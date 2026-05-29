@@ -494,3 +494,112 @@ Planned maintenance excluded from SLA calculations
 Alerts suppressed during windows
 Still logged for change tracking
 Shown on reports as excluded time
+
+## Business Service Availability (Phase 5+)
+
+Map infrastructure components to business services and calculate
+service health based on component health and dependency relationships.
+
+### The Concept
+Instead of "Router-A is down" → "E-Commerce checkout is degraded"
+Translates infrastructure events into business impact automatically.
+
+### Example Service Definition
+E-Commerce Platform:
+  Load Balancers (require 1 of 2):
+  ├── LB-DC1 (Datacenter-1)
+  └── LB-DC2 (Datacenter-2)
+  
+  App Servers (require 3 of 5 per DC):
+  ├── App-DC1-01 through App-DC1-05
+  └── App-DC2-01 through App-DC2-05
+  
+  Database (require primary + 1 replica):
+  ├── DB-Primary
+  ├── DB-Replica-1
+  └── DB-Replica-2
+  
+  Network Path (all required):
+  ├── WAN-Edge-DC1
+  ├── Core-SW-DC1
+  ├── WAN-Edge-DC2
+  └── Core-SW-DC2
+
+### Service Health Calculation
+Each component group has a threshold:
+
+  Load Balancers: 1 of 2 required
+    2/2 healthy → GREEN
+    1/2 healthy → YELLOW (degraded, no redundancy)
+    0/2 healthy → RED (service down)
+
+  App Servers DC1: 3 of 5 required  
+    5/5 healthy → GREEN
+    3-4/5 healthy → YELLOW (degraded capacity)
+    <3/5 healthy → RED (insufficient capacity)
+
+  Overall service = worst component group status
+
+### Models Needed
+BusinessService:
+  name, description
+  owner, team
+  sla_target_pct
+  status (green/yellow/red)
+
+ServiceComponent:
+  service (FK)
+  name, component_type (network/server/database/storage)
+  device_id or server_id (FK)
+  required_count    — minimum needed for service
+  total_count       — total in group
+  weight            — impact weight on overall service
+
+ServiceDependency:
+  service (FK)
+  depends_on_service (FK — service to service dependencies)
+  dependency_type (hard/soft)
+  — hard: if dependency fails, service fails
+  — soft: if dependency fails, service degrades
+
+### Dependency Chain Example
+E-Commerce → Payment Service → Banking API (external)
+  If Banking API degrades → Payment Service yellow
+  → E-Commerce yellow (soft dependency)
+
+### Service Map View (UI)
+Visual dependency map showing:
+  Business services as nodes
+  Dependencies as edges
+  Color = current health status
+  Click service → component breakdown
+  Click component → device/server details
+
+### Integration Points
+  Network devices → existing NetPulse inventory
+  Servers → agent-based or API monitoring
+  External services → synthetic probes / API health checks
+  Cloud services → AWS/Azure/GCP health APIs
+
+### Availability Reports Extended
+Service availability report adds:
+  Service-level availability % (not just device)
+  Business impact of each incident
+    "Core-SW-1 failure caused E-Commerce degradation
+     for 8 minutes affecting 3 business services"
+  SLA tracking at service level
+  Executive dashboard shows service health not device health
+
+### Agent Strategy for Servers
+Options for server health data:
+  1. SNMP — works, limited data
+  2. Node Exporter → OTLP → ingest-otlp (preferred)
+  3. Telegraf agent → InfluxDB line protocol → ingest-influx
+  4. Cloud provider APIs (EC2, Azure VM health)
+  5. Synthetic probes — HTTP health check endpoints
+
+### Future Phase — AIOps
+  Correlate infrastructure events with service degradation
+  Learn normal dependency behavior
+  Predict service impact before it happens
+  "Core-SW-1 CPU at 95% — E-Commerce likely to degrade in 15min"
