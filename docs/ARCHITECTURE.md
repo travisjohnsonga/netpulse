@@ -649,3 +649,53 @@ single platform monitors multiple customers simultaneously.
 **Cradlepoint**
 - Key data: LTE/5G signal strength, carrier, WAN health
 - Critical for branch offices on cellular WAN or backup
+
+## ChatOps Integration
+
+### Overview
+Engineers query NetPulse directly from chat platforms using natural language.
+No need to open a dashboard for quick health checks.
+
+### Example Interaction
+Engineer: "@netpulse status of router-a"
+NetPulse: 🟡 Router-A (WAN Edge | Datacenter-1)
+├── Uptime: 47 days
+├── CPU: 34% (normal)
+├── WAN Interface: 78% ⚠️ (trending to capacity)
+├── BGP Sessions: 3/3 up ✅
+├── CVE Exposure: 2 medium, 0 critical
+├── Risk Score: 42/100 (moderate)
+
+### Supported Platforms
+Microsoft Teams, Slack, Google Chat, Discord, Mattermost
+
+### Query Types
+- Device/site status and health
+- Active alerts and incidents  
+- CVE exposure queries
+- EOL/lifecycle status
+- Capacity and bandwidth queries
+- Action commands (with approval workflow)
+
+### Architecture
+Thin chatops-service sits on top of Django API:
+- Webhook receivers at /api/webhooks/{platform}/
+- Intent parser maps natural language → API calls
+- Response formatter per platform
+- No business logic — pure translation layer
+- Optional Claude API integration for richer NLP
+
+### Proactive Notifications
+Push alerts to designated channels without being asked:
+- Critical alerts and incidents
+- CVE notifications affecting inventory
+- UPS on-battery events
+- Circuits approaching capacity
+- EOL approaching deadlines
+
+### Security
+- Chat user identity mapped to NetPulse RBAC
+- Sensitive data never in chat responses
+- Action commands require explicit approval
+- All queries audit logged
+- Responses restricted to approved channels

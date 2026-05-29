@@ -219,3 +219,34 @@ Two modes:
 MSP consideration: Meraki/Mist have multi-org APIs —
 one credential set manages multiple customer orgs.
 Critical for MSP use case of NetPulse.
+
+## ChatOps Integration (Phase 4+)
+
+Conversational queries from chat platforms → NetPulse data.
+
+Service: chatops-service
+Platforms: Microsoft Teams, Slack, Google Chat, Discord, Mattermost
+
+Query types:
+- Device status: "status of router-a"
+- Site status: "status of site dallas"  
+- Active alerts: "any alerts right now"
+- CVE queries: "what CVEs affect firewall-c"
+- EOL queries: "when does router-a go end of life"
+- Capacity: "what circuits are near capacity"
+
+Architecture:
+- Webhook receiver endpoints in Django API (/api/webhooks/{platform}/)
+- Intent parser maps natural language to API calls
+- Response formatter per platform (Slack Block Kit, Teams Adaptive Cards etc)
+- Optional: Claude API integration for richer NLP
+
+Security:
+- Map chat user identity to NetPulse RBAC user
+- Read-only queries allowed, action commands require approval
+- Sensitive data never included in chat responses
+- All queries audit logged
+- Only respond in approved channels
+
+Proactive alerts pushed to designated channels:
+- Critical alerts, CVE notifications, UPS events, capacity warnings
