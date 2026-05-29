@@ -574,6 +574,28 @@ export async function testConnection(ip: string): Promise<TestConnectionResult> 
   return data
 }
 
+export interface DetectPlatformResult {
+  detected: boolean
+  device_type?: string
+  vendor?: string
+  platform?: string
+  os_version?: string | null
+  hostname?: string | null
+  model?: string | null
+  serial?: string | null
+  confidence?: 'high' | 'medium' | 'low'
+  all_matches?: string[]
+  error?: string
+  best_guess?: string | null
+}
+
+export async function detectPlatform(ip: string, credentialProfileId: number): Promise<DetectPlatformResult> {
+  const { data } = await api.post<DetectPlatformResult>('/devices/detect-platform/', {
+    ip, credential_profile_id: credentialProfileId,
+  })
+  return data
+}
+
 // Create a site inline (used by the add-device wizard).
 export async function createSite(payload: { name: string; location?: string }): Promise<Site> {
   const { data } = await api.post<Site>('/devices/sites/', payload)

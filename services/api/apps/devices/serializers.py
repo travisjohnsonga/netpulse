@@ -37,6 +37,28 @@ class DeviceListSerializer(serializers.ModelSerializer):
 
 class TestConnectionRequestSerializer(serializers.Serializer):
     ip = serializers.IPAddressField(help_text="IP address to probe.")
+    credential_profile_id = serializers.IntegerField(
+        required=False, help_text="If given, also run SSHDetect to identify the platform.")
+
+
+class DetectPlatformRequestSerializer(serializers.Serializer):
+    ip = serializers.IPAddressField()
+    credential_profile_id = serializers.IntegerField()
+
+
+class DetectPlatformResponseSerializer(serializers.Serializer):
+    detected = serializers.BooleanField()
+    device_type = serializers.CharField(required=False, allow_null=True)
+    vendor = serializers.CharField(required=False, allow_null=True)
+    platform = serializers.CharField(required=False, allow_null=True)
+    os_version = serializers.CharField(required=False, allow_null=True)
+    hostname = serializers.CharField(required=False, allow_null=True)
+    model = serializers.CharField(required=False, allow_null=True)
+    serial = serializers.CharField(required=False, allow_null=True)
+    confidence = serializers.CharField(required=False, allow_null=True)
+    all_matches = serializers.ListField(child=serializers.CharField(), required=False)
+    error = serializers.CharField(required=False, allow_null=True)
+    best_guess = serializers.CharField(required=False, allow_null=True)
 
 
 class TestConnectionResponseSerializer(serializers.Serializer):

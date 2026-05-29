@@ -1,11 +1,16 @@
 from drf_spectacular.utils import extend_schema
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from . import fingerprint
+from apps.credentials import vault
+from apps.credentials.models import CredentialProfile
+
+from . import detect, fingerprint
 from .models import Device, DeviceGroup, Site
 from .serializers import (
+    DetectPlatformRequestSerializer,
+    DetectPlatformResponseSerializer,
     DeviceGroupSerializer,
     DeviceListSerializer,
     DeviceSerializer,
@@ -13,6 +18,15 @@ from .serializers import (
     TestConnectionRequestSerializer,
     TestConnectionResponseSerializer,
 )
+
+
+def _ssh_creds(profile_id):
+    """Return (profile, ssh_password) for a credential profile id, or (None, None)."""
+    profile = CredentialProfile.objects.filter(pk=profile_id).first()
+    if not profile:
+        return None, None
+    secrets = vault.read_secret(profile.vault_path) if profile.vault_path else {}
+    return profile, secrets.get("ssh_password", "")
 
 
 class SiteViewSet(viewsets.ModelViewSet):
@@ -78,8 +92,50 @@ class DeviceViewSet(viewsets.ModelViewSet):
         """
         req = TestConnectionRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
-        result = fingerprint.fingerprint(req.validated_data["ip"])
+        ip = req.validated_data["ip"]
+        result = fingerprint.fingerprint(ip)
+        # If a credential profile is supplied, also run SSHDetect to fill in
+        # vendor/platform/os_version (otherwise they stay null from the probe).
+        profile_id = req.validated_data.get("credential_profile_id")
+        if profile_id:
+            profile, password = _ssh_creds(profile_id)
+            if profile and profile.ssh_enabled:
+                det = detect.detect_platform(ip, profile.ssh_username, password, profile.ssh_port)
+                if det.get("detected"):
+                    result.update({
+                        "vendor": det.get("vendor") or result["vendor"],
+                        "platform": det.get("platform"),
+                        "os_version": det.get("os_version"),
+                        "model": det.get("model"),
+                    })
         return Response(TestConnectionResponseSerializer(result).data)
+
+    @extend_schema(
+        request=DetectPlatformRequestSerializer,
+        responses=DetectPlatformResponseSerializer,
+        summary="Auto-detect a device's platform via Netmiko SSHDetect",
+    )
+    @action(detail=False, methods=["post"], url_path="detect-platform")
+    def detect_platform(self, request):
+        """
+        SSH to the device with the given credential profile, run Netmiko
+        SSHDetect to identify the platform, then read show-version for OS/model/
+        serial. Returns {detected, device_type, vendor, platform, …} or
+        {detected: false, error}.
+        """
+        req = DetectPlatformRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        profile, password = _ssh_creds(req.validated_data["credential_profile_id"])
+        if not profile:
+            return Response({"detected": False, "error": "credential profile not found"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not profile.ssh_enabled:
+            return Response({"detected": False, "error": "ssh_not_enabled"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        result = detect.detect_platform(
+            req.validated_data["ip"], profile.ssh_username, password, profile.ssh_port
+        )
+        return Response(DetectPlatformResponseSerializer(result).data)
 
     @action(detail=False, methods=["get"], url_path="topology")
     def topology(self, request):

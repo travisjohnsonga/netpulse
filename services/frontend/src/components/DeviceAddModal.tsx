@@ -2,30 +2,33 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  fetchSites, createSite, fetchCredentials, createDevice, testConnection, testCredential,
-  type Site, type CredentialProfileListItem, type DeviceDetail, type TestConnectionResult,
-  type CredentialTestResult,
+  fetchSites, createSite, fetchCredentials, createDevice, detectPlatform, testCredential,
+  type Site, type CredentialProfileListItem, type DeviceDetail,
+  type DetectPlatformResult, type CredentialTestResult,
 } from '../api/client'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 const PLATFORMS = [
-  { value: 'ios', label: 'Cisco IOS', vendor: 'Cisco' },
-  { value: 'ios_xe', label: 'Cisco IOS-XE', vendor: 'Cisco' },
-  { value: 'ios_xr', label: 'Cisco IOS-XR', vendor: 'Cisco' },
-  { value: 'nxos', label: 'Cisco NX-OS', vendor: 'Cisco' },
-  { value: 'eos', label: 'Arista EOS', vendor: 'Arista' },
-  { value: 'junos', label: 'Juniper JunOS', vendor: 'Juniper' },
-  { value: 'sonic', label: 'SONiC', vendor: '' },
+  { value: 'ios', label: 'Cisco IOS', vendor: 'cisco' },
+  { value: 'ios_xe', label: 'Cisco IOS-XE', vendor: 'cisco' },
+  { value: 'ios_xr', label: 'Cisco IOS-XR', vendor: 'cisco' },
+  { value: 'nxos', label: 'Cisco NX-OS', vendor: 'cisco' },
+  { value: 'asa', label: 'Cisco ASA', vendor: 'cisco' },
+  { value: 'eos', label: 'Arista EOS', vendor: 'arista' },
+  { value: 'junos', label: 'Juniper JunOS', vendor: 'juniper' },
+  { value: 'fortios', label: 'FortiOS', vendor: 'fortinet' },
+  { value: 'panos', label: 'PAN-OS', vendor: 'paloalto' },
+  { value: 'vyos', label: 'VyOS', vendor: 'vyos' },
+  { value: 'linux', label: 'Linux', vendor: 'linux' },
   { value: 'other', label: 'Other', vendor: '' },
 ]
 
 const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
 
-// Platform-aware telemetry config snippets, keyed by vendor family.
 function vendorFamily(platform: string): 'cisco' | 'juniper' | 'arista' | 'generic' {
-  if (platform.startsWith('ios') || platform === 'nxos') return 'cisco'
+  if (platform.startsWith('ios') || platform === 'nxos' || platform === 'asa') return 'cisco'
   if (platform === 'junos') return 'juniper'
   if (platform === 'eos') return 'arista'
   return 'generic'
@@ -65,12 +68,21 @@ const TELEMETRY_FEATURES = [
   { key: 'netflow', label: 'NetFlow / sFlow' },
 ]
 
-const STEPS = ['Basic Info', 'Platform', 'Credentials', 'Telemetry', 'Confirm']
+const DETECT_ERRORS: Record<string, string> = {
+  timeout: 'Could not connect: timeout',
+  auth_failed: 'Authentication failed — check the SSH credential',
+  unknown: 'Could not identify the platform',
+  ssh_not_enabled: 'The selected profile has no SSH enabled',
+  request_failed: 'Detection request failed',
+}
+
+// New order: Basic Info → Credentials → Platform → Telemetry → Confirm.
+const STEPS = ['Basic Info', 'Credentials', 'Platform', 'Telemetry', 'Confirm']
 
 export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [step, setStep] = useState(0)
 
-  // Step 1
+  // Step 1 — Basic info
   const [hostname, setHostname] = useState('')
   const [ip, setIp] = useState('')
   const [mgmtIp, setMgmtIp] = useState('')
@@ -82,35 +94,40 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   const [addingSite, setAddingSite] = useState(false)
   const [newSite, setNewSite] = useState('')
 
-  // Step 2
-  const [platform, setPlatform] = useState('other')
-  const [vendor, setVendor] = useState('')
-  const [detecting, setDetecting] = useState(false)
-  const [detect, setDetect] = useState<TestConnectionResult | null>(null)
-
-  // Step 3
+  // Step 2 — Credentials
   const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
   const [credentialId, setCredentialId] = useState<number | null>(null)
   const [credTest, setCredTest] = useState<CredentialTestResult | 'running' | null>(null)
 
-  // Step 4
+  // Step 3 — Platform
+  const [platform, setPlatform] = useState('other')
+  const [vendor, setVendor] = useState('')
+  const [osVersion, setOsVersion] = useState('')
+  const [model, setModel] = useState('')
+  const [serial, setSerial] = useState('')
+  const [detecting, setDetecting] = useState(false)
+  const [detect, setDetect] = useState<DetectPlatformResult | null>(null)
+  const [manualOpen, setManualOpen] = useState(false)
+
+  // Step 4 — Telemetry
   const [features, setFeatures] = useState<Set<string>>(new Set(['snmp', 'syslog']))
 
-  // Step 5
+  // Step 5 — result
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<DeviceDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const loadProfiles = () => fetchCredentials().then(setProfiles).catch(() => {})
-  useEffect(() => {
-    fetchSites().then(setSites).catch(() => {})
-    loadProfiles()
-  }, [])
+  useEffect(() => { fetchSites().then(setSites).catch(() => {}); loadProfiles() }, [])
+
+  const selectedProfile = profiles.find((p) => p.id === credentialId)
+  const hasSSH = !!selectedProfile?.enabled_protocols.includes('ssh')
 
   const reset = () => {
     setStep(0); setHostname(''); setIp(''); setMgmtIp(''); setSiteId(''); setRole(''); setTags([]); setTagInput('')
-    setPlatform('other'); setVendor(''); setDetect(null)
-    setCredentialId(null); setCredTest(null); setFeatures(new Set(['snmp', 'syslog'])); setCreated(null); setError(null)
+    setCredentialId(null); setCredTest(null)
+    setPlatform('other'); setVendor(''); setOsVersion(''); setModel(''); setSerial(''); setDetect(null); setManualOpen(false)
+    setFeatures(new Set(['snmp', 'syslog'])); setCreated(null); setError(null)
   }
 
   const addTag = () => {
@@ -127,15 +144,26 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
     } catch { setError('Failed to create site.') }
   }
 
-  const autoDetect = async () => {
-    if (!ip.trim()) { setError('Enter an IP first.'); return }
-    setDetecting(true); setError(null)
+  const runDetect = async () => {
+    if (credentialId == null || !ip.trim()) return
+    setDetecting(true); setDetect(null)
     try {
-      const r = await testConnection(ip.trim())
-      setDetect(r)
-      if (r.vendor) setVendor(r.vendor)
-    } catch { setError('Auto-detect request failed.') }
-    finally { setDetecting(false) }
+      setDetect(await detectPlatform(ip.trim(), credentialId))
+    } catch {
+      setDetect({ detected: false, error: 'request_failed' })
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  const applyDetected = () => {
+    if (!detect?.detected) return
+    if (detect.vendor) setVendor(detect.vendor)
+    if (detect.platform) setPlatform(detect.platform)
+    if (detect.os_version) setOsVersion(detect.os_version)
+    if (detect.model) setModel(detect.model)
+    if (detect.serial) setSerial(detect.serial)
+    if (detect.hostname) setHostname(detect.hostname)
   }
 
   const testCred = async () => {
@@ -157,6 +185,9 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
         ip_address: ip.trim(),
         management_ip: mgmtIp.trim() || null,
         platform, vendor,
+        os_version: osVersion,
+        model,
+        serial_number: serial,
         site: siteId === '' ? null : Number(siteId),
         credential_profile: credentialId,
         status: 'active',
@@ -201,6 +232,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
         <div className="px-6 py-5 overflow-y-auto">
           {error && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 mb-4">{error}</div>}
 
+          {/* Step 1 — Basic Info */}
           {step === 0 && (
             <div className="space-y-3">
               <Field label="Hostname *"><input className={inputCls} value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="core-rtr-01" /></Field>
@@ -240,54 +272,27 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
                     </span>
                   ))}
                 </div>
-                <input
-                  className={inputCls}
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
+                <input className={inputCls} value={tagInput} onChange={(e) => setTagInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
-                  placeholder="Type a tag and press Enter"
-                />
+                  placeholder="Type a tag and press Enter" />
               </Field>
-              <p className="text-xs text-gray-400">Role & tags are saved to the device notes until dedicated fields land.</p>
             </div>
           )}
 
+          {/* Step 2 — Credentials */}
           {step === 1 && (
             <div className="space-y-3">
-              <button onClick={autoDetect} disabled={detecting} className="px-4 py-2 border border-blue-300 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50">
-                {detecting ? 'Detecting…' : '🔍 Auto-detect platform'}
-              </button>
-              {detect && (
-                <div className={clsx('rounded-lg px-3 py-2 text-xs border', detect.reachable ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-yellow-50 border-yellow-200 text-yellow-800')}>
-                  {detect.vendor
-                    ? <>Detected: <strong>{detect.vendor}</strong>{detect.os_version ? ` ${detect.os_version}` : ''}{detect.model ? ` on ${detect.model}` : ''}. {detect.detail}</>
-                    : detect.detail}
-                  {detect.open_ports.length > 0 && <div className="mt-1 opacity-80">Open ports: {detect.open_ports.join(', ')}</div>}
-                </div>
-              )}
-              <Field label="Vendor"><input className={inputCls} value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Cisco" /></Field>
-              <Field label="Platform">
-                <select className={inputCls} value={platform} onChange={(e) => {
-                  setPlatform(e.target.value)
-                  const v = PLATFORMS.find((p) => p.value === e.target.value)?.vendor
-                  if (v) setVendor(v)
-                }}>
-                  {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
-              </Field>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-500">Assign one credential profile covering every protocol this device needs.</p>
+              <p className="text-sm text-gray-500">How should NetPulse connect to this device? Pick one profile covering every protocol it needs. SSH is required for platform auto-detection.</p>
               <div className="flex gap-2">
-                <select className={inputCls} value={credentialId ?? ''} onChange={(e) => setCredentialId(e.target.value ? Number(e.target.value) : null)}>
+                <select className={inputCls} value={credentialId ?? ''} onChange={(e) => { setCredentialId(e.target.value ? Number(e.target.value) : null); setCredTest(null); setDetect(null) }}>
                   <option value="">— No profile —</option>
                   {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.enabled_protocols.join(', ') || 'none'})</option>)}
                 </select>
                 <button onClick={loadProfiles} title="Refresh" className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 shrink-0">↻</button>
               </div>
+              {credentialId != null && !hasSSH && (
+                <p className="text-xs text-amber-600">⚠ This profile has no SSH — platform auto-detection won't be available.</p>
+              )}
               <a href="/settings/credentials" target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-600 hover:text-blue-800">+ New profile (opens Settings → Credentials)</a>
               <div>
                 <button onClick={testCred} disabled={credentialId == null || credTest === 'running'} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
@@ -307,6 +312,75 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
             </div>
           )}
 
+          {/* Step 3 — Platform */}
+          {step === 2 && (
+            <div className="space-y-4">
+              {!hasSSH ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 text-sm text-amber-800">
+                  Select an SSH credential profile in the previous step to enable auto-detection.
+                </div>
+              ) : (
+                <button onClick={runDetect} disabled={detecting} className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
+                  {detecting ? 'Connecting to device…' : '🔍 Auto-Detect Platform'}
+                </button>
+              )}
+
+              {detect && detect.detected && (
+                <div className={clsx('rounded-lg px-4 py-3 text-sm border',
+                  detect.confidence === 'low' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' : 'bg-green-50 border-green-200 text-green-800')}>
+                  <p className="font-medium">
+                    {detect.confidence === 'low' ? '⚠️ Best guess' : '✅ Detected'}: {vendorLabel(detect.vendor)} {platformLabel(detect.platform)}
+                    {detect.os_version ? ` ${detect.os_version}` : ''}
+                    {detect.confidence === 'low' && ' (low confidence)'}
+                  </p>
+                  <div className="text-xs mt-1 space-y-0.5 opacity-90">
+                    {detect.model && <div>Model: {detect.model}</div>}
+                    {detect.hostname && <div>Hostname: {detect.hostname}</div>}
+                    {detect.serial && <div>Serial: {detect.serial}</div>}
+                  </div>
+                  {detect.confidence === 'low' && <p className="text-xs mt-1">Please verify the platform selection below.</p>}
+                  <button onClick={applyDetected} className="mt-2 px-3 py-1.5 text-xs bg-white border border-current rounded-md font-medium hover:bg-opacity-80">Use these values</button>
+                </div>
+              )}
+
+              {detect && !detect.detected && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+                  ❌ {DETECT_ERRORS[detect.error ?? ''] ?? detect.error ?? 'Detection failed'}
+                  {detect.best_guess && <div className="text-xs mt-1">Best guess: {detect.best_guess}</div>}
+                  <div className="text-xs mt-1">Check the IP and credentials, or set the platform manually below.</div>
+                </div>
+              )}
+
+              {/* Manual override */}
+              <div className="border-t border-gray-100 pt-3">
+                <button onClick={() => setManualOpen((o) => !o)} className="text-sm font-medium text-gray-700 hover:text-gray-900">
+                  {manualOpen ? '▾' : '▸'} Override manually
+                </button>
+                {(manualOpen || platform !== 'other' || vendor) && (
+                  <div className="space-y-3 mt-3">
+                    <Row>
+                      <Field label="Vendor"><input className={inputCls} value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="cisco" /></Field>
+                      <Field label="Platform">
+                        <select className={inputCls} value={platform} onChange={(e) => {
+                          setPlatform(e.target.value)
+                          const v = PLATFORMS.find((p) => p.value === e.target.value)?.vendor
+                          if (v) setVendor(v)
+                        }}>
+                          {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                        </select>
+                      </Field>
+                    </Row>
+                    <Row>
+                      <Field label="OS Version"><input className={inputCls} value={osVersion} onChange={(e) => setOsVersion(e.target.value)} /></Field>
+                      <Field label="Model"><input className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} /></Field>
+                    </Row>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Step 4 — Telemetry */}
           {step === 3 && (
             <div className="space-y-3">
               <p className="text-sm text-gray-500">Enable telemetry sources, then apply the matching CLI for <strong>{PLATFORMS.find((p) => p.value === platform)?.label}</strong>.</p>
@@ -324,6 +398,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
             </div>
           )}
 
+          {/* Step 5 — Confirm */}
           {step === 4 && created && (
             <div className="text-center py-6">
               <div className="w-14 h-14 mx-auto rounded-full bg-green-100 text-green-600 flex items-center justify-center text-2xl mb-3">✓</div>
@@ -355,6 +430,12 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   )
 }
 
+function vendorLabel(v?: string) {
+  return v ? v.charAt(0).toUpperCase() + v.slice(1) : ''
+}
+function platformLabel(p?: string) {
+  return PLATFORMS.find((x) => x.value === p)?.label ?? p ?? ''
+}
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="flex-1 min-w-0"><label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>{children}</div>
 }

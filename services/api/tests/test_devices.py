@@ -350,3 +350,79 @@ class TestSitesTopLevelEndpoint:
         child = auth_client.post("/api/sites/", {"name": "Branch-1", "parent_site": parent["id"]}, format="json")
         assert child.status_code == 201
         assert child.json()["parent_site_name"] == "Region-1"
+
+
+class TestDetectPlatformEndpoint:
+    @pytest.fixture
+    def ssh_profile(self):
+        from apps.credentials.models import CredentialProfile
+        return CredentialProfile.objects.create(
+            name="detect-ssh", ssh_enabled=True, ssh_username="netmagic", vault_path="x")
+
+    def test_requires_fields(self, auth_client):
+        resp = auth_client.post("/api/devices/detect-platform/", {"ip": "10.0.0.1"}, format="json")
+        assert resp.status_code == 400  # missing credential_profile_id
+
+    def test_missing_profile(self, auth_client):
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.1", "credential_profile_id": 9999}, format="json")
+        assert resp.status_code == 400
+        assert resp.json()["detected"] is False
+
+    def test_ssh_not_enabled(self, auth_client):
+        from apps.credentials.models import CredentialProfile
+        p = CredentialProfile.objects.create(name="snmp-only", snmpv2c_enabled=True, vault_path="x")
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.1", "credential_profile_id": p.id}, format="json")
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "ssh_not_enabled"
+
+    def test_successful_detection(self, auth_client, ssh_profile, monkeypatch):
+        from apps.devices import detect
+        monkeypatch.setattr(detect, "_ssh_detect", lambda *a, **k: ("cisco_xe", {"cisco_xe": 99, "cisco_ios": 5}))
+        monkeypatch.setattr(detect, "_collect_version", lambda *a, **k: {
+            "os_version": "17.12.1", "model": "C8000V", "serial": "9W7Q57VMXHY", "hostname": "router1"})
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "192.168.98.100", "credential_profile_id": ssh_profile.id}, format="json")
+        assert resp.status_code == 200, resp.content
+        body = resp.json()
+        assert body["detected"] is True
+        assert body["device_type"] == "cisco_xe"
+        assert body["vendor"] == "cisco" and body["platform"] == "ios_xe"
+        assert body["os_version"] == "17.12.1" and body["model"] == "C8000V"
+        assert body["hostname"] == "router1" and body["confidence"] == "high"
+
+    def test_auth_failure(self, auth_client, ssh_profile, monkeypatch):
+        from apps.devices import detect
+        class NetmikoAuthenticationException(Exception):
+            pass
+        def boom(*a, **k):
+            raise NetmikoAuthenticationException("bad creds")
+        monkeypatch.setattr(detect, "_ssh_detect", boom)
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.1", "credential_profile_id": ssh_profile.id}, format="json")
+        assert resp.status_code == 200
+        assert resp.json() == {"detected": False, "error": "auth_failed"} or resp.json()["error"] == "auth_failed"
+
+    def test_unknown_platform(self, auth_client, ssh_profile, monkeypatch):
+        from apps.devices import detect
+        monkeypatch.setattr(detect, "_ssh_detect", lambda *a, **k: (None, {}))
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.1", "credential_profile_id": ssh_profile.id}, format="json")
+        assert resp.json()["detected"] is False
+        assert resp.json()["error"] == "unknown"
+
+
+class TestDetectParsing:
+    def test_parse_version_cisco(self):
+        from apps.devices.detect import parse_version
+        out = "Cisco IOS XE Software, Version 17.12.1\ncisco C8000V (VXE) processor\nProcessor board ID 9W7Q57VMXHY"
+        info = parse_version(out, "router1#")
+        assert info["os_version"] == "17.12.1"
+        assert info["hostname"] == "router1"
+        assert info["serial"] == "9W7Q57VMXHY"
+
+    def test_netmiko_mapping_complete(self):
+        from apps.devices.detect import NETMIKO_TO_NETPULSE
+        assert NETMIKO_TO_NETPULSE["cisco_xe"] == {"vendor": "cisco", "platform": "ios_xe"}
+        assert NETMIKO_TO_NETPULSE["juniper_junos"]["platform"] == "junos"
