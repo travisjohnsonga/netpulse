@@ -1,9 +1,20 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
+import { checkInfraHealth, type InfraHealth } from '../api/client'
 
 interface Props {
   onComplete: () => void
 }
+
+// Display metadata keyed by the service name returned from
+// GET /api/health/infrastructure/ ({ services: { postgres, valkey, ... } }).
+const INFRA_SERVICES: { key: keyof InfraHealth['services']; name: string; description: string; port: string }[] = [
+  { key: 'nats', name: 'NATS', description: 'Internal message bus', port: '4222' },
+  { key: 'influxdb', name: 'InfluxDB', description: 'Time-series metrics', port: '8086' },
+  { key: 'opensearch', name: 'OpenSearch', description: 'Log storage & search', port: '9200' },
+  { key: 'postgres', name: 'PostgreSQL', description: 'Relational data store', port: '5432' },
+  { key: 'valkey', name: 'Valkey', description: 'Cache & task queue', port: '6379' },
+]
 
 const PLATFORMS = [
   'IOS-XE',
@@ -33,6 +44,25 @@ export default function OnboardingWizard({ onComplete }: Props) {
     community: '',
   })
   const [connectedIntegrations, setConnectedIntegrations] = useState<Set<string>>(new Set())
+
+  // Live infrastructure health (step 2).
+  const [infra, setInfra] = useState<InfraHealth['services'] | null>(null)
+  const [infraLoading, setInfraLoading] = useState(false)
+  const [infraError, setInfraError] = useState(false)
+
+  const loadInfra = useCallback(() => {
+    setInfraLoading(true)
+    setInfraError(false)
+    checkInfraHealth()
+      .then((d) => setInfra(d.services))
+      .catch(() => setInfraError(true))
+      .finally(() => setInfraLoading(false))
+  }, [])
+
+  // Fetch when the infrastructure step becomes active.
+  useEffect(() => {
+    if (step === 1) loadInfra()
+  }, [step, loadInfra])
 
   const totalSteps = 4
 
@@ -104,39 +134,50 @@ export default function OnboardingWizard({ onComplete }: Props) {
           {/* Step 2: Infrastructure */}
           {step === 1 && (
             <div className="p-8">
-              <h2 className="text-xl font-bold text-gray-900 mb-1">Connect Infrastructure</h2>
-              <p className="text-sm text-gray-500 mb-6">
-                NetPulse uses Docker Compose to manage these services. They should all be running
-                if you started the platform with <code className="bg-gray-100 px-1 rounded text-xs">docker compose up -d</code>.
-              </p>
-              <div className="space-y-3 mb-8">
-                {[
-                  { name: 'NATS', description: 'Internal message bus', port: '4222' },
-                  { name: 'InfluxDB', description: 'Time-series metrics', port: '8086' },
-                  { name: 'OpenSearch', description: 'Log storage & search', port: '9200' },
-                  { name: 'PostgreSQL', description: 'Relational data store', port: '5432' },
-                  { name: 'Valkey', description: 'Cache & task queue', port: '6379' },
-                ].map((svc) => (
-                  <div
-                    key={svc.name}
-                    className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg border border-gray-200"
-                  >
-                    <div className="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm text-gray-800">{svc.name}</span>
-                        <span className="text-xs text-gray-400">:{svc.port}</span>
-                      </div>
-                      <span className="text-xs text-gray-500">{svc.description}</span>
-                    </div>
-                    <span className="text-xs text-yellow-600 font-medium">pending</span>
-                  </div>
-                ))}
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="text-xl font-bold text-gray-900">Connect Infrastructure</h2>
+                <button
+                  onClick={loadInfra}
+                  disabled={infraLoading}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
+                >
+                  {infraLoading ? 'Checking…' : 'Re-check'}
+                </button>
               </div>
-              <p className="text-xs text-gray-400 mb-6 bg-blue-50 p-3 rounded-lg border border-blue-100">
-                <strong>Tip:</strong> Service health will be checked automatically. Status updates
-                appear in the dashboard once you complete setup.
+              <p className="text-sm text-gray-500 mb-6">
+                Live status from <code className="bg-gray-100 px-1 rounded text-xs">/api/health/infrastructure/</code>.
+                All services should be running if you started the platform with{' '}
+                <code className="bg-gray-100 px-1 rounded text-xs">docker compose up -d</code>.
               </p>
+              {infraError && (
+                <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                  Couldn't reach the API to check service health. Make sure the <code>api</code> service is up, then Re-check.
+                </div>
+              )}
+              <div className="space-y-3 mb-8">
+                {INFRA_SERVICES.map((svc) => {
+                  const up = infra ? infra[svc.key] : null
+                  const dotCls = up == null ? 'bg-yellow-400' : up ? 'bg-green-500' : 'bg-red-500'
+                  const labelCls = up == null ? 'text-yellow-600' : up ? 'text-green-600' : 'text-red-600'
+                  const label = infraLoading && infra == null ? 'checking…' : up == null ? 'unknown' : up ? 'healthy' : 'down'
+                  return (
+                    <div
+                      key={svc.key}
+                      className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg border border-gray-200"
+                    >
+                      <div className={clsx('w-2 h-2 rounded-full flex-shrink-0', dotCls, up && 'animate-pulse')} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm text-gray-800">{svc.name}</span>
+                          <span className="text-xs text-gray-400">:{svc.port}</span>
+                        </div>
+                        <span className="text-xs text-gray-500">{svc.description}</span>
+                      </div>
+                      <span className={clsx('text-xs font-medium', labelCls)}>{label}</span>
+                    </div>
+                  )
+                })}
+              </div>
               <div className="flex gap-3">
                 <button
                   onClick={() => setStep(0)}
