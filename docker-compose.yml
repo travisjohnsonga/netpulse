@@ -209,7 +209,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────────
 
   ingest-grpc:
-    build: ./ingest
+    build: ./services/ingest-grpc
     restart: unless-stopped
     command: python -m ingest.grpc_server
     env_file: .env

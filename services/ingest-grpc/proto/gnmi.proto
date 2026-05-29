@@ -1,0 +1,245 @@
+// Based on the OpenConfig gNMI specification.
+// https://github.com/openconfig/gnmi/blob/master/proto/gnmi/gnmi.proto
+//
+// gNMIDialOut (device-initiated dial-out) is included here for convenience.
+// In the official spec it lives in a separate collector-metadata proto.
+
+syntax = "proto3";
+
+package gnmi;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
+import "gnmi_ext.proto";
+
+option go_package = "github.com/openconfig/gnmi/proto/gnmi";
+
+// ── Services ──────────────────────────────────────────────────────────────────
+
+// gNMI is the standard dial-in service (collector → device).
+service gNMI {
+  rpc Capabilities(CapabilityRequest)  returns (CapabilityResponse);
+  rpc Get(GetRequest)                  returns (GetResponse);
+  rpc Set(SetRequest)                  returns (SetResponse);
+  rpc Subscribe(stream SubscribeRequest) returns (stream SubscribeResponse);
+}
+
+// gNMIDialOut is the dial-out service (device → collector).
+// The device initiates the TCP/TLS connection and streams telemetry.
+service gNMIDialOut {
+  rpc Publish(stream PublishResponse) returns (google.protobuf.Empty);
+}
+
+// ── Core Types ────────────────────────────────────────────────────────────────
+
+message Notification {
+  int64          timestamp = 1;
+  Path           prefix    = 2;
+  repeated Update update   = 4;
+  repeated Path  delete    = 3;
+  bool           atomic    = 8;
+}
+
+message Update {
+  Path       path       = 1;
+  TypedValue val        = 3;
+  uint32     duplicates = 4;
+}
+
+message TypedValue {
+  oneof value {
+    string              string_val   = 1;
+    int64               int_val      = 2;
+    uint64              uint_val     = 3;
+    bool                bool_val     = 4;
+    bytes               bytes_val    = 5;
+    float               float_val    = 6;
+    double              double_val   = 7;
+    ScalarArray         leaflist_val = 8;
+    google.protobuf.Any any_val      = 9;
+    bytes               json_val     = 10;
+    bytes               json_ietf_val = 11;
+    string              ascii_val    = 12;
+    bytes               proto_bytes  = 13;
+  }
+}
+
+message Path {
+  repeated string  element = 1 [deprecated = true];
+  string           origin  = 2;
+  repeated PathElem elem   = 3;
+  string           target  = 4;
+}
+
+message PathElem {
+  string              name = 1;
+  map<string, string> key  = 2;
+}
+
+// ── Subscribe ─────────────────────────────────────────────────────────────────
+
+message SubscribeRequest {
+  oneof request {
+    SubscriptionList subscribe = 1;
+    Poll             poll      = 3;
+    AliasList        aliases   = 4;
+  }
+  repeated gnmi_ext.Extension extension = 5;
+}
+
+message SubscribeResponse {
+  oneof response {
+    Notification update        = 1;
+    bool         sync_response = 3;
+    Error        error         = 5 [deprecated = true];
+  }
+  repeated gnmi_ext.Extension extension = 8;
+}
+
+// PublishResponse wraps a SubscribeResponse for dial-out mode.
+message PublishResponse {
+  oneof response {
+    SubscribeResponse update = 1;
+    Error             error  = 27;
+  }
+}
+
+message SubscriptionList {
+  Path                 prefix            = 1;
+  repeated Subscription subscription     = 2;
+  bool                 use_aliases       = 3;
+  QosMarking           qos               = 4;
+  enum Mode {
+    STREAM = 0;
+    ONCE   = 1;
+    POLL   = 2;
+  }
+  Mode                  mode             = 5;
+  bool                  allow_aggregation = 6;
+  repeated ModelData    use_models        = 7;
+  Encoding              encoding          = 8;
+  bool                  updates_only      = 9;
+}
+
+message Subscription {
+  Path             path               = 1;
+  SubscriptionMode mode               = 2;
+  uint64           sample_interval    = 3;
+  bool             suppress_redundant = 4;
+  uint64           heartbeat_interval = 5;
+}
+
+enum SubscriptionMode {
+  TARGET_DEFINED = 0;
+  ON_CHANGE      = 1;
+  SAMPLE         = 2;
+}
+
+enum Encoding {
+  JSON      = 0;
+  BYTES     = 1;
+  PROTO     = 2;
+  ASCII     = 3;
+  JSON_IETF = 4;
+}
+
+enum Type {
+  ALL         = 0;
+  CONFIG      = 1;
+  STATE       = 2;
+  OPERATIONAL = 3;
+}
+
+// ── Capabilities ──────────────────────────────────────────────────────────────
+
+message CapabilityRequest {
+  repeated gnmi_ext.Extension extension = 1;
+}
+
+message CapabilityResponse {
+  repeated ModelData supported_models    = 1;
+  repeated Encoding  supported_encodings = 2;
+  string             gNMI_version        = 3;
+  repeated gnmi_ext.Extension extension  = 4;
+}
+
+message ModelData {
+  string name         = 1;
+  string organization = 2;
+  string version      = 3;
+}
+
+// ── Get / Set ─────────────────────────────────────────────────────────────────
+
+message GetRequest {
+  Path               prefix     = 1;
+  repeated Path      path       = 2;
+  Type               type       = 3;
+  Encoding           encoding   = 5;
+  repeated ModelData use_models = 6;
+  repeated gnmi_ext.Extension extension = 10;
+}
+
+message GetResponse {
+  repeated Notification notification = 1;
+  repeated gnmi_ext.Extension extension = 5;
+}
+
+message SetRequest {
+  Path           prefix  = 1;
+  repeated Path  delete  = 2;
+  repeated Update replace = 3;
+  repeated Update update  = 4;
+  repeated gnmi_ext.Extension extension = 5;
+}
+
+message SetResponse {
+  Path                   prefix    = 1;
+  repeated UpdateResult  response  = 2;
+  repeated gnmi_ext.Extension extension = 5;
+  int64                  timestamp = 6;
+}
+
+message UpdateResult {
+  enum Operation {
+    INVALID = 0;
+    DELETE  = 1;
+    REPLACE = 2;
+    UPDATE  = 3;
+  }
+  Path      path    = 1;
+  Error     message = 2 [deprecated = true];
+  Operation op      = 4;
+}
+
+// ── Misc ──────────────────────────────────────────────────────────────────────
+
+message Error {
+  uint32              code    = 1;
+  string              message = 2;
+  google.protobuf.Any data    = 3;
+}
+
+message Decimal64 {
+  int64  digits    = 1;
+  uint32 precision = 2;
+}
+
+message ScalarArray {
+  repeated TypedValue element = 1;
+}
+
+message Poll {}
+
+message AliasList {
+  repeated Alias alias = 1;
+}
+
+message Alias {
+  Path   path  = 1;
+  string alias = 2;
+}
+
+message QosMarking {
+  uint32 marking = 1;
+}
