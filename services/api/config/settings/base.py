@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     # NetPulse
     "apps.core",
     "apps.devices",
+    "apps.credentials",
     "apps.telemetry",
     "apps.compliance",
     "apps.alerts",

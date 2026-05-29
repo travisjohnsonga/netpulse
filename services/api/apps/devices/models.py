@@ -49,8 +49,14 @@ class Device(TimestampedModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     groups = models.ManyToManyField(DeviceGroup, blank=True, related_name="devices")
-    # Credential secret is stored in OpenBao; only the path is persisted here.
-    credential_path = models.CharField(max_length=512, blank=True)
+    # Credentials are managed via CredentialProfile records (secrets in OpenBao);
+    # the through model records the purpose + per-device usage stats.
+    credentials = models.ManyToManyField(
+        "credentials.CredentialProfile",
+        through="credentials.DeviceCredential",
+        related_name="devices",
+        blank=True,
+    )
     notes = models.TextField(blank=True)
 
     class Meta(TimestampedModel.Meta):

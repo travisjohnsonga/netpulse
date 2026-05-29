@@ -15,8 +15,9 @@ urlpatterns = [
     path("api/", include("apps.core.urls")),
 
     # ── Domain apps ───────────────────────────────────────────────────────────
-    path("api/devices/",    include("apps.devices.urls")),
-    path("api/telemetry/",  include("apps.telemetry.urls")),
+    path("api/devices/",     include("apps.devices.urls")),
+    path("api/credentials/", include("apps.credentials.urls")),
+    path("api/telemetry/",   include("apps.telemetry.urls")),
     path("api/compliance/", include("apps.compliance.urls")),
     path("api/alerts/",     include("apps.alerts.urls")),
     path("api/cve/",        include("apps.cve.urls")),
