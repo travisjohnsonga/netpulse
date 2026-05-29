@@ -117,19 +117,19 @@ services:
     # It prevents OpenBao from swapping secret memory pages to disk.
     cap_add:
       - IPC_LOCK
-    command: server -config=/openbao/config/openbao.hcl
+    command: server  -dev -dev-listen-address=0.0.0.0:8200
     environment:
-      BAO_API_ADDR: http://openbao:8210
-      BAO_CLUSTER_ADDR: http://openbao:8211
+      BAO_API_ADDR: http://openbao:8200
+      BAO_CLUSTER_ADDR: http://openbao:8201
+      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_TOKEN}
     volumes:
       - openbao-data:/openbao/data
-      - ./openbao/config:/openbao/config
     networks:
       - netpulse-net
     healthcheck:
       # exit 0 = initialized + unsealed; exit 2 = sealed (running, needs manual unseal).
       # Both indicate the process is healthy. exit 1 = error / not running.
-      test: ["CMD-SHELL", "BAO_ADDR=http://127.0.0.1:8210 bao status 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
+      test: ["CMD-SHELL", "BAO_ADDR=http://127.0.0.1:8200 bao status 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
       interval: 15s
       timeout: 5s
       retries: 5
