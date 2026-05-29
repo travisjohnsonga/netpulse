@@ -46,13 +46,14 @@ services:
   api:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
     environment:
       DJANGO_DEBUG: "true"
+      DJANGO_SETTINGS_MODULE: config.settings.development
 
   websocket:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
     environment:
       DJANGO_DEBUG: "true"
 
@@ -77,31 +78,31 @@ services:
 
   stream-processor:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   config-manager:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   alert-engine:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   cve-engine:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   lifecycle-engine:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   security-engine:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   scheduler:
     volumes:
-      - ./backend:/app
+      - ./services/api:/app
 
   # ── Ingest: mount source for faster iteration ─────────────────────────────
 

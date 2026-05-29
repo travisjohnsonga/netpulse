@@ -101,7 +101,7 @@ services:
       NATS_PASSWORD: ${NATS_PASSWORD}
     volumes:
       - nats-data:/data
-      - ./nats/nats.conf:/etc/nats/nats.conf:ro
+      - ./nats/nats.conf:/etc/nats/nats.conf
     networks:
       - netpulse-net
     healthcheck:
@@ -119,17 +119,17 @@ services:
       - IPC_LOCK
     command: server -config=/openbao/config/openbao.hcl
     environment:
-      BAO_API_ADDR: http://openbao:8200
-      BAO_CLUSTER_ADDR: http://openbao:8201
+      BAO_API_ADDR: http://openbao:8210
+      BAO_CLUSTER_ADDR: http://openbao:8211
     volumes:
       - openbao-data:/openbao/data
-      - ./openbao/config:/openbao/config:ro
+      - ./openbao/config:/openbao/config
     networks:
       - netpulse-net
     healthcheck:
       # exit 0 = initialized + unsealed; exit 2 = sealed (running, needs manual unseal).
       # Both indicate the process is healthy. exit 1 = error / not running.
-      test: ["CMD-SHELL", "BAO_ADDR=http://127.0.0.1:8200 bao status 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
+      test: ["CMD-SHELL", "BAO_ADDR=http://127.0.0.1:8210 bao status 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -140,7 +140,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────────
 
   api:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
     env_file: .env
@@ -170,7 +170,7 @@ services:
       start_period: 60s
 
   websocket:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: daphne -b 0.0.0.0 -p 8001 config.asgi:application
     env_file: .env
@@ -284,7 +284,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────────
 
   stream-processor:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: python manage.py run_stream_processor
     env_file: .env
@@ -301,7 +301,7 @@ services:
         condition: service_healthy
 
   config-manager:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: python manage.py run_config_manager
     env_file: .env
@@ -316,7 +316,7 @@ services:
         condition: service_healthy
 
   alert-engine:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: python manage.py run_alert_engine
     env_file: .env
@@ -331,7 +331,7 @@ services:
         condition: service_healthy
 
   cve-engine:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: python manage.py run_cve_engine
     env_file: .env
@@ -344,7 +344,7 @@ services:
         condition: service_healthy
 
   lifecycle-engine:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: python manage.py run_lifecycle_engine
     env_file: .env
@@ -357,7 +357,7 @@ services:
         condition: service_healthy
 
   security-engine:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     command: python manage.py run_security_engine
     env_file: .env
@@ -372,7 +372,7 @@ services:
         condition: service_healthy
 
   scheduler:
-    build: ./backend
+    build: ./services/api
     restart: unless-stopped
     # Celery Beat for periodic tasks; requires django-celery-beat and a running
     # Celery worker (add a separate worker service when needed).
