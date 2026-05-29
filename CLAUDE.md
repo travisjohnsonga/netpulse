@@ -796,3 +796,231 @@ Backup strategy:
 
 Keep all databases IN Docker — not external.
 Bind mounts give full data accessibility without complexity.
+
+
+# NetPulse — Claude Code Context
+
+NetPulse is a push-first, open source network intelligence platform.
+Full architecture in docs/ARCHITECTURE.md.
+
+## Current Status
+- Docker Compose scaffold: 22 services ✅
+- Infrastructure (postgres, influxdb, opensearch, valkey, nats, openbao): running ✅
+- Django 6.0 backend (services/api): 9 apps, models, REST API, JWT auth, RBAC ✅
+- services/ingest-grpc: gNMI dial-out receiver (27 tests) ✅
+- services/ingest-syslog: RFC 3164/5424 receiver (52 tests) ✅
+- services/ingest-snmp: SNMP poller + trap receiver (38 tests) ✅
+- services/ingest-flow: NetFlow/sFlow + latency correlation (41 tests) ✅
+- services/ingest-otlp: OpenTelemetry receiver (86 tests) ✅
+- services/ingest-api-poller: Meraki/Mist/UniFi plugin system (36 tests) ✅
+- services/stream-processor: NATS consumer, anomaly detection (91 tests) ✅
+- services/frontend: React + TypeScript + Vite + Tailwind ✅
+- Dashboard: infrastructure health, empty states, live WebSocket ✅
+- Onboarding wizard: 4 steps, integrations selection ✅
+- Total tests: 566 passing ✅
+
+## In Progress
+- Credential profile system (CredentialProfile + DeviceCredential models)
+- Settings page redesign with sub-navigation
+
+## Technology Stack
+- Backend: Python 3.13, Django 6.0, DRF, Django Channels
+- Frontend: React, TypeScript (.tsx), Vite, Tailwind CSS
+- Charts: Apache ECharts
+- Topology: Cytoscape.js
+- Flow viz: D3.js
+- State: Zustand
+- Data fetching: React Query
+- Auth: JWT (djangorestframework-simplejwt)
+- Database: PostgreSQL 17 + JSONB
+- Time-series: InfluxDB OSS
+- Search/logs: OpenSearch
+- Cache/WS broker: Valkey
+- Message bus: NATS + JetStream
+- Secrets: OpenBao (Vault-compatible, dev mode)
+- Deployment: Docker Compose (on-prem), Helm (cloud)
+
+## Architecture Principles
+- Push-first telemetry, SNMP polling as fallback
+- Security first — OpenBao for ALL credentials
+- Never store plaintext credentials anywhere
+- vault_path in PostgreSQL, actual secrets in OpenBao only
+- Always show "🔒 Stored securely in OpenBao" in credential UI
+- Least privilege per microservice
+- Multi-tenant from day one
+
+## Django Apps (services/api/apps/)
+- core: base models, health endpoints, shared utilities
+- devices: Device, Site, DeviceCredential models
+- telemetry: metrics, interface data
+- compliance: config templates, compliance rules, drift
+- alerts: AlertRule, AlertEvent, AlertChannel
+- cve: CVEDefinition, CVEApplicability
+- lifecycle: HardwareEOL, SoftwareEOL, RefreshPlan
+- security: AuthEvent, SecurityReport
+- collectors: Collector, CollectorHeartbeat
+
+## Credential System (in progress)
+CredentialProfile model:
+  name, credential_type, description, vault_path
+  username, auth_method, snmp_version, snmp_security_level
+  auth_protocol, priv_protocol, port, tls_enabled
+  created_by, last_updated, last_tested, last_test_result
+
+  Types: snmpv1, snmpv2c, snmpv3, ssh_password, ssh_key,
+         http_basic, http_token, http_apikey, gnmi, netconf
+
+DeviceCredential (through model):
+  device (FK), credential (FK), purpose, is_primary
+  last_used, last_success, failure_count, notes
+
+  Purposes: snmp_polling, ssh_config, ssh_backup,
+            netconf, gnmi, http_api
+
+## Settings Navigation (in progress)
+/settings/general        — platform config
+/settings/users          — users + roles (RBAC)
+/settings/credentials    — credential profiles
+/settings/integrations   — Meraki/Mist/UniFi/Slack/Teams/PagerDuty
+/settings/alerting       — rules, maintenance windows, templates
+/settings/discovery      — jobs, subnets, OT exclusions
+/settings/collectors     — registered collectors/pollers
+/settings/data-sources   — CVE feeds, EOL sources
+/settings/system         — backup, audit log, about
+
+## Frontend Routes
+/                → redirect to /dashboard
+/login           → JWT login page
+/dashboard       → main dashboard
+/devices         → device inventory
+/devices/:id     → device detail
+/topology        → network topology map
+/alerts          → alert list
+/cve             → CVE exposure
+/lifecycle       → EOL management
+/settings/*      → settings sub-pages (see above)
+
+## API Endpoints
+/api/health/                    — platform health
+/api/health/infrastructure/     — service connectivity check
+/api/auth/token/                — JWT obtain
+/api/auth/token/refresh/        — JWT refresh
+/api/devices/                   — device CRUD
+/api/devices/topology/          — CDP/LLDP topology data
+/api/devices/test-connection/   — test device connectivity
+/api/devices/:id/credentials/   — device credential associations
+/api/credentials/               — credential profile CRUD
+/api/credentials/:id/test/      — test credential against IP
+/api/credentials/:id/devices/   — devices using credential
+/api/alerts/                    — alert CRUD
+/api/cve/                       — CVE data
+/api/lifecycle/                 — EOL data
+/ws/telemetry/                  — WebSocket live metrics
+/ws/alerts/                     — WebSocket live alerts
+
+## Key Management Commands
+python manage.py run_stream_processor
+python manage.py run_config_manager
+python manage.py run_alert_engine
+python manage.py run_security_engine
+python manage.py run_cve_engine
+python manage.py run_lifecycle_engine
+python manage.py run_discovery
+python manage.py run_scheduler
+
+## Docker Compose Services
+Infrastructure: postgres, influxdb, opensearch, valkey, nats, openbao
+Application: api (port 8000), websocket (port 8001)
+Frontend: frontend/nginx (port 3000)
+Ingest: ingest-grpc, ingest-snmp, ingest-syslog, ingest-flow,
+        ingest-otlp, ingest-api-poller
+Engines: stream-processor, config-manager, alert-engine,
+         cve-engine, lifecycle-engine, security-engine, scheduler
+
+## SNMP Trap Receiver
+ingest-snmp handles both polling AND trap reception:
+- UDP port 162 for incoming traps (v1, v2c, v3 informs)
+- MIBs: RFC 1628 (UPS), APC, Eaton, standard network MIBs
+- NATS topic: netpulse.telemetry.{device_id}.trap
+- Critical: UPS on-battery, link state changes, hardware alerts
+
+## Device Discovery
+Four-tier system — all devices land in PENDING state:
+1. Passive — detect from syslog/gNMI/flow/trap source IPs
+2. Topology walk — CDP/LLDP + route table next-hop recursion
+3. Active scanning — SNMP sweep, protocol probe sequence
+4. Import — NetBox, DNA Center, CSV
+
+Route table walking preferred over ping — ICMP often blocked.
+OT/ICS WARNING: never auto-probe industrial control networks.
+Safety: allowed_subnets, excluded_subnets, rate_limit_pps=10
+
+## API-Based Integrations
+Service: ingest-api-poller
+Vendors: Meraki, Mist/Aruba, UniFi, DNA Center, FortiCloud, Panorama
+Plugin architecture: VendorAPIPlugin base class
+Two modes: polling (60-300s) + webhooks (real-time push)
+MSP: Meraki/Mist multi-org API support
+
+## ChatOps (Phase 4)
+Service: chatops-service
+Platforms: Teams, Slack, Google Chat, Discord, Mattermost
+Webhook endpoints: /api/webhooks/{platform}/
+Queries: device status, site health, active alerts, CVEs, EOL
+Security: map chat user → NetPulse RBAC, audit all queries
+
+## Network Topology Mapping (Phase 4)
+Auto-generated from CDP/LLDP with live utilization overlay
+Cytoscape.js for topology, D3.js for NetFlow path visualization
+Link colors: green <60%, yellow 60-80%, orange 80-90%, red 90%+
+WAN circuit capacity overrides — physical speed ≠ committed rate
+CircuitOverride model: committed_download_mbps, committed_upload_mbps,
+  provider, circuit_id, monthly_cost, contract_renewal_date
+
+## Availability & Uptime Reporting
+Hierarchical: Organization → Region → Site → Device → Interface
+Metrics: availability%, MTTR, MTBF, incident count
+Maintenance windows excluded from SLA calculations
+WAN circuit SLA tracking vs carrier commitment
+Carrier dispute evidence reports
+
+## Business Service Availability (Phase 5)
+Map infrastructure → business services
+ServiceComponent with required_count threshold
+ServiceDependency for service-to-service relationships
+Health: green/yellow/red based on component availability
+Translates "2 servers down" → "E-Commerce at 60% capacity"
+
+## TV/NOC Display Mode (Phase 4)
+Route: /tv — full screen, no navigation
+Auto-rotating views, large text, high contrast
+Raspberry Pi kiosk deployment supported
+Read-only token auth for always-on displays
+
+## Distributed Remote Pollers
+Poller nodes deployed close to monitored devices
+Single outbound mTLS connection to central platform
+Local disk buffer if central unreachable
+Registration: one-time token → OpenBao PKI certificate
+Poller assignment by subnet, manual override per device
+
+## Data Persistence
+Development: named Docker volumes
+Production: bind mounts to ${DATA_DIR:-/opt/netpulse/data}/
+Backup: docker compose stop → tar DATA_DIR → start
+
+## RBAC Roles (seeded on startup)
+Admin    — full platform access
+Engineer — read/write devices, configs, alerts
+Viewer   — read only
+API      — service account for integrations
+
+## Security Rules (NEVER violate)
+1. Never store plaintext credentials anywhere
+2. Always use OpenBao vault_path reference in PostgreSQL
+3. Never return credential values in API responses
+4. Always show "🔒 Stored securely in OpenBao" in credential UI
+5. Scrub credentials from all logs
+6. mTLS for all internal service communication
+7. TLS 1.3 minimum for external connections
+8. Zero secrets in code or environment variables in production
