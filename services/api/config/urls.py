@@ -1,7 +1,14 @@
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
+
+from apps.devices.views import SiteViewSet
+
+# Top-level sites router (also available under /api/devices/sites/).
+_sites_router = DefaultRouter()
+_sites_router.register("", SiteViewSet, basename="site-top")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -16,6 +23,7 @@ urlpatterns = [
 
     # ── Domain apps ───────────────────────────────────────────────────────────
     path("api/devices/",     include("apps.devices.urls")),
+    path("api/sites/",       include((_sites_router.urls, "sites"))),
     path("api/credentials/", include("apps.credentials.urls")),
     path("api/telemetry/",   include("apps.telemetry.urls")),
     path("api/compliance/", include("apps.compliance.urls")),

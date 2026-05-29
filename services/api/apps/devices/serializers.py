@@ -4,10 +4,13 @@ from .models import Device, DeviceGroup, Site
 
 
 class SiteSerializer(serializers.ModelSerializer):
+    device_count = serializers.IntegerField(source="devices.count", read_only=True)
+    parent_site_name = serializers.CharField(source="parent_site.name", read_only=True, default=None)
+
     class Meta:
         model = Site
         fields = "__all__"
-        read_only_fields = ("created_at", "updated_at")
+        read_only_fields = ("slug", "created_at", "updated_at")
 
 
 class DeviceGroupSerializer(serializers.ModelSerializer):

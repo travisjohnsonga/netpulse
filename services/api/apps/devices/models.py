@@ -5,9 +5,51 @@ from apps.core.models import TimestampedModel
 
 
 class Site(TimestampedModel):
+    class SiteType(models.TextChoices):
+        DATACENTER = "datacenter", "Datacenter"
+        CAMPUS = "campus", "Campus"
+        BRANCH = "branch", "Branch"
+        REMOTE = "remote", "Remote"
+        CLOUD = "cloud", "Cloud"
+
     name = models.CharField(max_length=255, unique=True)
-    location = models.CharField(max_length=255, blank=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True)
     description = models.TextField(blank=True)
+    # Kept for backwards compatibility with existing data/UX.
+    location = models.CharField(max_length=255, blank=True)
+
+    site_type = models.CharField(max_length=20, choices=SiteType.choices, default=SiteType.BRANCH, db_index=True)
+
+    # Address / geo
+    address = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    state = models.CharField(max_length=120, blank=True)
+    country = models.CharField(max_length=120, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+
+    # Hierarchy (parent/child sites). tenant FK omitted until multi-tenancy lands.
+    parent_site = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="child_sites"
+    )
+
+    # Contact
+    contact_name = models.CharField(max_length=255, blank=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=64, blank=True)
+
+    notes = models.TextField(blank=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            base = slugify(self.name) or "site"
+            slug, n = base, 1
+            while Site.objects.exclude(pk=self.pk).filter(slug=slug).exists():
+                n += 1
+                slug = f"{base}-{n}"
+            self.slug = slug
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name

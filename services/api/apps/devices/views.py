@@ -16,8 +16,26 @@ from .serializers import (
 
 
 class SiteViewSet(viewsets.ModelViewSet):
-    queryset = Site.objects.all()
+    """
+    Manage sites/locations — a hierarchy of datacenters, campuses and branches.
+
+    Sites carry address/geo, contact details and an optional parent for
+    hierarchy. Filter by `site_type` or `parent_site`; search by name/city. The
+    `devices/` action lists the devices located at a site.
+    """
+
+    queryset = Site.objects.select_related("parent_site").all()
     serializer_class = SiteSerializer
+    filterset_fields = ["site_type", "parent_site"]
+    search_fields = ["name", "city", "address"]
+    ordering_fields = ["name", "site_type", "created_at"]
+
+    @action(detail=True, methods=["get"], url_path="devices")
+    def devices(self, request, pk=None):
+        """List devices located at this site."""
+        site = self.get_object()
+        devices = site.devices.all()
+        return Response(DeviceListSerializer(devices, many=True).data)
 
 
 class DeviceGroupViewSet(viewsets.ModelViewSet):

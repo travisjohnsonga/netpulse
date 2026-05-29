@@ -329,3 +329,24 @@ class TestConnectionEndpoint:
             "/api/devices/test-connection/", {"ip": "10.0.0.1"}, format="json"
         )
         assert resp.status_code == 401
+
+
+class TestSitesTopLevelEndpoint:
+    def test_list_and_create_at_api_sites(self, auth_client):
+        resp = auth_client.post("/api/sites/", {"name": "DC-West", "site_type": "datacenter", "city": "Reno"}, format="json")
+        assert resp.status_code == 201, resp.content
+        body = resp.json()
+        assert body["slug"] == "dc-west"
+        assert body["device_count"] == 0
+        assert auth_client.get("/api/sites/").json()["count"] >= 1
+
+    def test_site_devices_action(self, auth_client, site, device):
+        resp = auth_client.get(f"/api/sites/{site.pk}/devices/")
+        assert resp.status_code == 200
+        assert any(d["hostname"] == device.hostname for d in resp.json())
+
+    def test_parent_hierarchy(self, auth_client):
+        parent = auth_client.post("/api/sites/", {"name": "Region-1"}, format="json").json()
+        child = auth_client.post("/api/sites/", {"name": "Branch-1", "parent_site": parent["id"]}, format="json")
+        assert child.status_code == 201
+        assert child.json()["parent_site_name"] == "Region-1"
