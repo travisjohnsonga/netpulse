@@ -1,0 +1,306 @@
+import pytest
+from apps.devices.models import Device, DeviceGroup, DiscoveredDevice, DiscoveryJob, Site
+
+pytestmark = pytest.mark.django_db
+
+
+# ── Fixtures ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def site():
+    return Site.objects.create(name="DC-1", location="New York")
+
+
+@pytest.fixture
+def device(site):
+    return Device.objects.create(
+        hostname="core-rtr-01",
+        ip_address="10.0.0.1",
+        vendor="Cisco",
+        platform=Device.Platform.IOS_XE,
+        site=site,
+    )
+
+
+@pytest.fixture
+def group():
+    return DeviceGroup.objects.create(name="Routers")
+
+
+# ── Site CRUD ─────────────────────────────────────────────────────────────────
+
+class TestSiteEndpoints:
+    def test_list_sites(self, auth_client, site):
+        resp = auth_client.get("/api/devices/sites/")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_create_site(self, auth_client):
+        resp = auth_client.post("/api/devices/sites/", {"name": "Branch-1", "location": "Austin"})
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "Branch-1"
+
+    def test_create_site_duplicate_name(self, auth_client, site):
+        resp = auth_client.post("/api/devices/sites/", {"name": "DC-1"})
+        assert resp.status_code == 400
+
+    def test_retrieve_site(self, auth_client, site):
+        resp = auth_client.get(f"/api/devices/sites/{site.pk}/")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "DC-1"
+
+    def test_update_site(self, auth_client, site):
+        resp = auth_client.patch(f"/api/devices/sites/{site.pk}/", {"location": "New Jersey"})
+        assert resp.status_code == 200
+        assert resp.json()["location"] == "New Jersey"
+
+    def test_delete_site(self, auth_client, site):
+        resp = auth_client.delete(f"/api/devices/sites/{site.pk}/")
+        assert resp.status_code == 204
+        assert not Site.objects.filter(pk=site.pk).exists()
+
+    def test_timestamps_present(self, auth_client, site):
+        resp = auth_client.get(f"/api/devices/sites/{site.pk}/")
+        data = resp.json()
+        assert "created_at" in data
+        assert "updated_at" in data
+
+    def test_unauthenticated_rejected(self, api_client):
+        resp = api_client.get("/api/devices/sites/")
+        assert resp.status_code == 401
+
+
+# ── DeviceGroup CRUD ──────────────────────────────────────────────────────────
+
+class TestDeviceGroupEndpoints:
+    def test_list_groups(self, auth_client, group):
+        resp = auth_client.get("/api/devices/groups/")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_create_group(self, auth_client):
+        resp = auth_client.post("/api/devices/groups/", {"name": "Switches"})
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "Switches"
+
+    def test_retrieve_group(self, auth_client, group):
+        resp = auth_client.get(f"/api/devices/groups/{group.pk}/")
+        assert resp.status_code == 200
+
+    def test_delete_group(self, auth_client, group):
+        resp = auth_client.delete(f"/api/devices/groups/{group.pk}/")
+        assert resp.status_code == 204
+
+
+# ── Device CRUD ───────────────────────────────────────────────────────────────
+
+class TestDeviceEndpoints:
+    def test_list_devices(self, auth_client, device):
+        resp = auth_client.get("/api/devices/")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_list_uses_lightweight_serializer(self, auth_client, device):
+        resp = auth_client.get("/api/devices/")
+        item = resp.json()["results"][0]
+        # List serializer only returns these fields
+        assert set(item.keys()) == {"id", "hostname", "ip_address", "platform", "status", "site_name", "created_at"}
+
+    def test_list_includes_site_name(self, auth_client, device, site):
+        resp = auth_client.get("/api/devices/")
+        assert resp.json()["results"][0]["site_name"] == "DC-1"
+
+    def test_list_site_name_null_when_no_site(self, auth_client):
+        Device.objects.create(hostname="rtr-02", ip_address="10.0.0.2")
+        resp = auth_client.get("/api/devices/")
+        assert resp.json()["results"][0]["site_name"] is None
+
+    def test_create_device(self, auth_client):
+        resp = auth_client.post("/api/devices/", {
+            "hostname": "edge-fw-01",
+            "ip_address": "192.168.1.1",
+            "vendor": "Palo Alto",
+            "platform": "other",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["hostname"] == "edge-fw-01"
+
+    def test_create_device_default_status_active(self, auth_client):
+        resp = auth_client.post("/api/devices/", {
+            "hostname": "sw-01",
+            "ip_address": "10.0.1.1",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["status"] == "active"
+
+    def test_create_device_duplicate_hostname(self, auth_client, device):
+        resp = auth_client.post("/api/devices/", {
+            "hostname": "core-rtr-01",
+            "ip_address": "10.99.99.99",
+        })
+        assert resp.status_code == 400
+
+    def test_create_device_duplicate_ip(self, auth_client, device):
+        resp = auth_client.post("/api/devices/", {
+            "hostname": "another-rtr",
+            "ip_address": "10.0.0.1",
+        })
+        assert resp.status_code == 400
+
+    def test_retrieve_device_full_serializer(self, auth_client, device):
+        resp = auth_client.get(f"/api/devices/{device.pk}/")
+        data = resp.json()
+        assert "vendor" in data
+        assert "os_version" in data
+        assert "serial_number" in data
+        assert "notes" in data
+
+    def test_update_device_status(self, auth_client, device):
+        resp = auth_client.patch(f"/api/devices/{device.pk}/", {"status": "maintenance"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "maintenance"
+
+    def test_delete_device(self, auth_client, device):
+        resp = auth_client.delete(f"/api/devices/{device.pk}/")
+        assert resp.status_code == 204
+        assert not Device.objects.filter(pk=device.pk).exists()
+
+    def test_filter_by_status(self, auth_client, device, site):
+        Device.objects.create(hostname="rtr-maint", ip_address="10.0.0.3", status="maintenance")
+        resp = auth_client.get("/api/devices/?status=active")
+        assert resp.status_code == 200
+        assert all(d["status"] == "active" for d in resp.json()["results"])
+
+    def test_filter_by_platform(self, auth_client, device):
+        Device.objects.create(hostname="juniper-01", ip_address="10.0.0.4", platform="junos")
+        resp = auth_client.get("/api/devices/?platform=ios_xe")
+        assert resp.status_code == 200
+        assert all(d["platform"] == "ios_xe" for d in resp.json()["results"])
+
+    def test_search_by_hostname(self, auth_client, device):
+        Device.objects.create(hostname="branch-sw-01", ip_address="10.0.0.5")
+        resp = auth_client.get("/api/devices/?search=core")
+        assert resp.status_code == 200
+        hostnames = [d["hostname"] for d in resp.json()["results"]]
+        assert "core-rtr-01" in hostnames
+        assert "branch-sw-01" not in hostnames
+
+    def test_ordering_by_hostname(self, auth_client, device):
+        Device.objects.create(hostname="aaa-device", ip_address="10.0.0.6")
+        resp = auth_client.get("/api/devices/?ordering=hostname")
+        assert resp.status_code == 200
+        hostnames = [d["hostname"] for d in resp.json()["results"]]
+        assert hostnames == sorted(hostnames)
+
+    def test_device_with_group(self, auth_client, device, group):
+        device.groups.add(group)
+        resp = auth_client.get(f"/api/devices/{device.pk}/")
+        assert group.pk in resp.json()["groups"]
+
+    def test_unauthenticated_rejected(self, api_client):
+        resp = api_client.get("/api/devices/")
+        assert resp.status_code == 401
+
+
+# ── Device Model ──────────────────────────────────────────────────────────────
+
+class TestDeviceModel:
+    def test_str(self, device):
+        assert str(device) == "core-rtr-01"
+
+    def test_status_choices(self):
+        for value, _ in Device.Status.choices:
+            assert value in ("active", "inactive", "maintenance", "decommissioned")
+
+    def test_platform_choices(self):
+        for value, _ in Device.Platform.choices:
+            assert value in ("ios", "ios_xe", "ios_xr", "nxos", "eos", "junos", "sonic", "other")
+
+    def test_site_nullable(self):
+        d = Device.objects.create(hostname="no-site", ip_address="172.16.0.1")
+        assert d.site is None
+
+    def test_management_ip_optional(self, device):
+        assert device.management_ip is None
+
+
+# ── DiscoveryJob ──────────────────────────────────────────────────────────────
+
+class TestDiscoveryJobModel:
+    def test_create_scan_job(self, user):
+        job = DiscoveryJob.objects.create(
+            name="DC-1 Scan",
+            method=DiscoveryJob.Method.SCAN,
+            subnets=["10.0.0.0/24"],
+            allowed_subnets=["10.0.0.0/24"],
+            created_by=user,
+        )
+        assert job.status == DiscoveryJob.Status.PENDING
+        assert job.devices_found == 0
+
+    def test_default_safety_limits(self, user):
+        job = DiscoveryJob.objects.create(
+            name="Safe Job",
+            method=DiscoveryJob.Method.SCAN,
+            created_by=user,
+        )
+        assert job.max_depth == 10
+        assert job.max_devices == 1000
+        assert job.rate_limit_pps == 10
+
+    def test_str(self, user):
+        job = DiscoveryJob.objects.create(name="Test", method="scan", created_by=user)
+        assert "Test" in str(job)
+        assert "scan" in str(job)
+
+    def test_topology_method_with_seed(self, user, device):
+        job = DiscoveryJob.objects.create(
+            name="Topo Walk",
+            method=DiscoveryJob.Method.TOPOLOGY,
+            seed_device=device,
+            created_by=user,
+        )
+        assert job.seed_device == device
+
+
+# ── DiscoveredDevice ──────────────────────────────────────────────────────────
+
+class TestDiscoveredDeviceModel:
+    def test_create_discovered_device(self, user):
+        job = DiscoveryJob.objects.create(name="Job", method="scan", created_by=user)
+        dd = DiscoveredDevice.objects.create(
+            job=job,
+            source_ip="10.0.0.50",
+            confidence_score=60,
+            discovered_hostname="sw-floor1",
+            detection_methods=["snmp"],
+            responds_to={"snmp": True},
+        )
+        assert dd.status == DiscoveredDevice.Status.PENDING
+        assert dd.confidence_score == 60
+
+    def test_unique_per_job_and_ip(self, user):
+        from django.db import IntegrityError
+        job = DiscoveryJob.objects.create(name="Job", method="scan", created_by=user)
+        DiscoveredDevice.objects.create(job=job, source_ip="10.0.0.51")
+        with pytest.raises(IntegrityError):
+            DiscoveredDevice.objects.create(job=job, source_ip="10.0.0.51")
+
+    def test_same_ip_different_jobs_allowed(self, user):
+        job1 = DiscoveryJob.objects.create(name="J1", method="scan", created_by=user)
+        job2 = DiscoveryJob.objects.create(name="J2", method="scan", created_by=user)
+        DiscoveredDevice.objects.create(job=job1, source_ip="10.0.0.52")
+        dd2 = DiscoveredDevice.objects.create(job=job2, source_ip="10.0.0.52")
+        assert dd2.pk is not None
+
+    def test_approval_sets_approved_device(self, user, device):
+        job = DiscoveryJob.objects.create(name="Job", method="scan", created_by=user)
+        dd = DiscoveredDevice.objects.create(job=job, source_ip="10.0.0.53")
+        from django.utils import timezone
+        dd.status = DiscoveredDevice.Status.APPROVED
+        dd.approved_device = device
+        dd.approved_by = user
+        dd.approved_at = timezone.now()
+        dd.save()
+        dd.refresh_from_db()
+        assert dd.approved_device == device

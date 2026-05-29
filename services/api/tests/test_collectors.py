@@ -1,0 +1,154 @@
+import pytest
+from apps.collectors.models import Collector
+
+pytestmark = pytest.mark.django_db
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def collector():
+    return Collector.objects.create(
+        name="Poller-DC1",
+        api_key_hash="$2b$12$fakehashvalue12345678901234567890123456789012",
+        status="active",
+        version="1.2.0",
+        remote_ip="10.10.0.50",
+    )
+
+
+# ── CRUD ──────────────────────────────────────────────────────────────────────
+
+class TestCollectorEndpoints:
+    def test_list_collectors(self, auth_client, collector):
+        resp = auth_client.get("/api/collectors/")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_create_collector(self, auth_client):
+        resp = auth_client.post("/api/collectors/", {
+            "name": "Poller-Branch",
+            "api_key_hash": "$2b$12$anotherfakehashvalue1234567890123456789012",
+            "status": "pending",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "Poller-Branch"
+        assert resp.json()["status"] == "pending"
+
+    def test_create_default_status_pending(self, auth_client):
+        resp = auth_client.post("/api/collectors/", {
+            "name": "New Poller",
+            "api_key_hash": "uniquehash_new_poller_12345678901234567890123",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["status"] == "pending"
+
+    def test_retrieve_collector(self, auth_client, collector):
+        resp = auth_client.get(f"/api/collectors/{collector.pk}/")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Poller-DC1"
+
+    def test_api_key_hash_in_response(self, auth_client, collector):
+        resp = auth_client.get(f"/api/collectors/{collector.pk}/")
+        # The hash is present (read-only), but it's the bcrypt hash — never plaintext
+        assert "api_key_hash" in resp.json()
+
+    def test_update_collector_status(self, auth_client, collector):
+        resp = auth_client.patch(f"/api/collectors/{collector.pk}/", {"status": "offline"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "offline"
+
+    def test_update_collector_version(self, auth_client, collector):
+        resp = auth_client.patch(f"/api/collectors/{collector.pk}/", {"version": "1.3.0"})
+        assert resp.status_code == 200
+        assert resp.json()["version"] == "1.3.0"
+
+    def test_delete_collector(self, auth_client, collector):
+        resp = auth_client.delete(f"/api/collectors/{collector.pk}/")
+        assert resp.status_code == 204
+        assert not Collector.objects.filter(pk=collector.pk).exists()
+
+    def test_filter_by_status(self, auth_client, collector):
+        Collector.objects.create(
+            name="Revoked", status="revoked",
+            api_key_hash="revokedhash_unique_1234567890123456789012345",
+        )
+        resp = auth_client.get("/api/collectors/?status=active")
+        assert resp.status_code == 200
+        assert all(c["status"] == "active" for c in resp.json()["results"])
+
+    def test_search_by_name(self, auth_client, collector):
+        Collector.objects.create(
+            name="Poller-Remote",
+            api_key_hash="remotehash_unique_1234567890123456789012345",
+            status="active",
+        )
+        resp = auth_client.get("/api/collectors/?search=DC1")
+        assert resp.status_code == 200
+        names = [c["name"] for c in resp.json()["results"]]
+        assert "Poller-DC1" in names
+        assert "Poller-Remote" not in names
+
+    def test_search_by_remote_ip(self, auth_client, collector):
+        resp = auth_client.get("/api/collectors/?search=10.10.0.50")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_api_key_hash_is_read_only(self, auth_client):
+        # api_key_hash is in read_only_fields — values sent in POST are silently ignored
+        resp = auth_client.post("/api/collectors/", {
+            "name": "New Poller",
+            "api_key_hash": "should-be-ignored",
+        })
+        assert resp.status_code == 201
+        # The returned hash is empty string (not our submitted value) because field is read-only
+        assert resp.json()["api_key_hash"] != "should-be-ignored"
+
+    def test_unauthenticated_rejected(self, api_client):
+        resp = api_client.get("/api/collectors/")
+        assert resp.status_code == 401
+
+
+# ── Model Tests ───────────────────────────────────────────────────────────────
+
+class TestCollectorModel:
+    def test_str(self, collector):
+        assert str(collector) == "Poller-DC1"
+
+    def test_status_choices(self):
+        for val, _ in Collector.Status.choices:
+            assert val in ("pending", "active", "offline", "revoked")
+
+    def test_cert_serial_optional(self):
+        c = Collector.objects.create(
+            name="No Cert",
+            api_key_hash="nocerthash_unique_1234567890123456789012345",
+        )
+        assert c.cert_serial == ""
+        assert c.cert_expires_at is None
+
+    def test_last_seen_at_nullable(self):
+        c = Collector.objects.create(
+            name="Never Seen",
+            api_key_hash="neverseenhash_unique_1234567890123456789012",
+        )
+        assert c.last_seen_at is None
+
+    def test_remote_ip_nullable(self):
+        c = Collector.objects.create(
+            name="No IP",
+            api_key_hash="noiphash_unique_123456789012345678901234567",
+        )
+        assert c.remote_ip is None
+
+
+# ── Telemetry Stub ────────────────────────────────────────────────────────────
+
+class TestTelemetryStub:
+    def test_metrics_returns_501(self, auth_client):
+        resp = auth_client.get("/api/telemetry/metrics/")
+        assert resp.status_code == 501
+
+    def test_metrics_unauthenticated(self, api_client):
+        resp = api_client.get("/api/telemetry/metrics/")
+        assert resp.status_code == 401

@@ -1,0 +1,32 @@
+import os
+
+# Set required env vars before importing base so it doesn't raise KeyError.
+os.environ.setdefault("DJANGO_SECRET_KEY", "insecure-test-key-not-for-production")
+os.environ.setdefault("POSTGRES_DB", "netpulse_test")
+os.environ.setdefault("POSTGRES_USER", "postgres")
+os.environ.setdefault("POSTGRES_PASSWORD", "postgres")
+os.environ.setdefault("VALKEY_PASSWORD", "test")
+
+from .base import *  # noqa: F401, F403
+
+DEBUG = True
+ALLOWED_HOSTS = ["*"]
+
+# SQLite — no external DB needed for unit tests.
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
+    }
+}
+
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+LOGGING = {"version": 1, "disable_existing_loggers": True}

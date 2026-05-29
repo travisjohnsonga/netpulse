@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 # ── intent patterns ───────────────────────────────────────────────────────────
 _INTENTS: list[tuple[str, re.Pattern]] = [
-    ("device_status",  re.compile(r"status\s+of\s+(?P<name>\S+)", re.I)),
     ("site_status",    re.compile(r"status\s+of\s+site\s+(?P<name>\S+)", re.I)),
+    ("device_status",  re.compile(r"status\s+of\s+(?P<name>\S+)", re.I)),
     ("active_alerts",  re.compile(r"(any\s+)?alerts?(\s+right\s+now)?", re.I)),
     ("cve_query",      re.compile(r"cve.*(affect|on)\s+(?P<name>\S+)", re.I)),
     ("eol_query",      re.compile(r"(eol|end.of.life|lifecycle).*(?P<name>\S+)", re.I)),
