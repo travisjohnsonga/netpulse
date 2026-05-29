@@ -237,7 +237,7 @@ services:
         condition: service_healthy
 
   ingest-syslog:
-    build: ./ingest
+    build: ./services/ingest-syslog
     restart: unless-stopped
     command: python -m ingest.syslog_server
     env_file: .env
