@@ -377,3 +377,50 @@ Each microservice has its own AppRole with minimal Vault policy:
 
 *Document created from initial architecture design session — May 2026*
 *Keep this document updated as the platform evolves*
+
+---
+
+## SNMP Trap Receiver
+
+Traps are a completely different flow from polling — devices initiate contact
+when events occur rather than waiting to be asked.
+
+### Critical Use Cases
+- **UPS events** — on battery, low battery, battery restored, overload, shutdown imminent
+- **Link state** — interface up/down (ifOperStatus change)
+- **Routing** — BGP neighbor state change, OSPF neighbor loss
+- **Hardware** — fan failure, PSU failure, temperature threshold
+- **Security** — authentication failure notifications
+- **Environmental** — temperature, humidity, PDU alerts
+
+### Architecture
+Device/UPS
+│
+│ SNMP Trap (UDP 162)
+▼
+ingest-snmp (trap receiver mode)
+│
+│ Normalized trap event → NATS
+▼
+netpulse.telemetry.{device_id}.trap
+│
+├── stream-processor (correlation)
+├── alert-engine (immediate notification)
+└── OpenSearch (searchable history)
+
+### Trap Types Supported
+- **SNMPv1 traps** — legacy UPS, old gear (fire and forget)
+- **SNMPv2c traps** — most common (fire and forget)
+- **SNMPv3 informs** — modern, authenticated, acknowledged (device retries until confirmed)
+
+### MIB Support
+- RFC 1628 — UPS MIB (standard, all vendors)
+- APC MIB — APC/Schneider specific (common in datacenters)
+- Eaton MIB — Eaton UPS specific
+- Standard network MIBs — IF-MIB, BGP4-MIB, OSPF-MIB
+
+### Key Design Notes
+- Polling and trap reception run in the same ingest-snmp service
+- Traps arrive on UDP 162 (privileged — use override file to remap in dev)
+- SNMPv3 informs require acknowledgment unlike v1/v2c
+- Unknown OIDs logged and stored raw — MIB coverage expandable by community
