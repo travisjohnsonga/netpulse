@@ -1,0 +1,70 @@
+# Secrets — never committed
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets/
+vault/data/
+openbao/data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.python-version
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+staticfiles/
+media/
+
+# Node / Frontend
+node_modules/
+npm-debug.log*
+dist/
+build/
+.cache/
+
+# Docker
+docker-compose.override.yml
+
+# Data Volumes
+data/
+logs/
+influxdb/data/
+opensearch/data/
+postgres/data/
+valkey/data/
+nats/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+junit/
+
+# Compiled Protobuf
+*_pb2.py
+*_pb2_grpc.py
