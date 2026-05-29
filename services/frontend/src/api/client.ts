@@ -383,16 +383,58 @@ export async function fetchCollectors(): Promise<Collector[]> {
 
 // ── Sites ────────────────────────────────────────────────────────────────────
 
+export type SiteType = 'datacenter' | 'campus' | 'branch' | 'remote' | 'cloud'
+
 export interface Site {
   id: number
   name: string
-  location: string
+  slug: string
   description: string
+  location: string
+  site_type: SiteType
+  address: string
+  city: string
+  state: string
+  country: string
+  latitude: string | null
+  longitude: string | null
+  parent_site: number | null
+  parent_site_name: string | null
+  contact_name: string
+  contact_email: string
+  contact_phone: string
+  notes: string
+  device_count: number
+  created_at: string
+  updated_at: string
 }
 
+export type SitePayload = Partial<Omit<Site, 'id' | 'slug' | 'parent_site_name' | 'device_count' | 'created_at' | 'updated_at'>> & { name: string }
+
 export async function fetchSites(): Promise<Site[]> {
-  const { data } = await api.get<Site[] | Paginated<Site>>('/devices/sites/')
+  const { data } = await api.get<Site[] | Paginated<Site>>('/sites/')
   return unwrap(data)
+}
+
+export async function fetchSite(id: number): Promise<Site> {
+  const { data } = await api.get<Site>(`/sites/${id}/`)
+  return data
+}
+
+export async function saveSite(payload: SitePayload, id?: number): Promise<Site> {
+  const { data } = id
+    ? await api.patch<Site>(`/sites/${id}/`, payload)
+    : await api.post<Site>('/sites/', payload)
+  return data
+}
+
+export async function deleteSite(id: number): Promise<void> {
+  await api.delete(`/sites/${id}/`)
+}
+
+export async function fetchSiteDevices(id: number): Promise<Device[]> {
+  const { data } = await api.get<Device[]>(`/sites/${id}/devices/`)
+  return data
 }
 
 // ── Device detail ────────────────────────────────────────────────────────────
