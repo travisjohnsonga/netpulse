@@ -1,0 +1,133 @@
+# docker-compose.override.yml.example
+#
+# Local development overrides for NetPulse.
+# Copy to docker-compose.override.yml — Docker Compose auto-loads it alongside
+# docker-compose.yml. Changes here merge with (not replace) the base file.
+#
+# Usage:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   # Edit as needed, then:
+#   docker compose up
+
+services:
+
+  # ── Expose infrastructure ports for local inspection ──────────────────────
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  influxdb:
+    ports:
+      - "8086:8086"
+
+  opensearch:
+    ports:
+      - "9200:9200"
+    environment:
+      # Reduce heap for dev workstations with limited RAM
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+
+  valkey:
+    ports:
+      - "6379:6379"
+
+  nats:
+    ports:
+      - "4222:4222"
+      - "8222:8222"  # NATS monitoring dashboard
+
+  openbao:
+    ports:
+      - "8200:8200"
+
+  # ── Backend: Django dev server + source-mounted hot reload ────────────────
+
+  api:
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    environment:
+      DJANGO_DEBUG: "true"
+
+  websocket:
+    volumes:
+      - ./backend:/app
+    environment:
+      DJANGO_DEBUG: "true"
+
+  # ── Frontend: Vite/CRA dev server instead of nginx ────────────────────────
+  # The main compose file maps FRONTEND_PORT → container port 80 (nginx/prod).
+  # Override the port mapping here to match the dev server's port (3000).
+  # Note: overriding `ports` appends — remove or adjust the base mapping in
+  # docker-compose.yml if you see a port conflict.
+
+  frontend:
+    command: npm start
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # preserve container node_modules from the build stage
+    environment:
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"  # required for inotify inside WSL2 / Docker Desktop
+
+  # ── Engine workers: mount source for faster iteration ─────────────────────
+
+  stream-processor:
+    volumes:
+      - ./backend:/app
+
+  config-manager:
+    volumes:
+      - ./backend:/app
+
+  alert-engine:
+    volumes:
+      - ./backend:/app
+
+  cve-engine:
+    volumes:
+      - ./backend:/app
+
+  lifecycle-engine:
+    volumes:
+      - ./backend:/app
+
+  security-engine:
+    volumes:
+      - ./backend:/app
+
+  scheduler:
+    volumes:
+      - ./backend:/app
+
+  # ── Ingest: mount source for faster iteration ─────────────────────────────
+
+  ingest-grpc:
+    volumes:
+      - ./ingest:/app
+
+  ingest-snmp:
+    # Remap privileged port 162 to 1162 for hosts that restrict < 1024
+    ports:
+      - "1162:162/udp"
+    volumes:
+      - ./ingest:/app
+
+  ingest-syslog:
+    # Remap privileged ports to unprivileged equivalents for local dev
+    ports:
+      - "5514:514/udp"
+      - "6601:601/tcp"
+    volumes:
+      - ./ingest:/app
+
+  ingest-flow:
+    volumes:
+      - ./ingest:/app
+
+  ingest-otlp:
+    volumes:
+      - ./ingest:/app

@@ -1,0 +1,407 @@
+name: netpulse
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Infrastructure
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - netpulse-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_ADMIN_TOKEN}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - netpulse-net
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  opensearch:
+    image: opensearchproject/opensearch:2.17.0
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - netpulse-net
+    healthcheck:
+      # Accepts yellow (single-node normal) and green; rejects red and connectivity failures.
+      test: ["CMD-SHELL", "curl -sf -u ${OPENSEARCH_USER}:${OPENSEARCH_PASSWORD} http://localhost:9200/_cluster/health | grep -qv '\"status\":\"red\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: >-
+      valkey-server
+      --requirepass ${VALKEY_PASSWORD}
+      --appendonly yes
+      --save 60 1
+    volumes:
+      - valkey-data:/data
+    networks:
+      - netpulse-net
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --no-auth-warning -a ${VALKEY_PASSWORD} ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command: ["-c", "/etc/nats/nats.conf"]
+    environment:
+      NATS_USER: ${NATS_USER}
+      NATS_PASSWORD: ${NATS_PASSWORD}
+    volumes:
+      - nats-data:/data
+      - ./nats/nats.conf:/etc/nats/nats.conf:ro
+    networks:
+      - netpulse-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  openbao:
+    image: openbao/openbao:2.1
+    restart: unless-stopped
+    # IPC_LOCK is required when disable_mlock = false in openbao.hcl.
+    # It prevents OpenBao from swapping secret memory pages to disk.
+    cap_add:
+      - IPC_LOCK
+    command: server -config=/openbao/config/openbao.hcl
+    environment:
+      BAO_API_ADDR: http://openbao:8200
+      BAO_CLUSTER_ADDR: http://openbao:8201
+    volumes:
+      - openbao-data:/openbao/data
+      - ./openbao/config:/openbao/config:ro
+    networks:
+      - netpulse-net
+    healthcheck:
+      # exit 0 = initialized + unsealed; exit 2 = sealed (running, needs manual unseal).
+      # Both indicate the process is healthy. exit 1 = error / not running.
+      test: ["CMD-SHELL", "BAO_ADDR=http://127.0.0.1:8200 bao status 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Application Layer
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    env_file: .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      openbao:
+        condition: service_healthy
+    healthcheck:
+      # Requires GET /api/health/ → 200. Implement this endpoint early.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/api/health/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  websocket:
+    build: ./backend
+    restart: unless-stopped
+    command: daphne -b 0.0.0.0 -p 8001 config.asgi:application
+    env_file: .env
+    ports:
+      - "${WS_PORT:-8001}:8001"
+    networks:
+      - netpulse-net
+    depends_on:
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Frontend
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      REACT_APP_API_URL: ${REACT_APP_API_URL}
+      REACT_APP_WS_URL: ${REACT_APP_WS_URL}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    networks:
+      - netpulse-net
+    depends_on:
+      api:
+        condition: service_started
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Ingest Layer — all publish to NATS; only NATS health is required at startup
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  ingest-grpc:
+    build: ./ingest
+    restart: unless-stopped
+    command: python -m ingest.grpc_server
+    env_file: .env
+    ports:
+      - "${GRPC_PORT:-50051}:50051"
+    networks:
+      - netpulse-net
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  ingest-snmp:
+    build: ./ingest
+    restart: unless-stopped
+    command: python -m ingest.snmp_server
+    env_file: .env
+    ports:
+      # Port 162 is privileged on Linux; map to an unprivileged host port in
+      # docker-compose.override.yml if binding 162 fails on your host.
+      - "${SNMP_TRAP_PORT:-162}:162/udp"
+    networks:
+      - netpulse-net
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  ingest-syslog:
+    build: ./ingest
+    restart: unless-stopped
+    command: python -m ingest.syslog_server
+    env_file: .env
+    ports:
+      - "${SYSLOG_UDP_PORT:-514}:514/udp"
+      - "${SYSLOG_TCP_PORT:-601}:601/tcp"
+    networks:
+      - netpulse-net
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  ingest-flow:
+    build: ./ingest
+    restart: unless-stopped
+    command: python -m ingest.flow_server
+    env_file: .env
+    ports:
+      - "${NETFLOW_PORT:-2055}:2055/udp"
+      - "${SFLOW_PORT:-6343}:6343/udp"
+    networks:
+      - netpulse-net
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  ingest-otlp:
+    build: ./ingest
+    restart: unless-stopped
+    command: python -m ingest.otlp_server
+    env_file: .env
+    ports:
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    networks:
+      - netpulse-net
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Processing & Intelligence Engines
+  # Commands reference Django management commands to be implemented in ./backend.
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  stream-processor:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py run_stream_processor
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+  config-manager:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py run_config_manager
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      openbao:
+        condition: service_healthy
+
+  alert-engine:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py run_alert_engine
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+
+  cve-engine:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py run_cve_engine
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  lifecycle-engine:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py run_lifecycle_engine
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  security-engine:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py run_security_engine
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+
+  scheduler:
+    build: ./backend
+    restart: unless-stopped
+    # Celery Beat for periodic tasks; requires django-celery-beat and a running
+    # Celery worker (add a separate worker service when needed).
+    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Volumes
+# ─────────────────────────────────────────────────────────────────────────────
+
+volumes:
+  postgres-data:
+  influxdb-data:
+  opensearch-data:
+  valkey-data:
+  nats-data:
+  openbao-data:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  netpulse-net:
+    driver: bridge
