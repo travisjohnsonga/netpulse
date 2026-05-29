@@ -1069,3 +1069,107 @@ JWT token includes tenant_id and role:
 - Multi-tenant only relevant for MSP/cloud-hosted deployments
 - Never expose cross-tenant data — enforce at QuerySet level
 - Audit log includes tenant_id on every entry
+
+## Configuration Backup & Git Sync
+
+Two-tier config storage:
+
+Tier 1 — Local (always on):
+  PostgreSQL: metadata, hashes, version references
+  Local disk: raw config files
+  Path: ${DATA_DIR}/configs/{tenant}/{device}/{timestamp}.cfg
+
+Tier 2 — Git Remote (optional):
+  Providers: GitHub, GitLab (cloud/self-hosted), Gitea,
+             Bitbucket, Generic Git (SSH or HTTPS)
+  Auth: Personal Access Token, SSH Key, Deploy Key
+  All git credentials stored in OpenBao
+
+Git repo structure:
+  devices/{hostname}/running-config.cfg (latest)
+  devices/{hostname}/startup-config.cfg (latest)
+  devices/{hostname}/metadata.json
+
+Git commits:
+  One commit per device per collection
+  Meaningful commit messages with diff summary
+  Drift detected → commit flagged with warning
+
+Models:
+  ConfigBackupSettings (per tenant):
+    local_enabled, local_path, local_retention_days
+    git_enabled, git_provider, git_repo_url, git_branch
+    git_auth_method, git_vault_path (OpenBao ref)
+    git_commit_author, git_commit_email, git_sync_frequency
+    last_sync_at, last_sync_success, last_commit_sha
+
+  DeviceConfig:
+    device, tenant, config_type (running/startup/candidate)
+    collected_at, collected_by, content, content_hash
+    changed_from_previous, diff_summary
+    git_commit_sha, local_path, compliance_status
+
+Settings UI: Settings → Data Sources → Config Backup
+  Local storage config + Git sync config
+  Test Connection button for git remote
+  Sync Now button
+  Last sync status
+
+Device Detail → Config tab:
+  Version history list
+  Side-by-side diff viewer
+  View in GitHub/GitLab link
+  Download config button
+  Restore to previous version button
+
+## Configuration Backup & Git Sync
+
+Two-tier config storage:
+
+Tier 1 — Local (always on):
+  PostgreSQL: metadata, hashes, version references
+  Local disk: raw config files
+  Path: ${DATA_DIR}/configs/{tenant}/{device}/{timestamp}.cfg
+
+Tier 2 — Git Remote (optional):
+  Providers: GitHub, GitLab (cloud/self-hosted), Gitea,
+             Bitbucket, Generic Git (SSH or HTTPS)
+  Auth: Personal Access Token, SSH Key, Deploy Key
+  All git credentials stored in OpenBao
+
+Git repo structure:
+  devices/{hostname}/running-config.cfg (latest)
+  devices/{hostname}/startup-config.cfg (latest)
+  devices/{hostname}/metadata.json
+
+Git commits:
+  One commit per device per collection
+  Meaningful commit messages with diff summary
+  Drift detected → commit flagged with warning
+
+Models:
+  ConfigBackupSettings (per tenant):
+    local_enabled, local_path, local_retention_days
+    git_enabled, git_provider, git_repo_url, git_branch
+    git_auth_method, git_vault_path (OpenBao ref)
+    git_commit_author, git_commit_email, git_sync_frequency
+    last_sync_at, last_sync_success, last_commit_sha
+
+  DeviceConfig:
+    device, tenant, config_type (running/startup/candidate)
+    collected_at, collected_by, content, content_hash
+    changed_from_previous, diff_summary
+    git_commit_sha, local_path, compliance_status
+
+Settings UI: Settings → Data Sources → Config Backup
+  Local storage config + Git sync config
+  Test Connection button for git remote
+  Sync Now button
+  Last sync status
+
+Device Detail → Config tab:
+  Version history list
+  Side-by-side diff viewer
+  View in GitHub/GitLab link
+  Download config button
+  Restore to previous version button
