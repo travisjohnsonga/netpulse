@@ -430,3 +430,67 @@ Topology map:
   WAN links show committed capacity not physical speed
   Hover tooltip shows: "500/200 Mbps (10G physical)"
   Color based on committed rate utilization
+
+## Availability & Uptime Reporting
+
+Hierarchical availability reporting from organization level 
+down to individual interfaces. Not just "was it up" but 
+weighted service availability with incident tracking.
+
+### Hierarchy
+Organization → Region/Datacenter → Site/Pod → Device → Interface/Circuit
+
+### Models Needed
+AvailabilityRecord:
+  entity_type (org/region/site/device/interface)
+  entity_id
+  period_start, period_end
+  availability_pct
+  total_minutes, outage_minutes, degraded_minutes
+  incident_count, mttr_minutes, mtbf_minutes
+
+Incident:
+  title, description
+  started_at, resolved_at, duration_minutes
+  severity (outage/degraded)
+  severity_weight (degraded = partial credit)
+  affected_entities (M2M)
+  root_cause, resolution
+  is_maintenance (excluded from SLA calc)
+
+MaintenanceWindow:
+  name, start_time, end_time
+  affected_devices (M2M), affected_sites (M2M)
+  created_by, approved_by
+  Alerts suppressed, downtime excluded from SLA
+
+### Key Metrics Per Report
+- Availability % (headline)
+- Total downtime minutes
+- Incident count
+- MTTR (mean time to restore)
+- MTBF (mean time between failures)
+- Longest single outage
+- Trend vs previous period
+
+### WAN Circuit SLA Tracking
+Track actual vs carrier SLA commitment
+Calculate minutes used vs monthly SLA budget
+Generate evidence reports for carrier disputes
+Credit calculation when SLA breached
+
+### Topology Map Integration
+Device color overlay by availability %:
+  Green: 99.9%+ | Yellow: 99-99.9% | Orange: 95-99% | Red: <95%
+
+### Report Formats
+- Executive summary (org/region level) — PDF exportable
+- Drill-down (site/device level) — timeline bar chart
+- WAN SLA report — carrier dispute evidence
+- Trend report — availability over time
+
+### Maintenance Windows
+Planned maintenance excluded from SLA calculations
+Alerts suppressed during windows
+Still logged for change tracking
+Shown on reports as excluded time
