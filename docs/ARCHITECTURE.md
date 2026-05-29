@@ -1,0 +1,379 @@
+# NetPulse Architecture & Design Document
+
+> This document captures the full architecture, design decisions, and requirements
+> defined during the initial project design session. It serves as the authoritative
+> reference for all development decisions.
+
+---
+
+## Project Vision
+
+A push-first, open source network intelligence platform that solves real problems
+ignored by traditional monitoring tools. Built for modern infrastructure, vendor-agnostic,
+deployable on-prem via Docker Compose or cloud-hosted via Kubernetes.
+
+**Key Differentiator:** Most platforms poll devices on a schedule. NetPulse is built
+around streaming telemetry (gRPC/gNMI, InfluxDB line protocol, OTLP) with polling
+as a fallback for legacy devices only.
+
+---
+
+## Core Capabilities
+
+### 1. Push-First Telemetry Ingest
+- **gRPC / gNMI** — high-throughput streaming telemetry (Cisco IOS-XR, Juniper, Arista)
+- **InfluxDB line protocol** — direct metric ingestion
+- **OpenTelemetry (OTLP)** — vendor-neutral metrics, traces, logs
+- **NetFlow / sFlow** — flow collection with inter-device path latency correlation
+- **SNMP** — polling fallback for legacy devices that don't support push
+- **Syslog** — normalized, enriched log ingestion
+
+**Why push over poll:**
+
+| | Polling | Push/Streaming |
+|---|---|---|
+| Latency | 30s–5min gaps | Sub-second |
+| Scalability | Monitoring system is bottleneck | Devices distribute load |
+| Accuracy | Misses spikes between polls | Captures every event |
+| Device load | Unpredictable (poll storms) | Predictable |
+
+---
+
+### 2. Bandwidth & Capacity Planning
+- 95th percentile trending per circuit (standard billing metric)
+- Year-over-year growth rate calculation with seasonal adjustment
+- Capacity threshold forecasting ("this circuit hits 80% in 7 months")
+- Budget planning reports exportable to PDF/CSV
+- Circuit metadata — provider, cost, contract renewal date, committed rate
+- Recommended upgrade trigger dates
+
+**Key output:** A budget planning report a network manager can hand to finance —
+not a dashboard, an actual document with projected spend.
+
+---
+
+### 3. Configuration Intelligence
+- Jinja2 template-based compliance engine with role-based templates and variable overrides
+- Cross-device consistency validation by role, site, platform
+- Config drift detection — MISSING, EXTRA, DRIFT classifications
+- Remediation config snippets (ready to push)
+- Per-device compliance score
+- Operational command runner across device fleets
+  - TextFSM/TTP parsing of CLI output into structured data
+  - Cross-device diff — run same command on 50 switches, show differences
+  - Output stored in PostgreSQL — queryable, historical, comparable
+  - Scheduled audits with drift alerting
+- Full config versioning and diff history
+- Protocols: NETCONF/YANG, gNMI, SSH+TextFSM, REST API, SNMP (last resort)
+
+---
+
+### 4. Log Intelligence
+
+#### Noise-Aware Anomaly Detection
+- **Phase 1 — Baseline:** Learn normal frequency and vocabulary per device+pattern
+- **Phase 2 — Period Analysis:** For a specified period (e.g. "last 3 days"):
+  - Suppress known-normal messages at normal frequency
+  - Flag: NEW patterns, FREQUENCY spikes, CORRELATED bursts, SEQUENCE anomalies, SILENT devices
+  - Rank by likely significance, not volume
+- **Phase 3 — Enrichment:** Cross-reference with interface telemetry and config changes
+
+#### Group Trend Analysis (Vendor Bug Detection)
+Device dimensions for grouping: role, site, platform, OS version, hardware, vendor, custom tags
+
+Pattern correlation engine:
+- Fingerprint message patterns (strip variable data, extract stable signature)
+- Track occurrence across device dimensions
+- Classification: VENDOR BUG CANDIDATE, ENVIRONMENTAL, CONFIG DRIFT, ISOLATED
+
+**Vendor Intelligence:** Cross-reference detected patterns against known advisories
+(Cisco PSIRT API, Juniper advisories, community-maintained YAML files)
+
+**Key view:** Log pattern heatmap across the fleet — not a table of messages
+
+---
+
+### 5. Security Authentication Reporting
+
+Detection scenarios:
+- **Brute Force:** failures > X in Y minutes from same source → did it succeed?
+- **Distributed Attack:** same source across > N devices in Y minutes
+- **Success After Failures:** any success preceded by > X failures (always high severity)
+- **Slow Burn:** same source accumulates failures over days/weeks
+- **Off-Hours Access:** successful login outside defined business hours
+- **New Source:** successful login from IP not seen in last 90 days
+- **Username Enumeration:** many different usernames from same source
+
+Scheduled security reports (daily/weekly) plus on-demand query.
+Normalized auth events across all vendors: Cisco IOS, Juniper, Arista, Fortinet,
+Palo Alto, Linux auth.log, TACACS+/RADIUS.
+
+---
+
+### 6. Flow Analytics
+- NetFlow v5/v9, IPFIX, sFlow collection
+- **Inter-device transit latency correlation** — measure hop-by-hop WAN latency from flow data
+  - Match flows by 5-tuple across adjacent devices
+  - Delta timestamps = transit latency per hop
+  - Store per-link latency distribution in InfluxDB
+- Application latency scoring
+- Baseline + deviation alerting
+- QoS validation hop-to-hop
+- Asymmetric path detection
+
+---
+
+### 7. Lifecycle Management
+- Hardware and software EOL tracking
+- Automated ingestion: Cisco EoX API, Juniper advisories, Arista scraper, community YAML
+- Status tracking: Active, EOS, EOM, PAST EOM, PAST EOSL
+- Proactive alerts: 365/180/90 days before EOSL
+- Refresh planning with cost estimates (1/2/3 year forecasts)
+- Budget integration — ties to bandwidth planning reports
+
+---
+
+### 8. CVE Intelligence & Applicability Engine
+
+**Key differentiator:** Not just version matching — config-aware applicability.
+
+Applicability conditions example:
+- CVE affects HTTP server on IOS-XE
+- Check if `ip http server` is present in running config
+- Check if ACL restricts HTTP access
+- Result: VULNERABLE / MITIGATED / NOT_APPLICABLE / PATCHED / UNVERIFIED
+
+Config check methods:
+- `config_search` — pattern in running config
+- `config_value` — specific value comparison
+- `telemetry_check` — cross-reference live telemetry
+- `feature_enabled` — structured data from NETCONF/gNMI
+- `acl_present` — ACL protection check
+
+CVE sources: NVD API, Cisco PSIRT openVuln API, Juniper/Arista advisories,
+CISA KEV (Known Exploited Vulnerabilities), community enrichment
+
+Compliance exports: PDF, POAM format, remediation workplan, delta report,
+"prove we're not affected" audit report.
+
+---
+
+### 9. Unified Risk Score
+
+Per-device risk score synthesizing:
+- EOL/EOSL status
+- CVE exposure and severity
+- Security authentication events
+- Configuration drift
+- Bandwidth headroom
+
+Executive summary view across entire estate.
+
+---
+
+### 10. NetPulse Collector (On-Prem → Cloud Agent)
+
+Lightweight agent for securely forwarding on-prem telemetry to cloud-hosted NetPulse.
+
+**Architecture:**
+- Runs on-prem as Docker container or systemd service
+- Receives all telemetry locally (gRPC/gNMI, syslog, NetFlow/sFlow, SNMP polling)
+- Forwards to cloud over single outbound mTLS connection (port 443/8443)
+- No inbound firewall rules required on customer network
+- Local disk buffer if cloud connection drops — replays when reconnected
+
+**Security:**
+- Outbound only — customer opens no inbound ports
+- mTLS — both collector and cloud authenticate with certificates
+- Certificates issued by OpenBao PKI engine
+- Unique API key per collector instance (stored as bcrypt hash)
+- TLS 1.3 minimum
+
+**Customer deployment:**
+```bash
+docker run -d \
+  --name netpulse-collector \
+  --restart always \
+  -p 514:514/udp \
+  -p 2055:2055/udp \
+  -p 50051:50051 \
+  -e NETPULSE_CLOUD_URL=https://cloud.netpulse.io \
+  -e NETPULSE_API_KEY=their-api-key \
+  netpulse/collector:latest
+```
+
+**Solves SNMP behind firewall:** Collector polls local devices directly and forwards
+results to cloud. No firewall holes needed for SNMP.
+
+---
+
+## Technology Stack
+
+All components are open source with permissive licenses. Zero licensing landmines.
+
+| Layer | Technology | License | Notes |
+|---|---|---|---|
+| Time-series metrics | InfluxDB OSS | MIT | High-frequency writes |
+| Primary database | PostgreSQL 17 + JSONB | PostgreSQL | Replaces MongoDB — SSPL concern |
+| Search / logs / flows | OpenSearch | Apache 2.0 | Replaces Elasticsearch — SSPL concern |
+| Cache + WebSocket broker | Valkey | BSD 3-Clause | Replaces Redis 7.4+ — license change |
+| Message bus | NATS + JetStream | Apache 2.0 | Lighter than Kafka for on-prem |
+| Secrets management | OpenBao | MPL 2.0 | HashiCorp Vault fork — BSL concern |
+| API framework | Django 6.0 + DRF | BSD | Latest stable |
+| WebSockets | Django Channels | BSD | |
+| Frontend | React | MIT | |
+| Charting | Apache ECharts | Apache 2.0 | |
+| Config templates | Jinja2 | BSD | |
+| CLI parsing | TextFSM / TTP | Apache 2.0 / MIT | |
+| Stream processing | Faust | BSD | Python-native |
+| gRPC | grpcio | Apache 2.0 | |
+| SNMP | pysnmp | BSD | |
+| Device comms | Netmiko / NAPALM / ncclient | MIT / Apache 2.0 | |
+| Python version | 3.13 | | Latest stable, Django 6.0 supported |
+| Project license | Apache 2.0 | | Permissive + patent protection |
+
+---
+
+## Microservices
+
+| Service | Description | Build Context |
+|---|---|---|
+| `ingest-grpc` | gRPC/gNMI stream receiver | services/ingest-grpc |
+| `ingest-snmp` | SNMP poller (legacy fallback) | services/ingest-snmp |
+| `ingest-syslog` | Syslog receiver and normalizer | services/ingest-syslog |
+| `ingest-flow` | NetFlow/sFlow collector | services/ingest-flow |
+| `ingest-otlp` | OpenTelemetry collector | services/ingest-otlp |
+| `stream-processor` | Real-time anomaly detection and correlation | services/api |
+| `config-manager` | Config collection, compliance, diff engine | services/api |
+| `alert-engine` | Rule evaluation and notification dispatch | services/api |
+| `cve-engine` | CVE ingestion and applicability scoring | services/api |
+| `lifecycle-engine` | EOL tracking and refresh planning | services/api |
+| `security-engine` | Auth event analysis and attack detection | services/api |
+| `api` | Django REST Framework API | services/api |
+| `websocket` | Django Channels live updates | services/api |
+| `frontend` | React SPA | services/frontend |
+| `scheduler` | Cron jobs and report generation | services/api |
+| `collector` | On-prem → cloud telemetry forwarder | services/collector |
+
+---
+
+## Security Architecture
+
+### Principles
+1. Never store plaintext credentials — anywhere, ever
+2. Encrypt at rest AND in transit — always
+3. Least privilege — services only access what they need
+4. Audit everything — every credential access logged
+5. Assume breach — design so stolen DB is useless without keys
+6. Rotate easily — credential rotation should be frictionless
+7. Zero secrets in code — no hardcoded anything, ever
+8. Secrets never in logs — scrub before writing
+
+### Credential Storage Pattern
+```
+PostgreSQL (devices table):
+  credential_path: "secret/devices/{uuid}/ssh"  ← path reference only
+  username: "monitor_user"                        ← username is OK
+  # NO passwords, NO keys, NO secrets in database
+
+OpenBao KV-v2:
+  secret/devices/{uuid}/ssh:
+    username: "monitor_user"
+    password: "..."     ← encrypted by Vault Transit
+    private_key: "..."  ← encrypted by Vault Transit
+```
+
+### Service Identity (Least Privilege)
+Each microservice has its own AppRole with minimal Vault policy:
+- `ingest-snmp` can only read `secret/data/devices/+/snmp`
+- `config-manager` can only read `secret/data/devices/+/ssh`
+- No service gets list access to all credentials at once
+
+---
+
+## Data Architecture
+
+### PostgreSQL (Primary Database)
+- Device inventory (attributes JSONB for vendor-specific data)
+- CVE definitions (affected_products, applicability_conditions as JSONB)
+- Lifecycle/EOL records, alert rules, auth events, audit trail
+- Config templates, credential metadata, users, tenants, budget data
+
+### InfluxDB OSS (Time-Series)
+- Interface counters, CPU/memory/temperature
+- BGP session state changes
+- Per-link latency distributions
+- 95th percentile bandwidth samples (long retention for trending)
+
+### OpenSearch (Logs & Flows)
+- Normalized syslog documents
+- Log pattern frequency metrics
+- NetFlow/sFlow records
+- Auth event search and anomaly detection queries
+
+### NATS JetStream Topics
+- `netpulse.telemetry.{device_id}.metrics`
+- `netpulse.telemetry.{device_id}.syslog`
+- `netpulse.telemetry.{device_id}.flow`
+- `netpulse.alerts.{severity}`
+- `netpulse.config.{device_id}.collected`
+- `netpulse.auth.events`
+
+---
+
+## Development Roadmap
+
+### Phase 1 — Foundation (In Progress)
+- [x] Architecture design
+- [x] Technology stack selection and license audit
+- [x] Development environment (WSL2, Docker, Claude Code)
+- [x] GitHub repository initialized
+- [x] Docker Compose scaffold — 22 services
+- [x] Infrastructure services running and healthy
+- [x] Django 6.0 backend — 9 apps, models, REST API
+- [ ] ingest-grpc — gRPC/gNMI receiver (in progress)
+- [ ] ingest-snmp, ingest-syslog, ingest-flow
+- [ ] stream-processor — NATS → InfluxDB/PostgreSQL
+- [ ] First end-to-end test with CML device
+
+### Phase 2 — Core Intelligence
+- [ ] Config compliance engine (Jinja2)
+- [ ] Bandwidth trending + forecasting
+- [ ] Basic alerting, Django API end-to-end
+
+### Phase 3 — Advanced Intelligence
+- [ ] CVE ingestion + applicability engine
+- [ ] Lifecycle/EOL management
+- [ ] Log anomaly detection + group trends
+- [ ] Auth security engine + reporting
+
+### Phase 4 — Frontend & Flow
+- [ ] React scaffold + live dashboards
+- [ ] NetFlow/sFlow path latency correlation
+- [ ] Budget/security reports
+- [ ] Unified risk score
+
+### Phase 5 — Polish & Community
+- [ ] NetPulse Collector (on-prem agent)
+- [ ] Helm chart for Kubernetes
+- [ ] Documentation site
+- [ ] Public announcement
+
+---
+
+## Design Principles
+
+1. **Push-first, poll as fallback** — designed for streaming, not polling
+2. **Security first** — OpenBao for all secrets, mTLS everywhere, audit everything
+3. **Multi-tenant from day one** — useful for MSPs and cloud-hosted version
+4. **Schema-flexible device metadata** — JSONB makes onboarding new device types easy
+5. **Pluggable alert channels** — Slack, PagerDuty, email, webhooks
+6. **Single command deployment** — `docker compose up` should just work
+7. **Use the right tool** — don't reinvent what open source already does well
+8. **License clean** — every dependency audited, zero commercial license exposure
+9. **Community first** — vendor advisories, SNMP walks, TextFSM templates all contributable
+
+---
+
+*Document created from initial architecture design session — May 2026*
+*Keep this document updated as the platform evolves*
