@@ -97,7 +97,7 @@ export default function DeviceDetail() {
       </div>
 
       {/* Tab content */}
-      {tab === 'overview' && <Overview device={device} onTab={setTab} />}
+      {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} />}
       {tab === 'credentials' && <CredentialsTab device={device} />}
       {tab === 'telemetry' && <Telemetry device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}

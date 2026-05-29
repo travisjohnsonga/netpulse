@@ -558,6 +558,14 @@ export async function createDevice(payload: DeviceCreatePayload): Promise<Device
   return data
 }
 
+// Full-resource update (PUT). Send all writable fields so none are reset.
+export async function updateDevice(
+  id: number, payload: DeviceCreatePayload & { groups?: number[] },
+): Promise<DeviceDetail> {
+  const { data } = await api.put<DeviceDetail>(`/devices/${id}/`, payload)
+  return data
+}
+
 export interface TestConnectionResult {
   reachable: boolean
   open_ports: number[]

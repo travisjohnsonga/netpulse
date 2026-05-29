@@ -5,6 +5,7 @@ import {
   type DeviceDetail, type RiskScore, type AlertEvent,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
+import DeviceEditModal from '../../components/DeviceEditModal'
 
 const SEVERITY_BADGE: Record<string, string> = {
   critical: 'bg-red-100 text-red-700',
@@ -14,10 +15,15 @@ const SEVERITY_BADGE: Record<string, string> = {
   info: 'bg-gray-100 text-gray-600',
 }
 
-export default function Overview({ device, onTab }: { device: DeviceDetail; onTab: (t: string) => void }) {
+export default function Overview({ device, onTab, onRefresh }: {
+  device: DeviceDetail
+  onTab: (t: string) => void
+  onRefresh?: () => void
+}) {
   const [risk, setRisk] = useState<RiskScore | null>(null)
   const [alerts, setAlerts] = useState<AlertEvent[]>([])
   const [alertsLoaded, setAlertsLoaded] = useState(false)
+  const [editing, setEditing] = useState(false)
 
   useEffect(() => {
     fetchDeviceRiskScore(device.id).then(setRisk).catch(() => setRisk(null))
@@ -33,7 +39,10 @@ export default function Overview({ device, onTab }: { device: DeviceDetail; onTa
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       {/* Device info */}
       <Card className="lg:col-span-2">
-        <h3 className="text-sm font-semibold text-gray-800 mb-3">Device Information</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-800">Device Information</h3>
+          <button onClick={() => setEditing(true)} className="px-3 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 font-medium">Edit Device</button>
+        </div>
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm">
           <Info label="Hostname" value={device.hostname} />
           <Info label="IP Address" value={device.ip_address} mono />
@@ -140,6 +149,14 @@ export default function Overview({ device, onTab }: { device: DeviceDetail; onTa
         </ul>
         <button onClick={() => onTab('configuration')} className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800">View configuration →</button>
       </Card>
+
+      {editing && (
+        <DeviceEditModal
+          device={device}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); onRefresh?.() }}
+        />
+      )}
     </div>
   )
 }
