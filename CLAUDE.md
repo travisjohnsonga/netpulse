@@ -129,3 +129,70 @@ ingest-snmp must handle both polling AND trap reception:
 - Normalize to common schema → NATS: netpulse.telemetry.{device_id}.trap
 - Critical: UPS on-battery, link state changes, hardware alerts
 - SNMPv3 informs require acknowledgment (unlike v1/v2c fire-and-forget)
+
+## Device Discovery
+
+Four-tier discovery system. All discovered devices land in PENDING state
+requiring admin approval before becoming ACTIVE. Never auto-activate.
+
+### Tier 1 — Passive (always running)
+Auto-detect from ingest layer source IPs:
+- New syslog source IP → PENDING device
+- New gNMI dial-out connection → PENDING device
+- New NetFlow/sFlow exporter → PENDING device
+- New SNMP trap source → PENDING device
+
+### Tier 2 — Topology Walk (seed-based, most powerful)
+Seed one device, recurse through entire network:
+- CDP/LLDP neighbor walk
+- Route table next-hop recursion (critical — ICMP often blocked in enterprise)
+- ARP table host discovery
+- BGP peer discovery
+- MAC table L2 discovery
+
+Route table walking is preferred over ping sweeps — enterprise networks
+block ICMP by policy but routing infrastructure is fully reachable via
+SNMP/NETCONF. Pull ipRouteTable (SNMP), ietf-routing (NETCONF), or
+"show ip route" (SSH+TextFSM) and probe each next-hop.
+
+### Tier 3 — Active Scanning (subnet-based)
+Admin defines subnets, system probes in order:
+1. SNMP v2c/v3 → sysDescr, sysName (most reliable)
+2. gNMI Capabilities RPC (port 50051/57344/57400)
+3. NETCONF hello (port 830)
+4. SSH banner grab (port 22) → parse vendor from banner
+5. HTTP/HTTPS → NX-API, EOS API, FortiOS detection
+6. DNS reverse lookup → hostname reveals device type
+7. ICMP → last resort, expected to fail often
+
+### Tier 4 — Import
+- NetBox API integration
+- Cisco DNA Center import
+- CSV/JSON bulk import
+- Manual entry via UI
+
+### Discovery Confidence Score (0-100)
+- 100: SNMP sysDescr + CDP/LLDP + gNMI capabilities confirmed
+- 60:  SNMP responds, sysDescr parsed
+- 30:  IP seen in route table, nothing confirmed yet
+- 10:  IP in ARP table only, no protocol response
+
+### Models Needed
+- DiscoveryJob: subnet, method, allowed_subnets, excluded_subnets,
+  max_depth, max_devices, rate_limit_pps, status, devices_found
+- DiscoveredDevice: source_ip, detection_methods, responds_to (JSONField),
+  confidence_score, discovered_hostname, discovered_vendor,
+  discovered_platform, status (pending/approved/rejected), approved_by
+
+### Safety Controls
+- allowed_subnets: never probe outside defined ranges
+- excluded_subnets: explicitly exclude OT/ICS/SCADA networks
+  (PLCs and industrial controllers may crash or malfunction if probed)
+- rate_limit_pps: be polite — default 10 packets/second
+- max_depth: prevent runaway recursion — default 10 hops
+- max_devices: circuit breaker — default 1000 devices per job
+
+### OT/ICS WARNING
+Never auto-probe OT subnets. Prompt admin to identify and exclude
+OT/ICS subnets during initial setup. Physical damage possible if
+industrial controllers are probed unexpectedly.
