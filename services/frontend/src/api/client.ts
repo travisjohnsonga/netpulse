@@ -116,6 +116,117 @@ export interface TopologyData {
   edges: TopologyEdge[]
 }
 
+// ── Credentials ────────────────────────────────────────────────────────────
+
+export type CredentialType =
+  | 'snmpv1' | 'snmpv2c' | 'snmpv3'
+  | 'ssh_password' | 'ssh_key'
+  | 'http_basic' | 'http_token' | 'http_apikey'
+  | 'gnmi' | 'netconf'
+
+export type CredentialPurpose =
+  | 'snmp_polling' | 'ssh_config' | 'ssh_backup'
+  | 'netconf' | 'gnmi' | 'http_api'
+
+export type TestResult = 'untested' | 'success' | 'failure'
+
+// Full profile (detail/create/update). Secret fields are write-only — they are
+// accepted on write, forwarded to OpenBao, and never returned on read.
+export interface CredentialProfile {
+  id: number
+  name: string
+  credential_type: CredentialType
+  description: string
+  username: string
+  auth_method: string
+  port: number | null
+  tls_enabled: boolean
+  snmp_version: string
+  snmp_security_level: string
+  auth_protocol: string
+  priv_protocol: string
+  vault_path: string
+  device_count: number
+  created_by: number | null
+  last_tested: string | null
+  last_test_result: TestResult
+  last_test_message: string
+  created_at: string
+  updated_at: string
+}
+
+// Lightweight shape returned by the list endpoint.
+export interface CredentialProfileListItem {
+  id: number
+  name: string
+  credential_type: CredentialType
+  username: string
+  device_count: number
+  last_tested: string | null
+  last_test_result: TestResult
+  created_at: string
+}
+
+// Write payload — metadata plus optional write-only secret fields.
+export interface CredentialProfilePayload {
+  name: string
+  credential_type: CredentialType
+  description?: string
+  username?: string
+  auth_method?: string
+  port?: number | null
+  tls_enabled?: boolean
+  snmp_version?: string
+  snmp_security_level?: string
+  auth_protocol?: string
+  priv_protocol?: string
+  // write-only secrets (never echoed back)
+  community?: string
+  auth_password?: string
+  priv_password?: string
+  password?: string
+  private_key?: string
+  passphrase?: string
+  token?: string
+  api_key?: string
+}
+
+export interface CredentialTestResult {
+  ip: string
+  success: boolean
+  message: string
+  latency_ms: number | null
+  port: number
+}
+
+export interface DeviceCredential {
+  id: number
+  device: number
+  device_hostname: string
+  credential: number
+  credential_name: string
+  credential_type: CredentialType
+  purpose: CredentialPurpose
+  is_primary: boolean
+  last_used: string | null
+  last_success: string | null
+  failure_count: number
+  notes: string
+  created_at: string
+  updated_at: string
+}
+
+interface Paginated<T> {
+  count: number
+  next: string | null
+  previous: string | null
+  results: T[]
+}
+
+function unwrap<T>(data: T[] | Paginated<T>): T[] {
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
 // ── API calls ────────────────────────────────────────────────────────────────
 
 export async function login(username: string, password: string): Promise<{ access: string; refresh: string }> {
@@ -154,4 +265,76 @@ export async function fetchTopology(): Promise<TopologyData> {
 
 export async function acknowledgeAlert(id: number): Promise<void> {
   await api.patch(`/alerts/events/${id}/`, { state: 'acknowledged' })
+}
+
+// ── Credential profile API ───────────────────────────────────────────────────
+
+export async function fetchCredentials(
+  params?: Record<string, string>,
+): Promise<CredentialProfileListItem[]> {
+  const { data } = await api.get<CredentialProfileListItem[] | Paginated<CredentialProfileListItem>>(
+    '/credentials/', { params },
+  )
+  return unwrap(data)
+}
+
+export async function fetchCredential(id: number): Promise<CredentialProfile> {
+  const { data } = await api.get<CredentialProfile>(`/credentials/${id}/`)
+  return data
+}
+
+export async function createCredential(
+  payload: CredentialProfilePayload,
+): Promise<CredentialProfile> {
+  const { data } = await api.post<CredentialProfile>('/credentials/', payload)
+  return data
+}
+
+export async function updateCredential(
+  id: number, payload: Partial<CredentialProfilePayload>,
+): Promise<CredentialProfile> {
+  const { data } = await api.patch<CredentialProfile>(`/credentials/${id}/`, payload)
+  return data
+}
+
+export async function deleteCredential(id: number): Promise<void> {
+  await api.delete(`/credentials/${id}/`)
+}
+
+export async function testCredential(
+  id: number, ip: string,
+): Promise<CredentialTestResult> {
+  const { data } = await api.post<CredentialTestResult>(
+    `/credentials/${id}/test/`, null, { params: { ip } },
+  )
+  return data
+}
+
+export async function fetchCredentialDevices(id: number): Promise<DeviceCredential[]> {
+  const { data } = await api.get<DeviceCredential[]>(`/credentials/${id}/devices/`)
+  return data
+}
+
+// Device-scoped credential associations.
+export async function fetchDeviceCredentials(deviceId: number): Promise<DeviceCredential[]> {
+  const { data } = await api.get<DeviceCredential[] | Paginated<DeviceCredential>>(
+    `/devices/${deviceId}/credentials/`,
+  )
+  return unwrap(data)
+}
+
+export async function addDeviceCredential(
+  deviceId: number,
+  payload: { credential: number; purpose: CredentialPurpose; is_primary?: boolean; notes?: string },
+): Promise<DeviceCredential> {
+  const { data } = await api.post<DeviceCredential>(
+    `/devices/${deviceId}/credentials/`, payload,
+  )
+  return data
+}
+
+export async function removeDeviceCredential(
+  deviceId: number, purpose: CredentialPurpose,
+): Promise<void> {
+  await api.delete(`/devices/${deviceId}/credentials/${purpose}/`)
 }

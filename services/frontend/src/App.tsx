@@ -7,6 +7,15 @@ import Alerts from './pages/Alerts'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
 import Settings from './pages/Settings'
+import General from './pages/settings/General'
+import Users from './pages/settings/Users'
+import Credentials from './pages/settings/Credentials'
+import Integrations from './pages/settings/Integrations'
+import Alerting from './pages/settings/Alerting'
+import Discovery from './pages/settings/Discovery'
+import Collectors from './pages/settings/Collectors'
+import DataSources from './pages/settings/DataSources'
+import System from './pages/settings/System'
 import Topology from './pages/Topology'
 import Login from './pages/Login'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -52,7 +61,18 @@ function AppRoutes() {
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />
-                <Route path="/settings" element={<Settings />} />
+                <Route path="/settings" element={<Settings />}>
+                  <Route index element={<Navigate to="general" replace />} />
+                  <Route path="general" element={<General />} />
+                  <Route path="users" element={<Users />} />
+                  <Route path="credentials" element={<Credentials />} />
+                  <Route path="integrations" element={<Integrations />} />
+                  <Route path="alerting" element={<Alerting />} />
+                  <Route path="discovery" element={<Discovery />} />
+                  <Route path="collectors" element={<Collectors />} />
+                  <Route path="data-sources" element={<DataSources />} />
+                  <Route path="system" element={<System />} />
+                </Route>
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </Layout>
