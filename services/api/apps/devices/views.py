@@ -17,6 +17,16 @@ class DeviceGroupViewSet(viewsets.ModelViewSet):
 
 
 class DeviceViewSet(viewsets.ModelViewSet):
+    """
+    Manage network devices — the core inventory of NetPulse.
+
+    Full CRUD over devices (routers, switches, firewalls, etc.). List responses
+    use a lightweight serializer; retrieve returns the full record including site,
+    groups and associated credential profiles. Filter by `status`, `platform`,
+    `vendor` or `site`; search across hostname, IP and serial number. The
+    `topology/` action returns nodes + edges for the network map.
+    """
+
     queryset = Device.objects.select_related("site").prefetch_related("groups").all()
     filterset_fields = ["status", "platform", "vendor", "site"]
     search_fields = ["hostname", "ip_address", "serial_number"]

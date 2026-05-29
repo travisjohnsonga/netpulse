@@ -180,9 +180,10 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "NetPulse API",
-    "DESCRIPTION": "Network intelligence platform — open source, push-first.",
-    "VERSION": "0.1.0",
+    "DESCRIPTION": "Push-first network intelligence platform API",
+    "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
 }
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

@@ -7,6 +7,14 @@ from .serializers import CVESerializer, DeviceCVESerializer
 
 
 class CVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+    """
+    Browse the CVE intelligence catalog.
+
+    Read-only access to known CVEs ingested from feeds (NVD, vendor PSIRTs).
+    Filter by `severity`; search by CVE ID or description; order by CVSS score or
+    publish date. Per-device exposure lives at `/api/cve/device-cves/`.
+    """
+
     queryset = CVE.objects.all()
     serializer_class = CVESerializer
     filterset_fields = ["severity"]

@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -18,6 +19,16 @@ from . import probe, vault
 
 
 class CredentialProfileViewSet(viewsets.ModelViewSet):
+    """
+    Manage reusable credential profiles (SNMP, SSH, HTTP, gNMI, NETCONF).
+
+    Profiles store only authentication *metadata* — secret material (passwords,
+    keys, community strings, tokens) is written to OpenBao and never returned on
+    read. Filter by `credential_type` or `last_test_result`; search by name or
+    username. Extra actions: `test/?ip=` probes reachability against an IP and
+    records the result; `devices/` lists the device associations using a profile.
+    """
+
     queryset = CredentialProfile.objects.prefetch_related("device_links").all()
     filterset_fields = ["credential_type", "last_test_result"]
     search_fields = ["name", "username", "description"]
@@ -78,6 +89,8 @@ class DeviceCredentialListCreateView(generics.ListCreateAPIView):
     """GET/POST credential associations for a single device."""
 
     serializer_class = DeviceCredentialSerializer
+    # Lets drf-spectacular introspect the model without resolving `device_id`.
+    queryset = DeviceCredential.objects.none()
 
     def _device(self):
         return get_object_or_404(Device, pk=self.kwargs["device_id"])
@@ -100,6 +113,10 @@ class DeviceCredentialListCreateView(generics.ListCreateAPIView):
         serializer.save(device=device)
 
 
+@extend_schema(
+    responses={204: OpenApiResponse(description="Association removed.")},
+    description="Remove the credential association for a device + purpose.",
+)
 class DeviceCredentialPurposeView(APIView):
     """DELETE the credential association for a device + purpose."""
 
