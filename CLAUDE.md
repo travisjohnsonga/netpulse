@@ -196,3 +196,26 @@ Admin defines subnets, system probes in order:
 Never auto-probe OT subnets. Prompt admin to identify and exclude
 OT/ICS subnets during initial setup. Physical damage possible if
 industrial controllers are probed unexpectedly.
+
+## API-Based Platform Integrations (Phase 3+)
+
+Cloud-managed and API-only platforms that cannot use SNMP/gNMI:
+
+Vendors: Meraki, Mist/HPE Aruba, UniFi, Cisco DNA Center,
+Fortinet FortiCloud, Palo Alto Panorama, Cradlepoint NetCloud
+
+New service: ingest-api-poller
+- Scheduled REST polling per vendor/org
+- Webhook receiver for vendor-push events (Meraki, Mist, UniFi all support)
+- Rate limit awareness per vendor API limits
+- Plugin architecture — VendorAPIPlugin base class
+- Credentials in OpenBao, never stored locally
+- Normalize all vendor data to common NetPulse schema → NATS
+
+Two modes:
+1. Polling — GET vendor API on schedule (60-300s intervals)
+2. Webhooks — vendor pushes events to us (near real-time)
+
+MSP consideration: Meraki/Mist have multi-org APIs —
+one credential set manages multiple customer orgs.
+Critical for MSP use case of NetPulse.

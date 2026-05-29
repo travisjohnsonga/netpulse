@@ -424,3 +424,228 @@ netpulse.telemetry.{device_id}.trap
 - Traps arrive on UDP 162 (privileged — use override file to remap in dev)
 - SNMPv3 informs require acknowledgment unlike v1/v2c
 - Unknown OIDs logged and stored raw — MIB coverage expandable by community
+
+---
+
+## Device Discovery
+
+### Overview
+Four-tier system — all discovered devices require admin approval before
+activation. Never auto-activate without human review.
+
+### Tier 1 — Passive (always running)
+Ingest layer detects new source IPs automatically:
+- New syslog source → PENDING device
+- New gNMI dial-out → PENDING device  
+- New NetFlow exporter → PENDING device
+- New SNMP trap source → PENDING device
+
+### Tier 2 — Topology Walk (most powerful)
+Seed one device, recurse through entire network:
+- CDP/LLDP neighbor walk
+- Route table next-hop recursion
+- ARP table host discovery
+- BGP peer discovery
+- MAC table L2 discovery
+
+**Why route tables over ping sweeps:**
+Enterprise networks block ICMP by policy but routing infrastructure
+is fully reachable via SNMP/NETCONF. Pull ipRouteTable (SNMP),
+ietf-routing (NETCONF), or "show ip route" (SSH+TextFSM) and probe
+each next-hop. Finds devices that ping sweeps completely miss.
+
+### Tier 3 — Active Scanning
+Protocol probe sequence per discovered IP:
+1. SNMP v2c/v3 → sysDescr, sysName
+2. gNMI Capabilities RPC
+3. NETCONF hello
+4. SSH banner grab → parse vendor
+5. HTTP/HTTPS → NX-API, EOS API detection
+6. DNS reverse lookup
+7. ICMP — last resort, expected to fail often
+
+### Tier 4 — Import
+NetBox API, Cisco DNA Center, CSV bulk import, manual entry.
+
+### Confidence Scoring (0-100)
+| Score | Meaning |
+|---|---|
+| 100 | SNMP + CDP/LLDP + gNMI all confirmed |
+| 60 | SNMP responds, sysDescr parsed |
+| 30 | IP in route table, nothing confirmed |
+| 10 | IP in ARP table only |
+
+### Safety Controls
+- **allowed_subnets** — never probe outside defined ranges
+- **excluded_subnets** — explicitly exclude OT/ICS/SCADA networks
+- **rate_limit_pps** — default 10 pps, be polite to the network
+- **max_depth** — default 10 hops, prevent runaway recursion
+- **max_devices** — default 1000, circuit breaker per job
+
+### OT/ICS WARNING
+Never auto-probe OT/ICS subnets. PLCs, SCADA systems, and industrial
+controllers may crash or cause physical damage if probed unexpectedly.
+Prompt admin to identify and exclude OT subnets during initial setup.
+
+---
+
+## Device Discovery
+
+### Overview
+Four-tier system — all discovered devices require admin approval before
+activation. Never auto-activate without human review.
+
+### Tier 1 — Passive (always running)
+Ingest layer detects new source IPs automatically:
+- New syslog source → PENDING device
+- New gNMI dial-out → PENDING device  
+- New NetFlow exporter → PENDING device
+- New SNMP trap source → PENDING device
+
+### Tier 2 — Topology Walk (most powerful)
+Seed one device, recurse through entire network:
+- CDP/LLDP neighbor walk
+- Route table next-hop recursion
+- ARP table host discovery
+- BGP peer discovery
+- MAC table L2 discovery
+
+**Why route tables over ping sweeps:**
+Enterprise networks block ICMP by policy but routing infrastructure
+is fully reachable via SNMP/NETCONF. Pull ipRouteTable (SNMP),
+ietf-routing (NETCONF), or "show ip route" (SSH+TextFSM) and probe
+each next-hop. Finds devices that ping sweeps completely miss.
+
+### Tier 3 — Active Scanning
+Protocol probe sequence per discovered IP:
+1. SNMP v2c/v3 → sysDescr, sysName
+2. gNMI Capabilities RPC
+3. NETCONF hello
+4. SSH banner grab → parse vendor
+5. HTTP/HTTPS → NX-API, EOS API detection
+6. DNS reverse lookup
+7. ICMP — last resort, expected to fail often
+
+### Tier 4 — Import
+NetBox API, Cisco DNA Center, CSV bulk import, manual entry.
+
+### Confidence Scoring (0-100)
+| Score | Meaning |
+|---|---|
+| 100 | SNMP + CDP/LLDP + gNMI all confirmed |
+| 60 | SNMP responds, sysDescr parsed |
+| 30 | IP in route table, nothing confirmed |
+| 10 | IP in ARP table only |
+
+### Safety Controls
+- **allowed_subnets** — never probe outside defined ranges
+- **excluded_subnets** — explicitly exclude OT/ICS/SCADA networks
+- **rate_limit_pps** — default 10 pps, be polite to the network
+- **max_depth** — default 10 hops, prevent runaway recursion
+- **max_devices** — default 1000, circuit breaker per job
+
+### OT/ICS WARNING
+Never auto-probe OT/ICS subnets. PLCs, SCADA systems, and industrial
+controllers may crash or cause physical damage if probed unexpectedly.
+Prompt admin to identify and exclude OT subnets during initial setup.
+
+## API-Based Platform Integrations
+
+### The Problem
+Cloud-managed devices have no SNMP agent, no SSH access, no gNMI —
+all data lives in vendor cloud APIs. You query their cloud, not the device.
+
+### Platforms Supported
+
+| Vendor | Platform | API Type | Key Data |
+|---|---|---|---|
+| Cisco | Meraki Dashboard | REST | Device status, uplink health, traffic, alerts |
+| Juniper | Mist AI | REST + WebSocket | RF health, client experience, WAN assurance |
+| HPE | Aruba Central | REST | AP health, client count, RSSI, WAN stats |
+| Ubiquiti | UniFi Network | REST | AP/switch health, client data, port stats |
+| Cisco | DNA Center | REST | Network topology, device inventory, issues |
+| Fortinet | FortiCloud | REST | Device health, security events |
+| Palo Alto | Panorama | REST/XML | Firewall health, threat logs |
+| Cradlepoint | NetCloud | REST | LTE/5G WAN health, signal quality |
+
+### Architecture — ingest-api-poller Service
+Vendor Cloud APIs
+│
+│ HTTPS REST / WebSocket
+▼
+ingest-api-poller
+├── Scheduled polling per vendor/org
+├── Webhook receiver (vendor pushes events to us)
+├── Rate limit awareness per vendor API
+├── Delta detection — only publish changes
+├── Credentials via OpenBao, never stored locally
+└── Normalize to common schema → NATS
+│
+▼
+netpulse.telemetry.{device_id}.metrics
+netpulse.telemetry.{device_id}.events
+
+### Two Ingestion Modes
+
+**Mode 1 — Polling** (all vendors)
+Every 60-300 seconds:
+GET /api/v1/devices → normalize → NATS
+
+**Mode 2 — Webhooks** (preferred where supported)
+Vendor pushes events to NetPulse endpoint:
+POST /webhooks/{vendor} → normalize → NATS
+Meraki, Mist, and UniFi all support webhooks → near real-time
+
+### Plugin Architecture
+
+```python
+class VendorAPIPlugin:
+    name: str
+    vendor: str
+
+    async def authenticate(self, credentials: dict) -> bool
+    async def get_devices(self) -> list[Device]
+    async def get_metrics(self, device_id: str) -> dict
+    async def handle_webhook(self, payload: dict) -> list[Event]
+    async def get_rate_limit(self) -> RateLimit
+
+# Community-contributable implementations
+class MerakiPlugin(VendorAPIPlugin): ...
+class MistPlugin(VendorAPIPlugin): ...
+class UniFiPlugin(VendorAPIPlugin): ...
+class CradlepointPlugin(VendorAPIPlugin): ...
+```
+
+Plugin model means community can add new vendors without touching core platform.
+
+### MSP Consideration
+Meraki and Mist have multi-org APIs — one credential set manages multiple
+customer organizations. Critical for MSP deployments of NetPulse where a
+single platform monitors multiple customers simultaneously.
+
+### Integration with Platform Features
+
+- **Unified risk score** — Meraki AP offline, Mist WAN alert all factor in
+- **Lifecycle management** — pull device inventory from vendor APIs, match EOL database
+- **Config compliance** — SSID consistency, network policy validation across cloud-managed devices
+- **Bandwidth planning** — WAN metrics from Meraki/Mist feed capacity forecasting
+- **Bandwidth planning** — Cradlepoint LTE failover triggers cost/bandwidth alerts
+
+### Vendor API Notes
+
+**Meraki**
+- Rate limit: 10 req/sec per org
+- Webhooks: supported for alerts and device status
+- MSP: Dashboard API supports multiple orgs
+
+**Mist / Juniper**
+- WebSocket streaming for real-time events
+- Mist AI anomaly detection — consume their alerts natively
+
+**UniFi**
+- Local controller API (self-hosted) or UniFi Cloud
+- Cookie-based auth on local controller
+
+**Cradlepoint**
+- Key data: LTE/5G signal strength, carrier, WAN health
+- Critical for branch offices on cellular WAN or backup
