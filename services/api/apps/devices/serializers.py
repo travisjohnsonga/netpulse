@@ -30,3 +30,18 @@ class DeviceListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Device
         fields = ("id", "hostname", "ip_address", "platform", "status", "site_name", "created_at")
+
+
+class TestConnectionRequestSerializer(serializers.Serializer):
+    ip = serializers.IPAddressField(help_text="IP address to probe.")
+
+
+class TestConnectionResponseSerializer(serializers.Serializer):
+    reachable = serializers.BooleanField()
+    open_ports = serializers.ListField(child=serializers.IntegerField())
+    banner = serializers.CharField(allow_blank=True)
+    vendor = serializers.CharField(allow_null=True)
+    platform = serializers.CharField(allow_null=True)
+    os_version = serializers.CharField(allow_null=True)
+    model = serializers.CharField(allow_null=True)
+    detail = serializers.CharField()

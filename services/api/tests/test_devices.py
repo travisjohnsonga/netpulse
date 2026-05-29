@@ -304,3 +304,28 @@ class TestDiscoveredDeviceModel:
         dd.save()
         dd.refresh_from_db()
         assert dd.approved_device == device
+
+
+class TestConnectionEndpoint:
+    def test_requires_ip(self, auth_client):
+        resp = auth_client.post("/api/devices/test-connection/", {}, format="json")
+        assert resp.status_code == 400
+
+    def test_probe_returns_fingerprint_shape(self, auth_client):
+        # 127.0.0.1 management ports are closed in the test env → fast, unreachable.
+        resp = auth_client.post(
+            "/api/devices/test-connection/", {"ip": "127.0.0.1"}, format="json"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == {
+            "reachable", "open_ports", "banner",
+            "vendor", "platform", "os_version", "model", "detail",
+        }
+        assert isinstance(body["open_ports"], list)
+
+    def test_unauthenticated_rejected(self, api_client):
+        resp = api_client.post(
+            "/api/devices/test-connection/", {"ip": "10.0.0.1"}, format="json"
+        )
+        assert resp.status_code == 401

@@ -1,9 +1,18 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from . import fingerprint
 from .models import Device, DeviceGroup, Site
-from .serializers import DeviceGroupSerializer, DeviceListSerializer, DeviceSerializer, SiteSerializer
+from .serializers import (
+    DeviceGroupSerializer,
+    DeviceListSerializer,
+    DeviceSerializer,
+    SiteSerializer,
+    TestConnectionRequestSerializer,
+    TestConnectionResponseSerializer,
+)
 
 
 class SiteViewSet(viewsets.ModelViewSet):
@@ -36,6 +45,23 @@ class DeviceViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             return DeviceListSerializer
         return DeviceSerializer
+
+    @extend_schema(
+        request=TestConnectionRequestSerializer,
+        responses=TestConnectionResponseSerializer,
+        summary="Probe an IP and best-effort fingerprint a device",
+    )
+    @action(detail=False, methods=["post"], url_path="test-connection")
+    def test_connection(self, request):
+        """
+        Probe management ports on an IP and infer the vendor from the SSH banner.
+        Used by the Add-Device wizard's auto-detect step. Full platform/OS/model
+        detection happens later in the poller (needs SNMP/credentials).
+        """
+        req = TestConnectionRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        result = fingerprint.fingerprint(req.validated_data["ip"])
+        return Response(TestConnectionResponseSerializer(result).data)
 
     @action(detail=False, methods=["get"], url_path="topology")
     def topology(self, request):
