@@ -250,3 +250,36 @@ Security:
 
 Proactive alerts pushed to designated channels:
 - Critical alerts, CVE notifications, UPS events, capacity warnings
+
+## Web UI Requirements
+
+React SPA with these principles:
+- Progressive disclosure — simple first, detail on demand
+- Guided onboarding wizard for first-time setup
+- Action-oriented — every screen suggests next action
+- Empty states that guide users to next step
+- Mobile-aware for NOC on-call scenarios
+- WebSocket live updates via Django Channels
+
+Key sections: Dashboard, Devices, Telemetry, Configuration,
+Logs, Security, CVE, Lifecycle, Flow, Alerts, Reports, Settings
+
+Integration configuration UI:
+- Cards for each available integration with Connect button
+- Step-by-step setup wizard per integration
+- Test connection before saving
+- Status indicators for connected integrations
+
+UI Stack: React + Apache ECharts + Tailwind CSS
+
+## Documentation Requirements
+
+Three audiences: Network Engineers, Platform Admins, Contributors
+Tool: Docusaurus hosted on GitHub Pages (docs.netpulse.io)
+
+Critical docs to build early:
+- Quickstart (up and running in 5 minutes)
+- Per-device setup guides with exact CLI commands
+  (IOS-XE, IOS-XR, NX-OS, Juniper, Arista)
+- Per-integration setup guides (Meraki, Mist, UniFi, Slack, Teams)
+- Contributor guides (vendor plugins, TextFSM templates, MIBs)
