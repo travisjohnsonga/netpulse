@@ -128,7 +128,10 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
           <h3 className="text-sm font-semibold text-gray-800">Running Config</h3>
           <div className="flex gap-2">
-            <button onClick={() => navigate('/configs/compare')} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Compare</button>
+            <button
+              onClick={() => navigate(`/configs/compare?left=${deviceId}${selectedId ? `&leftVersion=${selectedId}` : ''}`)}
+              className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+            >Compare</button>
             <button onClick={download} disabled={!selected} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Download</button>
           </div>
         </div>

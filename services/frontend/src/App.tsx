@@ -6,6 +6,7 @@ import Devices from './pages/Devices'
 import DeviceDetail from './pages/DeviceDetail'
 import Sites from './pages/Sites'
 import SiteDetail from './pages/SiteDetail'
+import ConfigCompare from './pages/ConfigCompare'
 import Alerts from './pages/Alerts'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
@@ -64,6 +65,7 @@ function AppRoutes() {
                 <Route path="/devices/:id" element={<DeviceDetail />} />
                 <Route path="/sites" element={<Sites />} />
                 <Route path="/sites/:id" element={<SiteDetail />} />
+                <Route path="/configs/compare" element={<ConfigCompare />} />
                 <Route path="/topology" element={<Topology />} />
                 <Route path="/api-docs" element={<ApiDocs />} />
                 <Route path="/alerts" element={<Alerts />} />

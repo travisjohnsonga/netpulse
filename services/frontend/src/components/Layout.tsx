@@ -15,6 +15,7 @@ const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: '▦' },
   { label: 'Devices', href: '/devices', icon: '⬡' },
   { label: 'Sites', href: '/sites', icon: '🏢' },
+  { label: 'Compare', href: '/configs/compare', icon: '🔀' },
   { label: 'Topology', href: '/topology', icon: '🌐' },
   { label: 'Alerts', href: '/alerts', icon: '⚠' },
   { label: 'CVE', href: '/cve', icon: '🛡' },
