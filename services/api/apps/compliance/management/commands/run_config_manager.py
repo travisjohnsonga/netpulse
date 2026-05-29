@@ -1,43 +1,77 @@
-import asyncio
+"""
+Config-manager: poll active devices, collect running configs, store snapshots and
+publish collection events to NATS.
+
+  python manage.py run_config_manager                 # loop every 300s
+  python manage.py run_config_manager --once          # one cycle, then exit
+  python manage.py run_config_manager --device-id 5   # one device (manual)
+  python manage.py run_config_manager --interval 600  # custom interval
+"""
 import logging
 import signal
+import threading
 
 from django.core.management.base import BaseCommand
+
+from apps.compliance import collector
+from apps.devices.models import Device
 
 logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Watch NATS for device config events; evaluate compliance policies and persist results."
+    help = "Collect device running configurations on a schedule and store snapshots."
+
+    def add_arguments(self, parser):
+        parser.add_argument("--once", action="store_true", help="Run one collection cycle then exit.")
+        parser.add_argument("--device-id", default=None, help="Collect only this device (by id); treated as manual.")
+        parser.add_argument("--interval", type=int, default=300, help="Polling interval in seconds (default 300).")
 
     def handle(self, *args, **options):
-        asyncio.run(self._run())
+        once = options["once"]
+        device_id = options["device_id"]
+        interval = options["interval"]
 
-    async def _run(self):
-        import nats
-        from django.conf import settings
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
 
-        logger.info("config-manager starting")
-        stop_event = asyncio.Event()
+        logger.info("config-manager starting (interval=%ss, once=%s, device=%s)", interval, once, device_id or "all-active")
 
-        def _shutdown(sig, _):
-            stop_event.set()
+        while not stop.is_set():
+            collected, failed = self._cycle(device_id)
+            logger.info("cycle complete: %d collected, %d failed", collected, failed)
+            if once:
+                break
+            # Interruptible sleep.
+            stop.wait(interval)
 
-        signal.signal(signal.SIGTERM, _shutdown)
-        signal.signal(signal.SIGINT, _shutdown)
+        logger.info("config-manager stopped")
 
-        nc = await nats.connect(
-            settings.NATS_URL,
-            user=settings.NATS_USER,
-            password=settings.NATS_PASSWORD,
-        )
-        await nc.subscribe("netpulse.config.>", cb=self._on_config)
-        logger.info("config-manager subscribed to netpulse.config.>")
+    def _cycle(self, device_id) -> tuple[int, int]:
+        if device_id is not None:
+            try:
+                devices = list(Device.objects.filter(pk=device_id))
+            except (ValueError, TypeError):
+                logger.error("invalid --device-id %r", device_id)
+                return (0, 0)
+            collected_by = "manual"
+            if not devices:
+                logger.warning("device %s not found", device_id)
+        else:
+            devices = list(
+                Device.objects.filter(status=Device.Status.ACTIVE).select_related("credential_profile")
+            )
+            collected_by = "scheduled"
 
-        await stop_event.wait()
-        await nc.drain()
-
-    async def _on_config(self, msg):
-        # TODO: deserialise config snapshot, run CompliancePolicyRule checks,
-        # persist ComplianceResult rows, publish netpulse.compliance.result
-        logger.debug("config event: subject=%s bytes=%d", msg.subject, len(msg.data))
+        collected = failed = 0
+        for device in devices:
+            try:
+                if collector.collect_one(device, collected_by) is not None:
+                    collected += 1
+                else:
+                    failed += 1
+            except Exception as exc:  # defensive — collect_one shouldn't raise
+                failed += 1
+                logger.error("unexpected error collecting %s: %s", device.hostname, exc)
+        return (collected, failed)

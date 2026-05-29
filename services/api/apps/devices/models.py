@@ -89,6 +89,8 @@ class Device(TimestampedModel):
     os_version = models.CharField(max_length=100, blank=True)
     serial_number = models.CharField(max_length=100, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+    # Last time NetPulse successfully reached the device (e.g. config collection).
+    last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     groups = models.ManyToManyField(DeviceGroup, blank=True, related_name="devices")
     # A device uses one multi-protocol credential profile (secrets in OpenBao).
