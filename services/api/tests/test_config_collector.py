@@ -34,15 +34,15 @@ class TestHelpers:
         ("Arista", "eos", "arista_eos"),
         ("Juniper", "junos", "juniper_junos"),
         ("", "sonic", "linux"),
-        ("Arista", "other", "arista_eos"),   # vendor fallback
-        ("Weird", "other", "linux"),         # final fallback
+        ("Arista", "other", "arista_eos"),       # vendor fallback
+        ("Weird", "other", "autodetect"),        # final fallback → autodetect
     ])
     def test_device_type_mapping(self, vendor, platform, expected):
         assert collector.netmiko_device_type(vendor, platform) == expected
 
     def test_config_command(self):
         assert collector.config_command("ios_xe") == "show running-config"
-        assert collector.config_command("junos") == "show configuration"
+        assert collector.config_command("junos") == "show configuration | display set"
         assert collector.config_command("eos") == "show running-config"
 
 

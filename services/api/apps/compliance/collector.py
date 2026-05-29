@@ -48,18 +48,21 @@ _VENDOR_FALLBACK = {
 
 # Running-config command per platform family.
 _CONFIG_COMMANDS = {
-    "junos": "show configuration",
+    "junos": "show configuration | display set",
     # everything else (cisco families, arista, generic) uses show running-config
 }
 
 
 def netmiko_device_type(vendor: str, platform: str) -> str:
-    """Resolve a Netmiko device_type from vendor + platform, defaulting to linux."""
+    """
+    Resolve a Netmiko device_type from vendor + platform. Falls back to
+    "autodetect" for unknown platforms so Netmiko's SSHDetect can guess.
+    """
     dt = _NETMIKO_TYPES.get((platform or "").lower(), "")
     if dt:
         return dt
     dt = _VENDOR_FALLBACK.get((vendor or "").lower(), "")
-    return dt or "linux"
+    return dt or "autodetect"
 
 
 def config_command(platform: str) -> str:
@@ -83,11 +86,29 @@ def _fetch_via_ssh(device, profile, creds: dict) -> str:
     from netmiko import ConnectHandler  # lazy
 
     host = device.ip_address or device.management_ip
+    device_type = netmiko_device_type(device.vendor, device.platform)
+    username = profile.ssh_username if profile else ""
+    port = (profile.ssh_port if profile else 22) or 22
+
+    # Unknown platform → let Netmiko guess, then fall back to cisco_ios.
+    if device_type == "autodetect":
+        try:
+            from netmiko import SSHDetect
+            guesser = SSHDetect(
+                device_type="autodetect", host=str(host), username=username,
+                password=creds.get("ssh_password", ""), port=port,
+            )
+            device_type = guesser.autodetect() or "cisco_ios"
+            logger.info("autodetected %s as %s", device.hostname, device_type)
+        except Exception as exc:
+            logger.warning("autodetect failed for %s (%s) — using cisco_ios", device.hostname, exc)
+            device_type = "cisco_ios"
+
     params: dict = {
-        "device_type": netmiko_device_type(device.vendor, device.platform),
+        "device_type": device_type,
         "host": str(host),
-        "username": profile.ssh_username if profile else "",
-        "port": (profile.ssh_port if profile else 22) or 22,
+        "username": username,
+        "port": port,
         "fast_cli": False,
     }
 
