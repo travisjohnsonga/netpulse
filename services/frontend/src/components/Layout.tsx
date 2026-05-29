@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useAuthStore } from '../store/authStore'
+import ErrorBoundary from './ErrorBoundary'
 
 interface NavItem {
   label: string
@@ -143,7 +144,9 @@ export default function Layout({ children }: Props) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-auto p-4 lg:p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-4 lg:p-6">
+          <ErrorBoundary>{children}</ErrorBoundary>
+        </main>
       </div>
     </div>
   )

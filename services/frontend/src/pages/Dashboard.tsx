@@ -4,7 +4,15 @@ import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import StatCard from '../components/StatCard'
 import EmptyState from '../components/EmptyState'
-import { fetchDevices, fetchAlerts, type Device, type Alert } from '../api/client'
+import {
+  fetchDevices,
+  fetchAlerts,
+  checkHealth,
+  checkInfraHealth,
+  type Device,
+  type Alert,
+  type InfraHealth,
+} from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import clsx from 'clsx'
 
@@ -15,7 +23,6 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: 'bg-blue-100 text-blue-700',
 }
 
-// Dummy chart data for placeholder charts
 const now = Date.now()
 const timeLabels = Array.from({ length: 12 }, (_, i) =>
   new Date(now - (11 - i) * 5 * 60 * 1000).toLocaleTimeString([], {
@@ -36,7 +43,7 @@ const deviceStatusChartOption: EChartsOption = {
       name: 'Active',
       type: 'line',
       smooth: true,
-      data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      data: Array(12).fill(0) as number[],
       itemStyle: { color: '#22c55e' },
       areaStyle: { opacity: 0.1 },
     },
@@ -44,7 +51,7 @@ const deviceStatusChartOption: EChartsOption = {
       name: 'Unreachable',
       type: 'line',
       smooth: true,
-      data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      data: Array(12).fill(0) as number[],
       itemStyle: { color: '#ef4444' },
       areaStyle: { opacity: 0.1 },
     },
@@ -65,56 +72,134 @@ const topTalkersChartOption: EChartsOption = {
     {
       name: 'Bytes',
       type: 'bar',
-      data: [0, 0, 0, 0, 0],
+      data: [0, 0, 0, 0, 0] as number[],
       itemStyle: { color: '#3b82f6', borderRadius: [0, 4, 4, 0] },
     },
   ],
 }
 
+// ── Infrastructure Health Card ────────────────────────────────────────────────
+
+const INFRA_LABELS: Record<keyof InfraHealth['services'], string> = {
+  postgres: 'PostgreSQL',
+  valkey: 'Valkey',
+  nats: 'NATS',
+  influxdb: 'InfluxDB',
+  opensearch: 'OpenSearch',
+}
+
+function InfraHealthSection({ health }: { health: InfraHealth | null; loading: boolean }) {
+  const services = health?.services
+  return (
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+      <h2 className="font-semibold text-gray-800 mb-4">Infrastructure</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {(Object.keys(INFRA_LABELS) as Array<keyof InfraHealth['services']>).map((key) => {
+          const ok = services?.[key]
+          return (
+            <div
+              key={key}
+              className={clsx(
+                'flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center',
+                ok === undefined
+                  ? 'border-gray-200 bg-gray-50'
+                  : ok
+                    ? 'border-green-200 bg-green-50'
+                    : 'border-red-200 bg-red-50',
+              )}
+            >
+              <span
+                className={clsx(
+                  'w-2.5 h-2.5 rounded-full',
+                  ok === undefined ? 'bg-gray-300' : ok ? 'bg-green-500' : 'bg-red-500',
+                )}
+              />
+              <span className="text-xs font-medium text-gray-700">{INFRA_LABELS[key]}</span>
+              <span
+                className={clsx(
+                  'text-xs',
+                  ok === undefined ? 'text-gray-400' : ok ? 'text-green-600' : 'text-red-600',
+                )}
+              >
+                {ok === undefined ? '…' : ok ? 'OK' : 'Down'}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [devices, setDevices] = useState<Device[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
+  const [infraHealth, setInfraHealth] = useState<InfraHealth | null>(null)
+  const [infraLoading, setInfraLoading] = useState(true)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const { connected, lastMessage } = useWebSocket('/ws/telemetry/')
+  const [apiError, setApiError] = useState<string | null>(null)
+  const { connected } = useWebSocket('/ws/telemetry/')
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+
     Promise.allSettled([fetchDevices(), fetchAlerts()])
       .then(([devResult, alertResult]) => {
         if (cancelled) return
-        if (devResult.status === 'fulfilled') setDevices(devResult.value.results)
-        if (alertResult.status === 'fulfilled') setAlerts(alertResult.value)
+        if (devResult.status === 'fulfilled') {
+          // Defensive: always ensure we have an array
+          const results = devResult.value?.results
+          setDevices(Array.isArray(results) ? results : [])
+        }
+        if (alertResult.status === 'fulfilled') {
+          setAlerts(Array.isArray(alertResult.value) ? alertResult.value : [])
+        }
+        if (devResult.status === 'rejected' && alertResult.status === 'rejected') {
+          setApiError('Could not reach the API. Check that the backend is running.')
+        }
         setLoading(false)
       })
       .catch(() => {
         if (!cancelled) {
-          setError('Could not reach the API. Check that the backend is running.')
+          setApiError('Could not reach the API. Check that the backend is running.')
           setLoading(false)
         }
       })
+
     return () => { cancelled = true }
   }, [])
 
-  // Live message indicator
   useEffect(() => {
-    if (lastMessage) {
-      // In production this would update charts/stats
-    }
-  }, [lastMessage])
+    let cancelled = false
+    setInfraLoading(true)
+    Promise.allSettled([checkHealth(), checkInfraHealth()])
+      .then(([, infraResult]) => {
+        if (cancelled) return
+        if (infraResult.status === 'fulfilled') setInfraHealth(infraResult.value)
+        setInfraLoading(false)
+      })
+      .catch(() => { if (!cancelled) setInfraLoading(false) })
+    return () => { cancelled = true }
+  }, [])
 
-  const activeAlerts = alerts.filter((a) => a.state === 'firing')
+  // Ensure these are always arrays before calling array methods
+  const safeDevices = Array.isArray(devices) ? devices : []
+  const safeAlerts = Array.isArray(alerts) ? alerts : []
+
+  const activeAlerts = safeAlerts.filter((a) => a.state === 'firing')
   const criticalCount = activeAlerts.filter((a) => a.severity === 'critical').length
-  const recentAlerts = alerts.slice(0, 5)
+  const recentAlerts = safeAlerts.slice(0, 5)
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-gray-500">Loading dashboard...</span>
+          <span className="text-sm text-gray-500">Loading dashboard…</span>
         </div>
       </div>
     )
@@ -128,31 +213,33 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-0.5">Network overview at a glance</p>
         </div>
-        <div className="flex items-center gap-2">
-          {connected && (
-            <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-              Live
-            </span>
-          )}
-        </div>
+        {connected && (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+            Live
+          </span>
+        )}
       </div>
 
-      {/* Error banner */}
-      {error && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">
-          {error}
+      {/* API error banner */}
+      {apiError && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 flex items-center gap-2">
+          <span>⚠️</span>
+          <span>{apiError}</span>
         </div>
       )}
 
-      {/* Stat cards */}
+      {/* Infrastructure health */}
+      <InfraHealthSection health={infraHealth} loading={infraLoading} />
+
+      {/* Stat cards — always visible even with no devices */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Devices"
-          value={devices.length}
-          subtitle="managed devices"
+          value={safeDevices.length}
+          subtitle={safeDevices.length === 0 ? 'none managed yet' : 'managed devices'}
           color="blue"
-          action={devices.length === 0 ? { label: 'Add a device', href: '/devices' } : undefined}
+          action={safeDevices.length === 0 ? { label: 'Add a device', href: '/devices' } : undefined}
         />
         <StatCard
           title="Active Alerts"
@@ -176,8 +263,8 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* No devices empty state */}
-      {devices.length === 0 && (
+      {/* Empty state when no devices */}
+      {safeDevices.length === 0 && !apiError && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <EmptyState
             title="No devices yet"

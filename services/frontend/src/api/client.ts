@@ -51,7 +51,17 @@ api.interceptors.response.use(
 
 export interface HealthStatus {
   status: string
-  services: Record<string, boolean>
+  db?: boolean
+}
+
+export interface InfraHealth {
+  services: {
+    postgres: boolean
+    valkey: boolean
+    nats: boolean
+    influxdb: boolean
+    opensearch: boolean
+  }
 }
 
 export interface Device {
@@ -123,8 +133,17 @@ export async function fetchDevices(params?: Record<string, string>): Promise<Dev
   return data
 }
 
+// DRF returns paginated { count, results } by default.
+// Defensively coerce to array regardless of shape.
+type MaybePaginated<T> = T[] | { results: T[]; count: number; next: string | null; previous: string | null }
+
 export async function fetchAlerts(): Promise<Alert[]> {
-  const { data } = await api.get<Alert[]>('/alerts/events/')
+  const { data } = await api.get<MaybePaginated<Alert>>('/alerts/events/')
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+export async function checkInfraHealth(): Promise<InfraHealth> {
+  const { data } = await api.get<InfraHealth>('/health/infrastructure/')
   return data
 }
 
