@@ -18,6 +18,7 @@ import Collectors from './pages/settings/Collectors'
 import DataSources from './pages/settings/DataSources'
 import System from './pages/settings/System'
 import Topology from './pages/Topology'
+import ApiDocs from './pages/ApiDocs'
 import Login from './pages/Login'
 import OnboardingWizard from './components/OnboardingWizard'
 import { useAuthStore } from './store/authStore'
@@ -60,6 +61,7 @@ function AppRoutes() {
                 <Route path="/devices" element={<Devices />} />
                 <Route path="/devices/:id" element={<DeviceDetail />} />
                 <Route path="/topology" element={<Topology />} />
+                <Route path="/api-docs" element={<ApiDocs />} />
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />

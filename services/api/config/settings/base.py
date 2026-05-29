@@ -184,6 +184,12 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
+    # Schema/docs are not public — the SPA fetches them with a JWT attached.
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
+    "SERVE_AUTHENTICATION": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
     # Several models expose a `status` field with different choice sets; name each
     # enum explicitly (by reference to the TextChoices class) so the generated
     # schema has no naming collisions.
