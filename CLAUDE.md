@@ -121,3 +121,11 @@ ingest-snmp must handle both polling AND trap reception:
 - Normalize to common trap schema → NATS topic: netpulse.telemetry.{device_id}.trap
 - Critical use case: UPS on-battery notification, link state changes, hardware alerts
 - SNMPv3 informs require acknowledgment (unlike v1/v2c fire-and-forget)
+
+## SNMP Trap Receiver
+ingest-snmp must handle both polling AND trap reception:
+- UDP port 162 for incoming traps (v1, v2c, v3 informs)
+- MIBs: RFC 1628 (UPS), APC, Eaton, standard network MIBs
+- Normalize to common schema → NATS: netpulse.telemetry.{device_id}.trap
+- Critical: UPS on-battery, link state changes, hardware alerts
+- SNMPv3 informs require acknowledgment (unlike v1/v2c fire-and-forget)
