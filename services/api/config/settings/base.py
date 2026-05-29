@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.security",
     "apps.collectors",
     "apps.integrations",
+    "apps.configbackup",
 ]
 
 MIDDLEWARE = [

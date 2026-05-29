@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 import { SectionHeader } from '../Settings'
+import ConfigBackupSection from './ConfigBackupSection'
 
 // CVE / advisory / EOL data feeds. Credentials are written to OpenBao; only
 // enablement + non-secret config is stored relationally (backend in progress).
@@ -80,6 +81,10 @@ export default function DataSources() {
           <SaveButton onSave={() => {}} />
           <p className="text-xs text-gray-400">🔒 Stored securely in OpenBao.</p>
         </div>
+      </div>
+
+      <div className="mt-8">
+        <ConfigBackupSection />
       </div>
     </div>
   )

@@ -413,6 +413,48 @@ export async function fetchNetboxImports(): Promise<NetBoxImportRecord[]> {
   return unwrap(data)
 }
 
+// ── Config backup settings ───────────────────────────────────────────────────
+
+export interface ConfigBackupSettings {
+  local_enabled: boolean
+  local_path: string
+  local_retention_days: number
+  git_enabled: boolean
+  git_provider: string
+  git_repo_url: string
+  git_branch: string
+  git_auth_method: string
+  git_vault_path: string
+  git_commit_author: string
+  git_commit_email: string
+  git_sync_frequency: string
+  last_sync_at: string | null
+  last_sync_success: boolean | null
+  last_commit_sha: string
+  local_used_bytes: number
+  updated_at: string
+}
+
+export async function fetchConfigBackup(): Promise<ConfigBackupSettings> {
+  const { data } = await api.get<ConfigBackupSettings>('/settings/config-backup/')
+  return data
+}
+
+export async function saveConfigBackup(payload: Partial<ConfigBackupSettings> & { git_credential?: string }): Promise<ConfigBackupSettings> {
+  const { data } = await api.patch<ConfigBackupSettings>('/settings/config-backup/', payload)
+  return data
+}
+
+export async function testGit(git_repo_url?: string): Promise<{ ok: boolean; message: string }> {
+  const { data } = await api.post<{ ok: boolean; message: string }>('/settings/config-backup/test-git/', { git_repo_url })
+  return data
+}
+
+export async function syncConfigNow(): Promise<{ ok: boolean; message: string; last_commit_sha?: string }> {
+  const { data } = await api.post<{ ok: boolean; message: string; last_commit_sha?: string }>('/settings/config-backup/sync-now/')
+  return data
+}
+
 // ── Sites ────────────────────────────────────────────────────────────────────
 
 export type SiteType = 'datacenter' | 'campus' | 'branch' | 'remote' | 'cloud'
