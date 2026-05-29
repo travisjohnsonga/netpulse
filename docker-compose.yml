@@ -278,6 +278,21 @@ services:
       nats:
         condition: service_healthy
 
+  ingest-api-poller:
+    build: ./services/ingest-api-poller
+    restart: unless-stopped
+    command: python -m ingest.poller_server
+    env_file: .env
+    ports:
+      - "${API_POLLER_WEBHOOK_PORT:-8080}:8080"
+    environment:
+      INTEGRATIONS_JSON: ${INTEGRATIONS_JSON:-[]}
+    networks:
+      - netpulse-net
+    depends_on:
+      - nats
+      - openbao
+
   # ─────────────────────────────────────────────────────────────────────────────
   # Processing & Intelligence Engines
   # Commands reference Django management commands to be implemented in ./backend.
