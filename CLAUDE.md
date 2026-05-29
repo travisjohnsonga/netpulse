@@ -75,3 +75,41 @@ External integrations requiring API credentials (set in `.env`):
 - NVD API key — CVE data feed
 - Cisco PSIRT client ID/secret — Cisco advisory feed
 - SMTP / Slack / PagerDuty — alerting
+
+## NetPulse Collector (On-Prem Agent)
+
+Lightweight agent deployed on-prem to securely forward telemetry to cloud-hosted NetPulse.
+
+### Architecture
+- Runs on-prem as a Docker container or systemd service
+- Receives all telemetry locally (gRPC/gNMI, syslog, NetFlow/sFlow, SNMP)
+- Forwards to cloud over a single outbound mTLS connection (port 443/8443)
+- No inbound firewall rules required on customer network
+- Local disk buffer if cloud connection drops — replays when reconnected
+
+### Security
+- Outbound only — customer opens no inbound ports
+- mTLS — both collector and cloud authenticate with certificates
+- Certificates issued by OpenBao PKI engine
+- Unique API key per collector instance
+- TLS 1.3 minimum
+
+### Deployment (customer side)
+docker run -d \
+  --name netpulse-collector \
+  --restart always \
+  -p 514:514/udp \
+  -p 2055:2055/udp \
+  -p 50051:50051 \
+  -e NETPULSE_CLOUD_URL=https://cloud.netpulse.io \
+  -e NETPULSE_API_KEY=their-api-key \
+  netpulse/collector:latest
+
+### Cloud-Side Components
+- collector-gateway service — authenticates collectors, routes to NATS
+- Collector management in Django API — register, cert issuance, health monitoring
+- OpenBao PKI — issues and rotates collector mTLS certificates
+
+### Solves SNMP Behind Firewall
+Collector polls local devices directly and forwards results to cloud.
+No need to open SNMP ports through customer firewall.
