@@ -603,3 +603,37 @@ Options for server health data:
   Learn normal dependency behavior
   Predict service impact before it happens
   "Core-SW-1 CPU at 95% — E-Commerce likely to degrade in 15min"
+
+## TV/NOC Display Mode (Phase 4)
+
+Browser-based TV dashboard mode — no native app needed.
+Works on any smart TV, Chromecast, or Raspberry Pi kiosk.
+
+Route: /tv (full screen, no navigation chrome)
+Auth: Read-only PIN/token (safe for always-on displays)
+
+Features:
+- Auto-rotating dashboard views (configurable interval)
+- Large text readable from across NOC floor
+- High contrast color scheme
+- WebSocket live updates
+- Configurable layout per display URL params
+- No mouse interaction required
+
+Rotating views:
+1. Network health map (sites colored by status)
+2. Active alerts list
+3. Top bandwidth circuits
+4. Business service status board
+5. Recent incidents timeline
+6. WAN circuit utilization heatmap
+
+Deployment options (document all in docs/):
+1. Smart TV browser — navigate to /tv URL
+2. Chromecast — cast from laptop
+3. Raspberry Pi kiosk — Chromium in kiosk mode (recommended for permanent NOC)
+4. Android TV / Fire TV — browser app
+
+Do NOT build native Roku/Apple TV apps —
+browser-based approach covers all use cases
+with far less development overhead.

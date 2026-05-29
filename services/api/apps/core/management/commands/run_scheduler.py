@@ -1,12 +1,8 @@
-import logging
-
 from django.core.management.base import BaseCommand
-
-logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Scheduler — triggers periodic platform jobs (CVE fetch, lifecycle check, discovery) (stub)"
+    help = "run_scheduler — not yet implemented (stub)"
 
     def handle(self, *args, **options):
-        self.stdout.write("scheduler: not yet implemented")
+        self.stdout.write(self.style.WARNING("run_scheduler: not yet implemented"))
