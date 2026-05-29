@@ -383,3 +383,50 @@ Flow correlator provides per-link latency
 - Toggle utilization/alert overlays
 - Export as PNG/SVG
 - NetFlow path: select src+dst → highlight path with latency
+
+## Interface/Circuit Capacity Overrides
+
+Physical interface speed ≠ actual circuit capacity on WAN links.
+Must support manual capacity overrides per interface.
+
+### Data Model additions (devices app)
+CircuitOverride model:
+  device_id (FK)
+  interface_name         — "GigabitEthernet0/0/0"
+  physical_speed_mbps    — 10000 (10Gbps physical port)
+  committed_download_mbps — 500  (actual circuit capacity)
+  committed_upload_mbps   — 200  (asymmetric circuits common)
+  burst_download_mbps     — 1000 (burst allowed, optional)
+  burst_upload_mbps       — 500
+  provider               — "AT&T", "Comcast", "Lumen" etc
+  circuit_id             — carrier circuit ID for support calls
+  monthly_cost           — for budget planning reports
+  contract_renewal_date  — alert before expiry
+  notes                  — free text
+
+### Utilization Calculation
+Without override: (current_bps / interface_speed) * 100
+With override:    (current_bps / committed_mbps) * 100
+
+### Topology Map Impact
+Link color based on override capacity not physical speed:
+  500Mbps circuit at 400Mbps = 80% = orange ⚠️
+  NOT: 10Gbps port at 400Mbps = 4% = green ✅ (wrong)
+
+### Bandwidth Planning Impact  
+95th percentile trending against committed rate not physical
+Budget reports show cost per Mbps, renewal dates, upgrade triggers
+Alert when approaching committed rate (configurable threshold)
+Alert X days before contract renewal date
+
+### UI
+Interface detail page shows:
+  Physical speed vs committed capacity
+  Current utilization vs BOTH speeds
+  Edit override button → form to set capacity
+  Provider info, circuit ID, cost, renewal date
+
+Topology map:
+  WAN links show committed capacity not physical speed
+  Hover tooltip shows: "500/200 Mbps (10G physical)"
+  Color based on committed rate utilization
