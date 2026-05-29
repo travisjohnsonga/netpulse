@@ -251,7 +251,7 @@ services:
         condition: service_healthy
 
   ingest-flow:
-    build: ./ingest
+    build: ./services/ingest-flow
     restart: unless-stopped
     command: python -m ingest.flow_server
     env_file: .env
@@ -265,7 +265,7 @@ services:
         condition: service_healthy
 
   ingest-otlp:
-    build: ./ingest
+    build: ./services/ingest-otlp
     restart: unless-stopped
     command: python -m ingest.otlp_server
     env_file: .env
