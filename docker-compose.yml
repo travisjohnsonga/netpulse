@@ -324,7 +324,7 @@ services:
   config-manager:
     build: ./services/api
     restart: unless-stopped
-    command: python manage.py run_config_manager
+    command: python manage.py run_config_manager --interval 300
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
