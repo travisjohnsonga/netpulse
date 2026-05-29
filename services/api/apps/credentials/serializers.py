@@ -1,49 +1,71 @@
 from rest_framework import serializers
 
-from .models import CredentialProfile, DeviceCredential
 from . import vault
+from .models import CredentialProfile
 
-# Secret fields accepted on write. They are NEVER stored on the model or
-# returned on read — they are pushed straight to OpenBao and discarded here.
+# Write-only secret inputs. Accepted on write, forwarded to OpenBao as one
+# object, never persisted to PostgreSQL and never echoed on read.
 SECRET_FIELDS = (
-    "community",       # SNMP v1/v2c
-    "auth_password",   # SNMP v3 auth
-    "priv_password",   # SNMP v3 priv
-    "password",        # SSH / HTTP basic / NETCONF / gNMI
-    "private_key",     # SSH key
-    "passphrase",      # SSH key passphrase
-    "token",           # HTTP bearer token
-    "api_key",         # HTTP API key
+    "ssh_password",
+    "ssh_private_key",
+    "ssh_passphrase",
+    "snmpv2c_community",
+    "snmpv3_auth_key",
+    "snmpv3_priv_key",
+    "https_password",
+    "https_token",
+    "https_api_key",
+    "gnmi_password",
+    "gnmi_client_cert",
+    "gnmi_client_key",
 )
+
+# Non-secret model fields the client may set.
+CONFIG_FIELDS = (
+    "name", "description",
+    "ssh_enabled", "ssh_username", "ssh_auth_method", "ssh_port",
+    "snmpv2c_enabled", "snmpv2c_port",
+    "snmpv3_enabled", "snmpv3_username", "snmpv3_security_level",
+    "snmpv3_auth_protocol", "snmpv3_priv_protocol", "snmpv3_port",
+    "https_enabled", "https_auth_type", "https_username", "https_port", "https_verify_tls",
+    "netconf_enabled", "netconf_port", "netconf_use_ssh_creds", "netconf_username",
+    "gnmi_enabled", "gnmi_username", "gnmi_port", "gnmi_tls_enabled",
+)
+
+
+def _secret_field():
+    return serializers.CharField(write_only=True, required=False, allow_blank=True)
 
 
 class CredentialProfileSerializer(serializers.ModelSerializer):
     device_count = serializers.IntegerField(read_only=True)
+    enabled_protocols = serializers.ListField(child=serializers.CharField(), read_only=True)
 
-    # Write-only secret inputs — accepted, forwarded to OpenBao, never echoed.
-    community = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    auth_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    priv_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    private_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    passphrase = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    token = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    api_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Write-only secrets — not model fields; forwarded to OpenBao.
+    ssh_password = _secret_field()
+    ssh_private_key = _secret_field()
+    ssh_passphrase = _secret_field()
+    snmpv2c_community = _secret_field()
+    snmpv3_auth_key = _secret_field()
+    snmpv3_priv_key = _secret_field()
+    https_password = _secret_field()
+    https_token = _secret_field()
+    https_api_key = _secret_field()
+    gnmi_password = _secret_field()
+    gnmi_client_cert = _secret_field()
+    gnmi_client_key = _secret_field()
 
     class Meta:
         model = CredentialProfile
         fields = (
-            "id", "name", "credential_type", "description",
-            "username", "auth_method", "port", "tls_enabled",
-            "snmp_version", "snmp_security_level", "auth_protocol", "priv_protocol",
-            "vault_path", "device_count",
+            "id", *CONFIG_FIELDS,
+            "vault_path", "device_count", "enabled_protocols",
             "created_by", "last_tested", "last_test_result", "last_test_message",
             "created_at", "updated_at",
-            # write-only secrets
             *SECRET_FIELDS,
         )
         read_only_fields = (
-            "vault_path", "device_count", "created_by",
+            "vault_path", "device_count", "enabled_protocols", "created_by",
             "last_tested", "last_test_result", "last_test_message",
             "created_at", "updated_at",
         )
@@ -54,7 +76,6 @@ class CredentialProfileSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         secrets = self._pop_secrets(validated_data)
         profile = CredentialProfile.objects.create(**validated_data)
-        # vault_path derives from the pk, so set it after the row exists.
         profile.vault_path = profile.default_vault_path()
         profile.save(update_fields=["vault_path"])
         vault.write_secret(profile.vault_path, secrets)
@@ -68,34 +89,19 @@ class CredentialProfileSerializer(serializers.ModelSerializer):
             instance.vault_path = instance.default_vault_path()
         instance.save()
         if secrets:
-            vault.write_secret(instance.vault_path, secrets)
+            # Merge with existing secrets so a partial update doesn't drop others.
+            merged = {**vault.read_secret(instance.vault_path), **secrets}
+            vault.write_secret(instance.vault_path, merged)
         return instance
 
 
 class CredentialProfileListSerializer(serializers.ModelSerializer):
     device_count = serializers.IntegerField(read_only=True)
+    enabled_protocols = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = CredentialProfile
         fields = (
-            "id", "name", "credential_type", "username", "device_count",
+            "id", "name", "enabled_protocols", "device_count",
             "last_tested", "last_test_result", "created_at",
         )
-
-
-class DeviceCredentialSerializer(serializers.ModelSerializer):
-    credential_name = serializers.CharField(source="credential.name", read_only=True)
-    credential_type = serializers.CharField(source="credential.credential_type", read_only=True)
-    device_hostname = serializers.CharField(source="device.hostname", read_only=True)
-
-    class Meta:
-        model = DeviceCredential
-        fields = (
-            "id", "device", "device_hostname",
-            "credential", "credential_name", "credential_type",
-            "purpose", "is_primary", "last_used", "last_success",
-            "failure_count", "notes", "created_at", "updated_at",
-        )
-        # device is taken from the URL on the nested create endpoint.
-        read_only_fields = ("device", "last_used", "last_success", "failure_count",
-                            "created_at", "updated_at")

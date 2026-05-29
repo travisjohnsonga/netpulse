@@ -1,38 +1,41 @@
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from drf_spectacular.utils import OpenApiResponse, extend_schema
-from rest_framework import generics, status, viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
-from apps.devices.models import Device
-
-from .models import CredentialProfile, DeviceCredential
-from .serializers import (
-    CredentialProfileListSerializer,
-    CredentialProfileSerializer,
-    DeviceCredentialSerializer,
-)
+from .models import CredentialProfile, PROTOCOL_LABELS
+from .serializers import CredentialProfileListSerializer, CredentialProfileSerializer
 from . import probe, vault
+
+# How each protocol maps onto the reachability probe.
+_PROBE_TYPE = {
+    "ssh": "ssh_password",
+    "snmpv2c": "snmpv2c",
+    "snmpv3": "snmpv3",
+    "https": "http_basic",
+    "netconf": "netconf",
+    "gnmi": "gnmi",
+}
 
 
 class CredentialProfileViewSet(viewsets.ModelViewSet):
     """
-    Manage reusable credential profiles (SNMP, SSH, HTTP, gNMI, NETCONF).
+    Manage multi-protocol credential profiles (SSH, SNMPv2c/v3, HTTPS, NETCONF, gNMI).
 
-    Profiles store only authentication *metadata* — secret material (passwords,
-    keys, community strings, tokens) is written to OpenBao and never returned on
-    read. Filter by `credential_type` or `last_test_result`; search by name or
-    username. Extra actions: `test/?ip=` probes reachability against an IP and
-    records the result; `devices/` lists the device associations using a profile.
+    A profile enables one or more protocols and stores all their secret material
+    together in OpenBao — never in the database, never echoed on read. Filter by
+    enabled protocol (e.g. `ssh_enabled=true`); search by name. Extra actions:
+    `test/?ip=` probes every enabled protocol against an IP and records the
+    outcome; `devices/` lists the devices using the profile.
     """
 
-    queryset = CredentialProfile.objects.prefetch_related("device_links").all()
-    filterset_fields = ["credential_type", "last_test_result"]
-    search_fields = ["name", "username", "description"]
-    ordering_fields = ["name", "credential_type", "last_tested", "created_at"]
+    queryset = CredentialProfile.objects.all()
+    filterset_fields = [
+        "ssh_enabled", "snmpv2c_enabled", "snmpv3_enabled",
+        "https_enabled", "netconf_enabled", "gnmi_enabled", "last_test_result",
+    ]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "last_tested", "created_at"]
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -44,85 +47,59 @@ class CredentialProfileViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=user)
 
     def perform_destroy(self, instance):
-        # Remove secret material from OpenBao before dropping the metadata row.
         vault.delete_secret(instance.vault_path)
         instance.delete()
 
     @action(detail=True, methods=["post"], url_path="test")
     def test(self, request, pk=None):
         """
-        Probe reachability of this credential's service against an IP.
-        Requires ``?ip=x.x.x.x``. Records the outcome on the profile.
+        Probe every enabled protocol against ``?ip=x.x.x.x``. Returns a per-protocol
+        result list plus an overall verdict, and records it on the profile.
         """
         ip = request.query_params.get("ip")
         if not ip:
-            return Response(
-                {"detail": "Query parameter 'ip' is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Query parameter 'ip' is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
         profile = self.get_object()
-        result = probe.probe(
-            profile.credential_type, ip, profile.port, profile.tls_enabled
-        )
+        protocols = profile.enabled_protocols
+        if not protocols:
+            return Response({"detail": "No protocols are enabled on this profile."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        results = []
+        for proto in protocols:
+            r = probe.probe(_PROBE_TYPE[proto], ip, profile.port_for(proto), False)
+            results.append({
+                "protocol": proto,
+                "label": PROTOCOL_LABELS[proto],
+                "success": r["success"],
+                "message": r["message"],
+                "port": r["port"],
+            })
+
+        n_ok = sum(1 for r in results if r["success"])
+        if n_ok == len(results):
+            overall = CredentialProfile.TestResult.SUCCESS
+        elif n_ok == 0:
+            overall = CredentialProfile.TestResult.FAILURE
+        else:
+            overall = CredentialProfile.TestResult.PARTIAL
+
         profile.last_tested = timezone.now()
-        profile.last_test_result = (
-            CredentialProfile.TestResult.SUCCESS if result["success"]
-            else CredentialProfile.TestResult.FAILURE
+        profile.last_test_result = overall
+        profile.last_test_message = "; ".join(
+            f"{r['label']}: {'ok' if r['success'] else 'fail'}" for r in results
         )
-        profile.last_test_message = result["message"]
         profile.save(update_fields=["last_tested", "last_test_result", "last_test_message"])
-        return Response({"ip": ip, **result})
+
+        return Response({"ip": ip, "overall": overall, "results": results})
 
     @action(detail=True, methods=["get"], url_path="devices")
     def devices(self, request, pk=None):
-        """List the device associations that use this credential profile."""
+        """List devices assigned to this credential profile."""
         profile = self.get_object()
-        links = profile.device_links.select_related("device", "credential").all()
-        return Response(DeviceCredentialSerializer(links, many=True).data)
-
-
-# ── Device-scoped credential association endpoints ─────────────────────────────
-# Mounted under /api/devices/<device_id>/credentials/ via apps.devices.urls.
-
-
-class DeviceCredentialListCreateView(generics.ListCreateAPIView):
-    """GET/POST credential associations for a single device."""
-
-    serializer_class = DeviceCredentialSerializer
-    # Lets drf-spectacular introspect the model without resolving `device_id`.
-    queryset = DeviceCredential.objects.none()
-
-    def _device(self):
-        return get_object_or_404(Device, pk=self.kwargs["device_id"])
-
-    def get_queryset(self):
-        return (
-            DeviceCredential.objects
-            .filter(device_id=self.kwargs["device_id"])
-            .select_related("device", "credential")
-        )
-
-    def perform_create(self, serializer):
-        device = self._device()
-        purpose = serializer.validated_data.get("purpose")
-        if DeviceCredential.objects.filter(device=device, purpose=purpose).exists():
-            raise ValidationError(
-                {"purpose": f"This device already has a credential for '{purpose}'. "
-                            "Remove it first or update the existing association."}
-            )
-        serializer.save(device=device)
-
-
-@extend_schema(
-    responses={204: OpenApiResponse(description="Association removed.")},
-    description="Remove the credential association for a device + purpose.",
-)
-class DeviceCredentialPurposeView(APIView):
-    """DELETE the credential association for a device + purpose."""
-
-    def delete(self, request, device_id, purpose):
-        link = get_object_or_404(
-            DeviceCredential, device_id=device_id, purpose=purpose
-        )
-        link.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        devices = profile.devices.all()
+        return Response([
+            {"id": d.id, "hostname": d.hostname, "ip_address": d.ip_address, "status": d.status}
+            for d in devices
+        ])

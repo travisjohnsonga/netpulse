@@ -49,13 +49,12 @@ class Device(TimestampedModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     groups = models.ManyToManyField(DeviceGroup, blank=True, related_name="devices")
-    # Credentials are managed via CredentialProfile records (secrets in OpenBao);
-    # the through model records the purpose + per-device usage stats.
-    credentials = models.ManyToManyField(
+    # A device uses one multi-protocol credential profile (secrets in OpenBao).
+    credential_profile = models.ForeignKey(
         "credentials.CredentialProfile",
-        through="credentials.DeviceCredential",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
         related_name="devices",
-        blank=True,
     )
     notes = models.TextField(blank=True)
 

@@ -1,6 +1,6 @@
 import pytest
 
-from apps.credentials.models import CredentialProfile, DeviceCredential
+from apps.credentials.models import CredentialProfile
 from apps.devices.models import Device
 
 pytestmark = pytest.mark.django_db
@@ -15,137 +15,123 @@ def device():
 
 
 @pytest.fixture
-def snmp_profile():
+def ssh_profile():
     return CredentialProfile.objects.create(
-        name="DC SNMPv2c",
-        credential_type=CredentialProfile.CredentialType.SNMPV2C,
-        snmp_version=CredentialProfile.SNMPVersion.V2C,
+        name="Cisco Standard",
+        ssh_enabled=True,
+        ssh_username="netadmin",
+        ssh_auth_method="password",
         vault_path="netpulse/credentials/seed",
     )
 
 
-# ── CredentialProfile CRUD ──────────────────────────────────────────────────
+# ── CRUD ─────────────────────────────────────────────────────────────────────
 
 
 class TestCredentialProfileCrud:
-    def test_create_derives_vault_path_and_hides_secret(self, auth_client):
+    def test_create_multi_protocol_hides_secrets(self, auth_client):
         resp = auth_client.post("/api/credentials/", {
-            "name": "Branch SSH",
-            "credential_type": "ssh_password",
-            "username": "netadmin",
-            "password": "super-secret",
+            "name": "Cisco Full",
+            "ssh_enabled": True,
+            "ssh_username": "admin",
+            "ssh_auth_method": "password",
+            "ssh_password": "s3cret",
+            "snmpv3_enabled": True,
+            "snmpv3_username": "snmpuser",
+            "snmpv3_auth_key": "authkey123",
+            "snmpv3_priv_key": "privkey123",
         }, format="json")
         assert resp.status_code == 201, resp.content
         body = resp.json()
-        # Secret material is never echoed back.
-        assert "password" not in body
-        # vault_path is auto-derived from the pk and stored, not the secret.
+        # No secret echoed back.
+        for f in ("ssh_password", "snmpv3_auth_key", "snmpv3_priv_key"):
+            assert f not in body
+        assert set(body["enabled_protocols"]) == {"ssh", "snmpv3"}
         profile = CredentialProfile.objects.get(pk=body["id"])
         assert body["vault_path"] == f"netpulse/credentials/{profile.pk}"
-        # The password is never persisted to the relational DB.
-        assert not hasattr(profile, "password")
+        assert not hasattr(profile, "ssh_password")
 
-    def test_list_uses_lightweight_serializer(self, auth_client, snmp_profile):
+    def test_list_uses_lightweight_serializer(self, auth_client, ssh_profile):
         resp = auth_client.get("/api/credentials/")
         assert resp.status_code == 200
         item = resp.json()["results"][0]
         assert set(item.keys()) == {
-            "id", "name", "credential_type", "username",
-            "device_count", "last_tested", "last_test_result", "created_at",
+            "id", "name", "enabled_protocols", "device_count",
+            "last_tested", "last_test_result", "created_at",
         }
+        assert item["enabled_protocols"] == ["ssh"]
 
-    def test_filter_by_type(self, auth_client, snmp_profile):
-        CredentialProfile.objects.create(
-            name="ssh", credential_type="ssh_key", vault_path="x")
-        resp = auth_client.get("/api/credentials/?credential_type=snmpv2c")
+    def test_filter_by_protocol(self, auth_client, ssh_profile):
+        CredentialProfile.objects.create(name="snmp-only", snmpv2c_enabled=True, vault_path="x")
+        resp = auth_client.get("/api/credentials/?ssh_enabled=true")
         assert resp.status_code == 200
-        results = resp.json()["results"]
-        assert all(c["credential_type"] == "snmpv2c" for c in results)
+        names = [c["name"] for c in resp.json()["results"]]
+        assert names == ["Cisco Standard"]
 
-    def test_device_count(self, auth_client, snmp_profile, device):
-        DeviceCredential.objects.create(
-            device=device, credential=snmp_profile, purpose="snmp_polling")
-        resp = auth_client.get(f"/api/credentials/{snmp_profile.pk}/")
+    def test_device_count(self, auth_client, ssh_profile, device):
+        device.credential_profile = ssh_profile
+        device.save()
+        resp = auth_client.get(f"/api/credentials/{ssh_profile.pk}/")
         assert resp.json()["device_count"] == 1
+
+    def test_viewer_cannot_write(self, viewer_client):
+        resp = viewer_client.post("/api/credentials/", {"name": "x", "ssh_enabled": True}, format="json")
+        assert resp.status_code == 403
 
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/credentials/").status_code == 401
-
-    def test_viewer_cannot_write(self, viewer_client):
-        resp = viewer_client.post("/api/credentials/", {
-            "name": "x", "credential_type": "ssh_password"}, format="json")
-        assert resp.status_code == 403
 
 
 # ── Test (probe) endpoint ────────────────────────────────────────────────────
 
 
 class TestCredentialTestEndpoint:
-    def test_requires_ip(self, auth_client, snmp_profile):
-        resp = auth_client.post(f"/api/credentials/{snmp_profile.pk}/test/")
+    def test_requires_ip(self, auth_client, ssh_profile):
+        resp = auth_client.post(f"/api/credentials/{ssh_profile.pk}/test/")
         assert resp.status_code == 400
 
-    def test_records_outcome(self, auth_client, snmp_profile):
-        # SNMP is UDP — sending a datagram to loopback succeeds instantly.
-        resp = auth_client.post(
-            f"/api/credentials/{snmp_profile.pk}/test/?ip=127.0.0.1")
+    def test_no_protocols_enabled(self, auth_client):
+        p = CredentialProfile.objects.create(name="empty", vault_path="x")
+        resp = auth_client.post(f"/api/credentials/{p.pk}/test/?ip=127.0.0.1")
+        assert resp.status_code == 400
+
+    def test_per_protocol_results(self, auth_client):
+        p = CredentialProfile.objects.create(
+            name="multi", ssh_enabled=True, snmpv2c_enabled=True, vault_path="x")
+        resp = auth_client.post(f"/api/credentials/{p.pk}/test/?ip=127.0.0.1")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["ip"] == "127.0.0.1"
-        assert "success" in body and "message" in body
-        snmp_profile.refresh_from_db()
-        assert snmp_profile.last_tested is not None
-        assert snmp_profile.last_test_result in ("success", "failure")
+        assert body["overall"] in ("success", "partial", "failure")
+        protos = {r["protocol"] for r in body["results"]}
+        assert protos == {"ssh", "snmpv2c"}
+        p.refresh_from_db()
+        assert p.last_tested is not None
 
-    def test_devices_action(self, auth_client, snmp_profile, device):
-        DeviceCredential.objects.create(
-            device=device, credential=snmp_profile, purpose="snmp_polling")
-        resp = auth_client.get(f"/api/credentials/{snmp_profile.pk}/devices/")
+    def test_devices_action(self, auth_client, ssh_profile, device):
+        device.credential_profile = ssh_profile
+        device.save()
+        resp = auth_client.get(f"/api/credentials/{ssh_profile.pk}/devices/")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) == 1
-        assert data[0]["device_hostname"] == "core-rtr-01"
-        assert data[0]["purpose"] == "snmp_polling"
+        assert len(data) == 1 and data[0]["hostname"] == "core-rtr-01"
 
 
-# ── Device-scoped association endpoints ──────────────────────────────────────
+# ── Device assignment ────────────────────────────────────────────────────────
 
 
-class TestDeviceCredentialEndpoints:
-    def test_list_credentials_for_device(self, auth_client, device, snmp_profile):
-        DeviceCredential.objects.create(
-            device=device, credential=snmp_profile, purpose="snmp_polling")
-        resp = auth_client.get(f"/api/devices/{device.pk}/credentials/")
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 1
+class TestDeviceAssignment:
+    def test_assign_profile_to_device(self, auth_client, device, ssh_profile):
+        resp = auth_client.patch(
+            f"/api/devices/{device.pk}/", {"credential_profile": ssh_profile.pk}, format="json")
+        assert resp.status_code == 200, resp.content
+        device.refresh_from_db()
+        assert device.credential_profile_id == ssh_profile.pk
 
-    def test_associate_credential(self, auth_client, device, snmp_profile):
-        resp = auth_client.post(f"/api/devices/{device.pk}/credentials/", {
-            "credential": snmp_profile.pk,
-            "purpose": "snmp_polling",
-            "is_primary": True,
-        }, format="json")
-        assert resp.status_code == 201, resp.content
-        assert DeviceCredential.objects.filter(
-            device=device, purpose="snmp_polling").exists()
-
-    def test_one_credential_per_purpose(self, auth_client, device, snmp_profile):
-        DeviceCredential.objects.create(
-            device=device, credential=snmp_profile, purpose="snmp_polling")
-        resp = auth_client.post(f"/api/devices/{device.pk}/credentials/", {
-            "credential": snmp_profile.pk, "purpose": "snmp_polling",
-        }, format="json")
-        assert resp.status_code == 400  # unique_together violation
-
-    def test_delete_by_purpose(self, auth_client, device, snmp_profile):
-        DeviceCredential.objects.create(
-            device=device, credential=snmp_profile, purpose="snmp_polling")
-        resp = auth_client.delete(
-            f"/api/devices/{device.pk}/credentials/snmp_polling/")
-        assert resp.status_code == 204
-        assert not DeviceCredential.objects.filter(device=device).exists()
-
-    def test_delete_unknown_purpose_404(self, auth_client, device):
-        resp = auth_client.delete(
-            f"/api/devices/{device.pk}/credentials/gnmi/")
-        assert resp.status_code == 404
+    def test_unassign_profile(self, auth_client, device, ssh_profile):
+        device.credential_profile = ssh_profile
+        device.save()
+        resp = auth_client.patch(
+            f"/api/devices/{device.pk}/", {"credential_profile": None}, format="json")
+        assert resp.status_code == 200, resp.content
+        device.refresh_from_db()
+        assert device.credential_profile_id is None

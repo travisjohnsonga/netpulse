@@ -1,84 +1,98 @@
 """
-Credential profile models.
+Credential profile model.
 
-A CredentialProfile holds only *metadata* about how to authenticate to a
-device (type, username, SNMP/SSH/TLS parameters, port, …).  The actual
-secret material — passwords, SSH private keys, SNMP community strings, API
-tokens — is **never** stored in PostgreSQL.  It lives in OpenBao at
-``vault_path``; this database only keeps the path.  See ``apps.credentials.vault``.
+A single CredentialProfile can carry *multiple* protocols (SSH, SNMPv2c,
+SNMPv3, HTTPS/API, NETCONF, gNMI), each toggled on with an ``*_enabled`` flag
+and configured with its own non-secret parameters. A device references exactly
+one profile (``Device.credential_profile``); that profile covers every protocol
+NetPulse needs for the device.
 
-Devices are linked to profiles through :class:`DeviceCredential`, which records
-*why* a device uses a profile (the ``purpose``) plus per-device usage stats.
+Secret material — passwords, keys, community strings, tokens — is **never**
+stored in PostgreSQL. All of a profile's secrets live together in OpenBao at
+``vault_path`` (only non-null values are written). See ``apps.credentials.vault``.
 """
 from django.contrib.auth import get_user_model
 from django.db import models
 
 from apps.core.models import TimestampedModel
 
+# Logical protocol keys ↔ their `*_enabled` flag. Order is display order.
+PROTOCOLS = ["ssh", "snmpv2c", "snmpv3", "https", "netconf", "gnmi"]
+
+PROTOCOL_LABELS = {
+    "ssh": "SSH",
+    "snmpv2c": "SNMPv2c",
+    "snmpv3": "SNMPv3",
+    "https": "HTTPS/API",
+    "netconf": "NETCONF",
+    "gnmi": "gNMI",
+}
+
 
 class CredentialProfile(TimestampedModel):
-    """A reusable set of authentication parameters, secrets held in OpenBao."""
+    """A reusable, multi-protocol credential set; secrets held in OpenBao."""
 
-    class CredentialType(models.TextChoices):
-        SNMPV1       = "snmpv1",       "SNMP v1"
-        SNMPV2C      = "snmpv2c",      "SNMP v2c"
-        SNMPV3       = "snmpv3",       "SNMP v3"
-        SSH_PASSWORD = "ssh_password", "SSH (password)"
-        SSH_KEY      = "ssh_key",      "SSH (key)"
-        HTTP_BASIC   = "http_basic",   "HTTP Basic Auth"
-        HTTP_TOKEN   = "http_token",   "HTTP Bearer Token"
-        HTTP_APIKEY  = "http_apikey",  "HTTP API Key"
-        GNMI         = "gnmi",         "gNMI"
-        NETCONF      = "netconf",      "NETCONF"
-
-    class SNMPVersion(models.TextChoices):
-        V1  = "1",  "v1"
-        V2C = "2c", "v2c"
-        V3  = "3",  "v3"
+    class SSHAuthMethod(models.TextChoices):
+        PASSWORD = "password", "Password"
+        KEY = "key", "SSH Key"
 
     class SNMPSecurityLevel(models.TextChoices):
         NO_AUTH_NO_PRIV = "noAuthNoPriv", "noAuthNoPriv"
-        AUTH_NO_PRIV    = "authNoPriv",   "authNoPriv"
-        AUTH_PRIV       = "authPriv",     "authPriv"
+        AUTH_NO_PRIV = "authNoPriv", "authNoPriv"
+        AUTH_PRIV = "authPriv", "authPriv"
 
-    class AuthMethod(models.TextChoices):
-        PASSWORD = "password", "Password"
-        KEY      = "key",      "SSH Key"
-        TOKEN    = "token",    "Token"
-        APIKEY   = "apikey",   "API Key"
-        COMMUNITY = "community", "Community String"
+    class HTTPSAuthType(models.TextChoices):
+        BASIC = "basic", "Basic"
+        TOKEN = "token", "Bearer Token"
+        APIKEY = "apikey", "API Key"
 
     class TestResult(models.TextChoices):
         UNTESTED = "untested", "Untested"
-        SUCCESS  = "success",  "Success"
-        FAILURE  = "failure",  "Failure"
+        SUCCESS = "success", "Success"
+        PARTIAL = "partial", "Partial"
+        FAILURE = "failure", "Failure"
 
     name = models.CharField(max_length=255, unique=True, db_index=True)
-    credential_type = models.CharField(
-        max_length=20, choices=CredentialType.choices, db_index=True
-    )
     description = models.TextField(blank=True)
-    # OpenBao KV path where the secret material lives. Auto-derived from the pk
-    # on first save; the actual secrets are never persisted in this table.
+    # OpenBao KV path holding ALL of this profile's secrets in one object.
     vault_path = models.CharField(max_length=512, blank=True)
 
-    # ── Common auth parameters ────────────────────────────────────────────────
-    username = models.CharField(max_length=255, blank=True)
-    auth_method = models.CharField(
-        max_length=20, choices=AuthMethod.choices, blank=True
-    )
-    port = models.PositiveIntegerField(null=True, blank=True)
-    tls_enabled = models.BooleanField(default=False)
+    # ── SSH ───────────────────────────────────────────────────────────────────
+    ssh_enabled = models.BooleanField(default=False)
+    ssh_username = models.CharField(max_length=255, blank=True)
+    ssh_auth_method = models.CharField(max_length=10, choices=SSHAuthMethod.choices, blank=True)
+    ssh_port = models.PositiveIntegerField(default=22)
 
-    # ── SNMP-specific ─────────────────────────────────────────────────────────
-    snmp_version = models.CharField(
-        max_length=4, choices=SNMPVersion.choices, blank=True
-    )
-    snmp_security_level = models.CharField(
-        max_length=16, choices=SNMPSecurityLevel.choices, blank=True
-    )
-    auth_protocol = models.CharField(max_length=16, blank=True)  # SHA, MD5, SHA256…
-    priv_protocol = models.CharField(max_length=16, blank=True)  # AES, DES, AES256…
+    # ── SNMPv2c ───────────────────────────────────────────────────────────────
+    snmpv2c_enabled = models.BooleanField(default=False)
+    snmpv2c_port = models.PositiveIntegerField(default=161)
+
+    # ── SNMPv3 ────────────────────────────────────────────────────────────────
+    snmpv3_enabled = models.BooleanField(default=False)
+    snmpv3_username = models.CharField(max_length=255, blank=True)
+    snmpv3_security_level = models.CharField(max_length=16, choices=SNMPSecurityLevel.choices, blank=True)
+    snmpv3_auth_protocol = models.CharField(max_length=16, blank=True)  # SHA, MD5…
+    snmpv3_priv_protocol = models.CharField(max_length=16, blank=True)  # AES, DES…
+    snmpv3_port = models.PositiveIntegerField(default=161)
+
+    # ── HTTPS / API ───────────────────────────────────────────────────────────
+    https_enabled = models.BooleanField(default=False)
+    https_auth_type = models.CharField(max_length=10, choices=HTTPSAuthType.choices, blank=True)
+    https_username = models.CharField(max_length=255, blank=True)
+    https_port = models.PositiveIntegerField(default=443)
+    https_verify_tls = models.BooleanField(default=True)
+
+    # ── NETCONF ───────────────────────────────────────────────────────────────
+    netconf_enabled = models.BooleanField(default=False)
+    netconf_port = models.PositiveIntegerField(default=830)
+    netconf_use_ssh_creds = models.BooleanField(default=True)
+    netconf_username = models.CharField(max_length=255, blank=True)
+
+    # ── gNMI ──────────────────────────────────────────────────────────────────
+    gnmi_enabled = models.BooleanField(default=False)
+    gnmi_username = models.CharField(max_length=255, blank=True)
+    gnmi_port = models.PositiveIntegerField(default=57400)
+    gnmi_tls_enabled = models.BooleanField(default=True)
 
     # ── Audit / test bookkeeping ──────────────────────────────────────────────
     created_by = models.ForeignKey(
@@ -92,52 +106,21 @@ class CredentialProfile(TimestampedModel):
     last_test_message = models.TextField(blank=True)
 
     class Meta(TimestampedModel.Meta):
-        indexes = [models.Index(fields=["credential_type", "name"])]
+        pass
 
     def __str__(self):
-        return f"{self.name} ({self.credential_type})"
+        return self.name
 
     def default_vault_path(self) -> str:
-        """Deterministic OpenBao path for this profile's secret material."""
         return f"netpulse/credentials/{self.pk}"
 
     @property
+    def enabled_protocols(self) -> list[str]:
+        return [p for p in PROTOCOLS if getattr(self, f"{p}_enabled")]
+
+    def port_for(self, protocol: str) -> int:
+        return getattr(self, f"{protocol}_port", 0)
+
+    @property
     def device_count(self) -> int:
-        return self.device_links.count()
-
-
-class DeviceCredential(TimestampedModel):
-    """
-    Through model linking a :class:`~apps.devices.models.Device` to a
-    :class:`CredentialProfile` for a specific ``purpose`` (one credential per
-    purpose per device).
-    """
-
-    class Purpose(models.TextChoices):
-        SNMP_POLLING = "snmp_polling", "SNMP Polling"
-        SSH_CONFIG   = "ssh_config",   "SSH (config push)"
-        SSH_BACKUP   = "ssh_backup",   "SSH (config backup)"
-        NETCONF      = "netconf",      "NETCONF"
-        GNMI         = "gnmi",         "gNMI"
-        HTTP_API     = "http_api",     "HTTP API"
-
-    device = models.ForeignKey(
-        "devices.Device", on_delete=models.CASCADE, related_name="credential_links"
-    )
-    credential = models.ForeignKey(
-        CredentialProfile, on_delete=models.CASCADE, related_name="device_links"
-    )
-    purpose = models.CharField(max_length=20, choices=Purpose.choices, db_index=True)
-    is_primary = models.BooleanField(default=False)
-    last_used = models.DateTimeField(null=True, blank=True)
-    last_success = models.DateTimeField(null=True, blank=True)
-    failure_count = models.PositiveIntegerField(default=0)
-    notes = models.TextField(blank=True)
-
-    class Meta(TimestampedModel.Meta):
-        # A device uses at most one credential per purpose.
-        unique_together = [("device", "purpose")]
-        indexes = [models.Index(fields=["device", "purpose"])]
-
-    def __str__(self):
-        return f"{self.device} → {self.credential} ({self.purpose})"
+        return self.devices.count()
