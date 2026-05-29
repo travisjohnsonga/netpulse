@@ -1173,3 +1173,40 @@ Device Detail → Config tab:
   View in GitHub/GitLab link
   Download config button
   Restore to previous version button
+
+## Sites/Locations
+
+Site model (apps/devices/ or apps/core/):
+  name, slug, description
+  address, city, state, country
+  latitude, longitude
+  site_type: datacenter/campus/branch/remote/cloud
+  tenant (FK), parent_site (FK self — hierarchy)
+  contact_name, contact_email, contact_phone
+  notes
+
+API: /api/sites/ CRUD + /api/sites/{id}/devices/
+
+Frontend route: /sites
+  Sites list — table with hierarchy view option
+  Site detail — tabs: Overview, Devices, Availability, WAN Circuits
+  Create/edit modal with parent site dropdown
+
+## NetBox Import
+
+POST /api/import/netbox/
+  netbox_url, api_token (OpenBao), import_options
+
+Import order:
+  1. Sites (map NetBox sites → NetPulse sites)
+  2. Device roles
+  3. Manufacturers + device types
+  4. Devices with all metadata
+
+NetBox v3 and v4 compatibility (auto-detect)
+Skip existing devices (match by hostname/IP)
+Store NetBox API token in OpenBao
+
+Settings → Integrations → NetBox card
+Import progress UI with live count
+Import history with re-import option
