@@ -222,7 +222,7 @@ services:
         condition: service_healthy
 
   ingest-snmp:
-    build: ./ingest
+    build: ./services/ingest-snmp
     restart: unless-stopped
     command: python -m ingest.snmp_server
     env_file: .env
