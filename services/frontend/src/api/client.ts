@@ -381,6 +381,38 @@ export async function fetchCollectors(): Promise<Collector[]> {
   return unwrap(data)
 }
 
+// ── NetBox import ────────────────────────────────────────────────────────────
+
+export interface NetBoxImportRecord {
+  id: number
+  netbox_url: string
+  netbox_version: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  options: Record<string, boolean>
+  sites_imported: number
+  devices_imported: number
+  skipped: number
+  errors: string[]
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export async function netboxTestConnection(netbox_url: string, api_token: string): Promise<{ ok: boolean; version: string; message: string }> {
+  const { data } = await api.post<{ ok: boolean; version: string; message: string }>('/import/netbox/test-connection/', { netbox_url, api_token })
+  return data
+}
+
+export async function netboxImport(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean> }): Promise<NetBoxImportRecord> {
+  const { data } = await api.post<NetBoxImportRecord>('/import/netbox/', payload)
+  return data
+}
+
+export async function fetchNetboxImports(): Promise<NetBoxImportRecord[]> {
+  const { data } = await api.get<NetBoxImportRecord[] | Paginated<NetBoxImportRecord>>('/import/netbox/')
+  return unwrap(data)
+}
+
 // ── Sites ────────────────────────────────────────────────────────────────────
 
 export type SiteType = 'datacenter' | 'campus' | 'branch' | 'remote' | 'cloud'

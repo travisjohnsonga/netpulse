@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.lifecycle",
     "apps.security",
     "apps.collectors",
+    "apps.integrations",
 ]
 
 MIDDLEWARE = [

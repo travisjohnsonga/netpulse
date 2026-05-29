@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Modal from '../../components/Modal'
+import NetBoxImportModal from '../../components/NetBoxImportModal'
 import { SectionHeader } from '../Settings'
 
 // Integration catalog. Connection state isn't persisted to a backend yet — the
@@ -34,6 +35,7 @@ const CATEGORIES: Category[] = [
       { id: 'mist', name: 'Juniper Mist', description: 'AI-driven Wi-Fi & WAN', icon: '🤖', summary: '1 org synced', fields: [{ key: 'token', label: 'API Token', secret: true }, { key: 'org', label: 'Org ID' }] },
       { id: 'unifi', name: 'Ubiquiti UniFi', description: 'Self-hosted UniFi Network', icon: '📶', fields: [{ key: 'host', label: 'Controller URL', placeholder: 'https://unifi.local' }, { key: 'user', label: 'Username' }, { key: 'pass', label: 'Password', secret: true }] },
       { id: 'cradlepoint', name: 'Cradlepoint', description: 'NetCloud cellular routers', icon: '📡', fields: [{ key: 'cp_api_id', label: 'CP-API-ID', secret: true }, { key: 'cp_api_key', label: 'CP-API-KEY', secret: true }] },
+      { id: 'netbox', name: 'NetBox', description: 'Import sites & devices from NetBox (v3/v4)', icon: '🗄', fields: [] },
     ],
   },
   {
@@ -65,6 +67,7 @@ export default function Integrations() {
   // id → summary string when connected (local-only for now).
   const [connected, setConnected] = useState<Record<string, string>>({})
   const [setup, setSetup] = useState<Integration | null>(null)
+  const [netboxOpen, setNetboxOpen] = useState(false)
 
   const statusOf = (id: string): Status => (id in connected ? 'connected' : 'not_configured')
 
@@ -104,10 +107,10 @@ export default function Integrations() {
                         {status === 'connected' ? connected[it.id] : ''}
                       </span>
                       <button
-                        onClick={() => setSetup(it)}
+                        onClick={() => (it.id === 'netbox' ? setNetboxOpen(true) : setSetup(it))}
                         className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
                       >
-                        {status === 'connected' ? 'Configure' : 'Connect'}
+                        {it.id === 'netbox' ? 'Import' : status === 'connected' ? 'Configure' : 'Connect'}
                       </button>
                     </div>
                   </div>
@@ -133,6 +136,8 @@ export default function Integrations() {
           }}
         />
       )}
+
+      {netboxOpen && <NetBoxImportModal onClose={() => setNetboxOpen(false)} />}
     </div>
   )
 }
