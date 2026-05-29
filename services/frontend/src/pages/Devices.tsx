@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
+import DeviceAddModal from '../components/DeviceAddModal'
 import { fetchDevices, type Device } from '../api/client'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -207,30 +208,12 @@ export default function Devices() {
         )}
       </div>
 
-      {/* Add Device Modal (stub) */}
+      {/* Add Device Modal — 5-step workflow */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Add Device</h2>
-            <p className="text-sm text-gray-500 mb-6">
-              Device creation UI coming soon. Configure devices via the API or use auto-discovery.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
-              >
-                Go to API Docs
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeviceAddModal
+          onClose={() => setShowAddModal(false)}
+          onCreated={load}
+        />
       )}
 
       {/* Discovery Modal (stub) */}
