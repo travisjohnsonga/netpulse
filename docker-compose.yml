@@ -105,7 +105,7 @@ services:
     networks:
       - netpulse-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/varz > /dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5

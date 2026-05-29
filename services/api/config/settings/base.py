@@ -1,9 +1,12 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+
+AUTH_USER_MODEL = "core.NetPulseUser"
 
 INSTALLED_APPS = [
     # daphne must precede staticfiles to serve ASGI via `manage.py runserver`
@@ -141,13 +144,25 @@ OPENBAO_TOKEN = os.environ.get("OPENBAO_TOKEN", "")
 
 # ── Django REST Framework ─────────────────────────────────────────────────────
 
+# ── JWT ───────────────────────────────────────────────────────────────────────
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME":  timedelta(hours=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS":  False,
+    "ALGORITHM":              "HS256",
+    "AUTH_HEADER_TYPES":      ("Bearer",),
+    # Include role + username in every access token
+    "TOKEN_OBTAIN_SERIALIZER": "apps.core.serializers.NetPulseTokenObtainPairSerializer",
+}
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "apps.core.permissions.NetPulsePermission",
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
