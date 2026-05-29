@@ -184,6 +184,15 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
+    # Several models expose a `status` field with different choice sets; name each
+    # enum explicitly (by reference to the TextChoices class) so the generated
+    # schema has no naming collisions.
+    "ENUM_NAME_OVERRIDES": {
+        "DeviceStatusEnum": "apps.devices.models.Device.Status",
+        "DiscoveryJobStatusEnum": "apps.devices.models.DiscoveryJob.Status",
+        "DiscoveredDeviceStatusEnum": "apps.devices.models.DiscoveredDevice.Status",
+        "CollectorStatusEnum": "apps.collectors.models.Collector.Status",
+    },
 }
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

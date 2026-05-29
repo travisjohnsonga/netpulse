@@ -5,11 +5,21 @@ import urllib.error
 
 from django.db import connection
 from django.db.utils import OperationalError
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 
+@extend_schema(
+    summary="Liveness / database health",
+    description="Returns overall service status and whether the database is reachable.",
+    responses=inline_serializer(
+        "HealthStatus",
+        {"status": serializers.CharField(), "db": serializers.BooleanField()},
+    ),
+)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
@@ -39,6 +49,14 @@ def _http_ok(url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+@extend_schema(
+    summary="Infrastructure service health",
+    description="Per-service reachability for postgres, valkey, nats, influxdb and opensearch.",
+    responses=inline_serializer(
+        "InfrastructureHealth",
+        {"services": serializers.DictField(child=serializers.BooleanField())},
+    ),
+)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def infrastructure_health(request):

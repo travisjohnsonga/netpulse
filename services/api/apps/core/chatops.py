@@ -23,8 +23,17 @@ import re
 import time
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
+
+# Webhook payloads/responses are platform-specific free-form JSON.
+_webhook_schema = extend_schema(
+    request=OpenApiTypes.OBJECT,
+    responses=OpenApiTypes.OBJECT,
+    tags=["chatops"],
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +137,7 @@ def _verify_slack(request: HttpRequest) -> bool:
     return hmac.compare_digest(expected, sig)
 
 
+@_webhook_schema
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_slack(request: HttpRequest) -> JsonResponse:
@@ -156,6 +166,7 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
 
 # ── Microsoft Teams ───────────────────────────────────────────────────────────
 
+@_webhook_schema
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_teams(request: HttpRequest) -> JsonResponse:
@@ -180,6 +191,7 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
 
 # ── Google Chat ───────────────────────────────────────────────────────────────
 
+@_webhook_schema
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_gchat(request: HttpRequest) -> JsonResponse:
@@ -197,6 +209,7 @@ def webhook_gchat(request: HttpRequest) -> JsonResponse:
 
 # ── Discord ───────────────────────────────────────────────────────────────────
 
+@_webhook_schema
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_discord(request: HttpRequest) -> JsonResponse:
