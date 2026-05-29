@@ -1263,3 +1263,61 @@ cdpCacheDeviceId, cdpCacheDevicePort (Cisco)
 ### Smart Defaults on Discovery
 Auto-select: operUp + has description OR has LLDP neighbor
 Auto-exclude: loopback, tunnel, null, subinterfaces
+
+## Telemetry Collection — Unified Design
+
+### Key Decisions
+- LLDP only — no CDP (open standard, vendor agnostic)
+- Same interface selection UI for both SNMP and gNMI
+- Auto-select collection method based on device capability
+- gNMI preferred when available (faster, lower overhead)
+
+### Models
+TelemetryConfig (OneToOne with Device):
+  primary_method: snmp/gnmi/both
+  snmp_interval (default 300s)
+  gnmi_interval (default 30s)
+  collect_cpu, memory, temperature, power, fans,
+  bgp, inventory, lldp (all BooleanField)
+
+MonitoredInterface:
+  device (FK), if_index (SNMP), if_name, if_description
+  if_speed_mbps, if_type
+  lldp_neighbor_hostname, lldp_neighbor_port, lldp_neighbor_desc
+  poll_traffic, poll_errors, poll_status
+  collection_method: auto/snmp/gnmi
+  circuit_override (FK optional)
+  last_discovered, last_status
+
+### Interface Discovery
+SNMP path: walk ifTable + ifXTable + lldpRemTable
+gNMI path: Get /interfaces/interface/state
+           Get /lldp/interfaces/interface/neighbors
+Both produce same table format.
+
+### gNMI Subscription Paths (OpenConfig)
+Traffic: /interfaces/interface[name=X]/state/counters/in-octets
+         /interfaces/interface[name=X]/state/counters/out-octets
+Status:  /interfaces/interface[name=X]/state/oper-status
+LLDP:    /lldp/interfaces/interface/neighbors/neighbor/state
+CPU:     /components/component/cpu/utilization/state/instant
+Memory:  /components/component/state/memory/utilized
+BGP:     /network-instances/.../bgp/neighbors/neighbor/state
+
+### Subscription Modes
+ON_CHANGE: interface status (event-driven)
+SAMPLE: traffic counters, CPU, memory (interval-based)
+ONCE: discovery, inventory
+
+### Smart Interface Auto-Select
+Include: oper-status UP + (has description OR has LLDP neighbor)
+Exclude: loopback, tunnel, null, subinterfaces, admin-down
+
+### UI
+Device Detail → Telemetry → Interfaces tab
+Table: ☑ | Interface | Description | LLDP Neighbor | Method
+Regex filter box
+[Select All] [Select None] [Select Up Only]
+[Discover] button → walks device → populates table
+[Save] button → saves selected interfaces
+Collection method badge per interface: [gNMI 10s] or [SNMP 5m]
