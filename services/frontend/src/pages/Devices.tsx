@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
 import { fetchDevices, type Device } from '../api/client'
@@ -15,6 +16,7 @@ const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
 const PAGE_SIZE = 20
 
 export default function Devices() {
+  const navigate = useNavigate()
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -149,7 +151,11 @@ export default function Devices() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {devices.map((device) => (
-                    <tr key={device.id} className="hover:bg-gray-50 cursor-pointer">
+                    <tr
+                      key={device.id}
+                      onClick={() => navigate(`/devices/${device.id}`)}
+                      className="hover:bg-gray-50 cursor-pointer"
+                    >
                       <td className="px-5 py-3 font-medium text-gray-800">{device.hostname}</td>
                       <td className="px-5 py-3 text-gray-600 font-mono text-xs">{device.ip_address}</td>
                       <td className="px-5 py-3 text-gray-600">{device.platform}</td>

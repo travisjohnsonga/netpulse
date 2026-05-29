@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/Devices'
+import DeviceDetail from './pages/DeviceDetail'
 import Alerts from './pages/Alerts'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
@@ -57,6 +58,7 @@ function AppRoutes() {
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/devices" element={<Devices />} />
+                <Route path="/devices/:id" element={<DeviceDetail />} />
                 <Route path="/topology" element={<Topology />} />
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/cve" element={<CVE />} />

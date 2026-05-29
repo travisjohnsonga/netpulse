@@ -402,3 +402,154 @@ export async function fetchCollectors(): Promise<Collector[]> {
   const { data } = await api.get<Collector[] | Paginated<Collector>>('/collectors/')
   return unwrap(data)
 }
+
+// ── Sites ────────────────────────────────────────────────────────────────────
+
+export interface Site {
+  id: number
+  name: string
+  location: string
+  description: string
+}
+
+export async function fetchSites(): Promise<Site[]> {
+  const { data } = await api.get<Site[] | Paginated<Site>>('/devices/sites/')
+  return unwrap(data)
+}
+
+// ── Device detail ────────────────────────────────────────────────────────────
+
+// Full device record from GET /api/devices/{id}/ (detail serializer = all fields).
+export interface DeviceDetail {
+  id: number
+  hostname: string
+  ip_address: string
+  management_ip: string | null
+  vendor: string
+  model: string
+  platform: string
+  os_version: string
+  serial_number: string
+  status: string
+  site: number | null
+  groups: number[]
+  credentials: number[]
+  notes: string
+  created_at: string
+  updated_at: string
+}
+
+export interface DeviceCreatePayload {
+  hostname: string
+  ip_address: string
+  management_ip?: string | null
+  vendor?: string
+  model?: string
+  platform?: string
+  os_version?: string
+  serial_number?: string
+  status?: string
+  site?: number | null
+  notes?: string
+}
+
+export async function fetchDevice(id: number): Promise<DeviceDetail> {
+  const { data } = await api.get<DeviceDetail>(`/devices/${id}/`)
+  return data
+}
+
+export async function createDevice(payload: DeviceCreatePayload): Promise<DeviceDetail> {
+  const { data } = await api.post<DeviceDetail>('/devices/', payload)
+  return data
+}
+
+// DRF serializes DecimalField as a string — keep them as string and parse in UI.
+export interface RiskScore {
+  id: number
+  device: number
+  hostname: string
+  score: string
+  cve_score: string
+  compliance_score: string
+  lifecycle_score: string
+  anomaly_score: string
+  last_computed_at: string
+}
+
+export async function fetchDeviceRiskScore(deviceId: number): Promise<RiskScore | null> {
+  const { data } = await api.get<RiskScore[] | Paginated<RiskScore>>('/security/risk-scores/', { params: { device: String(deviceId) } })
+  return unwrap(data)[0] ?? null
+}
+
+export interface ComplianceResult {
+  id: number
+  device: number
+  policy: number
+  rule: number
+  outcome: 'pass' | 'fail' | 'error'
+  detail: string
+  created_at: string
+}
+
+export async function fetchComplianceResults(deviceId: number): Promise<ComplianceResult[]> {
+  const { data } = await api.get<ComplianceResult[] | Paginated<ComplianceResult>>('/compliance/results/', { params: { device: String(deviceId) } })
+  return unwrap(data)
+}
+
+export interface DeviceCVE {
+  id: number
+  device: number
+  cve: number
+  cve_id: string
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'none'
+  cvss_score: string | null
+  is_patched: boolean
+  patched_at: string | null
+  created_at: string
+}
+
+export async function fetchDeviceCVEs(deviceId: number): Promise<DeviceCVE[]> {
+  const { data } = await api.get<DeviceCVE[] | Paginated<DeviceCVE>>('/cve/device-cves/', { params: { device: String(deviceId) } })
+  return unwrap(data)
+}
+
+export type MilestoneType = 'eos' | 'eosm' | 'eoss' | 'eol'
+
+export interface LifecycleMilestone {
+  id: number
+  device: number
+  hostname: string
+  milestone_type: MilestoneType
+  milestone_date: string
+  source: string
+  notes: string
+}
+
+export async function fetchLifecycleMilestones(deviceId: number): Promise<LifecycleMilestone[]> {
+  const { data } = await api.get<LifecycleMilestone[] | Paginated<LifecycleMilestone>>('/lifecycle/milestones/', { params: { device: String(deviceId) } })
+  return unwrap(data)
+}
+
+// AlertEvent has no device FK — device identity lives in the labels JSON.
+export interface AlertEvent {
+  id: number
+  rule: number
+  rule_name: string
+  severity: AlertSeverity
+  state: 'firing' | 'resolved'
+  labels: Record<string, string>
+  annotations: Record<string, string>
+  resolved_at: string | null
+  created_at: string
+}
+
+// Fetch recent alert events whose labels reference this device (by hostname or id).
+export async function fetchDeviceAlerts(deviceId: number, hostname: string): Promise<AlertEvent[]> {
+  const { data } = await api.get<AlertEvent[] | Paginated<AlertEvent>>('/alerts/events/', { params: { ordering: '-created_at' } })
+  const events = unwrap(data)
+  return events.filter((e) => {
+    const l = e.labels || {}
+    return l.hostname === hostname || l.device === hostname ||
+      String(l.device_id) === String(deviceId) || String(l.device) === String(deviceId)
+  })
+}
