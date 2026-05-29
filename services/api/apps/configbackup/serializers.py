@@ -42,5 +42,8 @@ class SimpleResultSerializer(serializers.Serializer):
 class DeviceConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeviceConfig
-        fields = "__all__"
-        read_only_fields = ("created_at", "updated_at")
+        fields = [
+            "id", "device", "config_type", "collected_at", "collected_by",
+            "content", "content_hash", "changed_from_previous", "diff_summary",
+            "git_commit_sha", "compliance_status",
+        ]

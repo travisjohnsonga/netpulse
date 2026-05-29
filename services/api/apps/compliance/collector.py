@@ -230,10 +230,10 @@ def publish_collected(device_id) -> None:
 async def _publish(device_id) -> None:
     import nats  # lazy
     nc = await nats.connect(
-        settings.NATS_URL,
-        user=getattr(settings, "NATS_USER", None) or None,
-        password=getattr(settings, "NATS_PASSWORD", None) or None,
-    )
+            os.environ.get("NATS_URL", "nats://nats:4222"),
+            user=os.environ.get("NATS_USER") or None,
+            password=os.environ.get("NATS_PASSWORD") or None,
+        )
     try:
         await nc.publish(f"netpulse.config.{device_id}.collected", b"{}")
     finally:

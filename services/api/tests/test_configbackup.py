@@ -74,3 +74,56 @@ class TestGitActions:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
         assert ConfigBackupSettings.load().last_sync_at is not None
+
+
+class TestDeviceConfigEndpoint:
+    @pytest.fixture
+    def device(self):
+        from apps.devices.models import Device
+        return Device.objects.create(hostname="rtr-cfg", ip_address="10.5.0.1", status="active")
+
+    @pytest.fixture
+    def snapshot(self, device):
+        from apps.configbackup.models import DeviceConfig
+        from django.utils import timezone
+        return DeviceConfig.objects.create(
+            device=device, config_type="running", collected_at=timezone.now(),
+            collected_by="manual", content="hostname rtr-cfg", content_hash="abc123",
+        )
+
+    def test_list_configs(self, auth_client, snapshot):
+        resp = auth_client.get("/api/configbackup/configs/")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+        row = resp.json()["results"][0]
+        assert set(row.keys()) == {
+            "id", "device", "config_type", "collected_at", "collected_by",
+            "content", "content_hash", "changed_from_previous", "diff_summary",
+            "git_commit_sha", "compliance_status",
+        }
+
+    def test_filter_by_device(self, auth_client, snapshot, device):
+        from apps.devices.models import Device
+        other = Device.objects.create(hostname="other", ip_address="10.5.0.2")
+        resp = auth_client.get(f"/api/configbackup/configs/?device={other.id}")
+        assert resp.json()["count"] == 0
+        resp = auth_client.get(f"/api/configbackup/configs/?device={device.id}")
+        assert resp.json()["count"] == 1
+
+    def test_also_mounted_under_settings(self, auth_client, snapshot):
+        assert auth_client.get("/api/settings/configs/").status_code == 200
+
+    def test_unauthenticated_rejected(self, api_client):
+        assert api_client.get("/api/configbackup/configs/").status_code == 401
+
+    def test_collect_action_triggers_collection(self, auth_client, device, monkeypatch):
+        from apps.compliance import collector
+        monkeypatch.setattr(collector, "_fetch_running_config", lambda d, c: "running cfg from probe")
+        monkeypatch.setattr(collector, "publish_collected", lambda did: None)
+        resp = auth_client.post(f"/api/configbackup/configs/collect/{device.id}/")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "collection triggered"
+        from apps.configbackup.models import DeviceConfig
+        cfg = DeviceConfig.objects.get(device=device)
+        assert cfg.collected_by == "manual"
+        assert cfg.content == "running cfg from probe"

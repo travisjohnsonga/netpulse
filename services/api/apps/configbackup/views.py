@@ -3,18 +3,47 @@ import urllib.parse
 
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from rest_framework import generics, status
+from rest_framework import generics, permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.credentials import vault
 
-from .models import ConfigBackupSettings
+from .models import ConfigBackupSettings, DeviceConfig
 from .serializers import (
     ConfigBackupSettingsSerializer,
+    DeviceConfigSerializer,
     SimpleResultSerializer,
     TestGitRequestSerializer,
 )
+
+
+class DeviceConfigViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Browse stored device configuration snapshots.
+
+    Read-only list/retrieve, newest first; filter with ?device=<id>. The
+    `collect/<device_id>/` action triggers an immediate collection for a device.
+    """
+
+    serializer_class = DeviceConfigSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = DeviceConfig.objects.all().order_by("-collected_at")
+        device_id = self.request.query_params.get("device")
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        return qs
+
+    @extend_schema(request=None, responses=SimpleResultSerializer)
+    @action(detail=False, methods=["post"], url_path="collect/(?P<device_id>[^/.]+)")
+    def collect(self, request, device_id=None):
+        """Trigger an immediate (manual) config collection for one device."""
+        from django.core.management import call_command
+        call_command("run_config_manager", device_id=device_id, once=True)
+        return Response({"status": "collection triggered"})
 
 
 class ConfigBackupSettingsView(generics.RetrieveUpdateAPIView):
