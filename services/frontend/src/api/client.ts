@@ -118,35 +118,52 @@ export interface TopologyData {
 
 // ── Credentials ────────────────────────────────────────────────────────────
 
-export type CredentialType =
-  | 'snmpv1' | 'snmpv2c' | 'snmpv3'
-  | 'ssh_password' | 'ssh_key'
-  | 'http_basic' | 'http_token' | 'http_apikey'
-  | 'gnmi' | 'netconf'
+export type CredentialProtocol = 'ssh' | 'snmpv2c' | 'snmpv3' | 'https' | 'netconf' | 'gnmi'
 
-export type CredentialPurpose =
-  | 'snmp_polling' | 'ssh_config' | 'ssh_backup'
-  | 'netconf' | 'gnmi' | 'http_api'
+export type TestResult = 'untested' | 'success' | 'partial' | 'failure'
 
-export type TestResult = 'untested' | 'success' | 'failure'
-
-// Full profile (detail/create/update). Secret fields are write-only — they are
-// accepted on write, forwarded to OpenBao, and never returned on read.
+// Full profile. One profile carries multiple protocols, each toggled via an
+// *_enabled flag. Secret fields are write-only — accepted on write, forwarded
+// to OpenBao, and never returned on read.
 export interface CredentialProfile {
   id: number
   name: string
-  credential_type: CredentialType
   description: string
-  username: string
-  auth_method: string
-  port: number | null
-  tls_enabled: boolean
-  snmp_version: string
-  snmp_security_level: string
-  auth_protocol: string
-  priv_protocol: string
   vault_path: string
   device_count: number
+  enabled_protocols: CredentialProtocol[]
+
+  ssh_enabled: boolean
+  ssh_username: string
+  ssh_auth_method: string
+  ssh_port: number
+
+  snmpv2c_enabled: boolean
+  snmpv2c_port: number
+
+  snmpv3_enabled: boolean
+  snmpv3_username: string
+  snmpv3_security_level: string
+  snmpv3_auth_protocol: string
+  snmpv3_priv_protocol: string
+  snmpv3_port: number
+
+  https_enabled: boolean
+  https_auth_type: string
+  https_username: string
+  https_port: number
+  https_verify_tls: boolean
+
+  netconf_enabled: boolean
+  netconf_port: number
+  netconf_use_ssh_creds: boolean
+  netconf_username: string
+
+  gnmi_enabled: boolean
+  gnmi_username: string
+  gnmi_port: number
+  gnmi_tls_enabled: boolean
+
   created_by: number | null
   last_tested: string | null
   last_test_result: TestResult
@@ -159,61 +176,36 @@ export interface CredentialProfile {
 export interface CredentialProfileListItem {
   id: number
   name: string
-  credential_type: CredentialType
-  username: string
+  enabled_protocols: CredentialProtocol[]
   device_count: number
   last_tested: string | null
   last_test_result: TestResult
   created_at: string
 }
 
-// Write payload — metadata plus optional write-only secret fields.
-export interface CredentialProfilePayload {
-  name: string
-  credential_type: CredentialType
-  description?: string
-  username?: string
-  auth_method?: string
-  port?: number | null
-  tls_enabled?: boolean
-  snmp_version?: string
-  snmp_security_level?: string
-  auth_protocol?: string
-  priv_protocol?: string
-  // write-only secrets (never echoed back)
-  community?: string
-  auth_password?: string
-  priv_password?: string
-  password?: string
-  private_key?: string
-  passphrase?: string
-  token?: string
-  api_key?: string
+// Write payload — non-secret config plus optional write-only secrets.
+// Loosely typed so the form can send a partial object.
+export type CredentialProfilePayload = Partial<Record<string, unknown>> & { name: string }
+
+export interface CredentialTestProtocolResult {
+  protocol: CredentialProtocol
+  label: string
+  success: boolean
+  message: string
+  port: number
 }
 
 export interface CredentialTestResult {
   ip: string
-  success: boolean
-  message: string
-  latency_ms: number | null
-  port: number
+  overall: TestResult
+  results: CredentialTestProtocolResult[]
 }
 
-export interface DeviceCredential {
+export interface CredentialProfileDevice {
   id: number
-  device: number
-  device_hostname: string
-  credential: number
-  credential_name: string
-  credential_type: CredentialType
-  purpose: CredentialPurpose
-  is_primary: boolean
-  last_used: string | null
-  last_success: string | null
-  failure_count: number
-  notes: string
-  created_at: string
-  updated_at: string
+  hostname: string
+  ip_address: string
+  status: string
 }
 
 interface Paginated<T> {
@@ -310,33 +302,19 @@ export async function testCredential(
   return data
 }
 
-export async function fetchCredentialDevices(id: number): Promise<DeviceCredential[]> {
-  const { data } = await api.get<DeviceCredential[]>(`/credentials/${id}/devices/`)
+export async function fetchCredentialDevices(id: number): Promise<CredentialProfileDevice[]> {
+  const { data } = await api.get<CredentialProfileDevice[]>(`/credentials/${id}/devices/`)
   return data
 }
 
-// Device-scoped credential associations.
-export async function fetchDeviceCredentials(deviceId: number): Promise<DeviceCredential[]> {
-  const { data } = await api.get<DeviceCredential[] | Paginated<DeviceCredential>>(
-    `/devices/${deviceId}/credentials/`,
-  )
-  return unwrap(data)
-}
-
-export async function addDeviceCredential(
-  deviceId: number,
-  payload: { credential: number; purpose: CredentialPurpose; is_primary?: boolean; notes?: string },
-): Promise<DeviceCredential> {
-  const { data } = await api.post<DeviceCredential>(
-    `/devices/${deviceId}/credentials/`, payload,
+// Assign (or clear, with null) the device's single credential profile.
+export async function setDeviceCredentialProfile(
+  deviceId: number, profileId: number | null,
+): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(
+    `/devices/${deviceId}/`, { credential_profile: profileId },
   )
   return data
-}
-
-export async function removeDeviceCredential(
-  deviceId: number, purpose: CredentialPurpose,
-): Promise<void> {
-  await api.delete(`/devices/${deviceId}/credentials/${purpose}/`)
 }
 
 // ── Alert rules & channels ───────────────────────────────────────────────────
@@ -433,7 +411,7 @@ export interface DeviceDetail {
   status: string
   site: number | null
   groups: number[]
-  credentials: number[]
+  credential_profile: number | null
   notes: string
   created_at: string
   updated_at: string
@@ -450,6 +428,7 @@ export interface DeviceCreatePayload {
   serial_number?: string
   status?: string
   site?: number | null
+  credential_profile?: number | null
   notes?: string
 }
 
@@ -460,6 +439,28 @@ export async function fetchDevice(id: number): Promise<DeviceDetail> {
 
 export async function createDevice(payload: DeviceCreatePayload): Promise<DeviceDetail> {
   const { data } = await api.post<DeviceDetail>('/devices/', payload)
+  return data
+}
+
+export interface TestConnectionResult {
+  reachable: boolean
+  open_ports: number[]
+  banner: string
+  vendor: string | null
+  platform: string | null
+  os_version: string | null
+  model: string | null
+  detail: string
+}
+
+export async function testConnection(ip: string): Promise<TestConnectionResult> {
+  const { data } = await api.post<TestConnectionResult>('/devices/test-connection/', { ip })
+  return data
+}
+
+// Create a site inline (used by the add-device wizard).
+export async function createSite(payload: { name: string; location?: string }): Promise<Site> {
+  const { data } = await api.post<Site>('/devices/sites/', payload)
   return data
 }
 

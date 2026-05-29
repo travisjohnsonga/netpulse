@@ -66,7 +66,7 @@ export default function Overview({ device, onTab }: { device: DeviceDetail; onTa
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Credentials</span>
             <button onClick={() => onTab('credentials')} className="text-xs font-medium text-blue-600 hover:text-blue-800">
-              {device.credentials.length} configured →
+              {device.credential_profile ? 'Profile assigned' : 'None'} →
             </button>
           </div>
         </div>
