@@ -1,7 +1,9 @@
-# WebSocket URL patterns — add consumers here as they are implemented.
-# Example:
-#   from django.urls import re_path
-#   from apps.telemetry.consumers import TelemetryConsumer
-#   re_path(r"ws/telemetry/(?P<device_id>[^/]+)/$", TelemetryConsumer.as_asgi()),
+from django.urls import re_path
 
-websocket_urlpatterns = []
+from apps.alerts.consumers import AlertConsumer
+from apps.telemetry.consumers import TelemetryConsumer
+
+websocket_urlpatterns = [
+    re_path(r"^ws/telemetry/$", TelemetryConsumer.as_asgi()),
+    re_path(r"^ws/alerts/$", AlertConsumer.as_asgi()),
+]

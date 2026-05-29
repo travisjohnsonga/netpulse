@@ -28,8 +28,9 @@ opensearch-py~=2.7
 # Secrets
 hvac~=2.1
 
-# WSGI server
+# WSGI server + static files
 gunicorn~=22.0
+whitenoise[brotli]~=6.7
 
 # Testing
 pytest~=9.0

@@ -144,6 +144,8 @@ services:
     restart: unless-stopped
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     ports:
       - "${API_PORT:-8000}:8000"
     networks:
@@ -174,6 +176,8 @@ services:
     restart: unless-stopped
     command: daphne -b 0.0.0.0 -p 8001 config.asgi:application
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     ports:
       - "${WS_PORT:-8001}:8001"
     networks:
@@ -303,6 +307,8 @@ services:
     restart: unless-stopped
     command: python manage.py run_stream_processor
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:
@@ -320,6 +326,8 @@ services:
     restart: unless-stopped
     command: python manage.py run_config_manager
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:
@@ -335,6 +343,8 @@ services:
     restart: unless-stopped
     command: python manage.py run_alert_engine
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:
@@ -350,6 +360,8 @@ services:
     restart: unless-stopped
     command: python manage.py run_cve_engine
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:
@@ -363,6 +375,8 @@ services:
     restart: unless-stopped
     command: python manage.py run_lifecycle_engine
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:
@@ -376,6 +390,8 @@ services:
     restart: unless-stopped
     command: python manage.py run_security_engine
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:
@@ -393,6 +409,8 @@ services:
     # Celery worker (add a separate worker service when needed).
     command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
     networks:
       - netpulse-net
     depends_on:

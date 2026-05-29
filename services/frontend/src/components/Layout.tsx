@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useAuthStore } from '../store/authStore'
 
 interface NavItem {
   label: string
@@ -12,6 +13,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: '▦' },
   { label: 'Devices', href: '/devices', icon: '⬡' },
+  { label: 'Topology', href: '/topology', icon: '🌐' },
   { label: 'Alerts', href: '/alerts', icon: '⚠' },
   { label: 'CVE', href: '/cve', icon: '🛡' },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
@@ -26,6 +28,13 @@ export default function Layout({ children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { connected } = useWebSocket('/ws/telemetry/')
   const location = useLocation()
+  const navigate = useNavigate()
+  const { username, logout } = useAuthStore()
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login', { replace: true })
+  }
 
   const currentPage = navItems.find((n) => location.pathname.startsWith(n.href))?.label ?? 'NetPulse'
 
@@ -79,8 +88,19 @@ export default function Layout({ children }: Props) {
           ))}
         </nav>
 
-        {/* Connection status */}
-        <div className="px-5 py-4 border-t border-gray-800">
+        {/* User + connection status */}
+        <div className="px-5 py-4 border-t border-gray-800 space-y-3">
+          {username && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-400 truncate">{username}</span>
+              <button
+                onClick={handleLogout}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors ml-2"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-2 text-xs">
             <span
               className={clsx(
