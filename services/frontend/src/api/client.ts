@@ -383,3 +383,22 @@ export async function fetchAlertChannels(): Promise<AlertChannel[]> {
   const { data } = await api.get<AlertChannel[] | Paginated<AlertChannel>>('/alerts/channels/')
   return unwrap(data)
 }
+
+// ── Collectors ───────────────────────────────────────────────────────────────
+
+export interface Collector {
+  id: number
+  name: string
+  status: 'pending' | 'active' | 'offline' | 'revoked'
+  version: string
+  remote_ip: string | null
+  cert_serial: string
+  cert_expires_at: string | null
+  last_seen_at: string | null
+  created_at: string
+}
+
+export async function fetchCollectors(): Promise<Collector[]> {
+  const { data } = await api.get<Collector[] | Paginated<Collector>>('/collectors/')
+  return unwrap(data)
+}
