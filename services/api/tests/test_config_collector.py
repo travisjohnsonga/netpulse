@@ -45,6 +45,12 @@ class TestHelpers:
         assert collector.config_command("junos") == "show configuration | display set"
         assert collector.config_command("eos") == "show running-config"
 
+    def test_device_host_prefers_management_ip(self, device):
+        device.management_ip = "192.168.98.100"
+        assert collector.device_host(device) == "192.168.98.100"
+        device.management_ip = None
+        assert collector.device_host(device) == device.ip_address
+
 
 # ── collect_one ───────────────────────────────────────────────────────────────
 

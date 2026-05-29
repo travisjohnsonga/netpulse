@@ -69,6 +69,11 @@ def config_command(platform: str) -> str:
     return _CONFIG_COMMANDS.get((platform or "").lower(), "show running-config")
 
 
+def device_host(device) -> str:
+    """Connection target: management IP if set, otherwise the primary IP."""
+    return str(device.management_ip or device.ip_address)
+
+
 def get_credentials(device) -> dict:
     """Fetch the device's secret material from OpenBao. Returns {} on any failure."""
     profile = device.credential_profile
@@ -85,7 +90,7 @@ def _fetch_via_ssh(device, profile, creds: dict) -> str:
     """Connect over SSH with Netmiko and return the running config."""
     from netmiko import ConnectHandler  # lazy
 
-    host = device.ip_address or device.management_ip
+    host = device_host(device)
     device_type = netmiko_device_type(device.vendor, device.platform)
     username = profile.ssh_username if profile else ""
     port = (profile.ssh_port if profile else 22) or 22
@@ -143,7 +148,7 @@ def _fetch_via_netconf(device, profile, creds: dict) -> str:
     """Connect over NETCONF with ncclient and return the configuration XML."""
     from ncclient import manager  # lazy
 
-    host = device.ip_address or device.management_ip
+    host = device_host(device)
     with manager.connect(
         host=str(host),
         port=(profile.netconf_port if profile else 830) or 830,
