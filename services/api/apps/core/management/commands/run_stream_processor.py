@@ -57,6 +57,24 @@ def _index(prefix: str) -> str:
     return f"{prefix}-{month}"
 
 
+def _daily_index(prefix: str) -> str:
+    day = datetime.now(timezone.utc).strftime("%Y.%m.%d")
+    return f"{prefix}-{day}"
+
+
+# Substrings indicating an authentication failure in a log line.
+_AUTH_FAIL_KEYWORDS = (
+    "authentication failure", "authentication failed", "failed password",
+    "login failed", "auth fail", "invalid user", "access denied",
+    "%sec_login-4", "%sec_login-5", "permission denied", "unauthorized",
+)
+
+
+def _log_body_text(data: dict) -> str:
+    keys = ("message", "msg", "body", "syslog_msg", "log", "text", "description")
+    return " ".join(str(data[k]) for k in keys if data.get(k)).lower()
+
+
 class Command(BaseCommand):
     help = "Consume NATS telemetry and write to InfluxDB / OpenSearch / PostgreSQL"
 
@@ -256,6 +274,49 @@ async def _serve() -> None:
                 "message": body[:200],
             })
 
+    async def _publish_auth_event(source: str, data: dict) -> None:
+        """Forward an auth-failure log to the security engine via netpulse.auth.events."""
+        try:
+            payload = {
+                "source": source,
+                "src_ip": data.get("src_ip") or data.get("host") or data.get("hostname", ""),
+                "message": data.get("message") or data.get("msg") or data.get("body", ""),
+                "severity": data.get("severity", ""),
+                "raw": data,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await nc.publish("netpulse.auth.events", json.dumps(payload, default=str).encode())
+            logger.info("auth event published from %s", source)
+        except Exception as exc:
+            logger.error("auth event publish failed: %s", exc)
+
+    async def on_log(msg) -> None:
+        await msg.ack()
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        parts = msg.subject.split(".")
+        source = parts[2] if len(parts) > 2 else "unknown"
+        data["@timestamp"] = datetime.now(timezone.utc).isoformat()
+        data["source"] = source
+        # Day-stamped logs index: netpulse-logs-YYYY.MM.DD
+        await _queue_os(_daily_index("netpulse-logs"), data)
+
+        body = _log_body_text(data)
+        if not body:
+            return
+        # Auth failure → security engine
+        if any(kw in body for kw in _AUTH_FAIL_KEYWORDS):
+            await _publish_auth_event(source, data)
+        # Anomaly keywords → flag for analysis (alerts)
+        if _LOG_KEYWORDS.search(body):
+            await _publish_alert("low", {
+                "condition": "log_anomaly",
+                "device_id": source,
+                "message": body[:200],
+            })
+
     async def on_alert(msg) -> None:
         await msg.ack()
         try:
@@ -311,6 +372,16 @@ async def _serve() -> None:
     for subject, handler in subscriptions:
         await nc.subscribe(subject, cb=handler)
         logger.info("subscribed to %s", subject)
+
+    # Logs flow through the JetStream LOGS stream — use a durable consumer so
+    # buffered messages are replayed, falling back to core NATS if no stream.
+    try:
+        await js.subscribe("netpulse.logs.>", durable="stream-processor-logs",
+                           stream="LOGS", cb=on_log)
+        logger.info("subscribed (JetStream) to netpulse.logs.>")
+    except Exception as exc:
+        await nc.subscribe("netpulse.logs.>", cb=on_log)
+        logger.info("subscribed (core NATS) to netpulse.logs.> — no stream (%s)", exc)
 
     # Periodic flush task
     async def flush_loop() -> None:

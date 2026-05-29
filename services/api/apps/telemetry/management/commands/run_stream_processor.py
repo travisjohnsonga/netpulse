@@ -74,6 +74,28 @@ def _index(prefix: str) -> str:
     return f"{prefix}-{stamp}"
 
 
+def _daily_index(prefix: str) -> str:
+    """Return a day-stamped index name like 'netpulse-logs-2025.06.14'."""
+    stamp = datetime.now(timezone.utc).strftime("%Y.%m.%d")
+    return f"{prefix}-{stamp}"
+
+
+# Substrings that indicate an authentication failure in a log line.
+_AUTH_FAIL_KEYWORDS = (
+    "authentication failure", "authentication failed", "failed password",
+    "login failed", "auth fail", "invalid user", "access denied",
+    "%sec_login-4", "%sec_login-5", "permission denied", "unauthorized",
+)
+# Substrings worth flagging for anomaly analysis.
+_ANOMALY_KEYWORDS = ("error", "critical", "down", "unreachable", "denied", "fail")
+
+
+def _log_body_text(payload: dict) -> str:
+    """Concatenate the human-readable fields of a log payload, lowercased."""
+    keys = ("message", "msg", "body", "syslog_msg", "log", "text", "description")
+    return " ".join(str(payload[k]) for k in keys if payload.get(k)).lower()
+
+
 # ---------------------------------------------------------------------------
 # Main Command
 # ---------------------------------------------------------------------------
@@ -148,6 +170,7 @@ class Command(BaseCommand):
             ("netpulse.telemetry.>", "TELEMETRY", self._on_telemetry),
             ("netpulse.flows.>", "FLOWS", self._on_flow),
             ("netpulse.otel.>", "OTEL", self._on_otel),
+            ("netpulse.logs.>", "LOGS", self._on_log),
             ("netpulse.alerts.>", "ALERTS", self._on_alert),
         ]
 
@@ -422,6 +445,66 @@ class Command(BaseCommand):
             logger.error(
                 "stream-processor: error processing alert msg %s: %s", msg.subject, exc
             )
+
+    async def _on_log(self, msg):
+        """
+        Handle netpulse.logs.<source>... messages.
+
+        - Write the log line to OpenSearch index netpulse-logs-YYYY.MM.DD.
+        - On auth-failure keywords: publish to netpulse.auth.events (security engine).
+        - On anomaly keywords: flag via the shared anomaly path (alerts).
+        """
+        try:
+            parts = msg.subject.split(".")
+            # parts: ["netpulse", "logs", <source/device_id>, ...]
+            source = parts[2] if len(parts) > 2 else "unknown"
+
+            payload = json.loads(msg.data)
+            logger.debug(
+                "stream-processor: log msg subject=%s bytes=%d", msg.subject, len(msg.data)
+            )
+
+            doc = {"source": source, "subject": msg.subject, "@timestamp": _utcnow_iso(), **payload}
+            await self._buffer_opensearch(_daily_index("netpulse-logs"), doc)
+
+            await self._inspect_log_security(source, payload)
+
+        except Exception as exc:
+            logger.error(
+                "stream-processor: error processing log msg %s: %s", msg.subject, exc
+            )
+
+    async def _inspect_log_security(self, source: str, payload: dict):
+        """Scan a log payload for auth failures and anomaly keywords."""
+        body = _log_body_text(payload)
+        if not body:
+            return
+
+        # Auth failure → security engine via netpulse.auth.events
+        if any(kw in body for kw in _AUTH_FAIL_KEYWORDS) and _can_fire_alert(source, "auth_fail"):
+            await self._publish_auth_event({
+                "source": source,
+                "src_ip": payload.get("src_ip") or payload.get("host") or payload.get("hostname", ""),
+                "message": payload.get("message") or payload.get("msg") or payload.get("body", ""),
+                "severity": payload.get("severity", ""),
+                "raw": payload,
+                "detected_at": _utcnow_iso(),
+            })
+
+        # Anomaly keywords → flag for analysis (shared anomaly path → alerts)
+        if any(kw in body for kw in _ANOMALY_KEYWORDS):
+            await self._check_anomalies("log", source, payload)
+
+    async def _publish_auth_event(self, payload: dict):
+        """Publish an auth-failure event to netpulse.auth.events for the security engine."""
+        if self._nc is None:
+            logger.warning("stream-processor: cannot publish auth event — NATS not connected")
+            return
+        try:
+            await self._nc.publish("netpulse.auth.events", json.dumps(payload, default=str).encode())
+            logger.info("stream-processor: published auth event from %s", payload.get("source"))
+        except Exception as exc:
+            logger.error("stream-processor: failed to publish auth event: %s", exc)
 
     # -----------------------------------------------------------------------
     # InfluxDB writer
