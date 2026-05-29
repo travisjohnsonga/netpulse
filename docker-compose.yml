@@ -191,7 +191,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────────
 
   frontend:
-    build: ./frontend
+    build: ./services/frontend
     restart: unless-stopped
     environment:
       REACT_APP_API_URL: ${REACT_APP_API_URL}

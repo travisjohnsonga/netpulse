@@ -637,3 +637,139 @@ Deployment options (document all in docs/):
 Do NOT build native Roku/Apple TV apps —
 browser-based approach covers all use cases
 with far less development overhead.
+
+## Distributed Remote Poller Architecture
+
+For large environments, single central poller won't scale.
+Need distributed polling nodes that can be deployed close
+to what they monitor.
+
+### Problem at Scale
+Single central poller limitations:
+├── SNMP polling 10,000 devices from one host = poll storms
+├── WAN latency affects SNMP response times / timeouts
+├── Single point of failure for all polling
+├── Firewall rules required from central to every device
+└── gNMI dial-out works but SNMP/SSH still needs reach
+
+### Poller Node Architecture
+Central NetPulse Platform
+│
+│ mTLS (outbound from poller only)
+│
+┌───────┴────────────────────────────┐
+│                                    │
+▼                                    ▼
+Poller-DC1                      Poller-Branch
+├── Polls local devices          ├── Polls local devices
+├── Receives local traps         ├── Receives local syslog
+├── Receives local syslog        ├── Local disk buffer
+├── Local disk buffer            └── Forwards to central
+└── Forwards to central              over single mTLS conn
+Each poller:
+├── Deployed as Docker container or systemd service
+├── Runs all ingest services locally
+├── Single outbound mTLS connection to central
+├── No inbound firewall rules needed
+├── Local buffer if central unreachable
+└── Registered and managed from central UI
+
+### Poller Assignment
+Devices assigned to pollers:
+├── Auto-assign by subnet (devices in 10.1.0.0/16 → Poller-DC1)
+├── Manual override per device
+├── Failover — if primary poller unreachable, secondary takes over
+└── Load balancing — distribute devices across multiple pollers
+Central platform:
+├── Knows which poller owns which device
+├── Routes commands to correct poller
+│   (run show command → sent to owning poller → executes → returns)
+├── Monitors poller health (heartbeat)
+└── Alerts if poller goes silent
+
+### Poller Registration & Security
+New poller deployment:
+
+Admin generates registration token in UI
+Poller starts with token
+Central issues mTLS certificate via OpenBao PKI
+Token invalidated after use (one-time)
+Poller authenticates with certificate going forward
+Unique identity per poller — compromise of one
+doesn't affect others
+
+Certificate rotation:
+└── Automatic via OpenBao PKI — pollers rotate certs
+before expiry without admin intervention
+
+### Poller Health Monitoring
+Central tracks per poller:
+├── Last heartbeat timestamp
+├── Devices assigned vs actively polling
+├── Poll success rate (% of polls getting responses)
+├── Queue depth (messages buffered locally)
+├── Version (alert if poller needs update)
+├── Resource usage (CPU, memory, disk for buffer)
+└── Network latency to central
+Alerts:
+├── Poller heartbeat missed → immediate alert
+├── Poll success rate drops → investigate devices
+├── Buffer growing → central connection issues
+└── Version mismatch → update needed
+
+### Deployment Sizing Guide
+Small poller (branch office):
+50-200 devices
+2 CPU, 4GB RAM, 20GB disk (buffer)
+Docker container on existing server or small VM
+Medium poller (regional DC):
+200-1000 devices
+4 CPU, 8GB RAM, 50GB disk
+Dedicated VM or small server
+Large poller (large DC / dense environment):
+1000-5000 devices
+8 CPU, 16GB RAM, 100GB disk
+Dedicated server
+Very large environments:
+Multiple pollers per DC
+Load balanced across poller pool
+Same mTLS architecture, just more nodes
+
+### Poller vs Collector Distinction
+NetPulse Collector (already documented):
+Purpose: forward device-initiated telemetry to cloud
+Devices push TO collector (gNMI dial-out, syslog, traps)
+Collector forwards to cloud NetPulse
+Remote Poller (this feature):
+Purpose: poll devices that don't support push
+Poller reaches OUT to devices (SNMP, SSH, NETCONF)
+Results forwarded to central NetPulse
+In practice:
+Full poller node = Collector + Poller combined
+Handles both push (receive) and pull (initiate)
+Single deployment covers all cases
+
+### UI Management
+Settings → Pollers page:
+├── List all registered pollers
+│   name, location, status, device count, last seen
+├── Register new poller (generate token)
+├── View poller health details
+├── Reassign devices between pollers
+├── Decommission poller (reassign devices first)
+└── Force poller update
+Device detail page:
+└── Shows assigned poller
+"Monitored by: Poller-DC1 (healthy)"
+Override button to reassign
+
+## Frontend Stack Details
+- React with TypeScript — all component files use .tsx extension
+- Vite as build tool (fast, modern, excellent TypeScript support)
+- Tailwind CSS for styling
+- Apache ECharts for charts and graphs
+- Cytoscape.js for network topology maps
+- D3.js for NetFlow path visualization
+- React Query for API data fetching and caching
+- Zustand for global state management
+- React Router for navigation
