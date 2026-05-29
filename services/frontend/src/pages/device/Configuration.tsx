@@ -1,76 +1,125 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { type DeviceDetail } from '../../api/client'
-import Modal from '../../components/Modal'
+import { api, type DeviceDetail } from '../../api/client'
 
-// Config storage/versioning is handled by the config-manager service; its API
-// isn't exposed yet, so this renders an illustrative running-config snapshot
-// derived from the device record. Download is real (client-side blob).
-
-function sampleConfig(d: DeviceDetail): string {
-  return [
-    '! NetPulse captured running-config',
-    `hostname ${d.hostname}`,
-    '!',
-    'service timestamps log datetime msec',
-    'no ip domain-lookup',
-    '!',
-    'interface Loopback0',
-    ` ip address ${d.ip_address} 255.255.255.255`,
-    '!',
-    'interface GigabitEthernet0/0/0',
-    ' description WAN uplink',
-    ' ip address dhcp',
-    ' no shutdown',
-    '!',
-    'snmp-server community netpulse RO',
-    'logging host 10.0.0.10',
-    '!',
-    'line vty 0 4',
-    ' transport input ssh',
-    '!',
-    'end',
-  ].join('\n')
+interface DeviceConfigRow {
+  id: number
+  config_type: string
+  collected_at: string
+  collected_by: string
+  content: string
+  content_hash: string
+  changed_from_previous: boolean
+  diff_summary: string | null
 }
 
-interface Version { id: number; label: string; when: string; author: string }
-const VERSIONS: Version[] = [
-  { id: 3, label: 'v3 (current)', when: '2d ago', author: 'config-backup' },
-  { id: 2, label: 'v2', when: '5d ago', author: 'dana' },
-  { id: 1, label: 'v1', when: '12d ago', author: 'config-backup' },
-]
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime()
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000))
+  if (secs < 60) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.round(hrs / 24)
+  return `${days}d ago`
+}
 
 export default function Configuration({ device }: { device: DeviceDetail }) {
-  const config = sampleConfig(device)
-  const [comparing, setComparing] = useState(false)
-  const [selected, setSelected] = useState(3)
+  const deviceId = device.id
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+
+  const { data: configsData, isLoading } = useQuery({
+    queryKey: ['device-configs', deviceId],
+    queryFn: () =>
+      api
+        .get(`/configbackup/configs/?device=${deviceId}&ordering=-collected_at`)
+        .then((r) => (Array.isArray(r.data) ? r.data : r.data.results ?? []) as DeviceConfigRow[]),
+  })
+  const configs = configsData ?? []
+
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  useEffect(() => {
+    if (configs.length && !selectedId) setSelectedId(configs[0].id)
+  }, [configs, selectedId])
+
+  const selected = configs.find((c) => c.id === selectedId)
+  const [collecting, setCollecting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const collectNow = async () => {
+    setCollecting(true)
+    setError(null)
+    try {
+      await api.post(`/configbackup/configs/collect/${deviceId}/`)
+      setSelectedId(null) // let the latest snapshot become selected after refetch
+      await queryClient.invalidateQueries({ queryKey: ['device-configs', deviceId] })
+    } catch {
+      setError('Collection failed. Check that the device is reachable and has a credential profile.')
+    } finally {
+      setCollecting(false)
+    }
+  }
 
   const download = () => {
-    const blob = new Blob([config], { type: 'text/plain' })
+    if (!selected) return
+    const blob = new Blob([selected.content], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${device.hostname}-running-config.txt`
+    a.download = `${device.hostname}-running.cfg`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+  }
+
+  if (configs.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 py-16 text-center">
+        <div className="text-4xl mb-2">📄</div>
+        <p className="text-sm text-gray-500 mb-4">No configurations collected yet</p>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+        <button onClick={collectNow} disabled={collecting} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          {collecting ? 'Collecting…' : 'Collect Now'}
+        </button>
+      </div>
+    )
   }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       {/* Version history */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200"><h3 className="text-sm font-semibold text-gray-800">Version History</h3></div>
-        <div className="divide-y divide-gray-100">
-          {VERSIONS.map((v) => (
-            <button
-              key={v.id}
-              onClick={() => setSelected(v.id)}
-              className={clsx('w-full text-left px-4 py-3 hover:bg-gray-50', selected === v.id && 'bg-blue-50')}
-            >
-              <p className="text-sm font-medium text-gray-800">{v.label}</p>
-              <p className="text-xs text-gray-400">{v.author} · {v.when}</p>
-            </button>
-          ))}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-800">Version History</h3>
+          <button onClick={collectNow} disabled={collecting} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">
+            {collecting ? '…' : 'Collect Now'}
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-600 px-4 py-2">{error}</p>}
+        <div className="divide-y divide-gray-100 max-h-[28rem] overflow-y-auto">
+          {configs.map((c, i) => {
+            const label = i === 0 ? `v${configs.length} (current)` : `v${configs.length - i}`
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedId(c.id)}
+                className={clsx('w-full text-left px-4 py-3 hover:bg-gray-50', selectedId === c.id && 'bg-blue-50')}
+              >
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-gray-800">{label}</p>
+                  {c.changed_from_previous && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">changed</span>}
+                </div>
+                <p className="text-xs text-gray-400">{c.collected_by} · {relativeTime(c.collected_at)}</p>
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -79,12 +128,12 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
           <h3 className="text-sm font-semibold text-gray-800">Running Config</h3>
           <div className="flex gap-2">
-            <button onClick={() => setComparing(true)} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Compare</button>
-            <button onClick={download} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Download</button>
+            <button onClick={() => navigate('/configs/compare')} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Compare</button>
+            <button onClick={download} disabled={!selected} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Download</button>
           </div>
         </div>
         <pre className="bg-gray-900 text-gray-100 text-xs font-mono p-4 overflow-x-auto leading-relaxed max-h-[28rem]">
-          {config.split('\n').map((line, i) => (
+          {(selected?.content ?? '').split('\n').map((line, i) => (
             <div key={i} className={clsx(
               line.startsWith('!') && 'text-gray-500',
               /^(hostname|interface|line|snmp-server|logging|service|ip|no)\b/.test(line) && 'text-sky-300',
@@ -93,18 +142,6 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
           ))}
         </pre>
       </div>
-
-      {comparing && (
-        <Modal title="Compare Configurations" onClose={() => setComparing(false)} size="xl"
-          footer={<button onClick={() => setComparing(false)} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Close</button>}>
-          <p className="text-sm text-gray-500 mb-3">v2 → v3 (current). Full diff renders once the config-manager API is wired.</p>
-          <div className="font-mono text-xs rounded-lg border border-gray-200 overflow-hidden">
-            <div className="bg-red-50 text-red-700 px-3 py-1">- snmp-server community public RO</div>
-            <div className="bg-green-50 text-green-700 px-3 py-1">+ snmp-server community netpulse RO</div>
-            <div className="bg-green-50 text-green-700 px-3 py-1">+ logging host 10.0.0.10</div>
-          </div>
-        </Modal>
-      )}
     </div>
   )
 }
