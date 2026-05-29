@@ -1210,3 +1210,56 @@ Store NetBox API token in OpenBao
 Settings → Integrations → NetBox card
 Import progress UI with live count
 Import history with re-import option
+
+## SNMP Polling Design
+
+### Device-Level Polls (always on, no selection)
+- System: sysDescr, sysName, sysUpTime, sysObjectID
+- CPU: vendor-specific MIBs + hrProcessorLoad fallback
+- Memory: ciscoMemoryPool or hrStorage
+- Temperature: entPhysical sensors
+- Power supplies: status per PSU
+- Fans: status per fan
+- BGP: peer state, uptime, prefix counts
+- Hardware inventory: entPhysicalTable
+
+### Interface-Level Polls (user selects)
+Models:
+  SNMPPollingConfig (OneToOne with Device):
+    enabled, interval, poll_cpu, poll_memory,
+    poll_temperature, poll_power, poll_fans,
+    poll_bgp, poll_inventory
+
+  MonitoredInterface:
+    device (FK), if_index, if_name, if_description
+    if_alias, if_speed_mbps, if_type
+    lldp_neighbor, lldp_port, cdp_neighbor
+    poll_traffic, poll_errors, poll_status
+    circuit_override (FK, optional)
+    last_discovered, last_status
+
+### Interface Discovery UI
+Device Detail → Telemetry → Interfaces tab
+[Discover] button → SNMP walk ifTable + LLDP + CDP
+Shows table: ☑ | Interface | Description | LLDP Neighbor
+Regex filter box to find interfaces
+Smart auto-select: UP + has description + has neighbor
+Auto-exclude: loopbacks, tunnels, null, admin-down
+
+### API Endpoints
+POST /api/devices/{id}/interfaces/discover/
+  SNMP walk → return list (does NOT save)
+GET/POST /api/devices/{id}/interfaces/
+DELETE /api/devices/{id}/interfaces/{if_index}/
+
+### Key OIDs
+ifHCInOctets, ifHCOutOctets (64-bit traffic)
+ifOperStatus, ifAdminStatus
+ifInErrors, ifOutErrors, ifInDiscards, ifOutDiscards
+ifAlias, ifHighSpeed
+lldpRemSysName, lldpRemPortDesc
+cdpCacheDeviceId, cdpCacheDevicePort (Cisco)
+
+### Smart Defaults on Discovery
+Auto-select: operUp + has description OR has LLDP neighbor
+Auto-exclude: loopback, tunnel, null, subinterfaces
