@@ -1024,3 +1024,48 @@ API      — service account for integrations
 6. mTLS for all internal service communication
 7. TLS 1.3 minimum for external connections
 8. Zero secrets in code or environment variables in production
+
+## RBAC & Multi-Tenancy
+
+### Phase 1 (Build Now) — Tenant-Level Isolation
+Every object belongs to a tenant. Users scoped to tenant + role.
+
+Tenant model:
+  name, slug, plan, is_active, max_devices, max_users
+  logo_url, primary_color (MSP white-labeling)
+
+TenantUser model:
+  user (FK), tenant (FK), role, is_active, invited_by, joined_at
+  Roles: admin, engineer, viewer, api
+
+All models inherit TenantModel (abstract):
+  tenant = ForeignKey(Tenant)
+
+All ViewSets inherit TenantViewSet:
+  get_queryset() auto-filters by request.user.tenant
+
+MSP Super Admin role:
+  Sees all tenants
+  Can switch tenant context
+  Manages tenant provisioning
+  Header shows "Viewing: {tenant} [Exit]" when in context
+
+JWT token includes tenant_id and role:
+  {user_id, username, tenant_id, tenant_slug, role}
+
+### Phase 2 (Future) — Site/Group Scoping
+  User role scoped to specific sites or device groups
+  "Engineer at Site: Dallas, Austin only"
+
+### Phase 3 (Future) — Object-Level (ABAC)
+  Full attribute-based access control
+  Granular per-feature permissions
+  Custom role definitions
+
+### Implementation Notes
+- Add tenant to all existing models via migration
+- Default tenant created on first run (single-org deployments)
+- Single-org deployments work transparently (one tenant)
+- Multi-tenant only relevant for MSP/cloud-hosted deployments
+- Never expose cross-tenant data — enforce at QuerySet level
+- Audit log includes tenant_id on every entry
