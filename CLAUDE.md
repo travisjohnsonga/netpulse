@@ -283,3 +283,103 @@ Critical docs to build early:
   (IOS-XE, IOS-XR, NX-OS, Juniper, Arista)
 - Per-integration setup guides (Meraki, Mist, UniFi, Slack, Teams)
 - Contributor guides (vendor plugins, TextFSM templates, MIBs)
+
+## Network Topology Mapping (Phase 4)
+
+Auto-generated topology maps from CDP/LLDP with live utilization overlay.
+
+### Three Views
+1. Physical Topology — auto-built from CDP/LLDP, links colored by utilization
+2. NetFlow Path View — traffic path between src/dst with per-hop latency
+3. Site/Geographic View — devices grouped by site, WAN links with utilization
+
+### Link Coloring (utilization)
+- Green: 0-60%
+- Yellow: 60-80%
+- Orange: 80-90%
+- Red: 90%+ (needs attention)
+- Gray: link down
+Link thickness = capacity (1G/10G/40G/100G)
+
+### Technology
+- Cytoscape.js (MIT) — topology rendering, large network support
+- D3.js (ISC) — NetFlow path visualization
+- Both open source, no licensing issues
+
+### Data Model (PostgreSQL)
+topology_links table:
+  device_a_id, device_b_id (FK to devices)
+  interface_a, interface_b
+  capacity_gbps, link_type
+  discovered_via (cdp/lldp/manual)
+  last_seen
+
+### API Response
+GET /api/topology/ returns nodes + edges JSON with:
+- Node: id, label, type, site, status, risk_score
+- Edge: source, target, capacity_gbps, utilization_pct,
+        utilization_color, in_bps, out_bps, latency_ms
+
+### Live Updates
+WebSocket pushes utilization updates every 30s
+InfluxDB queried for latest interface counters
+Flow correlator provides per-link latency
+
+### Interactive Features
+- Click device → health popup + "view details"
+- Click link → utilization chart + latency
+- Right-click → run commands, view config/logs/CVEs
+- Filter by site, role, device type
+- Toggle utilization/alert overlays
+- Export as PNG/SVG
+- NetFlow path: select src+dst → highlight path with latency
+
+## Network Topology Mapping (Phase 4)
+
+Auto-generated topology maps from CDP/LLDP with live utilization overlay.
+
+### Three Views
+1. Physical Topology — auto-built from CDP/LLDP, links colored by utilization
+2. NetFlow Path View — traffic path between src/dst with per-hop latency
+3. Site/Geographic View — devices grouped by site, WAN links with utilization
+
+### Link Coloring (utilization)
+- Green: 0-60%
+- Yellow: 60-80%
+- Orange: 80-90%
+- Red: 90%+ (needs attention)
+- Gray: link down
+Link thickness = capacity (1G/10G/40G/100G)
+
+### Technology
+- Cytoscape.js (MIT) — topology rendering, large network support
+- D3.js (ISC) — NetFlow path visualization
+- Both open source, no licensing issues
+
+### Data Model (PostgreSQL)
+topology_links table:
+  device_a_id, device_b_id (FK to devices)
+  interface_a, interface_b
+  capacity_gbps, link_type
+  discovered_via (cdp/lldp/manual)
+  last_seen
+
+### API Response
+GET /api/topology/ returns nodes + edges JSON with:
+- Node: id, label, type, site, status, risk_score
+- Edge: source, target, capacity_gbps, utilization_pct,
+        utilization_color, in_bps, out_bps, latency_ms
+
+### Live Updates
+WebSocket pushes utilization updates every 30s
+InfluxDB queried for latest interface counters
+Flow correlator provides per-link latency
+
+### Interactive Features
+- Click device → health popup + "view details"
+- Click link → utilization chart + latency
+- Right-click → run commands, view config/logs/CVEs
+- Filter by site, role, device type
+- Toggle utilization/alert overlays
+- Export as PNG/SVG
+- NetFlow path: select src+dst → highlight path with latency
