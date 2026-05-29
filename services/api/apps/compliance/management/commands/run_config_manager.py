@@ -39,11 +39,12 @@ class Command(BaseCommand):
         logger.info("config-manager starting (interval=%ss, once=%s, device=%s)", interval, once, device_id or "all-active")
 
         while not stop.is_set():
-            collected, failed = self._cycle(device_id)
-            logger.info("cycle complete: %d collected, %d failed", collected, failed)
+            reached, stored, failed = self._cycle(device_id)
+            logger.info("cycle complete: %d reached, %d stored (changed), %d failed", reached, stored, failed)
             if once:
                 break
-            # Interruptible sleep.
+            # Interruptible sleep — a signal mid-cycle lets the current cycle
+            # finish, then this returns immediately and the loop exits.
             stop.wait(interval)
 
         logger.info("config-manager stopped")
@@ -64,14 +65,17 @@ class Command(BaseCommand):
             )
             collected_by = "scheduled"
 
-        collected = failed = 0
+        reached = stored = failed = 0
         for device in devices:
             try:
-                if collector.collect_one(device, collected_by) is not None:
-                    collected += 1
+                res = collector.collect_one(device, collected_by)
+                if res.get("ok"):
+                    reached += 1
+                    if res.get("stored"):
+                        stored += 1
                 else:
                     failed += 1
             except Exception as exc:  # defensive — collect_one shouldn't raise
                 failed += 1
                 logger.error("unexpected error collecting %s: %s", device.hostname, exc)
-        return (collected, failed)
+        return (reached, stored, failed)

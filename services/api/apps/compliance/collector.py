@@ -17,6 +17,7 @@ import difflib
 import hashlib
 import logging
 import os
+import re
 import tempfile
 import time
 
@@ -72,6 +73,42 @@ def config_command(platform: str) -> str:
 def device_host(device) -> str:
     """Connection target: management IP if set, otherwise the primary IP."""
     return str(device.management_ip or device.ip_address)
+
+
+# ── Config normalization ──────────────────────────────────────────────────────
+# Lines that change every collection but carry no config meaning. Stripped
+# before hashing so timestamp churn doesn't register as a config change.
+_DYNAMIC_LINE_PATTERNS = [
+    re.compile(r"^\s*! Last configuration change at .*", re.IGNORECASE),
+    re.compile(r"^\s*! NVRAM config last updated .*", re.IGNORECASE),
+    re.compile(r"^\s*Building configuration\.\.\..*", re.IGNORECASE),
+    re.compile(r"^\s*Current configuration\s*:\s*\d+ bytes.*", re.IGNORECASE),
+]
+# Generic timestamp comment lines, e.g. "! 2024-06-14 12:00:00" or
+# "! Mon Jun 14 12:00:00 2024".
+_TS_DATE = re.compile(r"\b(19|20)\d{2}-\d{2}-\d{2}\b")
+_TS_CLOCK = re.compile(r"\b\d{1,2}:\d{2}:\d{2}\b")
+_TS_DOW = re.compile(r"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", re.IGNORECASE)
+
+
+def _is_timestamp_comment(line: str) -> bool:
+    s = line.strip()
+    if not s.startswith("!"):
+        return False
+    return bool(_TS_CLOCK.search(s) or _TS_DATE.search(s) or _TS_DOW.search(s))
+
+
+def normalize_config(content: str) -> str:
+    """Strip dynamic/timestamp lines so the hash reflects substantive config only."""
+    out = []
+    for raw in content.splitlines():
+        line = raw.rstrip()
+        if any(p.match(line) for p in _DYNAMIC_LINE_PATTERNS):
+            continue
+        if _is_timestamp_comment(line):
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def get_credentials(device) -> dict:
@@ -183,20 +220,29 @@ def _mark_credential_failed(device, message: str) -> None:
     profile.save(update_fields=["last_test_result", "last_test_message"])
 
 
-def store_config(device, content: str, collected_by: str) -> DeviceConfig:
-    """Persist a running-config snapshot with hash + change detection."""
-    content_hash = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+def store_config(device, content: str, collected_by: str) -> DeviceConfig | None:
+    """
+    Persist a running-config snapshot — but only when the *normalized* config
+    differs from the last stored one. ``content_hash`` is the hash of the
+    normalized text (used for change detection); ``content`` keeps the ORIGINAL
+    for display. Returns the new DeviceConfig, or None when unchanged.
+    """
+    normalized = normalize_config(content)
+    norm_hash = hashlib.sha256(normalized.encode("utf-8", "replace")).hexdigest()
     prev = (
         DeviceConfig.objects
         .filter(device=device, config_type=DeviceConfig.ConfigType.RUNNING)
         .order_by("-collected_at")
         .first()
     )
-    changed = prev is not None and prev.content_hash != content_hash
+    if prev is not None and prev.content_hash == norm_hash:
+        return None  # unchanged — nothing to store
+
+    changed = prev is not None
     diff_summary = None
     if changed:
         diff = difflib.unified_diff(
-            prev.content.splitlines(), content.splitlines(),
+            normalize_config(prev.content).splitlines(), normalized.splitlines(),
             fromfile="previous", tofile="current", lineterm="", n=2,
         )
         diff_summary = "\n".join(list(diff)[:500])
@@ -211,8 +257,8 @@ def store_config(device, content: str, collected_by: str) -> DeviceConfig:
         config_type=DeviceConfig.ConfigType.RUNNING,
         collected_at=timezone.now(),
         collected_by=collected_by,
-        content=content,
-        content_hash=content_hash,
+        content=content,            # ORIGINAL content for display
+        content_hash=norm_hash,     # NORMALIZED hash for change detection
         changed_from_previous=changed,
         diff_summary=diff_summary,
         local_path=local_path,
@@ -240,10 +286,15 @@ async def _publish(device_id) -> None:
         await nc.drain()
 
 
-def collect_one(device, collected_by: str = "scheduled") -> DeviceConfig | None:
+def collect_one(device, collected_by: str = "scheduled") -> dict:
     """
-    Collect and store one device's running config. Returns the DeviceConfig, or
-    None on failure. Never raises — single-device failures must not stop the loop.
+    Collect one device's running config. Returns a result dict:
+      {"ok": True, "stored": bool, "changed": bool, "config": DeviceConfig|None}
+      {"ok": False, "error": "auth_failed"|"timeout"|"empty"|"error"}
+
+    Updates ``device.last_seen`` whenever the device is reached, regardless of
+    whether the config changed. Never raises — a single device must not stop the
+    loop.
     """
     start = time.monotonic()
     creds = get_credentials(device)
@@ -254,24 +305,33 @@ def collect_one(device, collected_by: str = "scheduled") -> DeviceConfig | None:
         if "Auth" in name:
             _mark_credential_failed(device, f"{name}: authentication failed")
             logger.error("auth failure collecting %s (%s)", device.hostname, name)
-        elif "Timeout" in name or "timeout" in str(exc).lower():
+            return {"ok": False, "error": "auth_failed"}
+        if "Timeout" in name or "timeout" in str(exc).lower():
             logger.warning("timeout collecting %s: %s", device.hostname, exc)
-        else:
-            logger.error("error collecting %s: %s", device.hostname, exc)
-        return None
+            return {"ok": False, "error": "timeout"}
+        logger.error("error collecting %s: %s", device.hostname, exc)
+        return {"ok": False, "error": "error"}
 
     if not content or not content.strip():
         logger.warning("empty config returned for %s — skipping", device.hostname)
-        return None
+        return {"ok": False, "error": "empty"}
 
     cfg = store_config(device, content, collected_by)
+
+    # Reachability bookkeeping happens regardless of whether the config changed.
     device.last_seen = timezone.now()
     device.save(update_fields=["last_seen"])
     publish_collected(device.id)
 
     elapsed = time.monotonic() - start
-    logger.info(
-        "collected %s (%s) — %d bytes, changed=%s, %.2fs",
-        device.hostname, device.platform or "?", len(content), cfg.changed_from_previous, elapsed,
-    )
-    return cfg
+    if cfg is None:
+        logger.info("config unchanged for %s (%s) — %.2fs", device.hostname, device.platform or "?", elapsed)
+        return {"ok": True, "stored": False, "changed": False, "config": None}
+
+    if cfg.changed_from_previous:
+        logger.info("config changed, stored for %s (%s) — %d bytes, %.2fs",
+                    device.hostname, device.platform or "?", len(content), elapsed)
+    else:
+        logger.info("config stored (initial baseline) for %s (%s) — %d bytes, %.2fs",
+                    device.hostname, device.platform or "?", len(content), elapsed)
+    return {"ok": True, "stored": True, "changed": cfg.changed_from_previous, "config": cfg}
