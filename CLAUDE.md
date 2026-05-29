@@ -773,3 +773,26 @@ Override button to reassign
 - React Query for API data fetching and caching
 - Zustand for global state management
 - React Router for navigation
+
+## Data Persistence Strategy
+
+Development: Named Docker volumes (current)
+Production: Bind mounts to ${DATA_DIR:-/opt/netpulse/data}/
+
+Production docker-compose.yml should use:
+  - ${DATA_DIR}/postgres:/var/lib/postgresql/data
+  - ${DATA_DIR}/influxdb:/var/lib/influxdb2
+  - ${DATA_DIR}/opensearch:/usr/share/opensearch/data
+  - ${DATA_DIR}/valkey:/data
+  - ${DATA_DIR}/nats:/data
+  - ${DATA_DIR}/openbao:/openbao/data
+
+Add DATA_DIR=/opt/netpulse/data to .env for production
+
+Backup strategy:
+  docker compose stop → tar DATA_DIR → docker compose start
+  OpenBao data is most critical — back up separately
+  Document restore procedure in docs/deployment/backup-restore.md
+
+Keep all databases IN Docker — not external.
+Bind mounts give full data accessibility without complexity.
