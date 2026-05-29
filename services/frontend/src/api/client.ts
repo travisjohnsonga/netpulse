@@ -338,3 +338,48 @@ export async function removeDeviceCredential(
 ): Promise<void> {
   await api.delete(`/devices/${deviceId}/credentials/${purpose}/`)
 }
+
+// ── Alert rules & channels ───────────────────────────────────────────────────
+
+export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info'
+
+export interface AlertRule {
+  id: number
+  name: string
+  description: string
+  severity: AlertSeverity
+  condition: Record<string, unknown>
+  channels: number[]
+  is_active: boolean
+  cooldown_minutes: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertChannel {
+  id: number
+  name: string
+  channel_type: 'slack' | 'email' | 'pagerduty' | 'webhook'
+  config: Record<string, unknown>
+  is_active: boolean
+}
+
+export async function fetchAlertRules(): Promise<AlertRule[]> {
+  const { data } = await api.get<AlertRule[] | Paginated<AlertRule>>('/alerts/rules/')
+  return unwrap(data)
+}
+
+export async function createAlertRule(payload: Partial<AlertRule>): Promise<AlertRule> {
+  const { data } = await api.post<AlertRule>('/alerts/rules/', payload)
+  return data
+}
+
+export async function updateAlertRule(id: number, payload: Partial<AlertRule>): Promise<AlertRule> {
+  const { data } = await api.patch<AlertRule>(`/alerts/rules/${id}/`, payload)
+  return data
+}
+
+export async function fetchAlertChannels(): Promise<AlertChannel[]> {
+  const { data } = await api.get<AlertChannel[] | Paginated<AlertChannel>>('/alerts/channels/')
+  return unwrap(data)
+}
