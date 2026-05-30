@@ -166,6 +166,24 @@ _TABLE: dict[str, tuple[str, str]] = {
     "1.3.6.1.4.1.318.0.9":   ("APC-POWERNET-MIB", "apcUpsOnBattery"),
     "1.3.6.1.4.1.318.0.15":  ("APC-POWERNET-MIB", "apcUpsDischarged"),
     "1.3.6.1.4.1.318.0.16":  ("APC-POWERNET-MIB", "apcUpsCharged"),
+
+    # ── HOST-RESOURCES-MIB — universal CPU/memory ────────────────────────────
+    "1.3.6.1.2.1.25.3.3.1.2":   ("HOST-RESOURCES-MIB", "hrProcessorLoad"),
+    "1.3.6.1.2.1.25.2.3.1.5":   ("HOST-RESOURCES-MIB", "hrStorageSize"),
+    "1.3.6.1.2.1.25.2.3.1.6":   ("HOST-RESOURCES-MIB", "hrStorageUsed"),
+
+    # ── CISCO-PROCESS-MIB — Cisco CPU ────────────────────────────────────────
+    "1.3.6.1.4.1.9.9.109.1.1.1.1.1":  ("CISCO-PROCESS-MIB", "cpmCPUTotalPhysicalIndex"),
+    "1.3.6.1.4.1.9.9.109.1.1.1.1.3":  ("CISCO-PROCESS-MIB", "cpmCPUTotal1min"),
+    "1.3.6.1.4.1.9.9.109.1.1.1.1.4":  ("CISCO-PROCESS-MIB", "cpmCPUTotal5min"),
+    "1.3.6.1.4.1.9.9.109.1.1.1.1.7":  ("CISCO-PROCESS-MIB", "cpmCPUTotal1minRev"),
+    "1.3.6.1.4.1.9.9.109.1.1.1.1.8":  ("CISCO-PROCESS-MIB", "cpmCPUTotal5minRev"),
+
+    # ── CISCO-MEMORY-POOL-MIB ────────────────────────────────────────────────
+    "1.3.6.1.4.1.9.9.48.1.1.1.2":  ("CISCO-MEMORY-POOL-MIB", "ciscoMemoryPoolName"),
+    "1.3.6.1.4.1.9.9.48.1.1.1.5":  ("CISCO-MEMORY-POOL-MIB", "ciscoMemoryPoolUsed"),
+    "1.3.6.1.4.1.9.9.48.1.1.1.6":  ("CISCO-MEMORY-POOL-MIB", "ciscoMemoryPoolFree"),
+    "1.3.6.1.4.1.9.9.48.1.1.1.7":  ("CISCO-MEMORY-POOL-MIB", "ciscoMemoryPoolLargestFree"),
 }
 
 
