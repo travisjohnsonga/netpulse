@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { api, fetchDevice, deleteDevice, discoverInterfaces, type DeviceDetail as Device } from '../api/client'
+import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, type DeviceDetail as Device } from '../api/client'
+import { sshUrl, sshTooltip } from '../lib/ssh'
 import Overview from './device/Overview'
 import Telemetry from './device/Telemetry'
 import Logs from './device/Logs'
@@ -45,6 +46,7 @@ export default function DeviceDetail() {
   const [deleting, setDeleting] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [sshCred, setSshCred] = useState<{ username: string | null; port: number | null }>({ username: null, port: null })
 
   const load = useCallback(() => {
     setLoading(true)
@@ -55,6 +57,15 @@ export default function DeviceDetail() {
   }, [deviceId])
 
   useEffect(() => { load() }, [load])
+
+  // Pull the SSH username/port from the device's credential profile so the SSH
+  // link can include them (falls back to a bare ssh://<host> otherwise).
+  useEffect(() => {
+    if (!device?.credential_profile) { setSshCred({ username: null, port: null }); return }
+    fetchCredential(device.credential_profile)
+      .then((p) => setSshCred({ username: p.ssh_enabled ? p.ssh_username : null, port: p.ssh_port }))
+      .catch(() => setSshCred({ username: null, port: null }))
+  }, [device?.credential_profile])
 
   const flash = (ok: boolean, msg: string) => { setToast({ ok, msg }); setTimeout(() => setToast(null), 4000) }
 
@@ -100,7 +111,15 @@ export default function DeviceDetail() {
             <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600')}>{device.status}</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-500 font-mono">{device.ip_address}</span>
+            <span className="text-sm text-gray-500 font-mono">{device.management_ip || device.ip_address}</span>
+            <a
+              href={sshUrl(device, sshCred.username, sshCred.port)}
+              target="_blank" rel="noopener noreferrer"
+              title={sshTooltip(device.hostname, device, sshCred.username, sshCred.port)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700"
+            >
+              🔒 SSH
+            </a>
             <div className="relative">
               <button onClick={() => setMenuOpen((o) => !o)} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">
                 ⚙ Settings ▾
