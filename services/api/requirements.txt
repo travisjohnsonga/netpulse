@@ -29,9 +29,10 @@ opensearch-py[async]~=2.7
 # Secrets
 hvac~=2.1
 
-# Device access (config collection) — imported lazily by the config-manager
+# Device access (config collection / interface discovery) — imported lazily
 netmiko~=4.4
 ncclient~=0.6
+pysnmp~=7.1
 
 # WSGI server + static files
 gunicorn~=22.0
