@@ -22,7 +22,10 @@ export function severityBadge(sev: string): string {
 }
 
 export const TIME_RANGES: { id: string; label: string; seconds: number | null }[] = [
+  { id: '15m', label: 'Last 15 min', seconds: 900 },
   { id: '1h', label: 'Last 1 hr', seconds: 3600 },
+  { id: '4h', label: 'Last 4 hr', seconds: 14400 },
+  { id: '12h', label: 'Last 12 hr', seconds: 43200 },
   { id: '24h', label: 'Last 24 hr', seconds: 86400 },
   { id: '7d', label: 'Last 7 days', seconds: 604800 },
   { id: 'all', label: 'All time', seconds: null },

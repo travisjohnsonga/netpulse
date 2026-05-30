@@ -6,8 +6,9 @@ import {
   type LogEntry, type Device, type Site,
 } from '../api/client'
 import { SEVERITY_ORDER, TIME_RANGES, rangeFrom, severityBadge } from '../lib/severity'
+import { usePreferencesStore } from '../store/preferencesStore'
 
-const PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 50
 const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
 const selCls = 'px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -20,6 +21,7 @@ export default function Logs() {
   const [role, setRole] = useState('')
   const [severities, setSeverities] = useState<Set<string>>(new Set())
   const [range, setRange] = useState('1h')
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [search, setSearch] = useState('')
 
   const [rows, setRows] = useState<LogEntry[]>([])
@@ -31,6 +33,17 @@ export default function Logs() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [auto, setAuto] = useState(false)
 
+  // Apply user preference defaults once they load (without clobbering edits).
+  const prefs = usePreferencesStore((s) => s.prefs)
+  const prefsApplied = useRef(false)
+  useEffect(() => {
+    if (!prefs || prefsApplied.current) return
+    prefsApplied.current = true
+    setRange(prefs.log_default_time_range)
+    setPageSize(prefs.log_default_page_size)
+    setAuto(prefs.log_auto_refresh)
+  }, [prefs])
+
   useEffect(() => {
     fetchDevices({ page_size: '500' }).then((d) => setDevices(d.results)).catch(() => {})
     fetchSites().then(setSites).catch(() => {})
@@ -40,7 +53,7 @@ export default function Logs() {
 
   const load = useCallback(async (pg: number, append: boolean) => {
     setLoading(true); setError(null)
-    const params: Record<string, string> = { page: String(pg), page_size: String(PAGE_SIZE) }
+    const params: Record<string, string> = { page: String(pg), page_size: String(pageSize) }
     if (deviceHost) params.device_hostname = deviceHost
     if (site) params.site = site
     if (role) params.role = role
@@ -54,7 +67,7 @@ export default function Logs() {
       setRows((prev) => (append ? [...prev, ...res.results] : res.results))
       if (res.error) setError(res.error)
     } catch { setError('Failed to load logs.') } finally { setLoading(false) }
-  }, [deviceHost, site, role, severities, range, search])
+  }, [deviceHost, site, role, severities, range, search, pageSize])
 
   useEffect(() => {
     const t = setTimeout(() => { setPage(1); load(1, false) }, 300)

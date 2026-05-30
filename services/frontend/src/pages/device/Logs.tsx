@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { fetchLogs, type DeviceDetail, type LogEntry } from '../../api/client'
 import { SEVERITY_ORDER, TIME_RANGES, rangeFrom, severityBadge } from '../../lib/severity'
+import { usePreferencesStore } from '../../store/preferencesStore'
 
-const PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 50
 
 export default function Logs({ device }: { device: DeviceDetail }) {
   const [severities, setSeverities] = useState<Set<string>>(new Set())
   const [range, setRange] = useState('1h')
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<LogEntry[]>([])
   const [count, setCount] = useState(0)
@@ -16,10 +18,21 @@ export default function Logs({ device }: { device: DeviceDetail }) {
   const [error, setError] = useState<string | null>(null)
   const [auto, setAuto] = useState(false)
 
+  // Apply user preference defaults once loaded.
+  const prefs = usePreferencesStore((s) => s.prefs)
+  const prefsApplied = useRef(false)
+  useEffect(() => {
+    if (!prefs || prefsApplied.current) return
+    prefsApplied.current = true
+    setRange(prefs.log_default_time_range)
+    setPageSize(prefs.log_default_page_size)
+    setAuto(prefs.log_auto_refresh)
+  }, [prefs])
+
   const load = useCallback(async (pg: number, append: boolean) => {
     setLoading(true); setError(null)
     const params: Record<string, string> = {
-      device_hostname: device.hostname, page: String(pg), page_size: String(PAGE_SIZE),
+      device_hostname: device.hostname, page: String(pg), page_size: String(pageSize),
     }
     if (severities.size) params.severity = [...severities].join(',')
     const from = rangeFrom(range)
@@ -31,7 +44,7 @@ export default function Logs({ device }: { device: DeviceDetail }) {
       setRows((prev) => (append ? [...prev, ...res.results] : res.results))
       if (res.error) setError(res.error)
     } catch { setError('Failed to load logs.') } finally { setLoading(false) }
-  }, [device.hostname, severities, range, search])
+  }, [device.hostname, severities, range, search, pageSize])
 
   // Reload from page 1 when filters change (debounced for search).
   useEffect(() => {

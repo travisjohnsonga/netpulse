@@ -1,3 +1,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Global theme baselines so areas without explicit dark: classes still flip. */
+@layer base {
+  html { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+  body { @apply bg-gray-50 text-gray-900; }
+  html.dark body { @apply bg-gray-950 text-gray-100; }
+}

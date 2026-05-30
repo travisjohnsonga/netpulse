@@ -631,6 +631,54 @@ export async function saveCVEFeedSettings(payload: CVEFeedSettingsWrite): Promis
   return data
 }
 
+// ── User profile & preferences ───────────────────────────────────────────────
+
+export interface UserPreferences {
+  theme: 'light' | 'dark' | 'system'
+  log_default_time_range: '15m' | '1h' | '4h' | '12h' | '24h' | '7d' | 'all'
+  log_default_page_size: number
+  log_auto_refresh: boolean
+  devices_default_columns: string[]
+  devices_page_size: number
+  timezone: string
+  date_format: 'iso' | 'us' | 'eu'
+  email_alerts: boolean
+}
+
+export interface Me {
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  role: string
+  is_superuser: boolean
+  preferences: UserPreferences
+}
+
+export async function fetchMe(): Promise<Me> {
+  const { data } = await api.get<Me>('/users/me/')
+  return data
+}
+
+export async function updateMe(payload: Partial<Pick<Me, 'email' | 'first_name' | 'last_name'>>): Promise<Me> {
+  const { data } = await api.put<Me>('/users/me/', payload)
+  return data
+}
+
+export async function fetchPreferences(): Promise<UserPreferences> {
+  const { data } = await api.get<UserPreferences>('/users/me/preferences/')
+  return data
+}
+
+export async function savePreferences(payload: Partial<UserPreferences>): Promise<UserPreferences> {
+  const { data } = await api.put<UserPreferences>('/users/me/preferences/', payload)
+  return data
+}
+
+export async function changePassword(current_password: string, new_password: string): Promise<void> {
+  await api.post('/users/me/change-password/', { current_password, new_password })
+}
+
 export interface MonitoredInterface {
   id: number
   if_index: number | null

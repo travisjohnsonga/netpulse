@@ -27,7 +27,7 @@ export default function Settings() {
     <div className="flex gap-6">
       {/* Settings sub-navigation — icons only on narrow screens, full on desktop */}
       <nav className="shrink-0 w-14 lg:w-56 space-y-1">
-        <h1 className="hidden lg:block text-lg font-bold text-gray-900 px-3 mb-3">Settings</h1>
+        <h1 className="hidden lg:block text-lg font-bold text-gray-900 dark:text-gray-100 px-3 mb-3">Settings</h1>
         {SETTINGS_NAV.map((item) => (
           <NavLink
             key={item.to}
@@ -38,8 +38,8 @@ export default function Settings() {
                 'flex items-center gap-3 rounded-lg text-sm font-medium transition-colors',
                 'justify-center lg:justify-start px-0 lg:px-3 py-2.5',
                 isActive
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+                  ? 'bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white',
               )
             }
           >
@@ -66,8 +66,8 @@ export function SectionHeader({ title, description, action }: {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
       <div>
-        <h2 className="text-xl font-bold text-gray-900">{title}</h2>
-        {description && <p className="text-sm text-gray-500 mt-0.5">{description}</p>}
+        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h2>
+        {description && <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{description}</p>}
       </div>
       {action}
     </div>
