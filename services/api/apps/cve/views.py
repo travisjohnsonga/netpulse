@@ -1,9 +1,9 @@
-from rest_framework import viewsets
+from rest_framework import generics
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
 from rest_framework.viewsets import GenericViewSet
 
-from .models import CVE, DeviceCVE
-from .serializers import CVESerializer, DeviceCVESerializer
+from .models import CVE, CVEFeedSettings, DeviceCVE
+from .serializers import CVEFeedSettingsSerializer, CVESerializer, DeviceCVESerializer
 
 
 class CVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
@@ -26,3 +26,12 @@ class DeviceCVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
     queryset = DeviceCVE.objects.select_related("device", "cve").all()
     serializer_class = DeviceCVESerializer
     filterset_fields = ["device", "is_patched", "cve__severity"]
+
+
+class CVEFeedSettingsView(generics.RetrieveUpdateAPIView):
+    """Get or update the CVE feed settings (enable toggles + credentials)."""
+
+    serializer_class = CVEFeedSettingsSerializer
+
+    def get_object(self):
+        return CVEFeedSettings.load()
