@@ -718,6 +718,10 @@ export async function updateDevice(
   return data
 }
 
+export async function deleteDevice(id: number): Promise<void> {
+  await api.delete(`/devices/${id}/`)
+}
+
 export interface TestConnectionResult {
   reachable: boolean
   open_ports: number[]

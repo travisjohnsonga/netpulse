@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
-  fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs,
+  fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
   type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
@@ -15,10 +15,11 @@ const SEVERITY_BADGE: Record<string, string> = {
   info: 'bg-gray-100 text-gray-600',
 }
 
-export default function Overview({ device, onTab, onRefresh }: {
+export default function Overview({ device, onTab, onRefresh, onManageCredentials }: {
   device: DeviceDetail
   onTab: (t: string) => void
   onRefresh?: () => void
+  onManageCredentials?: () => void
 }) {
   const [risk, setRisk] = useState<RiskScore | null>(null)
   const [alerts, setAlerts] = useState<AlertEvent[]>([])
@@ -26,6 +27,7 @@ export default function Overview({ device, onTab, onRefresh }: {
   const [editing, setEditing] = useState(false)
   const [ifaceCount, setIfaceCount] = useState<number | null>(null)
   const [configs, setConfigs] = useState<RecentConfig[] | null>(null)
+  const [credName, setCredName] = useState<string | null>(null)
 
   useEffect(() => {
     fetchDeviceRiskScore(device.id).then(setRisk).catch(() => setRisk(null))
@@ -35,7 +37,12 @@ export default function Overview({ device, onTab, onRefresh }: {
       .finally(() => setAlertsLoaded(true))
     fetchMonitoredInterfaces(device.id).then((m) => setIfaceCount(m.length)).catch(() => setIfaceCount(null))
     fetchRecentConfigs(device.id, 3).then(setConfigs).catch(() => setConfigs([]))
-  }, [device.id, device.hostname])
+    if (device.credential_profile) {
+      fetchCredential(device.credential_profile).then((p) => setCredName(p.name)).catch(() => setCredName(null))
+    } else {
+      setCredName(null)
+    }
+  }, [device.id, device.hostname, device.credential_profile])
 
   const relTime = (iso: string) => {
     const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
@@ -86,9 +93,12 @@ export default function Overview({ device, onTab, onRefresh }: {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Credentials</span>
-            <button onClick={() => onTab('credentials')} className="text-xs font-medium text-blue-600 hover:text-blue-800">
-              {device.credential_profile ? 'Profile assigned' : 'None'} →
-            </button>
+            <span className="flex items-center gap-2 text-sm">
+              {device.credential_profile
+                ? <span className="text-gray-800">{credName ?? 'profile'} ✅</span>
+                : <span className="text-gray-400">None</span>}
+              <button onClick={() => onManageCredentials?.()} className="text-xs font-medium text-blue-600 hover:text-blue-800">Manage</button>
+            </span>
           </div>
         </div>
       </Card>
