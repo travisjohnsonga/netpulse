@@ -20,5 +20,17 @@ if [ ! -f "$SSL_DIR/netpulse.crt" ] || [ ! -f "$SSL_DIR/netpulse.key" ]; then
     chmod 600 "$SSL_DIR/netpulse.key"
 fi
 
+# Ensure a CA trust bundle exists so nginx's ssl_trusted_certificate directive
+# always resolves. The API rebuilds this (system roots + admin-added CAs) when
+# trusted CA certs are managed via Settings → System → Trusted CA Certificates;
+# here we just seed it from the image's system roots on first boot.
+if [ ! -f "$SSL_DIR/ca-bundle.crt" ]; then
+    if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+        cp /etc/ssl/certs/ca-certificates.crt "$SSL_DIR/ca-bundle.crt"
+    else
+        : > "$SSL_DIR/ca-bundle.crt"
+    fi
+fi
+
 # Runs as an nginx /docker-entrypoint.d/ hook — return so the launcher
 # continues to the next script and finally starts nginx.

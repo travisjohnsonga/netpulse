@@ -610,6 +610,44 @@ export async function uploadCertificate(payload: { certificate: string; private_
   return data
 }
 
+// ── Trusted CA certificates ──────────────────────────────────────────────────
+
+export interface CACertificate {
+  id: number
+  name: string
+  subject: string
+  issuer: string
+  fingerprint_sha256: string
+  not_before: string | null
+  not_after: string | null
+  is_root: boolean
+  is_intermediate: boolean
+  cert_pem: string
+  added_by_username: string | null
+  created_at: string
+  expiry_status: 'ok' | 'warning' | 'expired' | 'none'
+  days_remaining: number | null
+}
+
+export async function fetchCACerts(): Promise<CACertificate[]> {
+  const { data } = await api.get<CACertificate[]>('/settings/ssl/ca-certs/')
+  return data
+}
+
+export async function addCACert(payload: { name?: string; certificate: string }): Promise<CACertificate[]> {
+  const { data } = await api.post<CACertificate[]>('/settings/ssl/ca-certs/', payload)
+  return data
+}
+
+export async function deleteCACert(id: number): Promise<void> {
+  await api.delete(`/settings/ssl/ca-certs/${id}/`)
+}
+
+export async function verifyCACert(id: number): Promise<{ valid: boolean; expiry_status: string; days_remaining: number | null }> {
+  const { data } = await api.post(`/settings/ssl/ca-certs/${id}/verify/`)
+  return data
+}
+
 // ── CVE feed settings ────────────────────────────────────────────────────────
 
 export interface CVEFeedSettings {

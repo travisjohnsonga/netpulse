@@ -1,6 +1,42 @@
+from django.conf import settings
 from django.db import models
 
 from apps.core.models import TimestampedModel
+
+
+class CACertificate(TimestampedModel):
+    """
+    A trusted CA certificate added by an admin.
+
+    Used to trust internal/private PKIs and SSL-inspection proxies for all of
+    NetPulse's *outbound* HTTPS (CVE feeds, vendor APIs, git sync) and for
+    nginx OCSP stapling. The PEM is public material, so it is stored in the DB
+    as the source of truth; the on-disk ca-bundle.crt is rebuilt from these
+    rows. The fingerprint is unique so the same cert can't be added twice.
+    """
+
+    name = models.CharField(max_length=255, help_text="Admin-friendly label")
+    subject = models.CharField(max_length=512, blank=True)
+    issuer = models.CharField(max_length=512, blank=True)
+    fingerprint_sha256 = models.CharField(max_length=128, unique=True)
+    not_before = models.DateTimeField(null=True, blank=True)
+    not_after = models.DateTimeField(null=True, blank=True)
+    cert_pem = models.TextField()
+    file_path = models.CharField(max_length=512, blank=True)
+    is_root = models.BooleanField(default=False)
+    is_intermediate = models.BooleanField(default=False)
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="ca_certificates",
+    )
+
+    class Meta:
+        verbose_name = "CA certificate"
+        verbose_name_plural = "CA certificates"
+        ordering = ["subject"]
+
+    def __str__(self):
+        return self.name or self.subject or self.fingerprint_sha256
 
 
 class ServerCertificate(TimestampedModel):

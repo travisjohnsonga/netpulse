@@ -5,9 +5,11 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import certs
-from .models import ServerCertificate
+from . import ca_store, certs
+from .models import CACertificate, ServerCertificate
 from .serializers import (
+    CACertificateSerializer,
+    CACertificateUploadSerializer,
     CSRRequestSerializer,
     CSRResponseSerializer,
     SelfSignedRequestSerializer,
@@ -111,3 +113,85 @@ class SSLUploadView(APIView):
         logger.info("ssl: %s uploaded certificate (source=%s)",
                     getattr(request.user, "username", "?"), source)
         return Response(ServerCertificateStatusSerializer(_status_payload()).data)
+
+
+# ── Trusted CA certificates ───────────────────────────────────────────────────
+
+
+def _decode_upload(raw_text: str) -> bytes:
+    """Turn the uploaded text into bytes: PEM stays text; otherwise try base64 DER."""
+    text = raw_text.strip()
+    if "-----BEGIN" in text:
+        return text.encode()
+    import base64
+    try:
+        return base64.b64decode(text, validate=True)
+    except Exception:
+        return text.encode()
+
+
+class CACertificateListView(APIView):
+    """List trusted CA certificates (GET) or add one/many (POST)."""
+
+    @extend_schema(responses=CACertificateSerializer(many=True), summary="List trusted CA certificates")
+    def get(self, request):
+        qs = CACertificate.objects.all()
+        return Response(CACertificateSerializer(qs, many=True).data)
+
+    @extend_schema(request=CACertificateUploadSerializer, responses=CACertificateSerializer(many=True),
+                   summary="Add a trusted CA certificate (PEM/DER/PKCS#7)")
+    def post(self, request):
+        req = CACertificateUploadSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        try:
+            parsed = ca_store.load_certificates(_decode_upload(req.validated_data["certificate"]))
+        except ca_store.CAError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        added, skipped = [], []
+        for cert in parsed:
+            meta = ca_store.parse_metadata(cert)
+            obj, created = CACertificate.objects.get_or_create(
+                fingerprint_sha256=meta["fingerprint_sha256"],
+                defaults={
+                    "name": req.validated_data.get("name") or meta["subject"],
+                    "subject": meta["subject"], "issuer": meta["issuer"],
+                    "not_before": meta["not_before"], "not_after": meta["not_after"],
+                    "cert_pem": meta["cert_pem"], "is_root": meta["is_root"],
+                    "is_intermediate": meta["is_intermediate"],
+                    "added_by": request.user if request.user.is_authenticated else None,
+                },
+            )
+            (added if created else skipped).append(obj)
+
+        ca_store.rebuild_bundle()
+        logger.info("ca-trust: %s added %d CA cert(s) (%d duplicate(s) skipped)",
+                    getattr(request.user, "username", "?"), len(added), len(skipped))
+        return Response(CACertificateSerializer(CACertificate.objects.all(), many=True).data,
+                        status=status.HTTP_201_CREATED if added else status.HTTP_200_OK)
+
+
+class CACertificateDetailView(APIView):
+    """Delete a trusted CA certificate and rebuild the bundle."""
+
+    @extend_schema(summary="Delete a trusted CA certificate")
+    def delete(self, request, pk):
+        from rest_framework.generics import get_object_or_404
+        ca = get_object_or_404(CACertificate, pk=pk)
+        name = ca.name
+        ca.delete()
+        ca_store.rebuild_bundle()
+        logger.info("ca-trust: %s deleted CA cert %s", getattr(request.user, "username", "?"), name)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CACertificateVerifyView(APIView):
+    """Verify a stored CA cert is currently valid (dates) and report expiry."""
+
+    @extend_schema(summary="Verify a trusted CA certificate")
+    def post(self, request, pk):
+        from rest_framework.generics import get_object_or_404
+        ca = get_object_or_404(CACertificate, pk=pk)
+        st, days = ca_store.expiry_status(ca.not_after)
+        valid = st not in ("expired", "none")
+        return Response({"valid": valid, "expiry_status": st, "days_remaining": days})

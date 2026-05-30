@@ -156,6 +156,14 @@ OPENBAO_TOKEN = os.environ.get("OPENBAO_TOKEN", "")
 # lives here on disk (mode 0600) and is never returned by the API.
 SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 
+# Trusted CA bundle (system roots + admin-added CAs), rebuilt by apps.tls.
+# Point outbound HTTPS (requests: CVE feeds, vendor APIs, git sync) at it when
+# present so private/internal PKIs and SSL-inspection proxies are trusted.
+_CA_BUNDLE = os.path.join(SSL_DIR, "ca-bundle.crt")
+if os.path.exists(_CA_BUNDLE):
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", _CA_BUNDLE)
+    os.environ.setdefault("SSL_CERT_FILE", _CA_BUNDLE)
+
 # IP/host of the NetPulse collector that devices send telemetry to (used when
 # generating device telemetry config). Configured under Settings → General.
 COLLECTOR_IP = os.environ.get("COLLECTOR_IP", "")

@@ -377,6 +377,8 @@ services:
     volumes:
       # Read the OpenBao root token from the shared keys file (git creds).
       - openbao-data:/openbao/data:ro
+      # Trust admin-added CA certs for outbound git-over-HTTPS (ca-bundle.crt).
+      - ssl-certs:/app/ssl:ro
     networks:
       - netpulse-net
     depends_on:
@@ -411,6 +413,9 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    volumes:
+      # Trust admin-added CA certs for outbound CVE-feed HTTPS (ca-bundle.crt).
+      - ssl-certs:/app/ssl:ro
     networks:
       - netpulse-net
     depends_on:
@@ -426,6 +431,9 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    volumes:
+      # Trust admin-added CA certs for outbound EOL-feed HTTPS (ca-bundle.crt).
+      - ssl-certs:/app/ssl:ro
     networks:
       - netpulse-net
     depends_on:

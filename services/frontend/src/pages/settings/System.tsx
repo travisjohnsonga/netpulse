@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { checkInfraHealth, type InfraHealth } from '../../api/client'
 import { SectionHeader } from '../Settings'
+import TrustedCACerts from './TrustedCACerts'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -77,6 +78,9 @@ export default function System() {
           ))}
         </div>
       </section>
+
+      {/* Trusted CA certificates */}
+      <TrustedCACerts />
 
       {/* Audit log */}
       <section>
