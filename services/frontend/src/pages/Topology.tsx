@@ -46,6 +46,7 @@ export default function Topology() {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<Core | null>(null)
   const [popup, setPopup] = useState<Popup>(null)
+  const [hover, setHover] = useState<{ x: number; y: number; title: string; lines: string[] } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [nodeCount, setNodeCount] = useState(0)
@@ -70,40 +71,77 @@ export default function Topology() {
   const buildGraph = (nodes: TopologyNode[], edges: TopologyEdge[]) => {
     if (!containerRef.current) return
     cyRef.current?.destroy()
+
+    const labelById: Record<string, string> = Object.fromEntries(nodes.map((n) => [n.id, n.label]))
+    // Group edges by unordered device pair to detect parallel links.
+    const pairKey = (e: TopologyEdge) => [e.source, e.target].sort().join('|')
+    const groups: Record<string, TopologyEdge[]> = {}
+    for (const e of edges) (groups[pairKey(e)] ||= []).push(e)
+
     const cy = cytoscape({
       container: containerRef.current,
       elements: [
         ...nodes.map((n) => ({ data: { id: n.id, label: `${typeIcon(n.type)} ${n.label}`, status: n.status, raw: n } })),
-        ...edges.map((e, i) => ({ data: {
-          id: `e${i}`, source: e.source, target: e.target,
-          ports: `${e.port_a} ↔ ${e.port_b}`, width: speedWidth(e.speed_mbps),
-          color: UTILIZATION_COLORS[e.utilization_color] ?? UTILIZATION_COLORS.green, raw: e,
-        } })),
+        ...edges.map((e, i) => {
+          const group = groups[pairKey(e)]
+          const count = group.length
+          // Show the parallel-link count once, on the first edge of the group.
+          const isFirst = group[0] === e
+          return { data: {
+            id: `e${i}`, source: e.source, target: e.target,
+            ports: `${e.port_a} ↔ ${e.port_b}`, width: speedWidth(e.speed_mbps),
+            color: UTILIZATION_COLORS[e.utilization_color] ?? UTILIZATION_COLORS.green,
+            countLabel: count > 1 && isFirst ? `×${count}` : '',
+            raw: e,
+          } }
+        }),
       ],
       layout: { name: 'cose', animate: false, padding: 40, nodeRepulsion: 6000 },
       style: [
         { selector: 'node', style: {
           'background-color': (n: NodeSingular) => STATUS_COLORS[n.data('status') as string] ?? '#6b7280',
-          label: 'data(label)', 'font-size': 10, color: '#1f2937',
-          'text-valign': 'bottom', 'text-margin-y': 4,
+          label: 'data(label)', 'font-size': 11, color: '#1f2937',
+          'text-valign': 'bottom', 'text-margin-y': 5,
           'text-background-color': '#ffffff', 'text-background-opacity': 0.85, 'text-background-padding': '2px',
-          width: 24, height: 24, 'border-width': 2, 'border-color': '#ffffff',
+          width: 45, height: 45, 'border-width': 2, 'border-color': '#ffffff',
         } },
         { selector: 'edge', style: {
           width: 'data(width)', 'line-color': 'data(color)', 'curve-style': 'bezier', 'target-arrow-shape': 'none',
-          label: '', 'font-size': 9, color: '#374151',
+          label: 'data(countLabel)', 'font-size': 11, 'font-weight': 700, color: '#374151',
           'text-background-color': '#ffffff', 'text-background-opacity': 0.9, 'text-background-padding': '2px',
         } },
-        { selector: 'edge.hover', style: { label: 'data(ports)' } },
         { selector: 'node:selected', style: { 'border-color': '#3b82f6', 'border-width': 3 } },
         { selector: 'edge:selected', style: { 'line-color': '#3b82f6' } },
+        { selector: 'edge.hover', style: { 'line-color': '#3b82f6' } },
       ],
     })
-    cy.on('tap', 'node', (e) => { const p = e.renderedPosition; setPopup({ kind: 'node', data: (e.target as NodeSingular).data('raw') as TopologyNode, x: p.x, y: p.y }) })
-    cy.on('tap', 'edge', (e) => { const p = e.renderedPosition; setPopup({ kind: 'edge', data: (e.target as EdgeSingular).data('raw') as TopologyEdge, x: p.x, y: p.y }) })
-    cy.on('mouseover', 'edge', (e) => (e.target as EdgeSingular).addClass('hover'))
-    cy.on('mouseout', 'edge', (e) => (e.target as EdgeSingular).removeClass('hover'))
-    cy.on('tap', (e) => { if (e.target === cy) setPopup(null) })
+
+    const edgeTooltip = (e: TopologyEdge): string[] => {
+      const g = groups[pairKey(e)]
+      const s = labelById[e.source] ?? e.source
+      const t = labelById[e.target] ?? e.target
+      return g.map((x) => `${s}:${x.port_a} ↔ ${t}:${x.port_b}`)
+    }
+
+    cy.on('tap', 'node', (ev) => { const p = ev.renderedPosition; setPopup({ kind: 'node', data: (ev.target as NodeSingular).data('raw') as TopologyNode, x: p.x, y: p.y }) })
+    cy.on('tap', 'edge', (ev) => { const p = ev.renderedPosition; setPopup({ kind: 'edge', data: (ev.target as EdgeSingular).data('raw') as TopologyEdge, x: p.x, y: p.y }) })
+    cy.on('mouseover', 'node', (ev) => {
+      const n = (ev.target as NodeSingular).data('raw') as TopologyNode
+      const p = ev.renderedPosition
+      setHover({ x: p.x, y: p.y, title: n.label, lines: [
+        `Platform: ${n.type || '—'}`, `Vendor: ${n.vendor || '—'}`,
+        `Status: ${n.status}`, `Site: ${n.site || '—'}`, `IP: ${n.ip || '—'}`,
+      ] })
+    })
+    cy.on('mouseover', 'edge', (ev) => {
+      const e = (ev.target as EdgeSingular).data('raw') as TopologyEdge
+      const p = ev.renderedPosition
+      ;(ev.target as EdgeSingular).addClass('hover')
+      setHover({ x: p.x, y: p.y, title: 'Link', lines: edgeTooltip(e) })
+    })
+    cy.on('mouseout', 'node edge', (ev) => { (ev.target as EdgeSingular).removeClass('hover'); setHover(null) })
+    cy.on('pan zoom drag', () => setHover(null))
+    cy.on('tap', (ev) => { if (ev.target === cy) setPopup(null) })
     cyRef.current = cy
     setNodeCount(nodes.length); setEdgeCount(edges.length)
   }
@@ -215,6 +253,17 @@ export default function Topology() {
         )}
         <div ref={containerRef} className="w-full h-full" />
 
+        {/* Hover tooltip (informational; click a node/link for actions) */}
+        {hover && !popup && (
+          <div
+            className="absolute z-30 pointer-events-none bg-gray-900 text-white text-xs rounded-lg shadow-lg px-3 py-2 max-w-xs"
+            style={{ left: Math.min(hover.x + 14, (containerRef.current?.clientWidth ?? 600) - 240), top: hover.y + 14 }}
+          >
+            <p className="font-semibold mb-0.5">{hover.title}</p>
+            {hover.lines.map((l, i) => <p key={i} className="text-gray-200 font-mono leading-snug">{l}</p>)}
+          </div>
+        )}
+
         {popup && (
           <div className="absolute z-20 bg-white rounded-xl shadow-xl border border-gray-200 p-4 w-64 text-sm"
             style={{ left: Math.min(popup.x + 12, (containerRef.current?.clientWidth ?? 600) - 270), top: popup.y + 12 }}>
@@ -225,6 +274,8 @@ export default function Topology() {
                 <p className="text-gray-500 text-xs mt-0.5 mb-3">{popup.data.type}{popup.data.role ? ` · ${popup.data.role}` : ''}</p>
                 <div className="space-y-1.5">
                   <Row k="Status" v={<span className="capitalize font-medium" style={{ color: STATUS_COLORS[popup.data.status] ?? '#6b7280' }}>{popup.data.status}</span>} />
+                  {popup.data.vendor && <Row k="Vendor" v={popup.data.vendor} />}
+                  {popup.data.ip && <Row k="IP" v={<span className="font-mono text-xs">{popup.data.ip}</span>} />}
                   {popup.data.site && <Row k="Site" v={popup.data.site} />}
                   <Row k="Risk score" v={popup.data.risk_score} />
                 </div>

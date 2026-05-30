@@ -206,6 +206,7 @@ class DeviceViewSet(viewsets.ModelViewSet):
                 "id": str(d.id), "label": d.hostname, "type": d.platform,
                 "site": d.site.name if d.site else None, "status": d.status,
                 "role": role_of(d.notes), "risk_score": 0,
+                "ip": str(d.ip_address or ""), "vendor": d.vendor or "",
             }
             for d in devices
         ]

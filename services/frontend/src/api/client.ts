@@ -109,6 +109,8 @@ export interface TopologyNode {
   status: string
   role?: string
   risk_score: number
+  ip?: string
+  vendor?: string
 }
 
 export interface TopologyEdge {
