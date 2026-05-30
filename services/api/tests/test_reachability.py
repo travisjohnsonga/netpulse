@@ -69,3 +69,31 @@ class TestReachabilitySerializer:
     def test_device_list_exposes_reachability(self, auth_client, device):
         row = auth_client.get("/api/devices/").json()["results"][0]
         assert "is_reachable" in row and "last_seen" in row
+
+
+class TestDeviceStatusWebSocket:
+    def test_consumer_receives_group_push(self):
+        import asyncio
+        from channels.testing import WebsocketCommunicator
+        from channels.layers import get_channel_layer
+        from apps.devices.consumers import DeviceStatusConsumer
+
+        async def run():
+            comm = WebsocketCommunicator(DeviceStatusConsumer.as_asgi(), "/ws/devices/")
+            connected, _ = await comm.connect()
+            assert connected
+            await get_channel_layer().group_send("devices", {
+                "type": "device_status",
+                "payload": {"device_id": 7, "hostname": "r7", "is_reachable": False, "status": "unreachable"},
+            })
+            msg = await comm.receive_json_from(timeout=2)
+            assert msg["type"] == "device_status"
+            assert msg["device_id"] == 7 and msg["is_reachable"] is False
+            assert msg["status"] == "unreachable"
+            await comm.disconnect()
+
+        asyncio.run(run())
+
+    def test_routing_includes_ws_devices(self):
+        from apps.core.routing import websocket_urlpatterns
+        assert any("ws/devices" in p.pattern.regex.pattern for p in websocket_urlpatterns)

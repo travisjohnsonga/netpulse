@@ -61,8 +61,25 @@ class Command(BaseCommand):
         transitions = await sync_to_async(self._apply_all)(results)
         for sev, hostname, device_id, msg in transitions:
             await self._publish_alert(sev, hostname, device_id, msg)
+            # Real-time UI push: reachable transitions are info, others unreachable.
+            await self._push_ws({
+                "device_id": device_id, "hostname": hostname,
+                "is_reachable": sev == "info",
+                "status": "active" if sev == "info" else "unreachable",
+                "message": msg,
+            })
         reachable = sum(1 for _, ok, _ in results if ok)
         logger.info("reachability: %d/%d devices reachable", reachable, len(results))
+
+    async def _push_ws(self, payload: dict):
+        """Send a device_status event to the 'devices' channel group (best-effort)."""
+        try:
+            from channels.layers import get_channel_layer
+            layer = get_channel_layer()
+            if layer is not None:
+                await layer.group_send("devices", {"type": "device_status", "payload": payload})
+        except Exception as exc:
+            logger.warning("device_status WS push failed: %s", exc)
 
     # ── data access (sync) ────────────────────────────────────────────────────
 
