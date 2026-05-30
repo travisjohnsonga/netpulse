@@ -58,7 +58,7 @@ def _empty(device_id: str, period: str) -> dict:
             "cpu_pct": None, "poll_duration_ms": None,
         },
         "timeseries": {"uptime": [], "memory_used_pct": [], "cpu_pct": []},
-        "interfaces": {},
+        "interfaces": [],
     }
 
 
@@ -114,14 +114,85 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
         "poll_duration_ms": snapshot.get("poll_duration_ms"),
     }
 
-    # Interface fields (ifHCInOctets_3 etc.) surfaced raw for the UI.
-    interfaces = {k: v for k, v in snapshot.items()
-                  if k.startswith(("ifHC", "ifIn", "ifOut", "ifOper"))}
-    result["interfaces"] = interfaces
+    # ── per-interface derived stats (bps/pps/util/errors) ─────────────────────
+    if metric in ("all", "interfaces"):
+        try:
+            result["interfaces"] = _interface_stats(query_api, bucket, device_id, period)
+        except Exception as exc:
+            logger.warning("interface_stats query failed for device %s: %s", device_id, exc)
 
     # ── timeseries ────────────────────────────────────────────────────────────
     result["timeseries"] = series
     return result
+
+
+_OPER = {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6: "notPresent", 7: "lowerLayerDown"}
+
+
+def _iface_names(device_id: str) -> dict:
+    """if_index → if_name from MonitoredInterface (best-effort)."""
+    try:
+        from apps.telemetry.models import MonitoredInterface
+        return {str(ix): nm for ix, nm in MonitoredInterface.objects
+                .filter(device_id=int(device_id))
+                .values_list("if_index", "if_name") if ix is not None}
+    except Exception:
+        return {}
+
+
+def _interface_stats(query_api, bucket, device_id, period) -> list:
+    """Latest interface_stats per if_index + a short in/out bps series, with if_name."""
+    names = _iface_names(device_id)
+    window = _WINDOW.get(period, "1m")
+
+    # Latest snapshot per if_index.
+    snap_flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -{period})
+  |> filter(fn: (r) => r._measurement == "interface_stats" and r.device_id == "{device_id}")
+  |> last()
+  |> pivot(rowKey: ["if_index"], columnKey: ["_field"], valueColumn: "_value")
+'''
+    by_idx: dict = {}
+    for table in query_api.query(snap_flux):
+        for rec in table.records:
+            idx = rec.values.get("if_index")
+            if idx is None:
+                continue
+            v = rec.values
+            by_idx[idx] = {
+                "if_index": idx,
+                "if_name": names.get(str(idx), f"if{idx}"),
+                "in_bps": v.get("in_bps"), "out_bps": v.get("out_bps"),
+                "in_pps": v.get("in_pps"), "out_pps": v.get("out_pps"),
+                "in_errors_rate": v.get("in_errors_rate"), "out_errors_rate": v.get("out_errors_rate"),
+                "in_discards_rate": v.get("in_discards_rate"), "out_discards_rate": v.get("out_discards_rate"),
+                "in_util_pct": v.get("in_util_pct"), "out_util_pct": v.get("out_util_pct"),
+                "oper_status": _OPER.get(int(v["oper_status"]), "unknown") if isinstance(v.get("oper_status"), (int, float)) else None,
+                "series": {"in_bps": [], "out_bps": []},
+            }
+
+    # in/out bps series for sparklines.
+    series_flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -{period})
+  |> filter(fn: (r) => r._measurement == "interface_stats" and r.device_id == "{device_id}")
+  |> filter(fn: (r) => r._field == "in_bps" or r._field == "out_bps")
+  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+'''
+    for table in query_api.query(series_flux):
+        for rec in table.records:
+            idx = rec.values.get("if_index")
+            entry = by_idx.get(idx)
+            if not entry:
+                continue
+            field = rec.get_field()
+            val = rec.get_value()
+            if field in ("in_bps", "out_bps") and isinstance(val, (int, float)):
+                t = rec.get_time().isoformat().replace("+00:00", "Z")
+                entry["series"][field].append({"time": t, "value": round(val, 2)})
+
+    return sorted(by_idx.values(), key=lambda e: str(e["if_name"]))
 
 
 def _latest_snapshot(query_api, bucket, device_id, period) -> dict:

@@ -145,6 +145,10 @@ class Command(BaseCommand):
         self._os_buffer: list[tuple[str, dict]] = []
         self._os_buffer_lock = asyncio.Lock()
 
+        # Per-interface counter state for rate calculation:
+        # (device_id, if_index) → {counter_key: value, "_t": epoch_seconds}
+        self._iface_prev: dict = {}
+
         # --- connect NATS -------------------------------------------------------
         nc_opts: dict = {
             "servers": settings.NATS_URL,
@@ -323,12 +327,15 @@ class Command(BaseCommand):
             )
 
             if msg_type == "metrics":
+                fields = self._extract_fields(payload)
                 await self._write_influx(
                     measurement="telemetry",
                     tags={"device_id": device_id, "protocol": payload.get("protocol", "unknown")},
-                    fields=self._extract_fields(payload),
+                    fields=fields,
                     timestamp=payload.get("timestamp"),
                 )
+                # Derive per-interface bps/pps/error/util rates from the counters.
+                await self._interface_stats(device_id, fields, payload.get("timestamp"))
             elif msg_type == "trap":
                 doc = {"device_id": device_id, **payload, "@timestamp": _utcnow_iso()}
                 await self._buffer_opensearch(_index("netpulse-traps"), doc)
@@ -339,6 +346,112 @@ class Command(BaseCommand):
             logger.error(
                 "stream-processor: error processing telemetry msg %s: %s", msg.subject, exc
             )
+
+    # Interface counter field (resolved name or raw OID base) → (metric, is_counter, max).
+    _IFACE_COUNTERS = {
+        "ifHCInOctets": ("in_octets", 2 ** 64), "ifHCOutOctets": ("out_octets", 2 ** 64),
+        "ifHCInUcastPkts": ("in_pkts", 2 ** 64), "ifHCOutUcastPkts": ("out_pkts", 2 ** 64),
+        "ifInErrors": ("in_errors", 2 ** 32), "ifOutErrors": ("out_errors", 2 ** 32),
+        "ifInDiscards": ("in_discards", 2 ** 32), "ifOutDiscards": ("out_discards", 2 ** 32),
+        "ifInUnknownProtos": ("in_unknown", 2 ** 32),
+        # Raw OID bases (when the poller couldn't resolve a name).
+        "1_3_6_1_2_1_31_1_1_1_6": ("in_octets", 2 ** 64), "1_3_6_1_2_1_31_1_1_1_10": ("out_octets", 2 ** 64),
+        "1_3_6_1_2_1_31_1_1_1_7": ("in_pkts", 2 ** 64), "1_3_6_1_2_1_31_1_1_1_11": ("out_pkts", 2 ** 64),
+        "1_3_6_1_2_1_2_2_1_14": ("in_errors", 2 ** 32), "1_3_6_1_2_1_2_2_1_20": ("out_errors", 2 ** 32),
+        "1_3_6_1_2_1_2_2_1_13": ("in_discards", 2 ** 32), "1_3_6_1_2_1_2_2_1_19": ("out_discards", 2 ** 32),
+        "1_3_6_1_2_1_2_2_1_15": ("in_unknown", 2 ** 32),
+    }
+    _IFACE_GAUGES = {
+        "ifHighSpeed": "high_speed", "1_3_6_1_2_1_31_1_1_1_15": "high_speed",
+        "ifOperStatus": "oper_status", "1_3_6_1_2_1_2_2_1_8": "oper_status",
+    }
+
+    @staticmethod
+    def _counter_delta(cur, prev, maxv):
+        """Counter delta with rollover handling."""
+        if cur >= prev:
+            return cur - prev
+        return maxv - prev + cur
+
+    async def _interface_stats(self, device_id, fields: dict, timestamp):
+        """
+        Derive per-interface bps/pps/error/discard rates and utilisation from
+        the raw counters in a telemetry message, and write them to the
+        ``interface_stats`` measurement (tags device_id+if_index).
+        """
+        # Parse "name_<ifindex>" fields into per-interface buckets.
+        per_iface: dict = {}
+        maxv: dict = {}
+        for key, val in fields.items():
+            if not isinstance(val, (int, float)):
+                continue
+            base, _, idx = key.rpartition("_")
+            if not idx.isdigit():
+                continue
+            if base in self._IFACE_COUNTERS:
+                metric, mx = self._IFACE_COUNTERS[base]
+                per_iface.setdefault(idx, {})[metric] = val
+                maxv[metric] = mx
+            elif base in self._IFACE_GAUGES:
+                per_iface.setdefault(idx, {})[self._IFACE_GAUGES[base]] = val
+        if not per_iface:
+            return
+
+        # Resolve the sample time (epoch seconds) for the rate denominator.
+        now_epoch = None
+        if timestamp:
+            try:
+                now_epoch = datetime.fromisoformat(timestamp).timestamp()
+            except (ValueError, TypeError):
+                now_epoch = None
+        if now_epoch is None:
+            now_epoch = datetime.now(timezone.utc).timestamp()
+
+        for idx, cur in per_iface.items():
+            state_key = (device_id, idx)
+            prev = self._iface_prev.get(state_key)
+            high_speed = cur.get("high_speed")  # Mbps
+            out_fields: dict = {}
+            if "oper_status" in cur:
+                out_fields["oper_status"] = int(cur["oper_status"])
+
+            if prev:
+                dt = now_epoch - prev.get("_t", now_epoch)
+                if dt > 0:
+                    rate = {}
+                    for metric in ("in_octets", "out_octets", "in_pkts", "out_pkts",
+                                   "in_errors", "out_errors", "in_discards", "out_discards"):
+                        if metric in cur and metric in prev:
+                            d = self._counter_delta(cur[metric], prev[metric], maxv.get(metric, 2 ** 64))
+                            rate[metric] = d / dt
+                    out_fields["in_bps"] = round(rate.get("in_octets", 0.0) * 8, 2)
+                    out_fields["out_bps"] = round(rate.get("out_octets", 0.0) * 8, 2)
+                    out_fields["in_pps"] = round(rate.get("in_pkts", 0.0), 2)
+                    out_fields["out_pps"] = round(rate.get("out_pkts", 0.0), 2)
+                    out_fields["in_errors_rate"] = round(rate.get("in_errors", 0.0), 4)
+                    out_fields["out_errors_rate"] = round(rate.get("out_errors", 0.0), 4)
+                    out_fields["in_discards_rate"] = round(rate.get("in_discards", 0.0), 4)
+                    out_fields["out_discards_rate"] = round(rate.get("out_discards", 0.0), 4)
+                    if isinstance(high_speed, (int, float)) and high_speed > 0:
+                        cap = high_speed * 1_000_000
+                        out_fields["in_util_pct"] = round(out_fields["in_bps"] / cap * 100, 3)
+                        out_fields["out_util_pct"] = round(out_fields["out_bps"] / cap * 100, 3)
+
+            # Persist current counters + time for the next delta.
+            new_state = {"_t": now_epoch}
+            for metric in ("in_octets", "out_octets", "in_pkts", "out_pkts",
+                           "in_errors", "out_errors", "in_discards", "out_discards"):
+                if metric in cur:
+                    new_state[metric] = cur[metric]
+            self._iface_prev[state_key] = new_state
+
+            if out_fields:
+                await self._write_influx(
+                    measurement="interface_stats",
+                    tags={"device_id": device_id, "if_index": idx},
+                    fields=out_fields,
+                    timestamp=timestamp,
+                )
 
     async def _on_flow(self, msg):
         """Handle netpulse.flows.<exporter>.<type> messages."""

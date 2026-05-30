@@ -60,7 +60,9 @@ _TABLE: dict[str, tuple[str, str]] = {
     # ifXTable (64-bit counters)
     "1.3.6.1.2.1.31.1.1.1.1":  ("IF-MIB", "ifName"),
     "1.3.6.1.2.1.31.1.1.1.6":  ("IF-MIB", "ifHCInOctets"),
+    "1.3.6.1.2.1.31.1.1.1.7":  ("IF-MIB", "ifHCInUcastPkts"),
     "1.3.6.1.2.1.31.1.1.1.10": ("IF-MIB", "ifHCOutOctets"),
+    "1.3.6.1.2.1.31.1.1.1.11": ("IF-MIB", "ifHCOutUcastPkts"),
     "1.3.6.1.2.1.31.1.1.1.15": ("IF-MIB", "ifHighSpeed"),
     "1.3.6.1.2.1.31.1.1.1.18": ("IF-MIB", "ifAlias"),
 

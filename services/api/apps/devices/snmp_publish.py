@@ -52,9 +52,21 @@ def _device_oids(platform: str) -> list[str]:
     return list(PLATFORM_DEVICE_OIDS.get(platform or "", PLATFORM_DEVICE_OIDS["_default"]))
 # Per-interface OID prefixes (suffixed with the interface ifIndex).
 IFACE_OID_PREFIXES = {
-    "status":  ["1.3.6.1.2.1.2.2.1.8"],                       # ifOperStatus
-    "traffic": ["1.3.6.1.2.1.31.1.1.1.6", "1.3.6.1.2.1.31.1.1.1.10"],  # ifHCIn/OutOctets
-    "errors":  ["1.3.6.1.2.1.2.2.1.14", "1.3.6.1.2.1.2.2.1.20"],       # ifIn/OutErrors
+    "status": ["1.3.6.1.2.1.2.2.1.8"],                        # ifOperStatus
+    "traffic": [
+        "1.3.6.1.2.1.31.1.1.1.6",    # ifHCInOctets (64-bit)
+        "1.3.6.1.2.1.31.1.1.1.10",   # ifHCOutOctets (64-bit)
+        "1.3.6.1.2.1.31.1.1.1.7",    # ifHCInUcastPkts
+        "1.3.6.1.2.1.31.1.1.1.11",   # ifHCOutUcastPkts
+        "1.3.6.1.2.1.31.1.1.1.15",   # ifHighSpeed (Mbps) — needed for util%
+    ],
+    "errors": [
+        "1.3.6.1.2.1.2.2.1.14",      # ifInErrors
+        "1.3.6.1.2.1.2.2.1.20",      # ifOutErrors
+        "1.3.6.1.2.1.2.2.1.13",      # ifInDiscards
+        "1.3.6.1.2.1.2.2.1.19",      # ifOutDiscards
+        "1.3.6.1.2.1.2.2.1.15",      # ifInUnknownProtos
+    ],
 }
 
 
