@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
@@ -14,9 +14,22 @@ const PAGE_SIZE = 20
 
 export default function Devices() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Toast passed via navigation state (e.g. redirect from a deleted device).
+  const [toast, setToast] = useState<string | null>(
+    (location.state as { toast?: string } | null)?.toast ?? null,
+  )
+  useEffect(() => {
+    if (!toast) return
+    // Clear the history state so the toast doesn't reappear on back/refresh.
+    navigate(location.pathname, { replace: true, state: {} })
+    const t = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [platformFilter, setPlatformFilter] = useState('All')
@@ -71,6 +84,13 @@ export default function Devices() {
 
   return (
     <div className="space-y-4">
+      {/* Toast (e.g. redirected here after a device was not found) */}
+      {toast && (
+        <div className="bg-amber-50 border border-amber-200 dark:bg-amber-900/30 dark:border-amber-800 rounded-lg px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+          {toast}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

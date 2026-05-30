@@ -68,6 +68,7 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
             summary = netbox.run_import(client, options)
             record.sites_imported = summary["sites_imported"]
             record.devices_imported = summary["devices_imported"]
+            record.devices_updated = summary["devices_updated"]
             record.skipped = summary["skipped"]
             record.errors = summary["errors"]
             record.status = NetBoxImport.Status.COMPLETED

@@ -78,6 +78,28 @@ class DeviceViewSet(viewsets.ModelViewSet):
             return DeviceListSerializer
         return DeviceSerializer
 
+    def create(self, request, *args, **kwargs):
+        """
+        Upsert by hostname so device identity is stable: re-adding a device with
+        an existing hostname updates that row (reusing its PK and all references)
+        instead of erroring on the unique constraint or creating a duplicate.
+
+        Returns 200 when an existing device was updated, 201 when created.
+        (Hostname is globally unique today; once the tenant field lands this
+        should key on hostname+tenant — see CLAUDE.md RBAC & Multi-Tenancy.)
+        """
+        hostname = request.data.get("hostname")
+        existing = Device.objects.filter(hostname=hostname).first() if hostname else None
+        # Passing instance=existing makes this a full update: the unique
+        # validators exclude the instance and the PK is preserved.
+        serializer = self.get_serializer(instance=existing, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,
+        )
+
     @extend_schema(
         request=TestConnectionRequestSerializer,
         responses=TestConnectionResponseSerializer,

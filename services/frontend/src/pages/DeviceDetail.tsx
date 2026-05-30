@@ -57,9 +57,17 @@ export default function DeviceDetail() {
     setLoading(true)
     fetchDevice(deviceId)
       .then((d) => { setDevice(d); setError(null) })
-      .catch(() => setError('Device not found or the API is unavailable.'))
+      .catch((err) => {
+        // A missing device (deleted, or stale link) bounces back to the list
+        // with an explanatory toast instead of a dead-end error page.
+        if (err?.response?.status === 404) {
+          navigate('/devices', { replace: true, state: { toast: 'Device not found — it may have been deleted' } })
+          return
+        }
+        setError('Could not load the device. The API may be unavailable.')
+      })
       .finally(() => setLoading(false))
-  }, [deviceId])
+  }, [deviceId, navigate])
 
   useEffect(() => { load() }, [load])
 

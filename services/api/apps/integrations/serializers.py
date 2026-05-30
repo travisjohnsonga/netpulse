@@ -8,7 +8,7 @@ class NetBoxImportSerializer(serializers.ModelSerializer):
         model = NetBoxImport
         fields = (
             "id", "netbox_url", "netbox_version", "status", "options",
-            "sites_imported", "devices_imported", "skipped", "errors",
+            "sites_imported", "devices_imported", "devices_updated", "skipped", "errors",
             "started_at", "finished_at", "created_at",
         )
         read_only_fields = fields

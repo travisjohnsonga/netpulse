@@ -84,11 +84,16 @@ class TestNetBoxImport:
         assert d.site == Site.objects.get(name="DC-1")
         assert "Role: core" in d.notes
 
-    def test_reimport_skips_existing(self, auth_client):
+    def test_reimport_upserts_existing(self, auth_client):
         auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "t"}, format="json")
+        before = Device.objects.get(hostname="nb-rtr-01").pk
         resp = auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "t"}, format="json")
-        assert resp.json()["devices_imported"] == 0
-        assert resp.json()["sites_imported"] == 0  # get_or_create finds existing
+        body = resp.json()
+        assert body["devices_imported"] == 0      # nothing new created
+        assert body["devices_updated"] >= 1        # existing updated in place
+        assert body["sites_imported"] == 0         # get_or_create finds existing
+        # PK preserved → stable device identity across re-imports
+        assert Device.objects.get(hostname="nb-rtr-01").pk == before
 
     def test_history_listed(self, auth_client):
         auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "t"}, format="json")

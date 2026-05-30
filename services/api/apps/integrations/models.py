@@ -26,6 +26,7 @@ class NetBoxImport(TimestampedModel):
 
     sites_imported = models.PositiveIntegerField(default=0)
     devices_imported = models.PositiveIntegerField(default=0)
+    devices_updated = models.PositiveIntegerField(default=0)
     skipped = models.PositiveIntegerField(default=0)
     errors = models.JSONField(default=list)
 

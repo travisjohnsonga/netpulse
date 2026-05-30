@@ -138,12 +138,18 @@ class TestDeviceEndpoints:
         assert resp.status_code == 201
         assert resp.json()["status"] == "active"
 
-    def test_create_device_duplicate_hostname(self, auth_client, device):
+    def test_create_device_same_hostname_upserts(self, auth_client, device):
+        # Re-adding an existing hostname updates that row in place (stable PK),
+        # returning 200 — not a duplicate or a 400.
         resp = auth_client.post("/api/devices/", {
             "hostname": "core-rtr-01",
             "ip_address": "10.99.99.99",
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json()["id"] == device.pk
+        device.refresh_from_db()
+        assert device.ip_address == "10.99.99.99"
+        assert Device.objects.filter(hostname="core-rtr-01").count() == 1
 
     def test_create_device_duplicate_ip(self, auth_client, device):
         resp = auth_client.post("/api/devices/", {

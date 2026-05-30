@@ -110,7 +110,7 @@ def run_import(client: NetBoxClient, options: dict) -> dict:
     """
     from apps.devices.models import Device, Site
 
-    summary = {"sites_imported": 0, "devices_imported": 0, "skipped": 0, "errors": []}
+    summary = {"sites_imported": 0, "devices_imported": 0, "devices_updated": 0, "skipped": 0, "errors": []}
 
     site_by_name: dict[str, Site] = {}
 
@@ -145,7 +145,12 @@ def run_import(client: NetBoxClient, options: dict) -> dict:
                     summary["errors"].append(f"{hostname}: no primary IP — skipped")
                     summary["skipped"] += 1
                     continue
-                if Device.objects.filter(hostname=hostname).exists() or Device.objects.filter(ip_address=ip).exists():
+                # Upsert by hostname (stable identity across re-imports). Skip
+                # only when the IP is already owned by a *different* hostname,
+                # since ip_address is globally unique.
+                ip_owner = Device.objects.filter(ip_address=ip).exclude(hostname=hostname).first()
+                if ip_owner:
+                    summary["errors"].append(f"{hostname}: IP {ip} already used by {ip_owner.hostname} — skipped")
                     summary["skipped"] += 1
                     continue
 
@@ -171,18 +176,20 @@ def run_import(client: NetBoxClient, options: dict) -> dict:
                     notes_bits.append(f"Tags: {', '.join(tags)}")
                 notes_bits.append("Imported from NetBox")
 
-                Device.objects.create(
+                _, created = Device.objects.update_or_create(
                     hostname=hostname,
-                    ip_address=ip,
-                    management_ip=ip,
-                    vendor=manufacturer,
-                    model=model,
-                    platform=map_platform(platform_name or model),
-                    status=_STATUS_MAP.get(status_val, "inactive"),
-                    site=site,
-                    notes="\n".join(notes_bits),
+                    defaults=dict(
+                        ip_address=ip,
+                        management_ip=ip,
+                        vendor=manufacturer,
+                        model=model,
+                        platform=map_platform(platform_name or model),
+                        status=_STATUS_MAP.get(status_val, "inactive"),
+                        site=site,
+                        notes="\n".join(notes_bits),
+                    ),
                 )
-                summary["devices_imported"] += 1
+                summary["devices_imported" if created else "devices_updated"] += 1
             except Exception as exc:  # never let one record abort the import
                 summary["errors"].append(f"{nb.get('name', '?')}: {exc}")
                 summary["skipped"] += 1
