@@ -84,6 +84,28 @@ class NATSPublisher:
             # Log and drop; a production implementation would buffer and retry.
             logger.error("failed to publish to %s: %s", subject, exc)
 
+    @property
+    def nc(self):
+        """The live NATS client (for sharing subscriptions, e.g. the registry)."""
+        return self._nc
+
+    async def publish_metrics(self, device_id: str, payload: dict) -> None:
+        """
+        Publish a metrics payload to netpulse.telemetry.<device_id>.metrics —
+        the same subject shape the SNMP poller uses, so the stream-processor
+        writes it to InfluxDB (tagged with the payload's protocol).
+        """
+        token = (
+            str(device_id).replace(".", "-").replace(":", "-").replace(" ", "_").strip("[]")
+        )
+        subject = f"{self._subject_prefix}.{token}.metrics"
+        data = json.dumps(payload, separators=(",", ":")).encode()
+        try:
+            ack = await self._js.publish(subject, data)
+            logger.info("published metrics to %s seq=%d bytes=%d", subject, ack.seq, len(data))
+        except Exception as exc:
+            logger.error("failed to publish to %s: %s", subject, exc)
+
     async def drain(self) -> None:
         if self._nc and not self._nc.is_closed:
             await self._nc.drain()

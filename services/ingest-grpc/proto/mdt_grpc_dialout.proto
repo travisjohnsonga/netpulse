@@ -1,0 +1,19 @@
+// Cisco Model-Driven Telemetry (MDT) gRPC dial-out transport.
+// IOS-XE/XR devices configured with `... protocol grpc-tcp` connect outbound
+// and stream MdtDialoutArgs whose `data` field is a serialized
+// telemetry.Telemetry message (see cisco_telemetry.proto).
+//
+// Source: https://github.com/cisco-ie/cisco-proto
+syntax = "proto3";
+
+package mdt_dialout;
+
+service gRPCMdtDialout {
+    rpc MdtDialout(stream MdtDialoutArgs) returns (stream MdtDialoutArgs) {}
+}
+
+message MdtDialoutArgs {
+    int64 ReqId = 1;
+    bytes data = 2;
+    string errors = 3;
+}

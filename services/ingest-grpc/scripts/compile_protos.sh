@@ -14,7 +14,9 @@ python -m grpc_tools.protoc \
     --python_out="$ROOT/proto_generated" \
     --grpc_python_out="$ROOT/proto_generated" \
     gnmi.proto \
-    gnmi_ext.proto
+    gnmi_ext.proto \
+    mdt_grpc_dialout.proto \
+    cisco_telemetry.proto
 
 touch "$ROOT/proto_generated/__init__.py"
 

@@ -18,7 +18,8 @@ RUN mkdir -p proto_generated && \
         --proto_path=proto \
         --python_out=proto_generated \
         --grpc_python_out=proto_generated \
-        gnmi.proto gnmi_ext.proto && \
+        gnmi.proto gnmi_ext.proto \
+        mdt_grpc_dialout.proto cisco_telemetry.proto && \
     touch proto_generated/__init__.py
 
 COPY ingest/ ingest/
@@ -26,6 +27,6 @@ COPY ingest/ ingest/
 RUN useradd -m -u 1000 netpulse && chown -R netpulse:netpulse /app
 USER netpulse
 
-EXPOSE 50051
+EXPOSE 57400
 
 CMD ["python", "-m", "ingest.grpc_server"]

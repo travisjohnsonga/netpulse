@@ -14,8 +14,11 @@ import grpc
 # Importing the ingest package (via __init__.py) adds proto_generated/ to
 # sys.path, so the generated modules are importable below.
 import gnmi_pb2_grpc  # noqa: E402 — available after proto compilation
+import mdt_grpc_dialout_pb2_grpc  # noqa: E402 — Cisco MDT dial-out
 
 from .config import cfg
+from .device_registry import DeviceRegistry
+from .mdt_servicer import CiscoMDTServicer
 from .publisher import NATSPublisher
 from .servicer import GNMIDialOutServicer
 
@@ -24,6 +27,14 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+class _MethodLogInterceptor(grpc.aio.ServerInterceptor):
+    """Log the gRPC method of every incoming RPC (diagnostics for dial-out)."""
+
+    async def intercept_service(self, continuation, handler_call_details):
+        logger.debug("gRPC call: method=%s", handler_call_details.method)
+        return await continuation(handler_call_details)
 
 
 async def serve() -> None:
@@ -37,9 +48,18 @@ async def serve() -> None:
     )
     await publisher.connect()
 
-    server = grpc.aio.server()
+    # Device registry (source IP / node-id → device_id) kept in sync from NATS.
+    registry = DeviceRegistry()
+    await registry.start(publisher.nc)
+
+    server = grpc.aio.server(interceptors=[_MethodLogInterceptor()])
+    # OpenConfig gNMI dial-out (standard).
     gnmi_pb2_grpc.add_gNMIDialOutServicer_to_server(
         GNMIDialOutServicer(publisher), server
+    )
+    # Cisco IOS-XE/XR Model-Driven Telemetry dial-out (encode-kvgpb over grpc-tcp).
+    mdt_grpc_dialout_pb2_grpc.add_gRPCMdtDialoutServicer_to_server(
+        CiscoMDTServicer(publisher, registry), server
     )
 
     listen_addr = f"{cfg.grpc_host}:{cfg.grpc_port}"
