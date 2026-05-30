@@ -1321,3 +1321,37 @@ Regex filter box
 [Discover] button → walks device → populates table
 [Save] button → saves selected interfaces
 Collection method badge per interface: [gNMI 10s] or [SNMP 5m]
+
+## SNMP Polling Timer Settings
+
+Two levels:
+
+Global (Settings → Polling):
+  SNMPGlobalSettings model (singleton per tenant):
+  device_metrics_interval: 300s default
+  interface_traffic_interval: 300s default
+  interface_status_interval: 60s default
+  bgp_interval: 60s default
+  inventory_interval: 3600s default
+  lldp_interval: 3600s default
+  
+  Also: max_concurrent_sessions, timeout, retries,
+        bulk_get_enabled, bulk_get_max_repetitions
+
+Per-device override (Device Detail → Telemetry):
+  TelemetryConfig additions:
+  override_intervals: BooleanField(default=False)
+  device_metrics_interval: IntegerField(null=True)
+  interface_traffic_interval: IntegerField(null=True)
+  interface_status_interval: IntegerField(null=True)
+  bgp_interval: IntegerField(null=True)
+  
+  Presets: Normal / Troubleshooting (30s) / Reduced (600s) / Custom
+
+Effective interval = device override if set, else global default
+
+gNMI/gRPC intervals: controlled on device via generated config
+  NOT configurable in NetPulse — document with UI tooltip
+  To change: regenerate config → push to device
+
+Settings sub-nav: add "Polling" between General and Credentials
