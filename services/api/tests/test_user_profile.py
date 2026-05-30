@@ -1,0 +1,78 @@
+import pytest
+
+pytestmark = pytest.mark.django_db
+
+
+class TestMe:
+    def test_get_includes_preferences(self, auth_client, user):
+        b = auth_client.get("/api/users/me/").json()
+        assert b["username"] == user.username
+        assert b["role"] == user.role
+        assert "preferences" in b
+        assert b["preferences"]["theme"] == "system"
+        assert b["preferences"]["log_default_time_range"] == "1h"
+
+    def test_update_account_fields(self, auth_client):
+        resp = auth_client.put("/api/users/me/", {
+            "email": "new@example.com", "first_name": "Ada", "last_name": "L",
+        }, format="json")
+        assert resp.status_code == 200
+        b = resp.json()
+        assert b["email"] == "new@example.com" and b["first_name"] == "Ada"
+
+    def test_role_is_read_only(self, auth_client, user):
+        original = user.role
+        auth_client.put("/api/users/me/", {"role": "viewer", "email": "x@y.z"}, format="json")
+        user.refresh_from_db()
+        assert user.role == original  # role cannot be changed via this endpoint
+
+    def test_unauthenticated(self, api_client):
+        assert api_client.get("/api/users/me/").status_code == 401
+
+
+class TestPreferences:
+    def test_get_auto_creates(self, auth_client):
+        b = auth_client.get("/api/users/me/preferences/").json()
+        assert b["theme"] == "system" and b["devices_page_size"] == 25
+        assert b["log_default_page_size"] == 50
+
+    def test_update(self, auth_client):
+        resp = auth_client.put("/api/users/me/preferences/", {
+            "theme": "dark", "log_default_time_range": "24h",
+            "log_auto_refresh": True, "devices_default_columns": ["hostname", "status"],
+            "timezone": "America/Chicago", "date_format": "us",
+        }, format="json")
+        assert resp.status_code == 200
+        b = resp.json()
+        assert b["theme"] == "dark" and b["log_default_time_range"] == "24h"
+        assert b["log_auto_refresh"] is True
+        assert b["devices_default_columns"] == ["hostname", "status"]
+        assert b["timezone"] == "America/Chicago" and b["date_format"] == "us"
+
+    def test_invalid_theme_rejected(self, auth_client):
+        assert auth_client.put("/api/users/me/preferences/", {"theme": "neon"}, format="json").status_code == 400
+
+
+class TestChangePassword:
+    def test_success(self, auth_client, user):
+        user.set_password("oldpass123"); user.save()
+        resp = auth_client.post("/api/users/me/change-password/", {
+            "current_password": "oldpass123", "new_password": "BrandNew!pass99",
+        }, format="json")
+        assert resp.status_code == 200
+        user.refresh_from_db()
+        assert user.check_password("BrandNew!pass99")
+
+    def test_wrong_current_rejected(self, auth_client, user):
+        user.set_password("oldpass123"); user.save()
+        resp = auth_client.post("/api/users/me/change-password/", {
+            "current_password": "wrong", "new_password": "BrandNew!pass99",
+        }, format="json")
+        assert resp.status_code == 400
+
+    def test_weak_new_rejected(self, auth_client, user):
+        user.set_password("oldpass123"); user.save()
+        resp = auth_client.post("/api/users/me/change-password/", {
+            "current_password": "oldpass123", "new_password": "123",
+        }, format="json")
+        assert resp.status_code == 400

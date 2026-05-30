@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
@@ -48,3 +49,61 @@ class TimestampedModel(models.Model):
     class Meta:
         abstract = True
         ordering = ["-created_at"]
+
+
+class UserPreferences(TimestampedModel):
+    """Per-user UI preferences (theme, log viewer defaults, table sizing, etc.)."""
+
+    class Theme(models.TextChoices):
+        LIGHT  = "light",  "Light"
+        DARK   = "dark",   "Dark"
+        SYSTEM = "system", "System"
+
+    class LogRange(models.TextChoices):
+        M15 = "15m", "Last 15 minutes"
+        H1  = "1h",  "Last 1 hour"
+        H4  = "4h",  "Last 4 hours"
+        H12 = "12h", "Last 12 hours"
+        H24 = "24h", "Last 24 hours"
+        D7  = "7d",  "Last 7 days"
+        ALL = "all", "All time"
+
+    class DateFormat(models.TextChoices):
+        ISO   = "iso",   "2026-05-30"
+        US    = "us",    "05/30/2026"
+        EU    = "eu",    "30/05/2026"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="preferences",
+    )
+
+    # UI
+    theme = models.CharField(max_length=10, choices=Theme.choices, default=Theme.SYSTEM)
+
+    # Log viewer
+    log_default_time_range = models.CharField(max_length=4, choices=LogRange.choices, default=LogRange.H1)
+    log_default_page_size = models.IntegerField(default=50)
+    log_auto_refresh = models.BooleanField(default=False)
+
+    # Tables
+    devices_default_columns = models.JSONField(default=list, blank=True)
+    devices_page_size = models.IntegerField(default=25)
+
+    # Display
+    timezone = models.CharField(max_length=64, default="UTC")
+    date_format = models.CharField(max_length=4, choices=DateFormat.choices, default=DateFormat.ISO)
+
+    # Notifications
+    email_alerts = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "user preferences"
+        verbose_name_plural = "user preferences"
+
+    def __str__(self):
+        return f"preferences for {self.user}"
+
+    @classmethod
+    def for_user(cls, user):
+        obj, _ = cls.objects.get_or_create(user=user)
+        return obj

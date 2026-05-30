@@ -6,10 +6,18 @@ import urllib.error
 from django.db import connection
 from django.db.utils import OperationalError
 from drf_spectacular.utils import extend_schema, inline_serializer
-from rest_framework import serializers
+from rest_framework import generics, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import UserPreferences
+from .serializers import (
+    ChangePasswordSerializer,
+    MeSerializer,
+    UserPreferencesSerializer,
+)
 
 
 @extend_schema(
@@ -100,3 +108,41 @@ def infrastructure_health(request):
     }
 
     return Response({"services": services})
+
+
+# ── user profile & preferences ───────────────────────────────────────────────
+
+
+class MeView(generics.RetrieveUpdateAPIView):
+    """Get or update the current user's account info (with nested preferences)."""
+
+    serializer_class = MeSerializer
+
+    def get_object(self):
+        # Ensure a preferences row exists so it's always present in the response.
+        UserPreferences.for_user(self.request.user)
+        return self.request.user
+
+
+class MyPreferencesView(generics.RetrieveUpdateAPIView):
+    """Get or update the current user's preferences (auto-created on first access)."""
+
+    serializer_class = UserPreferencesSerializer
+
+    def get_object(self):
+        return UserPreferences.for_user(self.request.user)
+
+
+class ChangePasswordView(APIView):
+    """Change the current user's password (requires the current password)."""
+
+    @extend_schema(
+        request=ChangePasswordSerializer,
+        responses=inline_serializer("ChangePasswordResponse", {"detail": serializers.CharField()}),
+        summary="Change current user's password",
+    )
+    def post(self, request):
+        ser = ChangePasswordSerializer(data=request.data, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response({"detail": "Password updated."})
