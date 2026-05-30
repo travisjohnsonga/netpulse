@@ -54,10 +54,14 @@ def _env():
 
 
 def _context(device, cfg: TelemetryConfig) -> dict:
+    from apps.collectors.resolve import effective_collector_ip
+
     profile = device.credential_profile
     creds = vault.read_secret(profile.vault_path) if (profile and profile.vault_path) else {}
     return {
-        "collector_ip": getattr(settings, "COLLECTOR_IP", "") or "",
+        # Device's assigned collector → site default → global default →
+        # settings.COLLECTOR_IP.
+        "collector_ip": effective_collector_ip(device),
         "management_interface": "Loopback0",
         "platform": (device.platform or "").lower(),
         "hostname": device.hostname or "",

@@ -21,10 +21,31 @@ class DeviceGroupSerializer(serializers.ModelSerializer):
 
 
 class DeviceSerializer(serializers.ModelSerializer):
+    # Resolved collector display info (assigned → site default → global default).
+    collector_name = serializers.SerializerMethodField()
+    collector_ip = serializers.SerializerMethodField()
+    collector_status = serializers.SerializerMethodField()
+
     class Meta:
         model = Device
         fields = "__all__"
         read_only_fields = ("created_at", "updated_at")
+
+    def _effective(self, obj):
+        from apps.collectors.resolve import effective_collector
+        return effective_collector(obj)
+
+    def get_collector_name(self, obj):
+        c = self._effective(obj)
+        return c.name if c else None
+
+    def get_collector_ip(self, obj):
+        from apps.collectors.resolve import effective_collector_ip
+        return effective_collector_ip(obj) or None
+
+    def get_collector_status(self, obj):
+        c = self._effective(obj)
+        return c.status if c else None
 
 
 class DeviceListSerializer(serializers.ModelSerializer):

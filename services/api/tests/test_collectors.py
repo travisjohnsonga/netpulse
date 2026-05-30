@@ -152,3 +152,38 @@ class TestTelemetryStub:
     def test_metrics_unauthenticated(self, api_client):
         resp = api_client.get("/api/telemetry/metrics/")
         assert resp.status_code == 401
+
+
+class TestCollectorResolution:
+    """effective_collector(_ip): device → site default → global default → setting."""
+
+    def test_precedence(self, settings):
+        from apps.collectors.models import Collector
+        from apps.collectors.resolve import effective_collector, effective_collector_ip
+        from apps.devices.models import Device, Site
+
+        settings.COLLECTOR_IP = "9.9.9.9"
+        glob = Collector.objects.create(name="Global", api_key_hash="h-glob", is_default=True, collector_ip="1.1.1.1")
+        site_col = Collector.objects.create(name="SiteCol", api_key_hash="h-site", collector_ip="2.2.2.2")
+        dev_col = Collector.objects.create(name="DevCol", api_key_hash="h-dev", collector_ip="3.3.3.3")
+        site = Site.objects.create(name="DC", default_collector=site_col)
+        d = Device.objects.create(hostname="r1", ip_address="10.0.0.1", site=site, collector=dev_col)
+
+        # device collector wins
+        assert effective_collector(d).name == "DevCol"
+        assert effective_collector_ip(d) == "3.3.3.3"
+        # fall back to site default
+        d.collector = None; d.save()
+        assert effective_collector_ip(d) == "2.2.2.2"
+        # fall back to global default
+        site.default_collector = None; site.save()
+        assert effective_collector_ip(d) == "1.1.1.1"
+        # fall back to the setting
+        glob.is_default = False; glob.save()
+        assert effective_collector_ip(d) == "9.9.9.9"
+
+    def test_serializer_exposes_new_fields(self, auth_client, collector):
+        resp = auth_client.get("/api/collectors/")
+        row = resp.json()["results"][0]
+        for key in ("collector_ip", "site", "site_name", "status", "last_seen_at", "device_count", "is_default"):
+            assert key in row

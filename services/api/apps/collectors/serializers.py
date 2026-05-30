@@ -4,6 +4,9 @@ from .models import Collector
 
 
 class CollectorSerializer(serializers.ModelSerializer):
+    site_name = serializers.CharField(source="site.name", read_only=True, default=None)
+    device_count = serializers.IntegerField(source="devices.count", read_only=True)
+
     class Meta:
         model = Collector
         fields = "__all__"

@@ -38,6 +38,15 @@ class Site(TimestampedModel):
     contact_email = models.EmailField(blank=True)
     contact_phone = models.CharField(max_length=64, blank=True)
 
+    # Collector that devices at this site default to (when a device has no
+    # collector of its own).
+    default_collector = models.ForeignKey(
+        "collectors.Collector",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="default_for_sites",
+    )
+
     notes = models.TextField(blank=True)
 
     def save(self, *args, **kwargs):
@@ -96,6 +105,14 @@ class Device(TimestampedModel):
     # A device uses one multi-protocol credential profile (secrets in OpenBao).
     credential_profile = models.ForeignKey(
         "credentials.CredentialProfile",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="devices",
+    )
+    # Poller/collector that monitors this device. When unset, falls back to the
+    # device's site default collector, then the global default collector.
+    collector = models.ForeignKey(
+        "collectors.Collector",
         null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name="devices",
