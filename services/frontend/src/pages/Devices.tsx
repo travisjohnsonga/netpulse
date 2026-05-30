@@ -4,6 +4,7 @@ import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
 import { fetchDevices, fetchCredentials, type Device } from '../api/client'
+import { useWebSocket } from '../hooks/useWebSocket'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
 } from '../lib/deviceColumns'
@@ -45,6 +46,16 @@ export default function Devices() {
       .then((profiles) => setCredNames(Object.fromEntries(profiles.map((p) => [p.id, p.name]))))
       .catch(() => {})
   }, [])
+
+  // Live reachability updates: patch the matching row when the monitor pushes.
+  const { lastMessage } = useWebSocket('/ws/devices/')
+  useEffect(() => {
+    const m = lastMessage as { type?: string; device_id?: number; is_reachable?: boolean; status?: string } | null
+    if (!m || m.type !== 'device_status' || m.device_id == null) return
+    setDevices((prev) => prev.map((d) => d.id === m.device_id
+      ? { ...d, is_reachable: m.is_reachable, status: (m.status as Device['status']) ?? d.status, last_seen: m.is_reachable ? new Date().toISOString() : d.last_seen }
+      : d))
+  }, [lastMessage])
 
   const setColumns = (keys: string[]) => { setColumnKeys(keys); saveColumnKeys(keys) }
   const resetColumns = () => {

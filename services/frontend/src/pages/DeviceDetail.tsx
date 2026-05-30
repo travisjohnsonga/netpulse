@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, reachabilityOf, fetchCollectors, setDeviceCollector, type Collector, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
+import { useWebSocket } from '../hooks/useWebSocket'
 import Overview from './device/Overview'
 import Telemetry, { TelemetryConfigPanel } from './device/Telemetry'
 import Logs from './device/Logs'
@@ -71,6 +72,13 @@ export default function DeviceDetail() {
   }, [deviceId, navigate])
 
   useEffect(() => { load() }, [load])
+
+  // Live reachability: reload this device when the monitor pushes a change for it.
+  const { lastMessage } = useWebSocket('/ws/devices/')
+  useEffect(() => {
+    const m = lastMessage as { type?: string; device_id?: number } | null
+    if (m && m.type === 'device_status' && m.device_id === deviceId) load()
+  }, [lastMessage, deviceId, load])
 
   // Pull the SSH username/port from the device's credential profile so the SSH
   // link can include them (falls back to a bare ssh://<host> otherwise).
