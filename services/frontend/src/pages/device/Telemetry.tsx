@@ -35,6 +35,9 @@ interface Row {
   lldp_neighbor_port: string | null
   lldp_neighbor_desc: string | null
   collection_method: string
+  alert_on_down: boolean
+  alert_on_up: boolean
+  alert_severity: 'critical' | 'high' | 'medium' | 'low'
 }
 
 function formatSpeed(mbps: number | null): string {
@@ -273,6 +276,7 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
           if_speed_mbps: m.if_speed_mbps, if_type: m.if_type, status: m.last_status,
           lldp_neighbor_hostname: m.lldp_neighbor_hostname, lldp_neighbor_port: m.lldp_neighbor_port,
           lldp_neighbor_desc: m.lldp_neighbor_desc, collection_method: m.collection_method,
+          alert_on_down: m.alert_on_down, alert_on_up: m.alert_on_up, alert_severity: m.alert_severity,
         })))
         setSelected(new Set(mi.map((m) => m.if_name)))
       })
@@ -293,6 +297,7 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
         if_speed_mbps: d.if_speed_mbps, if_type: d.if_type, status: d.oper_status,
         lldp_neighbor_hostname: d.lldp_neighbor_hostname, lldp_neighbor_port: d.lldp_neighbor_port,
         lldp_neighbor_desc: d.lldp_neighbor_desc, collection_method: d.collection_method,
+        alert_on_down: true, alert_on_up: true, alert_severity: 'high' as const,
       })))
       // Pre-check auto-selected interfaces (and anything already monitored).
       const next = new Set<string>()
@@ -315,6 +320,11 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
   const selectNone = () => setSelected(new Set())
   const selectUp = () => setSelected(new Set(filtered.filter((r) => r.status === 'up').map((r) => r.if_name)))
 
+  const toggleAlert = (name: string) =>
+    setRows((rs) => rs.map((r) => (r.if_name === name ? { ...r, alert_on_down: !r.alert_on_down } : r)))
+  const bulkAlert = (on: boolean) =>
+    setRows((rs) => rs.map((r) => (selected.has(r.if_name) ? { ...r, alert_on_down: on, alert_on_up: on } : r)))
+
   const save = async () => {
     setSaving(true); setError(null); setSavedMsg(null)
     const payload = rows.filter((r) => selected.has(r.if_name)).map((r) => ({
@@ -324,6 +334,7 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
       lldp_neighbor_desc: r.lldp_neighbor_desc, oper_status: r.status,
       poll_traffic: true, poll_errors: true, poll_status: true,
       collection_method: r.collection_method || 'auto',
+      alert_on_down: r.alert_on_down, alert_on_up: r.alert_on_up, alert_severity: r.alert_severity,
     }))
     try {
       await saveMonitoredInterfaces(device.id, payload)
@@ -362,6 +373,8 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
             <button onClick={selectAll} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50">Select All</button>
             <button onClick={selectNone} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50">Select None</button>
             <button onClick={selectUp} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50">Select Up Only</button>
+            <button onClick={() => bulkAlert(true)} disabled={!selected.size} title="Enable down/up alerts for selected" className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">🔔 Enable Alerts</button>
+            <button onClick={() => bulkAlert(false)} disabled={!selected.size} title="Disable alerts for selected" className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">🔕 Disable Alerts</button>
           </div>
           <div className="overflow-x-auto max-h-[26rem]">
             <table className="w-full text-sm">
@@ -374,6 +387,7 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
                   <th className="px-3 py-2 font-medium">Speed</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Method</th>
+                  <th className="px-3 py-2 font-medium">Alert</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -391,6 +405,15 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
                           ? `gNMI ${cfg?.gnmi_interval ?? '—'}s`
                           : `SNMP ${cfg?.effective_intervals.interface_traffic ?? '—'}s`}
                       </span>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <button
+                        onClick={() => toggleAlert(r.if_name)}
+                        title={r.alert_on_down ? `Alerting on (severity: ${r.alert_severity}) — click to mute` : 'Alerts muted — click to enable'}
+                        className="text-base leading-none"
+                      >
+                        {r.alert_on_down ? '🔔' : '🔕'}
+                      </button>
                     </td>
                   </tr>
                 ))}

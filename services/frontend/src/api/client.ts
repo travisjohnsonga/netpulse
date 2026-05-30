@@ -694,6 +694,23 @@ export interface MonitoredInterface {
   poll_status: boolean
   collection_method: 'auto' | 'snmp' | 'gnmi'
   last_status: string
+  alert_on_down: boolean
+  alert_on_up: boolean
+  alert_severity: 'critical' | 'high' | 'medium' | 'low'
+  consecutive_polls_before_alert: number
+}
+
+export interface InterfaceAlertConfig {
+  if_names: string[]
+  alert_on_down?: boolean
+  alert_on_up?: boolean
+  alert_severity?: 'critical' | 'high' | 'medium' | 'low'
+  consecutive_polls_before_alert?: number
+}
+
+export async function saveInterfaceAlertConfig(deviceId: number, payload: InterfaceAlertConfig): Promise<MonitoredInterface[]> {
+  const { data } = await api.post<MonitoredInterface[]>(`/devices/${deviceId}/interfaces/alert-config/`, payload)
+  return data
 }
 
 export interface DiscoveredInterface {
