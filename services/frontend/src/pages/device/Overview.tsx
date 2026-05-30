@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
-  fetchDeviceRiskScore, fetchDeviceAlerts,
+  fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces,
   type DeviceDetail, type RiskScore, type AlertEvent,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
@@ -24,6 +24,7 @@ export default function Overview({ device, onTab, onRefresh }: {
   const [alerts, setAlerts] = useState<AlertEvent[]>([])
   const [alertsLoaded, setAlertsLoaded] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [ifaceCount, setIfaceCount] = useState<number | null>(null)
 
   useEffect(() => {
     fetchDeviceRiskScore(device.id).then(setRisk).catch(() => setRisk(null))
@@ -31,6 +32,7 @@ export default function Overview({ device, onTab, onRefresh }: {
       .then((a) => setAlerts(a.slice(0, 5)))
       .catch(() => setAlerts([]))
       .finally(() => setAlertsLoaded(true))
+    fetchMonitoredInterfaces(device.id).then((m) => setIfaceCount(m.length)).catch(() => setIfaceCount(null))
   }, [device.id, device.hostname])
 
   const reachable = device.status === 'active'
@@ -107,7 +109,10 @@ export default function Overview({ device, onTab, onRefresh }: {
           <Stat label="CPU" value="—" />
           <Stat label="Memory" value="—" />
         </div>
-        <p className="text-xs text-gray-400 mt-3">Live metrics appear once the telemetry pipeline reports for this device.</p>
+        <button onClick={() => onTab('telemetry')} className="block w-full text-center text-sm font-medium text-gray-700 mt-3 hover:text-blue-700">
+          {ifaceCount ?? 0} interface{ifaceCount === 1 ? '' : 's'} monitored →
+        </button>
+        <p className="text-xs text-gray-400 mt-2">Live metrics appear once the telemetry pipeline reports for this device.</p>
       </Card>
 
       {/* Recent alerts */}

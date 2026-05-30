@@ -455,6 +455,80 @@ export async function syncConfigNow(): Promise<{ ok: boolean; message: string; l
   return data
 }
 
+// ── Telemetry config & interfaces ────────────────────────────────────────────
+
+export interface TelemetryConfig {
+  id: number
+  primary_method: 'snmp' | 'gnmi' | 'both'
+  snmp_interval: number
+  gnmi_interval: number
+  collect_cpu: boolean
+  collect_memory: boolean
+  collect_temperature: boolean
+  collect_power: boolean
+  collect_fans: boolean
+  collect_bgp: boolean
+  collect_inventory: boolean
+  collect_lldp: boolean
+}
+
+export interface MonitoredInterface {
+  id: number
+  if_index: number | null
+  if_name: string
+  if_description: string
+  if_speed_mbps: number | null
+  if_type: string
+  lldp_neighbor_hostname: string | null
+  lldp_neighbor_port: string | null
+  lldp_neighbor_desc: string | null
+  poll_traffic: boolean
+  poll_errors: boolean
+  poll_status: boolean
+  collection_method: 'auto' | 'snmp' | 'gnmi'
+  last_status: string
+}
+
+export interface DiscoveredInterface {
+  if_index: number | null
+  if_name: string
+  if_description: string
+  if_speed_mbps: number | null
+  if_type: string
+  oper_status: string
+  admin_status: string
+  lldp_neighbor_hostname: string | null
+  lldp_neighbor_port: string | null
+  lldp_neighbor_desc: string | null
+  auto_select: boolean
+  collection_method: 'snmp' | 'gnmi'
+}
+
+export async function fetchTelemetryConfig(deviceId: number): Promise<TelemetryConfig> {
+  const { data } = await api.get<TelemetryConfig>(`/devices/${deviceId}/telemetry-config/`)
+  return data
+}
+
+export async function saveTelemetryConfig(deviceId: number, payload: Partial<TelemetryConfig>): Promise<TelemetryConfig> {
+  const { data } = await api.put<TelemetryConfig>(`/devices/${deviceId}/telemetry-config/`, payload)
+  return data
+}
+
+export async function discoverInterfaces(deviceId: number): Promise<{ count: number; auto_selected: number; interfaces: DiscoveredInterface[]; error?: string }> {
+  const { data } = await api.post(`/devices/${deviceId}/interfaces/discover/`)
+  return data
+}
+
+export async function fetchMonitoredInterfaces(deviceId: number): Promise<MonitoredInterface[]> {
+  const { data } = await api.get<MonitoredInterface[] | Paginated<MonitoredInterface>>(`/devices/${deviceId}/interfaces/`)
+  return unwrap(data)
+}
+
+export async function saveMonitoredInterfaces(deviceId: number, interfaces: Record<string, unknown>[]): Promise<MonitoredInterface[]> {
+  const { data } = await api.post<MonitoredInterface[]>(`/devices/${deviceId}/interfaces/`, { interfaces })
+  return data
+}
+
 // ── Sites ────────────────────────────────────────────────────────────────────
 
 export type SiteType = 'datacenter' | 'campus' | 'branch' | 'remote' | 'cloud'
