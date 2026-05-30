@@ -1,16 +1,12 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
-import { fetchDevices, type Device } from '../api/client'
-
-const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-700',
-  inactive: 'bg-gray-100 text-gray-600',
-  pending: 'bg-yellow-100 text-yellow-700',
-  unreachable: 'bg-red-100 text-red-700',
-}
+import ColumnPicker from '../components/ColumnPicker'
+import { fetchDevices, fetchCredentials, type Device } from '../api/client'
+import {
+  DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
+} from '../lib/deviceColumns'
 
 const PLATFORM_OPTIONS = ['All', 'IOS-XE', 'IOS-XR', 'NX-OS', 'Junos', 'EOS', 'FortiOS', 'Other']
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
@@ -28,6 +24,26 @@ export default function Devices() {
   const [total, setTotal] = useState(0)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showDiscoveryModal, setShowDiscoveryModal] = useState(false)
+  const [columnKeys, setColumnKeys] = useState<string[]>(loadColumnKeys)
+  const [credNames, setCredNames] = useState<Record<number, string>>({})
+
+  useEffect(() => {
+    fetchCredentials()
+      .then((profiles) => setCredNames(Object.fromEntries(profiles.map((p) => [p.id, p.name]))))
+      .catch(() => {})
+  }, [])
+
+  const setColumns = (keys: string[]) => { setColumnKeys(keys); saveColumnKeys(keys) }
+  const resetColumns = () => {
+    localStorage.removeItem('netpulse.devices.columns')
+    setColumnKeys(defaultColumnKeys())
+  }
+
+  const activeColumns = useMemo(
+    () => columnKeys.map((k) => DEVICE_COLUMNS.find((c) => c.key === k)).filter(Boolean) as typeof DEVICE_COLUMNS,
+    [columnKeys],
+  )
+  const colCtx: ColCtx = { credNames }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -113,6 +129,7 @@ export default function Devices() {
             <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>
           ))}
         </select>
+        <ColumnPicker activeKeys={columnKeys} onChange={setColumns} onReset={resetColumns} />
       </div>
 
       {/* Table */}
@@ -142,12 +159,9 @@ export default function Devices() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-gray-500 text-left border-b border-gray-200">
-                    <th className="px-5 py-3 font-medium">Hostname</th>
-                    <th className="px-5 py-3 font-medium">IP Address</th>
-                    <th className="px-5 py-3 font-medium">Platform</th>
-                    <th className="px-5 py-3 font-medium">Vendor</th>
-                    <th className="px-5 py-3 font-medium">Status</th>
-                    <th className="px-5 py-3 font-medium">Last Seen</th>
+                    {activeColumns.map((col) => (
+                      <th key={col.key} className="px-5 py-3 font-medium whitespace-nowrap">{col.label}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -157,23 +171,9 @@ export default function Devices() {
                       onClick={() => navigate(`/devices/${device.id}`)}
                       className="hover:bg-gray-50 cursor-pointer"
                     >
-                      <td className="px-5 py-3 font-medium text-gray-800">{device.hostname}</td>
-                      <td className="px-5 py-3 text-gray-600 font-mono text-xs">{device.ip_address}</td>
-                      <td className="px-5 py-3 text-gray-600">{device.platform}</td>
-                      <td className="px-5 py-3 text-gray-600">{device.vendor}</td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={clsx(
-                            'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
-                            STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600',
-                          )}
-                        >
-                          {device.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 text-xs">
-                        {device.last_seen ? new Date(device.last_seen).toLocaleString() : '—'}
-                      </td>
+                      {activeColumns.map((col) => (
+                        <td key={col.key} className="px-5 py-3">{col.render(device, colCtx)}</td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>

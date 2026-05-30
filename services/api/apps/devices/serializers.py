@@ -32,7 +32,13 @@ class DeviceListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Device
-        fields = ("id", "hostname", "ip_address", "platform", "status", "site_name", "created_at")
+        # Lightweight, but carries enough for the configurable Devices columns
+        # (vendor, model, OS, serial, mgmt IP, last seen, credentials, notes).
+        fields = (
+            "id", "hostname", "ip_address", "management_ip", "platform", "vendor",
+            "model", "os_version", "serial_number", "status", "site_name",
+            "credential_profile", "last_seen", "notes", "created_at",
+        )
 
 
 class TestConnectionRequestSerializer(serializers.Serializer):

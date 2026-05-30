@@ -103,8 +103,13 @@ class TestDeviceEndpoints:
     def test_list_uses_lightweight_serializer(self, auth_client, device):
         resp = auth_client.get("/api/devices/")
         item = resp.json()["results"][0]
-        # List serializer only returns these fields
-        assert set(item.keys()) == {"id", "hostname", "ip_address", "platform", "status", "site_name", "created_at"}
+        # Lightweight list serializer — carries the fields the configurable
+        # Devices columns need, but not the full device record (no groups, etc.).
+        assert set(item.keys()) == {
+            "id", "hostname", "ip_address", "management_ip", "platform", "vendor",
+            "model", "os_version", "serial_number", "status", "site_name",
+            "credential_profile", "last_seen", "notes", "created_at",
+        }
 
     def test_list_includes_site_name(self, auth_client, device, site):
         resp = auth_client.get("/api/devices/")

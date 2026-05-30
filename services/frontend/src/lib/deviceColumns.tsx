@@ -1,0 +1,109 @@
+import { type ReactNode } from 'react'
+import clsx from 'clsx'
+import { type Device } from '../api/client'
+import { sshUrl, sshTooltip } from './ssh'
+
+const STATUS_COLORS: Record<string, string> = {
+  active: 'bg-green-100 text-green-700',
+  inactive: 'bg-gray-100 text-gray-600',
+  pending: 'bg-yellow-100 text-yellow-700',
+  unreachable: 'bg-red-100 text-red-700',
+}
+
+export interface ColCtx {
+  credNames: Record<number, string>
+}
+
+export interface DeviceColumn {
+  key: string
+  label: string
+  locked?: boolean
+  default: boolean
+  render: (d: Device, ctx: ColCtx) => ReactNode
+}
+
+function relTime(iso: string | null): string {
+  if (!iso) return '—'
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86400)}d ago`
+}
+
+function roleFromNotes(notes: string): string {
+  for (const line of (notes || '').split('\n')) {
+    if (line.toLowerCase().startsWith('role:')) return line.split(':').slice(1).join(':').trim()
+  }
+  return '—'
+}
+
+const dash = (v: string | null | undefined): ReactNode => (v ? v : <span className="text-gray-300">—</span>)
+
+export const DEVICE_COLUMNS: DeviceColumn[] = [
+  {
+    key: 'hostname', label: 'Hostname', locked: true, default: true,
+    render: (d) => (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="font-medium text-gray-800">{d.hostname}</span>
+        <a
+          href={sshUrl(d)}
+          onClick={(e) => e.stopPropagation()}
+          target="_blank" rel="noopener noreferrer"
+          title={sshTooltip(d.hostname, d)}
+          className="text-gray-300 hover:text-blue-600 transition-colors"
+        >🔒</a>
+      </span>
+    ),
+  },
+  {
+    key: 'status', label: 'Status', default: true,
+    render: (d) => (
+      <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>
+        {d.status}
+      </span>
+    ),
+  },
+  { key: 'ip_address', label: 'IP Address', default: true, render: (d) => <span className="font-mono text-xs text-gray-600">{d.ip_address}</span> },
+  { key: 'vendor', label: 'Vendor', default: true, render: (d) => <span className="text-gray-600">{dash(d.vendor)}</span> },
+  { key: 'platform', label: 'Platform', default: true, render: (d) => <span className="text-gray-600">{dash(d.platform)}</span> },
+  { key: 'site', label: 'Site', default: true, render: (d) => <span className="text-gray-600">{dash(d.site_name)}</span> },
+  { key: 'management_ip', label: 'Mgmt IP', default: false, render: (d) => <span className="font-mono text-xs text-gray-600">{dash(d.management_ip)}</span> },
+  { key: 'os_version', label: 'OS Version', default: false, render: (d) => <span className="text-gray-600">{dash(d.os_version)}</span> },
+  { key: 'model', label: 'Model', default: false, render: (d) => <span className="text-gray-600">{dash(d.model)}</span> },
+  { key: 'serial_number', label: 'Serial', default: false, render: (d) => <span className="font-mono text-xs text-gray-600">{dash(d.serial_number)}</span> },
+  { key: 'last_seen', label: 'Last Seen', default: false, render: (d) => <span className="text-gray-500 text-xs">{relTime(d.last_seen)}</span> },
+  {
+    key: 'credential_profile', label: 'Credentials', default: false,
+    render: (d, ctx) => <span className="text-gray-600">{d.credential_profile ? (ctx.credNames[d.credential_profile] ?? `#${d.credential_profile}`) : <span className="text-gray-300">—</span>}</span>,
+  },
+  { key: 'created_at', label: 'Added', default: false, render: (d) => <span className="text-gray-500 text-xs">{new Date(d.created_at).toLocaleDateString()}</span> },
+  { key: 'role', label: 'Role', default: false, render: (d) => <span className="text-gray-600">{roleFromNotes(d.notes)}</span> },
+  { key: 'notes', label: 'Notes', default: false, render: (d) => <span className="text-gray-500 text-xs line-clamp-1 max-w-xs">{dash(d.notes?.trim())}</span> },
+]
+
+export const COLUMN_STORAGE_KEY = 'netpulse.devices.columns'
+
+export function defaultColumnKeys(): string[] {
+  return DEVICE_COLUMNS.filter((c) => c.locked || c.default).map((c) => c.key)
+}
+
+/** Load persisted column keys, sanitised against the current definitions. */
+export function loadColumnKeys(): string[] {
+  try {
+    const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
+    if (!raw) return defaultColumnKeys()
+    const saved: string[] = JSON.parse(raw)
+    const valid = saved.filter((k) => DEVICE_COLUMNS.some((c) => c.key === k))
+    // Locked columns are always present and lead.
+    const locked = DEVICE_COLUMNS.filter((c) => c.locked).map((c) => c.key)
+    const ordered = [...locked, ...valid.filter((k) => !locked.includes(k))]
+    return ordered.length ? ordered : defaultColumnKeys()
+  } catch {
+    return defaultColumnKeys()
+  }
+}
+
+export function saveColumnKeys(keys: string[]): void {
+  try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(keys)) } catch { /* ignore */ }
+}

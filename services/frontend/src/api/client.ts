@@ -70,10 +70,18 @@ export interface Device {
   id: number
   hostname: string
   ip_address: string
+  management_ip: string | null
   platform: string
   vendor: string
+  model: string
+  os_version: string
+  serial_number: string
   status: 'active' | 'inactive' | 'pending' | 'unreachable'
+  site_name: string | null
+  credential_profile: number | null
   last_seen: string | null
+  notes: string
+  created_at: string
 }
 
 export interface DeviceListResponse {
