@@ -13,5 +13,14 @@ python manage.py migrate --noinput
 echo "[entrypoint] seeding role groups..."
 python manage.py create_roles
 
+# Superuser seeding runs ONLY in the api service (SEED_SUPERUSER=1). All
+# api-image services share this entrypoint, but only the api should create the
+# initial user. Idempotent: skips when the user already exists. The migrations
+# above guarantee the auth table exists before this runs.
+if [ "$SEED_SUPERUSER" = "1" ]; then
+    echo "[entrypoint] ensuring superuser..."
+    python manage.py ensure_superuser
+fi
+
 echo "[entrypoint] starting: $*"
 exec "$@"

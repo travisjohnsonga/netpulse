@@ -149,6 +149,9 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
       SSL_DIR: /app/ssl
+      # Only the api service seeds the initial superuser (idempotent). Other
+      # api-image services share the entrypoint but must not create users.
+      SEED_SUPERUSER: "1"
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
