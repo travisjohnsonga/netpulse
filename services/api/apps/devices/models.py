@@ -76,6 +76,7 @@ class Device(TimestampedModel):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         INACTIVE = "inactive", "Inactive"
+        UNREACHABLE = "unreachable", "Unreachable"
         MAINTENANCE = "maintenance", "Maintenance"
         DECOMMISSIONED = "decommissioned", "Decommissioned"
 
@@ -100,6 +101,11 @@ class Device(TimestampedModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     # Last time NetPulse successfully reached the device (e.g. config collection).
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Liveness/reachability (updated by run_reachability_monitor).
+    is_reachable = models.BooleanField(default=True)
+    last_reachability_check = models.DateTimeField(null=True, blank=True)
+    reachability_method = models.CharField(max_length=8, blank=True)  # ping/tcp/snmp
+    consecutive_failures = models.IntegerField(default=0)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     groups = models.ManyToManyField(DeviceGroup, blank=True, related_name="devices")
     # A device uses one multi-protocol credential profile (secrets in OpenBao).

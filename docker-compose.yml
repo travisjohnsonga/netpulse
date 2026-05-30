@@ -389,6 +389,21 @@ services:
       openbao:
         condition: service_healthy
 
+  reachability-monitor:
+    build: ./services/api
+    restart: unless-stopped
+    command: python manage.py run_reachability_monitor --interval 30
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
   alert-engine:
     build: ./services/api
     restart: unless-stopped

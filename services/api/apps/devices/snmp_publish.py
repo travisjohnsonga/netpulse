@@ -92,7 +92,9 @@ def build_device_payload(device) -> dict | None:
     Build the non-secret SNMP config payload for a device, or None when the
     device isn't pollable (inactive, or no SNMP credential profile).
     """
-    if device.status != device.Status.ACTIVE:
+    # Poll active devices and ones currently flagged unreachable (so SNMP can
+    # confirm recovery); skip inactive/maintenance/decommissioned.
+    if device.status not in (device.Status.ACTIVE, device.Status.UNREACHABLE):
         return None
     profile = _snmp_profile(device)
     if not profile:
@@ -208,7 +210,7 @@ def publish_all_active() -> int:
     """Publish every pollable device. Returns the count published."""
     from .models import Device
     messages = []
-    qs = (Device.objects.filter(status=Device.Status.ACTIVE)
+    qs = (Device.objects.filter(status__in=[Device.Status.ACTIVE, Device.Status.UNREACHABLE])
           .select_related("credential_profile", "telemetry_config")
           .prefetch_related("monitored_interfaces"))
     for device in qs:

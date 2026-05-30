@@ -108,7 +108,8 @@ class TestDeviceEndpoints:
         assert set(item.keys()) == {
             "id", "hostname", "ip_address", "management_ip", "platform", "vendor",
             "model", "os_version", "serial_number", "status", "site_name",
-            "credential_profile", "last_seen", "notes", "created_at",
+            "credential_profile", "last_seen", "is_reachable", "consecutive_failures",
+            "last_reachability_check", "notes", "created_at",
         }
 
     def test_list_includes_site_name(self, auth_client, device, site):
@@ -221,7 +222,7 @@ class TestDeviceModel:
 
     def test_status_choices(self):
         for value, _ in Device.Status.choices:
-            assert value in ("active", "inactive", "maintenance", "decommissioned")
+            assert value in ("active", "inactive", "unreachable", "maintenance", "decommissioned")
 
     def test_platform_choices(self):
         for value, _ in Device.Platform.choices:
