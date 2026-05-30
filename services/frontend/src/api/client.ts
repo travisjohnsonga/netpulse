@@ -99,18 +99,18 @@ export interface TopologyNode {
   type: string
   site: string | null
   status: string
+  role?: string
   risk_score: number
 }
 
 export interface TopologyEdge {
   source: string
   target: string
-  capacity_gbps: number
+  port_a: string
+  port_b: string
+  speed_mbps: number | null
   utilization_pct: number
   utilization_color: string
-  in_bps: number
-  out_bps: number
-  latency_ms: number | null
 }
 
 export interface TopologyData {
@@ -252,8 +252,13 @@ export async function checkInfraHealth(): Promise<InfraHealth> {
   return data
 }
 
-export async function fetchTopology(): Promise<TopologyData> {
-  const { data } = await api.get<TopologyData>('/devices/topology/')
+export async function fetchTopology(params?: Record<string, string>): Promise<TopologyData> {
+  const { data } = await api.get<TopologyData>('/devices/topology/', { params })
+  return data
+}
+
+export async function discoverDeviceLinks(deviceId: number): Promise<{ count: number; matched: number }> {
+  const { data } = await api.post(`/devices/${deviceId}/topology/discover/`)
   return data
 }
 
