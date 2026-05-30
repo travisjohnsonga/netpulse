@@ -5,10 +5,13 @@ import {
   fetchTelemetryConfig, saveTelemetryConfig, fetchMonitoredInterfaces,
   discoverInterfaces, saveMonitoredInterfaces,
   generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth, fetchSystemSettings,
+  fetchDeviceMetrics,
   type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
-  type MonitoredInterface,
+  type MonitoredInterface, type DeviceMetrics, type MetricPoint,
 } from '../../api/client'
 import Modal from '../../components/Modal'
+import ReactECharts from 'echarts-for-react'
+import type { EChartsOption } from 'echarts'
 
 const inputCls =
   'px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -594,15 +597,36 @@ const TRAFFIC_RANGES = ['1h', '6h', '24h', '7d'] as const
 // A static, faded bar pattern standing in for a sparkline until InfluxDB queries land.
 const FLAT_SPARK = [3, 4, 3, 5, 4, 3, 4, 5, 6, 5, 4, 3, 4, 5, 4]
 
+function formatUptime(seconds: number | null): string {
+  if (seconds == null) return '—'
+  const s = Math.floor(seconds)
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
 export default function Telemetry({ device, onConfigure }: { device: DeviceDetail; onConfigure?: () => void }) {
   const [ifaces, setIfaces] = useState<MonitoredInterface[] | null>(null)
   const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
   const [range, setRange] = useState<(typeof TRAFFIC_RANGES)[number]>('1h')
+  const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
 
   useEffect(() => {
     fetchMonitoredInterfaces(device.id).then(setIfaces).catch(() => setIfaces([]))
     fetchTelemetryConfig(device.id).then(setCfg).catch(() => setCfg(null))
   }, [device.id])
+
+  // Metrics: refetch on device/range change and auto-refresh every 60s.
+  useEffect(() => {
+    let cancelled = false
+    const load = () => fetchDeviceMetrics(device.id, range).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
+    load()
+    const t = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [device.id, range])
+
+  const health = metrics?.metrics
 
   const lldp = useMemo(() => (ifaces || []).filter((i) => i.lldp_neighbor_hostname), [ifaces])
 
@@ -630,16 +654,28 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
       <div className={clsx(liveCard, 'p-4')}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Device Health</h3>
-          <button onClick={configure} className="text-xs font-medium text-blue-600 hover:text-blue-800">Configure →</button>
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1">
+              {TRAFFIC_RANGES.map((r) => (
+                <button key={r} onClick={() => setRange(r)}
+                  className={clsx('px-2 py-1 text-xs rounded-md border',
+                    range === r ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
+                      : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800')}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            <button onClick={configure} className="text-xs font-medium text-blue-600 hover:text-blue-800">Configure →</button>
+          </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[['CPU', '%'], ['Memory', '%'], ['Uptime', ''], ['Temperature', '°C']].map(([label]) => (
-            <div key={label} className="rounded-lg border border-gray-100 dark:border-gray-800 p-3 text-center">
-              <p className="text-xs text-gray-400 dark:text-gray-500">{label}</p>
-              <p className="text-lg font-bold text-gray-300 dark:text-gray-600 mt-1">—</p>
-              <p className="text-[10px] text-gray-300 dark:text-gray-600">no data</p>
-            </div>
-          ))}
+          <HealthCard label="CPU" value={health?.cpu_pct != null ? `${health.cpu_pct.toFixed(1)}%` : null}
+            series={metrics?.timeseries.cpu_pct} color="#f59e0b" />
+          <HealthCard label="Memory" value={health?.memory_used_pct != null ? `${health.memory_used_pct.toFixed(1)}%` : null}
+            series={metrics?.timeseries.memory_used_pct} color="#3b82f6" />
+          <HealthCard label="Uptime" value={health?.uptime_seconds != null ? formatUptime(health.uptime_seconds) : null}
+            series={metrics?.timeseries.uptime} color="#10b981" />
+          <HealthCard label="Poll" value={health?.poll_duration_ms != null ? `${health.poll_duration_ms.toFixed(0)} ms` : null} />
         </div>
       </div>
 
@@ -740,4 +776,47 @@ function Sparkline() {
       ))}
     </span>
   )
+}
+
+// A health metric tile: big current value + an ECharts sparkline of the series.
+function HealthCard({ label, value, series, color = '#3b82f6' }: {
+  label: string; value: string | null; series?: MetricPoint[]; color?: string
+}) {
+  const hasData = value != null
+  return (
+    <div className="rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs text-gray-400 dark:text-gray-500">{label}</p>
+          <p className={clsx('text-lg font-bold mt-1', hasData ? 'text-gray-800 dark:text-gray-100' : 'text-gray-300 dark:text-gray-600')}>
+            {value ?? '—'}
+          </p>
+        </div>
+      </div>
+      {series && series.length > 1
+        ? <MiniSpark series={series} color={color} />
+        : <p className="text-[10px] text-gray-300 dark:text-gray-600">{hasData ? '' : 'no data'}</p>}
+    </div>
+  )
+}
+
+function MiniSpark({ series, color }: { series: MetricPoint[]; color: string }) {
+  const option: EChartsOption = {
+    grid: { left: 0, right: 0, top: 4, bottom: 0 },
+    xAxis: { type: 'category', show: false, data: series.map((p) => p.time) },
+    yAxis: { type: 'value', show: false, scale: true },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        return `${new Date(p.axisValue).toLocaleString()}<br/>${Number(p.value).toLocaleString()}`
+      },
+    },
+    series: [{
+      type: 'line', data: series.map((p) => p.value), showSymbol: false, smooth: true,
+      lineStyle: { color, width: 1.5 },
+      areaStyle: { color, opacity: 0.12 },
+    }],
+  }
+  return <ReactECharts option={option} style={{ height: 28, marginTop: 4 }} opts={{ renderer: 'svg' }} notMerge />
 }

@@ -250,6 +250,31 @@ export async function checkHealth(): Promise<HealthStatus> {
   return data
 }
 
+export interface MetricPoint { time: string; value: number }
+export interface DeviceMetrics {
+  device_id: string
+  period: string
+  metrics: {
+    uptime_seconds: number | null
+    memory_used_bytes: number | null
+    memory_free_bytes: number | null
+    memory_used_pct: number | null
+    cpu_pct: number | null
+    poll_duration_ms: number | null
+  }
+  timeseries: {
+    uptime: MetricPoint[]
+    memory_used_pct: MetricPoint[]
+    cpu_pct: MetricPoint[]
+  }
+  interfaces: Record<string, number>
+}
+
+export async function fetchDeviceMetrics(deviceId: number, period = '1h'): Promise<DeviceMetrics> {
+  const { data } = await api.get<DeviceMetrics>(`/devices/${deviceId}/metrics/`, { params: { period } })
+  return data
+}
+
 export interface SystemSettings {
   allow_config_push: boolean
   collector_ip: string
