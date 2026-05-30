@@ -552,6 +552,44 @@ export async function savePollingSettings(payload: Partial<PollingSettings>): Pr
   return data
 }
 
+// ── TLS / HTTPS server certificate ───────────────────────────────────────────
+
+export interface SSLStatus {
+  installed: boolean
+  has_private_key: boolean
+  source: string
+  common_name: string
+  issuer: string
+  sans: string[]
+  serial: string
+  fingerprint_sha256: string
+  not_before: string | null
+  not_after: string | null
+  expiry_status: 'none' | 'not_yet_valid' | 'expired' | 'critical' | 'warning' | 'ok'
+  days_remaining: number | null
+  pending_csr: string | null
+}
+
+export async function fetchSSLStatus(): Promise<SSLStatus> {
+  const { data } = await api.get<SSLStatus>('/settings/ssl/')
+  return data
+}
+
+export async function generateSelfSigned(payload: { common_name: string; sans?: string[]; days?: number }): Promise<SSLStatus> {
+  const { data } = await api.post<SSLStatus>('/settings/ssl/self-signed/', payload)
+  return data
+}
+
+export async function generateCSR(payload: { common_name: string; sans?: string[]; organization?: string; country?: string }): Promise<{ csr: string }> {
+  const { data } = await api.post<{ csr: string }>('/settings/ssl/csr/', payload)
+  return data
+}
+
+export async function uploadCertificate(payload: { certificate: string; private_key?: string; chain?: string }): Promise<SSLStatus> {
+  const { data } = await api.post<SSLStatus>('/settings/ssl/upload/', payload)
+  return data
+}
+
 export interface MonitoredInterface {
   id: number
   if_index: number | null

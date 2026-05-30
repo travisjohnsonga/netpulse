@@ -18,6 +18,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'discovery',    label: 'Discovery',      icon: '🔎' },
   { to: 'collectors',   label: 'Collectors',     icon: '📡' },
   { to: 'data-sources', label: 'Data Sources',   icon: '🗄' },
+  { to: 'certificates', label: 'Certificates',   icon: '🔒' },
   { to: 'system',       label: 'System',         icon: '🖥' },
 ]
 

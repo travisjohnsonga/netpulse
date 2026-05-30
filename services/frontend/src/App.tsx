@@ -21,6 +21,7 @@ import Alerting from './pages/settings/Alerting'
 import Discovery from './pages/settings/Discovery'
 import Collectors from './pages/settings/Collectors'
 import DataSources from './pages/settings/DataSources'
+import Certificates from './pages/settings/Certificates'
 import System from './pages/settings/System'
 import Topology from './pages/Topology'
 import ApiDocs from './pages/ApiDocs'
@@ -85,6 +86,7 @@ function AppRoutes() {
                   <Route path="discovery" element={<Discovery />} />
                   <Route path="collectors" element={<Collectors />} />
                   <Route path="data-sources" element={<DataSources />} />
+                  <Route path="certificates" element={<Certificates />} />
                   <Route path="system" element={<System />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
