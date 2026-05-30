@@ -1696,3 +1696,57 @@ Example flow:
   API docs:  http://192.168.98.134:8000/api/docs/
 
 Do NOT build until requested.
+
+## PINNED — Config Push Safety Flag
+
+### Environment variable: ALLOW_CONFIG_PUSH
+Controls whether NetPulse can push configuration changes
+to network devices. Default: false (read-only mode).
+
+.env / .env.example:
+  # Allow NetPulse to push configuration to devices
+  # Set to true only after review by network team
+  # Default: false (read-only, monitoring only)
+  ALLOW_CONFIG_PUSH=false
+
+Backend behavior:
+  All endpoints that push config to devices must check:
+  from django.conf import settings
+  if not settings.ALLOW_CONFIG_PUSH:
+      return Response(
+          {"error": "Config push is disabled. Set ALLOW_CONFIG_PUSH=true to enable."},
+          status=403
+      )
+  
+  Affected endpoints:
+  - POST /api/devices/{id}/telemetry-config/push/
+  - POST /api/devices/{id}/remediation/push/
+  - Any future config push endpoints
+
+Frontend behavior:
+  When ALLOW_CONFIG_PUSH=false:
+  - "Push to Device" button is disabled (grayed out)
+  - Tooltip: "Config push is disabled by administrator.
+              Contact your network team to enable."
+  - Copy to Clipboard still works
+  - Generated config still visible (read-only)
+  
+  When ALLOW_CONFIG_PUSH=true:
+  - "Push to Device" button active
+  - Shows confirmation modal before pushing
+  - Audit log entry on every push
+
+  Frontend reads flag from:
+  GET /api/settings/system/ 
+  Add: allow_config_push: bool to response
+  So frontend knows without hardcoding.
+
+Django settings:
+  ALLOW_CONFIG_PUSH = env.bool('ALLOW_CONFIG_PUSH', default=False)
+
+Audit trail regardless of setting:
+  Log every push ATTEMPT (successful or blocked)
+  So admins can see what would have been pushed
+  even in read-only mode.
+
+Do NOT build until requested.
