@@ -10,6 +10,7 @@ interface SettingsNavItem {
 
 const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'general',      label: 'General',        icon: '⚙' },
+  { to: 'polling',      label: 'Polling',        icon: '⏱' },
   { to: 'users',        label: 'Users & Access', icon: '👥' },
   { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
   { to: 'integrations', label: 'Integrations',   icon: '🔌' },

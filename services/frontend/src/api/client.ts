@@ -520,6 +520,36 @@ export interface TelemetryConfig {
   collect_bgp: boolean
   collect_inventory: boolean
   collect_lldp: boolean
+  override_intervals: boolean
+  device_metrics_interval: number | null
+  interface_traffic_interval: number | null
+  interface_status_interval: number | null
+  bgp_interval: number | null
+  effective_intervals: { device_metrics: number; interface_traffic: number; interface_status: number; bgp: number }
+}
+
+export interface PollingSettings {
+  device_metrics_interval: number
+  interface_traffic_interval: number
+  interface_status_interval: number
+  bgp_interval: number
+  inventory_interval: number
+  lldp_interval: number
+  max_concurrent_sessions: number
+  snmp_timeout: number
+  snmp_retries: number
+  bulk_get_enabled: boolean
+  bulk_get_max_repetitions: number
+}
+
+export async function fetchPollingSettings(): Promise<PollingSettings> {
+  const { data } = await api.get<PollingSettings>('/settings/polling/')
+  return data
+}
+
+export async function savePollingSettings(payload: Partial<PollingSettings>): Promise<PollingSettings> {
+  const { data } = await api.put<PollingSettings>('/settings/polling/', payload)
+  return data
 }
 
 export interface MonitoredInterface {

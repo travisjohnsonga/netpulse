@@ -50,31 +50,80 @@ const STATUS_BADGE: Record<string, string> = {
 }
 
 export default function Telemetry({ device }: { device: DeviceDetail }) {
+  const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
+  const [cfgError, setCfgError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchTelemetryConfig(device.id).then(setCfg).catch(() => setCfgError('Failed to load telemetry config.'))
+  }, [device.id])
+
   return (
     <div className="space-y-4">
-      <DevicePolling device={device} />
-      <InterfacePolling device={device} />
+      <DevicePolling device={device} cfg={cfg} setCfg={setCfg} error={cfgError} setError={setCfgError} />
+      <InterfacePolling device={device} cfg={cfg} />
       <GeneratedConfigSection device={device} />
     </div>
   )
 }
 
-// ── Section 1: device-level metrics ───────────────────────────────────────────
+// ── Section 1: device-level metrics + polling intervals ──────────────────────
 
-function DevicePolling({ device }: { device: DeviceDetail }) {
-  const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
+const PRESETS: Record<string, { label: string; desc: string }> = {
+  normal:          { label: 'Normal',          desc: 'Use global defaults' },
+  troubleshooting: { label: 'Troubleshooting', desc: '30s — high-resolution' },
+  reduced:         { label: 'Reduced',         desc: '600s — light load' },
+  custom:          { label: 'Custom',          desc: 'Set each interval' },
+}
+
+const INTERVAL_KEYS: [keyof TelemetryConfig, keyof TelemetryConfig['effective_intervals'], string][] = [
+  ['device_metrics_interval', 'device_metrics', 'Device metrics'],
+  ['interface_traffic_interval', 'interface_traffic', 'Interface traffic'],
+  ['interface_status_interval', 'interface_status', 'Interface status'],
+  ['bgp_interval', 'bgp', 'BGP peers'],
+]
+
+function DevicePolling({ device, cfg, setCfg, error, setError }: {
+  device: DeviceDetail
+  cfg: TelemetryConfig | null
+  setCfg: (c: TelemetryConfig) => void
+  error: string | null
+  setError: (e: string | null) => void
+}) {
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [showIntervals, setShowIntervals] = useState(false)
+  const [preset, setPreset] = useState<string>('custom')
 
+  // Derive the preset from the current values once the config loads.
   useEffect(() => {
-    fetchTelemetryConfig(device.id).then(setCfg).catch(() => setError('Failed to load telemetry config.'))
-  }, [device.id])
+    if (!cfg) return
+    if (!cfg.override_intervals) { setPreset('normal'); return }
+    const vals = INTERVAL_KEYS.map(([k]) => cfg[k] as number | null)
+    if (vals.every((v) => v === 30)) setPreset('troubleshooting')
+    else if (vals.every((v) => v === 600)) setPreset('reduced')
+    else setPreset('custom')
+  }, [cfg])
 
-  if (error) return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">{error}</div>
+  if (error && !cfg) return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">{error}</div>
   if (!cfg) return <div className="bg-white rounded-lg border border-gray-200 p-4"><div className="w-5 h-5 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
 
-  const set = (patch: Partial<TelemetryConfig>) => setCfg((c) => (c ? { ...c, ...patch } : c))
+  const set = (patch: Partial<TelemetryConfig>) => setCfg({ ...cfg, ...patch })
+
+  const applyPreset = (p: string) => {
+    setPreset(p)
+    if (p === 'normal') {
+      set({ override_intervals: false })
+    } else if (p === 'troubleshooting' || p === 'reduced') {
+      const v = p === 'troubleshooting' ? 30 : 600
+      set({
+        override_intervals: true,
+        device_metrics_interval: v, interface_traffic_interval: v,
+        interface_status_interval: v, bgp_interval: v,
+      })
+    } else {
+      set({ override_intervals: true })
+    }
+  }
 
   const save = async () => {
     setSaving(true); setError(null)
@@ -83,6 +132,8 @@ function DevicePolling({ device }: { device: DeviceDetail }) {
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } catch { setError('Failed to save settings.') } finally { setSaving(false) }
   }
+
+  const eff = cfg.effective_intervals
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
@@ -116,13 +167,64 @@ function DevicePolling({ device }: { device: DeviceDetail }) {
           {saved ? 'Saved!' : saving ? 'Saving…' : 'Save Settings'}
         </button>
       </div>
+
+      {/* Polling intervals (collapsible per-device override) */}
+      <div className="mt-4 border-t border-gray-100 pt-3">
+        <button onClick={() => setShowIntervals((v) => !v)} className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900">
+          <span className={clsx('transition-transform', showIntervals && 'rotate-90')}>▶</span>
+          Polling Intervals
+          <span className="text-xs font-normal text-gray-400">
+            {cfg.override_intervals ? `overridden · ${PRESETS[preset].label}` : 'using global defaults'}
+          </span>
+        </button>
+        {showIntervals && (
+          <div className="mt-3 space-y-3">
+            <p className="text-xs text-gray-400">
+              These intervals come from <Link to="/settings/polling" className="text-blue-600 hover:text-blue-800">Settings → Polling</Link> unless you override them for this device.
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Preset</label>
+                <select className={inputCls} value={preset} onChange={(e) => applyPreset(e.target.value)}>
+                  {Object.entries(PRESETS).map(([k, p]) => <option key={k} value={k}>{p.label} — {p.desc}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700 pb-2">
+                <input type="checkbox" checked={cfg.override_intervals} onChange={(e) => { set({ override_intervals: e.target.checked }); setPreset(e.target.checked ? 'custom' : 'normal') }} />
+                Override global intervals for this device
+              </label>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {INTERVAL_KEYS.map(([k, ek, label]) => (
+                <div key={k}>
+                  <label className="block text-xs text-gray-500 mb-1">{label}</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min={5}
+                      disabled={!cfg.override_intervals}
+                      className={`${inputCls} w-24 disabled:bg-gray-50 disabled:text-gray-400`}
+                      value={(cfg[k] as number | null) ?? eff[ek]}
+                      onChange={(e) => { set({ [k]: Number(e.target.value) } as Partial<TelemetryConfig>); setPreset('custom') }}
+                    />
+                    <span className="text-xs text-gray-400">s</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-0.5">effective {eff[ek]}s</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400">
+              ℹ️ gNMI subscription intervals are configured on the device, not by these timers. Use Generate Config below to update and push a new gNMI interval.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
 // ── Section 2: interface selection ────────────────────────────────────────────
 
-function InterfacePolling({ device }: { device: DeviceDetail }) {
+function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: TelemetryConfig | null }) {
   const [rows, setRows] = useState<Row[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
@@ -254,7 +356,13 @@ function InterfacePolling({ device }: { device: DeviceDetail }) {
                     <td className="px-3 py-1.5">{r.lldp_neighbor_hostname ? <span className="text-blue-600">{r.lldp_neighbor_hostname}</span> : <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-1.5 text-gray-600">{formatSpeed(r.if_speed_mbps)}</td>
                     <td className="px-3 py-1.5"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_BADGE[r.status] ?? STATUS_BADGE.unknown)}>{r.status}</span></td>
-                    <td className="px-3 py-1.5"><span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 uppercase">{r.collection_method === 'gnmi' ? 'gNMI' : 'SNMP'}</span></td>
+                    <td className="px-3 py-1.5">
+                      <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                        {r.collection_method === 'gnmi'
+                          ? `gNMI ${cfg?.gnmi_interval ?? '—'}s`
+                          : `SNMP ${cfg?.effective_intervals.interface_traffic ?? '—'}s`}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

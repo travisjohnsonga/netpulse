@@ -13,6 +13,7 @@ import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
 import Settings from './pages/Settings'
 import General from './pages/settings/General'
+import Polling from './pages/settings/Polling'
 import Users from './pages/settings/Users'
 import Credentials from './pages/settings/Credentials'
 import Integrations from './pages/settings/Integrations'
@@ -76,6 +77,7 @@ function AppRoutes() {
                 <Route path="/settings" element={<Settings />}>
                   <Route index element={<Navigate to="general" replace />} />
                   <Route path="general" element={<General />} />
+                  <Route path="polling" element={<Polling />} />
                   <Route path="users" element={<Users />} />
                   <Route path="credentials" element={<Credentials />} />
                   <Route path="integrations" element={<Integrations />} />
