@@ -590,6 +590,39 @@ export async function uploadCertificate(payload: { certificate: string; private_
   return data
 }
 
+// ── CVE feed settings ────────────────────────────────────────────────────────
+
+export interface CVEFeedSettings {
+  nvd_enabled: boolean
+  cisa_kev_enabled: boolean
+  cisco_psirt_enabled: boolean
+  paloalto_enabled: boolean
+  has_nvd_api_key: boolean
+  has_psirt_credentials: boolean
+  has_paloalto_api_key: boolean
+}
+
+export interface CVEFeedSettingsWrite {
+  nvd_enabled?: boolean
+  cisa_kev_enabled?: boolean
+  cisco_psirt_enabled?: boolean
+  paloalto_enabled?: boolean
+  nvd_api_key?: string
+  cisco_psirt_client_id?: string
+  cisco_psirt_client_secret?: string
+  paloalto_api_key?: string
+}
+
+export async function fetchCVEFeedSettings(): Promise<CVEFeedSettings> {
+  const { data } = await api.get<CVEFeedSettings>('/cve/feed-settings/')
+  return data
+}
+
+export async function saveCVEFeedSettings(payload: CVEFeedSettingsWrite): Promise<CVEFeedSettings> {
+  const { data } = await api.put<CVEFeedSettings>('/cve/feed-settings/', payload)
+  return data
+}
+
 export interface MonitoredInterface {
   id: number
   if_index: number | null
