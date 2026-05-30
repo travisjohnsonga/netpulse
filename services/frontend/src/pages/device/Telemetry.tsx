@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import {
   fetchTelemetryConfig, saveTelemetryConfig, fetchMonitoredInterfaces,
   discoverInterfaces, saveMonitoredInterfaces,
-  generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth,
+  generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth, fetchSystemSettings,
   type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
   type MonitoredInterface,
 } from '../../api/client'
@@ -445,6 +445,7 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
   const [gen, setGen] = useState<GeneratedConfig | null>(null)
   const [tab, setTab] = useState<string>('snmp')
   const [collectorIp, setCollectorIp] = useState<string>('')
+  const [pushAllowed, setPushAllowed] = useState<boolean>(true)
   const [history, setHistory] = useState<ConfigPushRecord[]>([])
   const [copied, setCopied] = useState(false)
   const [pushing, setPushing] = useState(false)
@@ -457,6 +458,7 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
   useEffect(() => {
     generateTelemetryConfig(device.id).then(setGen).catch(() => setError('Failed to generate config.'))
     checkHealth().then((h) => setCollectorIp(h.collector_ip ?? '')).catch(() => {})
+    fetchSystemSettings().then((s) => setPushAllowed(s.allow_config_push)).catch(() => {})
     loadHistory()
   }, [device.id, loadHistory])
 
@@ -541,9 +543,14 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
         )}
         <div className="flex gap-2 mt-3">
           <button onClick={copy} disabled={!currentConfig} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Copy to Clipboard</button>
-          <button onClick={openPush} disabled={!currentConfig || pushing} className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium">
+          <button onClick={openPush} disabled={!currentConfig || pushing || !pushAllowed}
+            title={!pushAllowed ? 'Config push is disabled by administrator. Contact your network team to enable.' : undefined}
+            className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-medium">
             {pushing ? 'Pushing…' : 'Push to Device ▶'}
           </button>
+          {!pushAllowed && (
+            <span className="self-center text-xs text-gray-400">Push disabled — read-only mode</span>
+          )}
         </div>
       </div>
 

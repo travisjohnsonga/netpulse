@@ -201,6 +201,7 @@ class TestConfigGenerate:
 class TestConfigPush:
     def test_push_success(self, auth_client, device, monkeypatch, settings):
         settings.COLLECTOR_IP = "10.0.0.10"
+        settings.ALLOW_CONFIG_PUSH = True
         captured = {}
 
         class FakeConn:
@@ -223,6 +224,7 @@ class TestConfigPush:
         assert rec.success is True and set(rec.sections) == {"snmp", "syslog"}
 
     def test_push_no_ssh(self, auth_client, settings):
+        settings.ALLOW_CONFIG_PUSH = True
         from apps.credentials.models import CredentialProfile
         from apps.devices.models import Device
         p = CredentialProfile.objects.create(name="snmp2", snmpv2c_enabled=True, vault_path="x")
@@ -232,6 +234,18 @@ class TestConfigPush:
                                 {"sections": ["snmp"]}, format="json")
         assert resp.status_code == 400
         assert resp.json()["success"] is False
+
+    def test_push_blocked_when_disabled(self, auth_client, device, settings):
+        # Default safety: ALLOW_CONFIG_PUSH=false → 403, no device connection.
+        settings.ALLOW_CONFIG_PUSH = False
+        resp = auth_client.post(f"/api/devices/{device.id}/telemetry-config/push/",
+                                {"sections": ["snmp"]}, format="json")
+        assert resp.status_code == 403
+        assert resp.json()["success"] is False
+        # Blocked attempt is still audited.
+        from apps.telemetry.models import ConfigPush
+        rec = ConfigPush.objects.filter(device=device).latest("created_at")
+        assert rec.success is False and rec.sections == []
 
     def test_push_history(self, auth_client, device):
         from apps.telemetry.models import ConfigPush
@@ -247,6 +261,22 @@ class TestHealthCollectorIp:
         resp = api_client.get("/api/health/")
         assert resp.status_code == 200
         assert resp.json()["collector_ip"] == "192.168.98.134"
+
+
+class TestSystemSettings:
+    def test_exposes_allow_config_push_flag(self, auth_client, settings):
+        settings.ALLOW_CONFIG_PUSH = True
+        settings.COLLECTOR_IP = "10.1.2.3"
+        resp = auth_client.get("/api/settings/system/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["allow_config_push"] is True
+        assert body["collector_ip"] == "10.1.2.3"
+
+    def test_flag_false_by_default(self, auth_client, settings):
+        settings.ALLOW_CONFIG_PUSH = False
+        resp = auth_client.get("/api/settings/system/")
+        assert resp.json()["allow_config_push"] is False
 
 
 # ── polling intervals (global + per-device override) ──────────────────────────

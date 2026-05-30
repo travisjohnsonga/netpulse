@@ -243,6 +243,16 @@ export async function checkHealth(): Promise<HealthStatus> {
   return data
 }
 
+export interface SystemSettings {
+  allow_config_push: boolean
+  collector_ip: string
+}
+
+export async function fetchSystemSettings(): Promise<SystemSettings> {
+  const { data } = await api.get<SystemSettings>('/settings/system/')
+  return data
+}
+
 export async function fetchDevices(params?: Record<string, string>): Promise<DeviceListResponse> {
   const { data } = await api.get<DeviceListResponse>('/devices/', { params })
   return data

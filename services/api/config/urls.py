@@ -4,6 +4,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 
+from apps.core.views import SystemSettingsView
 from apps.devices.views import SiteViewSet
 from apps.telemetry.views import PollingSettingsView
 
@@ -38,6 +39,7 @@ urlpatterns = [
     path("api/configbackup/",  include("apps.configbackup.urls")),
     path("api/logs/",         include("apps.logs.urls")),
     path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
+    path("api/settings/system/",  SystemSettingsView.as_view(),  name="system-settings"),
     path("api/settings/",      include("apps.tls.urls")),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────

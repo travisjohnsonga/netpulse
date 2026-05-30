@@ -160,6 +160,13 @@ SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 # generating device telemetry config). Configured under Settings → General.
 COLLECTOR_IP = os.environ.get("COLLECTOR_IP", "")
 
+# ── Config push safety ────────────────────────────────────────────────────────
+# Master switch for pushing configuration to network devices. Default false
+# (read-only / monitoring only); device-push endpoints return 403 unless this
+# is explicitly enabled after network-team review. Exposed to the frontend via
+# GET /api/settings/system/ so the UI can disable "Push to Device".
+ALLOW_CONFIG_PUSH = os.environ.get("ALLOW_CONFIG_PUSH", "false").lower() == "true"
+
 # ── Django REST Framework ─────────────────────────────────────────────────────
 
 # ── JWT ───────────────────────────────────────────────────────────────────────

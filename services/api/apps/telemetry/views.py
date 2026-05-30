@@ -184,10 +184,23 @@ class PushConfigView(APIView):
 
     @extend_schema(request=PushRequestSerializer, responses=PushResponseSerializer)
     def post(self, request, device_id):
+        from django.conf import settings as dj_settings
+
         device = get_object_or_404(Device, pk=device_id)
         req = PushRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
         requested = req.validated_data["sections"]
+
+        # Master safety switch: when config push is disabled, block the push but
+        # still audit the attempt so admins can see what would have been pushed.
+        if not getattr(dj_settings, "ALLOW_CONFIG_PUSH", False):
+            self._audit(device, request, [], False, "",
+                        ["config push is disabled (ALLOW_CONFIG_PUSH=false)"])
+            return Response(
+                {"success": False, "pushed_sections": [], "output": "",
+                 "errors": ["Config push is disabled. Set ALLOW_CONFIG_PUSH=true to enable."]},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         profile = device.credential_profile
         if not profile or not profile.ssh_enabled:

@@ -133,6 +133,36 @@ class MyPreferencesView(generics.RetrieveUpdateAPIView):
         return UserPreferences.for_user(self.request.user)
 
 
+class SystemSettingsView(APIView):
+    """
+    Platform-level system settings the frontend needs at runtime.
+
+    Currently exposes the config-push master switch so the UI can disable the
+    "Push to Device" controls without hardcoding the flag, plus the configured
+    collector IP for convenience.
+    """
+
+    @extend_schema(
+        summary="System settings (config-push flag, collector IP)",
+        responses=inline_serializer(
+            "SystemSettings",
+            {
+                "allow_config_push": serializers.BooleanField(),
+                "collector_ip": serializers.CharField(allow_blank=True),
+            },
+        ),
+    )
+    def get(self, request):
+        from django.conf import settings as dj_settings
+
+        return Response(
+            {
+                "allow_config_push": bool(getattr(dj_settings, "ALLOW_CONFIG_PUSH", False)),
+                "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
+            }
+        )
+
+
 class ChangePasswordView(APIView):
     """Change the current user's password (requires the current password)."""
 
