@@ -79,10 +79,17 @@ def device_host(device) -> str:
 # Lines that change every collection but carry no config meaning. Stripped
 # before hashing so timestamp churn doesn't register as a config change.
 _DYNAMIC_LINE_PATTERNS = [
-    re.compile(r"^\s*! Last configuration change at .*", re.IGNORECASE),
-    re.compile(r"^\s*! NVRAM config last updated .*", re.IGNORECASE),
+    # IOS / IOS-XE / IOS-XR ("!" or "!!" prefix), NX-OS.
+    re.compile(r"^\s*!{1,2}\s*Last configuration change at .*", re.IGNORECASE),
+    re.compile(r"^\s*!\s*NVRAM config last updated .*", re.IGNORECASE),
+    re.compile(r"^\s*!\s*Time:.*", re.IGNORECASE),                       # NX-OS "!Time: ..."
     re.compile(r"^\s*Building configuration\.\.\..*", re.IGNORECASE),
     re.compile(r"^\s*Current configuration\s*:\s*\d+ bytes.*", re.IGNORECASE),
+    re.compile(r"^\s*ntp\s+clock-period\s+\d+.*", re.IGNORECASE),        # drifts every poll
+    # Juniper "## Last commit: 2024-... by user" / "## Last changed: ...".
+    re.compile(r"^\s*##\s*Last (commit|changed):.*", re.IGNORECASE),
+    # Arista EOS / generic "! Generated on ..." / "! Saved at ...".
+    re.compile(r"^\s*!\s*(Generated|Saved)\b.*", re.IGNORECASE),
 ]
 # Generic timestamp comment lines, e.g. "! 2024-06-14 12:00:00" or
 # "! Mon Jun 14 12:00:00 2024".
@@ -92,8 +99,10 @@ _TS_DOW = re.compile(r"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", re.IGNORECASE)
 
 
 def _is_timestamp_comment(line: str) -> bool:
+    # Treat IOS "!", Juniper "#"/"##", and ";"-style comment lines that contain
+    # a date/clock/day-of-week as dynamic (so they don't trip change detection).
     s = line.strip()
-    if not s.startswith("!"):
+    if not s or s[0] not in "!#;":
         return False
     return bool(_TS_CLOCK.search(s) or _TS_DATE.search(s) or _TS_DOW.search(s))
 

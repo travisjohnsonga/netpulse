@@ -145,6 +145,31 @@ class TestCollectOne:
         assert "Last configuration change" not in norm
         assert "NVRAM config last updated" not in norm
 
+    def test_normalize_strips_vendor_dynamic_lines(self):
+        # IOS-XR "!!", NX-OS "!Time", Juniper "## Last commit", NTP drift, EOS.
+        raw = (
+            "!! Last configuration change at Tue Jun 2 2026\n"
+            "!Time: Mon Jun 1 10:00:00 2026\n"
+            "## Last commit: 2026-06-01 10:00:00 UTC by admin\n"
+            "ntp clock-period 17179847\n"
+            "! Saved at 2026-06-01 10:00:00\n"
+            "hostname rtr\n"
+        )
+        norm = collector.normalize_config(raw)
+        assert "hostname rtr" in norm
+        for dyn in ("Last configuration change", "!Time", "Last commit", "clock-period", "Saved at"):
+            assert dyn not in norm
+
+    def test_timestamp_drift_does_not_change_hash(self, device, monkeypatch):
+        import apps.compliance.collector as c
+        cfg1 = "!! Last configuration change at Mon Jun 1 2026\nntp clock-period 17179800\nhostname rtr\n"
+        cfg2 = "!! Last configuration change at Tue Jun 2 2026\nntp clock-period 17179999\nhostname rtr\n"
+        monkeypatch.setattr(c, "_fetch_running_config", lambda *a, **k: cfg1)
+        first = c.store_config(device, cfg1, "test")
+        assert first is not None
+        # Only timestamp/drift lines differ → treated as unchanged.
+        assert c.store_config(device, cfg2, "test") is None
+
 
 # ── Management command ───────────────────────────────────────────────────────
 
