@@ -1496,3 +1496,45 @@ Lines between LLDP-connected devices
 Color by utilization, thickness by speed
 Hover: show port names each side
 Click: link detail popup
+
+## CVE/Advisory Feed Sources
+
+### Direct APIs (require credentials)
+Cisco PSIRT openVuln API:
+  URL: https://apix.cisco.com/security/advisories/v2
+  Auth: OAuth2 (CLIENT_ID + CLIENT_SECRET → bearer token)
+  Covers: All Cisco products
+  Rate: 5/sec, 30/min, 5000/day
+
+Palo Alto PSIRT API (beta):
+  URL: https://security.paloaltonetworks.com/api
+  Auth: Contact psirt@paloaltonetworks.com
+  Status: Beta
+
+### Free Public Feeds (no key needed)
+NVD API v2:
+  URL: https://services.nvd.nist.gov/rest/json/cves/2.0
+  Auth: Optional API key (higher rate limits with key)
+  Rate: 5/30s without key, 50/30s with key
+
+CISA KEV (Known Exploited Vulnerabilities):
+  URL: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+  Auth: None
+  Update: Daily — flag these as highest priority
+
+HPE/Aruba CSAF feed:
+  URL: https://csaf.arubanetworking.hpe.com
+  Auth: None
+  Format: CSAF standard
+
+Fortinet CSAF feed:
+  Auth: None — public CSAF
+
+### Community YAML (open source contribution model)
+Juniper JSAs: no API — use community YAML in repo
+Arista advisories: no API — use community YAML in repo
+MikroTik, VyOS, etc: community YAML
+
+### Third-Party Aggregators (future)
+VulnCheck: commercial, aggregates 100+ vendor feeds
+GitHub Advisory DB: free, software packages primarily
