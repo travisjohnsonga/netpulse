@@ -5,6 +5,7 @@ import { fetchDevice, type DeviceDetail as Device } from '../api/client'
 import Overview from './device/Overview'
 import CredentialsTab from './device/CredentialsTab'
 import Telemetry from './device/Telemetry'
+import Logs from './device/Logs'
 import Configuration from './device/Configuration'
 import Compliance from './device/Compliance'
 import CVE from './device/CVE'
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'credentials', label: 'Credentials' },
   { id: 'telemetry', label: 'Telemetry' },
+  { id: 'logs', label: 'Logs' },
   { id: 'configuration', label: 'Configuration' },
   { id: 'compliance', label: 'Compliance' },
   { id: 'cve', label: 'CVE' },
@@ -100,6 +102,7 @@ export default function DeviceDetail() {
       {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} />}
       {tab === 'credentials' && <CredentialsTab device={device} />}
       {tab === 'telemetry' && <Telemetry device={device} />}
+      {tab === 'logs' && <Logs device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}
       {tab === 'compliance' && <Compliance device={device} />}
       {tab === 'cve' && <CVE device={device} />}

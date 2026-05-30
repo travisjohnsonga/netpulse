@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
-  fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces,
-  type DeviceDetail, type RiskScore, type AlertEvent,
+  fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs,
+  type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
 import DeviceEditModal from '../../components/DeviceEditModal'
@@ -25,6 +25,7 @@ export default function Overview({ device, onTab, onRefresh }: {
   const [alertsLoaded, setAlertsLoaded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [ifaceCount, setIfaceCount] = useState<number | null>(null)
+  const [configs, setConfigs] = useState<RecentConfig[] | null>(null)
 
   useEffect(() => {
     fetchDeviceRiskScore(device.id).then(setRisk).catch(() => setRisk(null))
@@ -33,7 +34,16 @@ export default function Overview({ device, onTab, onRefresh }: {
       .catch(() => setAlerts([]))
       .finally(() => setAlertsLoaded(true))
     fetchMonitoredInterfaces(device.id).then((m) => setIfaceCount(m.length)).catch(() => setIfaceCount(null))
+    fetchRecentConfigs(device.id, 3).then(setConfigs).catch(() => setConfigs([]))
   }, [device.id, device.hostname])
+
+  const relTime = (iso: string) => {
+    const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+    if (s < 60) return 'just now'
+    if (s < 3600) return `${Math.round(s / 60)}m ago`
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`
+    return `${Math.round(s / 86400)}d ago`
+  }
 
   const reachable = device.status === 'active'
 
@@ -137,22 +147,30 @@ export default function Overview({ device, onTab, onRefresh }: {
         )}
       </Card>
 
-      {/* Recent config changes (illustrative — config API pending) */}
+      {/* Recent config changes (live) */}
       <Card>
         <h3 className="text-sm font-semibold text-gray-800 mb-3">Recent Config Changes</h3>
-        <ul className="space-y-2 text-sm">
-          {[
-            { when: '2d ago', who: 'config-backup', what: 'Running config snapshot' },
-            { when: '5d ago', who: 'dana', what: 'interface Gi0/1 description updated' },
-            { when: '12d ago', who: 'config-backup', what: 'Startup config saved' },
-          ].map((c, i) => (
-            <li key={i} className="flex items-center gap-2">
-              <span className="text-gray-700 truncate">{c.what}</span>
-              <span className="ml-auto text-xs text-gray-400 whitespace-nowrap">{c.who} · {c.when}</span>
-            </li>
-          ))}
-        </ul>
-        <button onClick={() => onTab('configuration')} className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800">View configuration →</button>
+        {configs === null ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : configs.length === 0 ? (
+          <div className="text-sm text-gray-400">
+            No configurations collected yet.
+            <button onClick={() => onTab('configuration')} className="block mt-2 text-xs font-medium text-blue-600 hover:text-blue-800">Collect Now →</button>
+          </div>
+        ) : (
+          <>
+            <ul className="space-y-2 text-sm">
+              {configs.map((c) => (
+                <li key={c.id} className="flex items-center gap-2">
+                  <span className="text-gray-700">Running config</span>
+                  {c.changed_from_previous && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">changed</span>}
+                  <span className="ml-auto text-xs text-gray-400 whitespace-nowrap">{c.collected_by} · {relTime(c.collected_at)}</span>
+                </li>
+              ))}
+            </ul>
+            <button onClick={() => onTab('configuration')} className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800">View configuration →</button>
+          </>
+        )}
       </Card>
 
       {editing && (

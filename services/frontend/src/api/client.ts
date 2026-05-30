@@ -457,6 +457,49 @@ export async function syncConfigNow(): Promise<{ ok: boolean; message: string; l
   return data
 }
 
+// ── Logs ─────────────────────────────────────────────────────────────────────
+
+export interface LogEntry {
+  id: string
+  timestamp: string
+  hostname: string
+  severity: string
+  severity_label: string
+  facility: string
+  facility_label: string
+  message: string
+  program: string
+  pid: string | null
+  source_ip: string | null
+  raw: string
+}
+
+export interface LogQueryResponse {
+  count: number
+  results: LogEntry[]
+  summary: { total: number; by_severity: Record<string, number> }
+  error?: string
+}
+
+export async function fetchLogs(params: Record<string, string>): Promise<LogQueryResponse> {
+  const { data } = await api.get<LogQueryResponse>('/logs/', { params })
+  return data
+}
+
+export interface RecentConfig {
+  id: number
+  collected_at: string
+  collected_by: string
+  changed_from_previous: boolean
+}
+
+export async function fetchRecentConfigs(deviceId: number, limit = 3): Promise<RecentConfig[]> {
+  const { data } = await api.get<RecentConfig[] | Paginated<RecentConfig>>(
+    `/configbackup/configs/?device=${deviceId}&ordering=-collected_at&page_size=${limit}`,
+  )
+  return unwrap(data).slice(0, limit)
+}
+
 // ── Telemetry config & interfaces ────────────────────────────────────────────
 
 export interface TelemetryConfig {

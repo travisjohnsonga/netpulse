@@ -18,6 +18,7 @@ const navItems: NavItem[] = [
   { label: 'Compare', href: '/configs/compare', icon: '🔀' },
   { label: 'Topology', href: '/topology', icon: '🌐' },
   { label: 'Alerts', href: '/alerts', icon: '⚠' },
+  { label: 'Logs', href: '/logs', icon: '🧾' },
   { label: 'CVE', href: '/cve', icon: '🛡' },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
   { label: 'API Docs', href: '/api-docs', icon: '📖' },
