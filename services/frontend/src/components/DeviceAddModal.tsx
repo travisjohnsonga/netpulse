@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchSites, createSite, fetchCredentials, createDevice, detectPlatform, testCredential,
-  fetchCredential, checkHealth, fetchSystemSettings, pushTelemetryConfig,
-  type Site, type CredentialProfileListItem, type CredentialProfile, type DeviceDetail,
+  fetchCredential, checkHealth, fetchSystemSettings, pushTelemetryConfig, fetchCollectors,
+  type Site, type Collector, type CredentialProfileListItem, type CredentialProfile, type DeviceDetail,
   type DetectPlatformResult, type CredentialTestResult,
 } from '../api/client'
 
@@ -145,6 +145,8 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   const [sites, setSites] = useState<Site[]>([])
   const [addingSite, setAddingSite] = useState(false)
   const [newSite, setNewSite] = useState('')
+  const [collectors, setCollectors] = useState<Collector[]>([])
+  const [collectorId, setCollectorId] = useState<number | null>(null)  // null = Auto (site default)
 
   // Step 2 — Credentials
   const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
@@ -179,6 +181,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   const loadProfiles = () => fetchCredentials().then(setProfiles).catch(() => {})
   useEffect(() => {
     fetchSites().then(setSites).catch(() => {}); loadProfiles()
+    fetchCollectors().then(setCollectors).catch(() => {})
     checkHealth().then((h) => setCollectorIp(h.collector_ip ?? '')).catch(() => {})
     fetchSystemSettings().then((s) => setPushAllowed(s.allow_config_push)).catch(() => {})
   }, [])
@@ -197,7 +200,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   }
 
   const reset = () => {
-    setStep(0); setHostname(''); setIp(''); setMgmtIp(''); setSiteId(''); setRole(''); setTags([]); setTagInput('')
+    setStep(0); setHostname(''); setIp(''); setMgmtIp(''); setSiteId(''); setRole(''); setTags([]); setTagInput(''); setCollectorId(null)
     setCredentialId(null); setCredTest(null)
     setPlatform('other'); setVendor(''); setOsVersion(''); setModel(''); setSerial(''); setDetect(null); setManualOpen(false)
     setFeatures(new Set(['snmp', 'syslog'])); setCreated(null); setError(null)
@@ -263,6 +266,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
         model,
         serial_number: serial,
         site: siteId === '' ? null : Number(siteId),
+        collector: collectorId,
         credential_profile: credentialId,
         status: 'active',
         notes: noteParts.join('\n'),
@@ -291,6 +295,13 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
 
   const canNext = step === 0 ? hostname.trim() !== '' && ip.trim() !== '' : true
   const fam = vendorFamily(platform)
+
+  // Collector that telemetry will target: explicit choice → site default → global.
+  const selectedCollector = collectors.find((c) => c.id === collectorId)
+  const siteDefault = siteId !== '' ? sites.find((s) => s.id === siteId)?.default_collector : null
+  const siteDefaultCollector = siteDefault ? collectors.find((c) => c.id === siteDefault) : undefined
+  const effectiveCollector = selectedCollector ?? siteDefaultCollector
+  const effectiveCollectorIp = selectedCollector?.collector_ip || siteDefaultCollector?.collector_ip || collectorIp
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
@@ -353,6 +364,27 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
                   </select>
                 </Field>
               </Row>
+              {collectors.length > 0 && (
+                <Field label="Collector">
+                  <select className={inputCls} value={collectorId ?? ''} onChange={(e) => setCollectorId(e.target.value === '' ? null : Number(e.target.value))}>
+                    <option value="">Auto — use site's default collector</option>
+                    {collectors.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{c.collector_ip ? ` (${c.collector_ip})` : ''}{c.is_default ? ' — default' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 flex items-center gap-1.5">
+                    {effectiveCollector
+                      ? <>
+                          <span className={clsx('w-1.5 h-1.5 rounded-full', effectiveCollector.status === 'active' ? 'bg-green-500' : 'bg-gray-400')} />
+                          Telemetry → {effectiveCollector.name} {effectiveCollector.collector_ip ? `(${effectiveCollector.collector_ip})` : ''}
+                          {!selectedCollector && ' · site default'}
+                        </>
+                      : <>Telemetry → {effectiveCollectorIp || 'collector not configured'}</>}
+                  </p>
+                </Field>
+              )}
               <Field label="Tags">
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {tags.map((t) => (
@@ -473,11 +505,11 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {step === 3 && (
             <div className="space-y-3">
               <p className="text-sm text-gray-500 dark:text-gray-400">Enable telemetry sources, then apply the matching CLI for <strong>{PLATFORMS.find((p) => p.value === platform)?.label}</strong>.</p>
-              {collectorIp
-                ? <p className="text-xs text-gray-500 dark:text-gray-400">Telemetry will be sent to <span className="font-mono text-gray-700 dark:text-gray-200">{collectorIp}</span>.</p>
+              {effectiveCollectorIp
+                ? <p className="text-xs text-gray-500 dark:text-gray-400">Telemetry will be sent to {effectiveCollector ? <span className="font-medium">{effectiveCollector.name} </span> : null}<span className="font-mono text-gray-700 dark:text-gray-200">{effectiveCollectorIp}</span>.</p>
                 : <div className="text-sm bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 rounded-lg px-3 py-2">⚠️ Collector IP not configured — set it in Settings → General. Snippets use a placeholder.</div>}
               {TELEMETRY_FEATURES.map((f) => {
-                const snippet = buildSnippet(fam, f.key, collectorIp, credProfile)
+                const snippet = buildSnippet(fam, f.key, effectiveCollectorIp, credProfile)
                 const isV3Snmp = f.key === 'snmp' && fam === 'cisco' && !!credProfile?.snmpv3_enabled
                 return (
                 <div key={f.key} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">

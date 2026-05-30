@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, reachabilityOf, type DeviceDetail as Device } from '../api/client'
+import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, reachabilityOf, fetchCollectors, setDeviceCollector, type Collector, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import Overview from './device/Overview'
 import Telemetry, { TelemetryConfigPanel } from './device/Telemetry'
@@ -52,6 +52,7 @@ export default function DeviceDetail() {
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
   const [sshCred, setSshCred] = useState<{ username: string | null; port: number | null }>({ username: null, port: null })
   const [telemetryConfig, setTelemetryConfig] = useState(false)
+  const [changingCollector, setChangingCollector] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -144,6 +145,7 @@ export default function DeviceDetail() {
                   <div className="absolute right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-40 py-1">
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setEditing(true) }}>Edit Device Info</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setManagingCreds(true) }}>Manage Credentials</button>
+                    <button className={menuItem} onClick={() => { setMenuOpen(false); setChangingCollector(true) }}>Change Collector</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setTelemetryConfig(true) }}>Telemetry Configuration</button>
                     <div className="my-1 border-t border-gray-100" />
                     <button className={menuItem} onClick={collectNow} disabled={busy === 'collect'}>Collect Config Now</button>
@@ -187,6 +189,7 @@ export default function DeviceDetail() {
       {editing && <DeviceEditModal device={device} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load() }} />}
       {managingCreds && <DeviceCredentialsPanel device={device} onClose={() => setManagingCreds(false)} onSaved={() => { setManagingCreds(false); load() }} />}
       {telemetryConfig && <TelemetryConfigPanel device={device} onClose={() => setTelemetryConfig(false)} />}
+      {changingCollector && <ChangeCollectorModal device={device} onClose={() => setChangingCollector(false)} onSaved={() => { setChangingCollector(false); load() }} />}
       {deleting && (
         <Modal title="Delete device?" onClose={() => setDeleting(false)}
           footer={
@@ -223,5 +226,43 @@ function ReachabilityIndicator({ device }: { device: Device }) {
       <span className={clsx('w-2 h-2 rounded-full', dot)} />
       {label} — {detail}
     </span>
+  )
+}
+
+function ChangeCollectorModal({ device, onClose, onSaved }: { device: Device; onClose: () => void; onSaved: () => void }) {
+  const [collectors, setCollectors] = useState<Collector[]>([])
+  const [sel, setSel] = useState<number | ''>((device as { collector?: number | null }).collector ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => { fetchCollectors().then(setCollectors).catch(() => {}) }, [])
+
+  const save = async () => {
+    setSaving(true); setError(null)
+    try { await setDeviceCollector(device.id, sel === '' ? null : Number(sel)); onSaved() }
+    catch { setError('Failed to update collector.'); setSaving(false) }
+  }
+
+  return (
+    <Modal title={`Change collector — ${device.hostname}`} onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
+        </>
+      }>
+      {error && <div className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</div>}
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Pick the collector that monitors this device. "Auto" uses the site default, then the global default.</p>
+      <select className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+        value={sel} onChange={(e) => setSel(e.target.value === '' ? '' : Number(e.target.value))}>
+        <option value="">Auto (site / global default)</option>
+        {collectors.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}{c.collector_ip ? ` (${c.collector_ip})` : ''}{c.is_default ? ' — default' : ''}</option>
+        ))}
+      </select>
+      {device.collector_name && (
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">Currently resolved: {device.collector_name}{device.collector_ip ? ` (${device.collector_ip})` : ''}</p>
+      )}
+    </Modal>
   )
 }

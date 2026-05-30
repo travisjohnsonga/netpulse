@@ -462,6 +462,11 @@ export async function fetchAlertChannels(): Promise<AlertChannel[]> {
 export interface Collector {
   id: number
   name: string
+  collector_ip: string | null
+  site: number | null
+  site_name?: string | null
+  is_default: boolean
+  device_count?: number
   status: 'pending' | 'active' | 'offline' | 'revoked'
   version: string
   remote_ip: string | null
@@ -926,6 +931,7 @@ export interface Site {
   contact_name: string
   contact_email: string
   contact_phone: string
+  default_collector: number | null
   notes: string
   device_count: number
   created_at: string
@@ -1000,6 +1006,7 @@ export interface DeviceCreatePayload {
   serial_number?: string
   status?: string
   site?: number | null
+  collector?: number | null
   credential_profile?: number | null
   notes?: string
 }
@@ -1011,6 +1018,11 @@ export async function fetchDevice(id: number): Promise<DeviceDetail> {
 
 export async function createDevice(payload: DeviceCreatePayload): Promise<DeviceDetail> {
   const { data } = await api.post<DeviceDetail>('/devices/', payload)
+  return data
+}
+
+export async function setDeviceCollector(id: number, collector: number | null): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(`/devices/${id}/`, { collector })
   return data
 }
 

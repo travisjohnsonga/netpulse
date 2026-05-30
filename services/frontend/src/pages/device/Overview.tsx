@@ -72,6 +72,18 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
           <Info label="OS Version" value={device.os_version || '—'} />
           <Info label="Serial" value={device.serial_number || '—'} mono />
           <Info label="Added" value={new Date(device.created_at).toLocaleDateString()} />
+          <div>
+            <dt className="text-xs text-gray-400 dark:text-gray-500">Collector</dt>
+            <dd className="text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+              {device.collector_name ? (
+                <>
+                  <span className={clsx('w-1.5 h-1.5 rounded-full', device.collector_status === 'active' ? 'bg-green-500' : 'bg-gray-400')} />
+                  {device.collector_name}
+                  {device.collector_ip ? <span className="font-mono text-xs text-gray-500 dark:text-gray-400">({device.collector_ip})</span> : null}
+                </>
+              ) : '—'}
+            </dd>
+          </div>
         </dl>
       </Card>
 

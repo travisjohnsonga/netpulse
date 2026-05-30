@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { fetchSite, fetchSiteDevices, type Site, type Device } from '../api/client'
+import { fetchSite, fetchSiteDevices, saveSite, fetchCollectors, type Site, type Device, type Collector } from '../api/client'
 
 const TYPE_ICON: Record<string, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
@@ -107,6 +107,7 @@ function Overview({ site }: { site: Site }) {
             <Info label="Phone" value={site.contact_phone || '—'} />
           </dl>
         </Card>
+        <DefaultCollectorCard site={site} />
         <Card>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Notes</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{site.notes || '—'}</p>
@@ -161,4 +162,37 @@ function Placeholder({ text, icon }: { text: string; icon: string }) {
 
 function Info({ label, value }: { label: string; value: string }) {
   return <div><dt className="text-xs text-gray-400 dark:text-gray-500">{label}</dt><dd className="text-gray-800 dark:text-gray-100">{value}</dd></div>
+}
+
+function DefaultCollectorCard({ site }: { site: Site }) {
+  const [collectors, setCollectors] = useState<Collector[]>([])
+  const [sel, setSel] = useState<number | ''>(site.default_collector ?? '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => { fetchCollectors().then(setCollectors).catch(() => {}) }, [])
+
+  const save = async (value: number | '') => {
+    setSel(value); setSaving(true); setSaved(false)
+    try {
+      await saveSite({ name: site.name, default_collector: value === '' ? null : Number(value) }, site.id)
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Card>
+      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Default Collector</h3>
+      <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">Devices added at this site use this collector when none is chosen.</p>
+      <select className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+        value={sel} disabled={saving} onChange={(e) => save(e.target.value === '' ? '' : Number(e.target.value))}>
+        <option value="">— None (use global default) —</option>
+        {collectors.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}{c.collector_ip ? ` (${c.collector_ip})` : ''}{c.is_default ? ' — default' : ''}</option>
+        ))}
+      </select>
+      {saving && <p className="text-xs text-gray-400 mt-1">Saving…</p>}
+      {saved && <p className="text-xs text-green-600 dark:text-green-400 mt-1">✓ Saved</p>}
+    </Card>
+  )
 }
