@@ -6,6 +6,7 @@ import {
   discoverInterfaces, saveMonitoredInterfaces,
   generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth,
   type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
+  type MonitoredInterface,
 } from '../../api/client'
 import Modal from '../../components/Modal'
 
@@ -49,7 +50,12 @@ const STATUS_BADGE: Record<string, string> = {
   unknown: 'bg-gray-100 text-gray-500',
 }
 
-export default function Telemetry({ device }: { device: DeviceDetail }) {
+/**
+ * Telemetry configuration UI — device metrics, interval overrides, the
+ * monitored-interface table and the generated config. Rendered inside the
+ * Settings → Telemetry Configuration slide-over (not the Telemetry tab).
+ */
+function TelemetryConfigInner({ device }: { device: DeviceDetail }) {
   const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
   const [cfgError, setCfgError] = useState<string | null>(null)
 
@@ -62,6 +68,29 @@ export default function Telemetry({ device }: { device: DeviceDetail }) {
       <DevicePolling device={device} cfg={cfg} setCfg={setCfg} error={cfgError} setError={setCfgError} />
       <InterfacePolling device={device} cfg={cfg} />
       <GeneratedConfigSection device={device} />
+    </div>
+  )
+}
+
+/** Right-side slide-over hosting the full telemetry configuration. */
+export function TelemetryConfigPanel({ device, onClose }: { device: DeviceDetail; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+      <div className="bg-gray-50 dark:bg-gray-950 w-full max-w-3xl h-full shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Telemetry Configuration</h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{device.hostname}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">×</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          <TelemetryConfigInner device={device} />
+        </div>
+        <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Save & Close</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -525,5 +554,160 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
         </Modal>
       )}
     </div>
+  )
+}
+
+// ── Live telemetry view (default export = the Telemetry tab) ──────────────────
+
+const liveCard = 'bg-white dark:bg-gray-900 rounded-lg shadow-sm border border-gray-200 dark:border-gray-800'
+const TRAFFIC_RANGES = ['1h', '6h', '24h', '7d'] as const
+// A static, faded bar pattern standing in for a sparkline until InfluxDB queries land.
+const FLAT_SPARK = [3, 4, 3, 5, 4, 3, 4, 5, 6, 5, 4, 3, 4, 5, 4]
+
+export default function Telemetry({ device, onConfigure }: { device: DeviceDetail; onConfigure?: () => void }) {
+  const [ifaces, setIfaces] = useState<MonitoredInterface[] | null>(null)
+  const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
+  const [range, setRange] = useState<(typeof TRAFFIC_RANGES)[number]>('1h')
+
+  useEffect(() => {
+    fetchMonitoredInterfaces(device.id).then(setIfaces).catch(() => setIfaces([]))
+    fetchTelemetryConfig(device.id).then(setCfg).catch(() => setCfg(null))
+  }, [device.id])
+
+  const lldp = useMemo(() => (ifaces || []).filter((i) => i.lldp_neighbor_hostname), [ifaces])
+
+  const configure = () => onConfigure?.()
+
+  // Nothing configured yet → guide the user to the config slide-over.
+  if (ifaces !== null && ifaces.length === 0 && cfg && !cfg.collect_cpu && !cfg.collect_memory) {
+    return (
+      <div className={clsx(liveCard, 'py-16 text-center')}>
+        <div className="text-4xl mb-2">📈</div>
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">No telemetry data collected yet</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 mb-4 max-w-md mx-auto">
+          Configure telemetry in ⚙ Settings → Telemetry Configuration to select metrics and interfaces to start collecting.
+        </p>
+        <button onClick={configure} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
+          Open Telemetry Configuration →
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Section 1 — Device Health */}
+      <div className={clsx(liveCard, 'p-4')}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Device Health</h3>
+          <button onClick={configure} className="text-xs font-medium text-blue-600 hover:text-blue-800">Configure →</button>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[['CPU', '%'], ['Memory', '%'], ['Uptime', ''], ['Temperature', '°C']].map(([label]) => (
+            <div key={label} className="rounded-lg border border-gray-100 dark:border-gray-800 p-3 text-center">
+              <p className="text-xs text-gray-400 dark:text-gray-500">{label}</p>
+              <p className="text-lg font-bold text-gray-300 dark:text-gray-600 mt-1">—</p>
+              <p className="text-[10px] text-gray-300 dark:text-gray-600">no data</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Section 2 — Interface Traffic */}
+      <div className={liveCard}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Interface Traffic</h3>
+          <div className="flex gap-1">
+            {TRAFFIC_RANGES.map((r) => (
+              <button key={r} onClick={() => setRange(r)}
+                className={clsx('px-2 py-1 text-xs rounded-md border',
+                  range === r ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
+                    : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800')}>
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+        {ifaces === null ? (
+          <div className="py-10 text-center text-sm text-gray-400">Loading…</div>
+        ) : ifaces.length === 0 ? (
+          <div className="py-10 text-center text-sm text-gray-400 dark:text-gray-500">
+            No monitored interfaces. <button onClick={configure} className="text-blue-600 hover:text-blue-800 font-medium">Select interfaces →</button>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-gray-500 dark:text-gray-400 text-left border-b border-gray-100 dark:border-gray-800">
+                <th className="px-4 py-2 font-medium">Interface</th>
+                <th className="px-4 py-2 font-medium">In</th>
+                <th className="px-4 py-2 font-medium">Out</th>
+                <th className="px-4 py-2 font-medium">{range} Traffic</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {ifaces.map((i) => (
+                <tr key={i.id}>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-800 dark:text-gray-200">{i.if_name}</td>
+                  <td className="px-4 py-2 text-gray-300 dark:text-gray-600">—</td>
+                  <td className="px-4 py-2 text-gray-300 dark:text-gray-600">—</td>
+                  <td className="px-4 py-2"><Sparkline /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Section 3 — BGP (only when BGP collection is enabled) */}
+      {cfg?.collect_bgp && (
+        <div className={clsx(liveCard, 'p-4')}>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">BGP Neighbors</h3>
+          <p className="text-sm text-gray-400 dark:text-gray-500">No BGP data collected yet.</p>
+        </div>
+      )}
+
+      {/* Section 4 — LLDP Neighbors */}
+      <div className={liveCard}>
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">LLDP Neighbors</h3>
+        </div>
+        {lldp.length === 0 ? (
+          <div className="py-8 text-center text-sm text-gray-400 dark:text-gray-500">No LLDP neighbors discovered.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-gray-500 dark:text-gray-400 text-left border-b border-gray-100 dark:border-gray-800">
+                <th className="px-4 py-2 font-medium">Local Port</th>
+                <th className="px-4 py-2 font-medium">Neighbor</th>
+                <th className="px-4 py-2 font-medium">Remote Port</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {lldp.map((i) => (
+                <tr key={i.id}>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-800 dark:text-gray-200">{i.if_name}</td>
+                  <td className="px-4 py-2 text-blue-600 dark:text-blue-400">{i.lldp_neighbor_hostname}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-300">{i.lldp_neighbor_port || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <p className="text-xs text-gray-400 dark:text-gray-500">
+        Live metrics populate once SNMP/gNMI polling reports for this device. Manage what's collected in ⚙ Settings → Telemetry Configuration.
+      </p>
+    </div>
+  )
+}
+
+function Sparkline() {
+  return (
+    <span className="inline-flex items-end gap-0.5 h-5" title="No data yet">
+      {FLAT_SPARK.map((h, i) => (
+        <span key={i} className="w-1 bg-gray-200 dark:bg-gray-700 rounded-sm" style={{ height: `${h * 3}px` }} />
+      ))}
+    </span>
   )
 }

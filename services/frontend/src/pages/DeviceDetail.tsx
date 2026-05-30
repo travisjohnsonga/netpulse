@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import Overview from './device/Overview'
-import Telemetry from './device/Telemetry'
+import Telemetry, { TelemetryConfigPanel } from './device/Telemetry'
 import Logs from './device/Logs'
 import Configuration from './device/Configuration'
 import Compliance from './device/Compliance'
@@ -47,6 +47,7 @@ export default function DeviceDetail() {
   const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
   const [sshCred, setSshCred] = useState<{ username: string | null; port: number | null }>({ username: null, port: null })
+  const [telemetryConfig, setTelemetryConfig] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -130,7 +131,7 @@ export default function DeviceDetail() {
                   <div className="absolute right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-40 py-1">
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setEditing(true) }}>Edit Device Info</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setManagingCreds(true) }}>Manage Credentials</button>
-                    <button className={menuItem} onClick={() => { setMenuOpen(false); setTab('telemetry') }}>Polling Configuration</button>
+                    <button className={menuItem} onClick={() => { setMenuOpen(false); setTelemetryConfig(true) }}>Telemetry Configuration</button>
                     <div className="my-1 border-t border-gray-100" />
                     <button className={menuItem} onClick={collectNow} disabled={busy === 'collect'}>Collect Config Now</button>
                     <button className={menuItem} onClick={runDiscovery} disabled={busy === 'discover'}>Run Discovery</button>
@@ -163,7 +164,7 @@ export default function DeviceDetail() {
 
       {/* Tab content */}
       {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} onManageCredentials={() => setManagingCreds(true)} />}
-      {tab === 'telemetry' && <Telemetry device={device} />}
+      {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} />}
       {tab === 'logs' && <Logs device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}
       {tab === 'compliance' && <Compliance device={device} />}
@@ -172,6 +173,7 @@ export default function DeviceDetail() {
 
       {editing && <DeviceEditModal device={device} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load() }} />}
       {managingCreds && <DeviceCredentialsPanel device={device} onClose={() => setManagingCreds(false)} onSaved={() => { setManagingCreds(false); load() }} />}
+      {telemetryConfig && <TelemetryConfigPanel device={device} onClose={() => setTelemetryConfig(false)} />}
       {deleting && (
         <Modal title="Delete device?" onClose={() => setDeleting(false)}
           footer={
