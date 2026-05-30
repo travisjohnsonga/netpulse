@@ -1538,3 +1538,30 @@ MikroTik, VyOS, etc: community YAML
 ### Third-Party Aggregators (future)
 VulnCheck: commercial, aggregates 100+ vendor feeds
 GitHub Advisory DB: free, software packages primarily
+
+## Interface State Change Alerting
+
+MonitoredInterface alert fields:
+  alert_on_down: BooleanField(default=True)
+  alert_on_up: BooleanField(default=True)  ← recovery notification
+  alert_severity: critical/high/medium/low (default=high)
+  consecutive_polls_before_alert: IntegerField(default=1)
+  last_status_changed: DateTimeField(null=True)
+
+Alert engine behavior:
+  On status change up→down:
+    Create AlertEvent: severity=interface.alert_severity
+    Title: "Interface Down: {device} {interface}"
+    Message includes: previous status, timestamp
+  On status change down→up (recovery):
+    Create AlertEvent: severity=info
+    Title: "Interface Recovered: {device} {interface}"
+    Message includes: downtime duration
+
+Flapping protection:
+  consecutive_polls_before_alert=N means N consecutive
+  down polls required before alerting
+  Prevents false alerts from brief link flaps
+
+UI: Bell icon toggle per interface in Telemetry Config
+Bulk enable/disable for selected interfaces
