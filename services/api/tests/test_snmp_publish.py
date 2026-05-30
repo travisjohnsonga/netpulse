@@ -79,3 +79,31 @@ class TestBuildDevicePayload:
         from apps.devices import snmp_publish
         monkeypatch.setattr(snmp_publish, "_run", lambda msgs: False)
         assert snmp_publish.publish_all_active() == 0
+
+
+class TestPlatformOIDs:
+    def _dev(self, platform):
+        from apps.credentials.models import CredentialProfile
+        from apps.devices.models import Device
+        p = CredentialProfile.objects.create(name=f"p-{platform}", snmpv2c_enabled=True, vault_path="x")
+        return Device.objects.create(hostname=f"h-{platform}", ip_address="10.0.0.1",
+                                     platform=platform, status="active", credential_profile=p)
+
+    def test_cisco_gets_hrproc_and_cisco_mem(self):
+        from apps.devices.snmp_publish import build_device_payload, HRPROCLOAD, CISCO_MEM_USED, SYSUPTIME
+        oids = build_device_payload(self._dev("ios_xe"))["poll_oids"]
+        assert SYSUPTIME in oids and HRPROCLOAD in oids and CISCO_MEM_USED in oids
+
+    def test_junos_gets_juniper_cpu_not_cisco_mem(self):
+        from apps.devices.snmp_publish import build_device_payload, HRPROCLOAD, CISCO_MEM_USED
+        oids = build_device_payload(self._dev("junos"))["poll_oids"]
+        assert HRPROCLOAD in oids
+        assert "1.3.6.1.4.1.2636.3.1.13.1.8.9.1.0.0" in oids
+        assert CISCO_MEM_USED not in oids
+
+    def test_unknown_platform_uses_default(self):
+        from apps.devices.snmp_publish import build_device_payload, SYSUPTIME, HRPROCLOAD
+        oids = build_device_payload(self._dev("fortios"))["poll_oids"]
+        # _default = just sysUpTime + hrProcessorLoad (+ any interface OIDs)
+        assert SYSUPTIME in oids and HRPROCLOAD in oids
+        assert "1.3.6.1.4.1.9.9.48.1.1.1.5.1" not in oids

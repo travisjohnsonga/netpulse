@@ -23,6 +23,10 @@ VALID_PERIODS = {"1h", "6h", "24h", "7d"}
 # Raw InfluxDB field name → friendly metric name.
 FIELD_MAP = {
     "sysUpTime_0": "uptime_seconds",
+    # Universal CPU via HOST-RESOURCES hrProcessorLoad (resolved name or raw OID).
+    "hrProcessorLoad_1": "cpu_pct",
+    "1_3_6_1_2_1_25_3_3_1_2_1": "cpu_pct",
+    # Cisco-specific (kept for backward compatibility).
     "1_3_6_1_4_1_9_9_48_1_1_1_5_1": "memory_used_bytes",
     "1_3_6_1_4_1_9_9_48_1_1_1_6_1": "memory_free_bytes",
     "1_3_6_1_4_1_9_9_109_1_1_1_1_3_1": "cpu_1min_pct",
@@ -95,7 +99,10 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
     # ── snapshot ──────────────────────────────────────────────────────────────
     used = snapshot.get("memory_used_bytes")
     free = snapshot.get("memory_free_bytes")
-    cpu = snapshot.get("cpu_5min_pct")
+    # Prefer the universal hrProcessorLoad (cpu_pct); fall back to Cisco CPU.
+    cpu = snapshot.get("cpu_pct")
+    if cpu is None:
+        cpu = snapshot.get("cpu_5min_pct")
     if cpu is None:
         cpu = snapshot.get("cpu_1min_pct")
     result["metrics"] = {
@@ -160,7 +167,12 @@ from(bucket: "{bucket}")
                           free if isinstance(free, (int, float)) else None)
             if p is not None:
                 mem_pct.append({"time": t, "value": p})
-            cpu = vals.get("1_3_6_1_4_1_9_9_109_1_1_1_1_8_1")
+            # Universal hrProcessorLoad first, then Cisco CPU OIDs.
+            cpu = vals.get("hrProcessorLoad_1")
+            if not isinstance(cpu, (int, float)):
+                cpu = vals.get("1_3_6_1_2_1_25_3_3_1_2_1")
+            if not isinstance(cpu, (int, float)):
+                cpu = vals.get("1_3_6_1_4_1_9_9_109_1_1_1_1_8_1")
             if not isinstance(cpu, (int, float)):
                 cpu = vals.get("1_3_6_1_4_1_9_9_109_1_1_1_1_3_1")
             if isinstance(cpu, (int, float)):

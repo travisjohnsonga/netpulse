@@ -27,13 +27,29 @@ logger = logging.getLogger(__name__)
 UPSERT_SUBJECT = "netpulse.devices.upsert"
 REMOVE_SUBJECT = "netpulse.devices.remove"
 
-# Device-level OIDs polled for every SNMP device (sysUpTime + Cisco CPU/memory).
-DEVICE_OIDS = [
-    "1.3.6.1.2.1.1.3.0",                 # sysUpTime
-    "1.3.6.1.4.1.9.9.109.1.1.1.1.8.1",   # cpmCPUTotal5min (Cisco)
-    "1.3.6.1.4.1.9.9.48.1.1.1.5.1",      # ciscoMemoryPoolUsed
-    "1.3.6.1.4.1.9.9.48.1.1.1.6.1",      # ciscoMemoryPoolFree
-]
+# Device-level OIDs, chosen per platform. Platform values are the DB strings
+# (ios_xe, ios, nxos, ios_xr, eos, junos), not netmiko device types.
+SYSUPTIME = "1.3.6.1.2.1.1.3.0"
+HRPROCLOAD = "1.3.6.1.2.1.25.3.3.1.2.1"      # hrProcessorLoad — universal CPU %
+CISCO_MEM_USED = "1.3.6.1.4.1.9.9.48.1.1.1.5.1"
+CISCO_MEM_FREE = "1.3.6.1.4.1.9.9.48.1.1.1.6.1"
+CISCO_CPU_5MIN = "1.3.6.1.4.1.9.9.109.1.1.1.1.8.1"
+
+PLATFORM_DEVICE_OIDS = {
+    "ios_xe": [SYSUPTIME, HRPROCLOAD, CISCO_MEM_USED, CISCO_MEM_FREE],
+    "ios":    [SYSUPTIME, HRPROCLOAD, CISCO_MEM_USED, CISCO_MEM_FREE],
+    "nxos":   [SYSUPTIME, HRPROCLOAD, CISCO_MEM_USED, CISCO_MEM_FREE],
+    "ios_xr": [SYSUPTIME, HRPROCLOAD, CISCO_MEM_USED, CISCO_MEM_FREE],
+    "eos":    [SYSUPTIME, HRPROCLOAD,
+               "1.3.6.1.4.1.30065.3.12.1.1.1.1.4.1"],   # Arista memory
+    "junos":  [SYSUPTIME, HRPROCLOAD,
+               "1.3.6.1.4.1.2636.3.1.13.1.8.9.1.0.0"],   # Juniper CPU
+    "_default": [SYSUPTIME, HRPROCLOAD],                  # universal fallback
+}
+
+
+def _device_oids(platform: str) -> list[str]:
+    return list(PLATFORM_DEVICE_OIDS.get(platform or "", PLATFORM_DEVICE_OIDS["_default"]))
 # Per-interface OID prefixes (suffixed with the interface ifIndex).
 IFACE_OID_PREFIXES = {
     "status":  ["1.3.6.1.2.1.2.2.1.8"],                       # ifOperStatus
@@ -73,7 +89,7 @@ def build_device_payload(device) -> dict | None:
     version = 3 if profile.snmpv3_enabled else 2
     port = (profile.snmpv3_port if version == 3 else profile.snmpv2c_port) or 161
 
-    interfaces, oids = [], list(DEVICE_OIDS)
+    interfaces, oids = [], _device_oids(device.platform)
     for iface in device.monitored_interfaces.all():
         interfaces.append({
             "if_name": iface.if_name,
