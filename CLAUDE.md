@@ -1436,155 +1436,30 @@ Expiry monitoring:
   Dashboard warning included
 
 
-Add logging views to NetPulse:
 
-1. Add Logs tab to Device Detail page
-   New file: services/frontend/src/pages/device/Logs.tsx
-   
-   Add "Logs" to tab bar in DeviceDetail.tsx between
-   Telemetry and Configuration tabs:
-   Overview | Credentials | Telemetry | Logs | Configuration | Compliance | CVE | Lifecycle
+## Log Viewing
 
-   Logs tab UI:
-   ┌─────────────────────────────────────────────────┐
-   │  Device Logs — router1              [🔄 Refresh] │
-   ├─────────────────────────────────────────────────┤
-   │  Filters:                                       │
-   │  Severity: [All ▼] [Emergency][Alert][Critical] │
-   │            [Error][Warning][Notice][Info][Debug] │
-   │  Time: [Last 1hr ▼] / [Last 24hr] / [Custom]   │
-   │  Search: [filter by message text________]       │
-   ├──────────┬──────────┬─────────┬─────────────────┤
-   │ Time     │ Severity │ Facility│ Message         │
-   ├──────────┼──────────┼─────────┼─────────────────┤
-   │ 22:15:01 │ WARNING  │ LOCAL7  │ BGP: Neighbor.. │
-   │ 22:14:55 │ INFO     │ LOCAL7  │ Interface Gi0.. │
-   │ 22:14:32 │ ERROR    │ KERN    │ OSPF: Process.. │
-   └──────────┴──────────┴─────────┴─────────────────┘
-   
-   Severity color coding:
-   Emergency/Alert/Critical → red
-   Error → orange
-   Warning → yellow
-   Notice/Info → blue
-   Debug → gray
-   
-   Pagination: 50 per page, load more button
-   Auto-refresh toggle (30s interval)
-   
-   API: GET /api/logs/?device_hostname={hostname}
-        &severity={level}&from={timestamp}&search={text}
+### Device Logs Tab
+Device Detail → Logs tab (between Telemetry and Configuration)
+Filters: severity, time range, message text search
+Severity color coding: red=critical+, orange=error, 
+  yellow=warning, blue=info, gray=debug
+Auto-refresh toggle (30s)
+Pagination: 50 per page
 
-2. Top-level Logs page (/logs)
-   Add "Logs" to main sidebar navigation
-   Between Alerts and CVE
-   
-   Route: /logs
-   New file: services/frontend/src/pages/Logs.tsx
-   
-   Full fleet log viewer:
-   ┌─────────────────────────────────────────────────┐
-   │  Network Logs                    [Export] [🔄]  │
-   ├─────────────────────────────────────────────────┤
-   │  Filters:                                       │
-   │  Device: [All Devices ▼] or search by hostname  │
-   │  Site:   [All Sites ▼]                         │
-   │  Role:   [All Roles ▼]                         │
-   │  Severity: [All ▼]                             │
-   │  Time: [Last 1hr ▼]                            │
-   │  Search: [___________________________]          │
-   ├─────────────────────────────────────────────────┤
-   │  Summary bar:                                   │
-   │  1,247 messages │ 3 critical │ 12 errors        │
-   │  47 warnings │ 1,185 info                       │
-   ├──────────┬──────────┬──────────┬────────────────┤
-   │ Time     │ Device   │ Severity │ Message        │
-   ├──────────┼──────────┼──────────┼────────────────┤
-   │ 22:15:01 │ router1  │ WARNING  │ BGP: Neighbor  │
-   │ 22:14:55 │ switch-a │ INFO     │ Interface up   │
-   │ 22:14:32 │ fw-core  │ ERROR    │ Auth failed    │
-   └──────────┴──────────┴──────────┴────────────────┘
-   
-   Click row → expand full message details
-   Click device name → go to device detail logs tab
+### Fleet Logs Page (/logs)
+Top-level sidebar nav between Alerts and CVE
+Filters: device, site, role, severity, time, text search
+Summary bar: total + count by severity
+Click row → expand details
+Click device → navigate to device logs tab
 
-3. Backend log query endpoint:
-   GET /api/logs/
-   Query params:
-     device_hostname: filter by device
-     device_id: filter by device ID
-     site: filter by site
-     severity: comma-separated levels
-     from: ISO timestamp
-     to: ISO timestamp
-     search: full text search
-     page: pagination
-     page_size: default 50
-   
-   Query OpenSearch index: netpulse-logs-*
-   
-   Response:
-   {
-     count: 1247,
-     results: [
-       {
-         id, timestamp, hostname, severity,
-         severity_label, facility, facility_label,
-         message, program, pid, source_ip,
-         raw
-       }
-     ],
-     summary: {
-       total: 1247,
-       by_severity: {
-         emergency: 0, alert: 0, critical: 3,
-         error: 12, warning: 47, notice: 0,
-         info: 1185, debug: 0
-       }
-     }
-   }
-   
-   OpenSearch query:
-   {
-     query: {
-       bool: {
-         must: [
-           {match: {hostname: device_hostname}},
-           {range: {timestamp: {gte: from, lte: to}}},
-           {terms: {severity: [levels]}},
-           {match: {message: search_text}}
-         ]
-       }
-     },
-     sort: [{timestamp: {order: desc}}],
-     size: 50,
-     from: offset
-   }
-   
-   Register: path('api/logs/', include('apps.logs.urls'))
-   Or add to existing telemetry app if appropriate
+### Backend
+GET /api/logs/
+Query params: device_hostname, device_id, site, severity,
+  from, to, search, page, page_size
+Queries OpenSearch index: netpulse-logs-*
+Returns: {count, results[], summary:{by_severity}}
 
-4. Fix Recent Config Changes on device Overview tab:
-   Currently showing mock data:
-   "Running config snapshot · config-backup · 2d ago"
-   "interface Gi0/1 description updated · dana · 5d ago"
-   
-   Replace with real API call:
-   GET /api/configbackup/configs/?device={id}&ordering=-collected_at&page_size=3
-   
-   Show real version history:
-   - collected_at (relative time)
-   - collected_by
-   - changed_from_previous badge
-   
-   Empty state: "No configurations collected yet"
-   [Collect Now] button
-
-5. Add Logs to sidebar nav in Layout.tsx:
-   Between Alerts and CVE:
-   { label: 'Logs', href: '/logs', icon: ScrollText }
-   (use lucide-react ScrollText or FileText icon)
-
-Rebuild frontend after completing.
-Commit when complete.
-Read CLAUDE.md for full context.
+OpenSearch must be running and stream-processor must be
+consuming netpulse.logs.> from NATS to populate logs.
