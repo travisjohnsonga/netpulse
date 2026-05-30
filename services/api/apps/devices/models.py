@@ -196,3 +196,23 @@ class DiscoveredDevice(TimestampedModel):
 
     def __str__(self):
         return f"{self.source_ip} ({self.status}, score={self.confidence_score})"
+
+
+class TopologyLink(TimestampedModel):
+    """A discovered link between two devices (e.g. via LLDP)."""
+
+    device_a = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="links_as_a")
+    port_a = models.CharField(max_length=255)
+    device_b = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="links_as_b")
+    port_b = models.CharField(max_length=255, blank=True)
+    discovered_via = models.CharField(max_length=20, default="lldp")
+    link_speed_mbps = models.IntegerField(null=True, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        # One link per local port (the near-end device + interface).
+        unique_together = ["device_a", "port_a"]
+        indexes = [models.Index(fields=["device_a"]), models.Index(fields=["device_b"])]
+
+    def __str__(self):
+        return f"{self.device_a.hostname}:{self.port_a} ↔ {self.device_b.hostname}:{self.port_b}"

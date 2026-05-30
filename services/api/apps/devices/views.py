@@ -137,25 +137,85 @@ class DeviceViewSet(viewsets.ModelViewSet):
         )
         return Response(DetectPlatformResponseSerializer(result).data)
 
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="topology/discover")
+    def topology_discover(self, request, pk=None):
+        """Discover this device's LLDP neighbors and persist matched links."""
+        from . import topology as topo
+        from apps.telemetry.discovery import DiscoveryError
+        device = self.get_object()
+        try:
+            found = topo.discover_links(device)
+        except DiscoveryError as exc:
+            return Response({"error": str(exc), "neighbors": []}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({
+            "count": len(found),
+            "matched": sum(1 for f in found if f["matched_device_id"]),
+            "neighbors": found,
+        })
+
     @action(detail=False, methods=["get"], url_path="topology")
     def topology(self, request):
         """
-        Return nodes + edges for the network topology map.
-        Topology links are populated via CDP/LLDP discovery (future).
-        Returns empty edges until the topology_links table is populated.
+        Return nodes + edges for the network topology map. Edges come from
+        discovered TopologyLink rows. Filters: site, role, device (center) + depth.
         """
+        from collections import defaultdict
+        from .models import TopologyLink
+
+        params = request.query_params
         devices = Device.objects.select_related("site").filter(
             status__in=[Device.Status.ACTIVE, Device.Status.INACTIVE, Device.Status.MAINTENANCE]
         )
+        if params.get("site"):
+            devices = devices.filter(site_id=params["site"])
+        if params.get("role"):
+            devices = devices.filter(notes__icontains=f"Role: {params['role']}")
+
+        dev_ids = set(devices.values_list("id", flat=True))
+        links = list(TopologyLink.objects.filter(device_a__in=dev_ids, device_b__in=dev_ids))
+
+        center = params.get("device")
+        depth = params.get("depth")
+        if center and str(center).isdigit() and int(center) in dev_ids:
+            center = int(center)
+            adj = defaultdict(set)
+            for ln in links:
+                adj[ln.device_a_id].add(ln.device_b_id)
+                adj[ln.device_b_id].add(ln.device_a_id)
+            max_depth = None if (not depth or depth == "all") else int(depth)
+            visited, frontier, d = {center}, {center}, 0
+            while frontier and (max_depth is None or d < max_depth):
+                nxt = set()
+                for n in frontier:
+                    nxt |= {m for m in adj[n] if m not in visited}
+                visited |= nxt
+                frontier, d = nxt, d + 1
+            dev_ids &= visited
+            devices = devices.filter(id__in=dev_ids)
+            links = [ln for ln in links if ln.device_a_id in dev_ids and ln.device_b_id in dev_ids]
+
+        def role_of(notes: str) -> str:
+            for line in (notes or "").splitlines():
+                if line.lower().startswith("role:"):
+                    return line.split(":", 1)[1].strip()
+            return ""
+
         nodes = [
             {
-                "id": str(d.id),
-                "label": d.hostname,
-                "type": d.platform,
-                "site": d.site.name if d.site else None,
-                "status": d.status,
-                "risk_score": 0,
+                "id": str(d.id), "label": d.hostname, "type": d.platform,
+                "site": d.site.name if d.site else None, "status": d.status,
+                "role": role_of(d.notes), "risk_score": 0,
             }
             for d in devices
         ]
-        return Response({"nodes": nodes, "edges": []})
+        edges = [
+            {
+                "source": str(ln.device_a_id), "target": str(ln.device_b_id),
+                "port_a": ln.port_a, "port_b": ln.port_b,
+                "speed_mbps": ln.link_speed_mbps,
+                "utilization_pct": 0, "utilization_color": "green",
+            }
+            for ln in links
+        ]
+        return Response({"nodes": nodes, "edges": edges})

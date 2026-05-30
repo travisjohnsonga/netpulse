@@ -323,6 +323,15 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     device.save(update_fields=["last_seen"])
     publish_collected(device.id)
 
+    # Opportunistic LLDP topology discovery when an SNMP credential is configured.
+    profile = device.credential_profile
+    if profile and (profile.snmpv2c_enabled or profile.snmpv3_enabled):
+        try:
+            from apps.devices.topology import discover_links
+            discover_links(device)
+        except Exception as exc:
+            logger.warning("topology discovery skipped for %s: %s", device.hostname, exc)
+
     elapsed = time.monotonic() - start
     if cfg is None:
         logger.info("config unchanged for %s (%s) — %.2fs", device.hostname, device.platform or "?", elapsed)
