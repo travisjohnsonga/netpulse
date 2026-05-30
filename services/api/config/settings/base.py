@@ -94,8 +94,13 @@ DATABASES = {
 
 # ── Cache & Channel Layer (Valkey / Redis-compatible) ─────────────────────────
 
+from urllib.parse import quote as _urlquote
+
+# URL-encode the password: special chars (#, /, @, !, …) in a raw redis:// URL
+# otherwise corrupt parsing — e.g. a "#" is read as a URL fragment, which made
+# kombu/Celery read the port as the password text. safe="" encodes everything.
 _valkey = (
-    f"redis://:{os.environ['VALKEY_PASSWORD']}"
+    f"redis://:{_urlquote(os.environ['VALKEY_PASSWORD'], safe='')}"
     f"@{os.environ.get('VALKEY_HOST', 'valkey')}"
     f":{os.environ.get('VALKEY_PORT', '6379')}"
 )
