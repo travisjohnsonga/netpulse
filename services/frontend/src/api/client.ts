@@ -94,8 +94,15 @@ export interface DeviceListResponse {
 export interface Alert {
   id: number
   severity: 'critical' | 'high' | 'medium' | 'low'
+  effective_severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
   rule_name: string
+  title: string
   device: string
+  device_id: number | null
+  interface: string
+  transition: '' | 'up' | 'down'
+  downtime_seconds: number | null
+  is_interface_alert: boolean
   fired_at: string
   state: 'firing' | 'acknowledged' | 'resolved'
   message: string

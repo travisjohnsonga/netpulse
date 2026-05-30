@@ -195,6 +195,47 @@ class TestAlertEventEndpoints:
         assert resp.status_code == 401
 
 
+class TestInterfaceAlertSerialization:
+    """The event serializer surfaces interface metadata from labels/annotations."""
+
+    def test_interface_down_fields(self, auth_client, rule):
+        e = AlertEvent.objects.create(
+            rule=rule, state="firing",
+            labels={"source": "interface_monitor", "device": "rtr-1", "device_id": 7,
+                    "interface": "GigabitEthernet1", "severity": "high", "transition": "down"},
+            annotations={"title": "Interface Down: rtr-1 GigabitEthernet1",
+                         "message": "GigabitEthernet1 on rtr-1 changed from up to down",
+                         "severity": "high", "downtime_seconds": None},
+        )
+        data = auth_client.get(f"/api/alerts/events/{e.pk}/").json()
+        assert data["is_interface_alert"] is True
+        assert data["interface"] == "GigabitEthernet1"
+        assert data["transition"] == "down"
+        assert data["device"] == "rtr-1" and data["device_id"] == 7
+        assert data["effective_severity"] == "high"
+        assert "down" in data["message"]
+        assert data["fired_at"]  # mapped from created_at
+
+    def test_interface_recovery_reports_info_and_downtime(self, auth_client, rule):
+        e = AlertEvent.objects.create(
+            rule=rule, state="firing",
+            labels={"source": "interface_monitor", "device": "rtr-1", "device_id": 7,
+                    "interface": "Gi1", "severity": "info", "transition": "up"},
+            annotations={"title": "Interface Recovered", "message": "Gi1 is back up",
+                         "severity": "info", "downtime_seconds": 142},
+        )
+        data = auth_client.get(f"/api/alerts/events/{e.pk}/").json()
+        # rule severity is unchanged (critical), but the event's effective is info
+        assert data["severity"] == "critical"
+        assert data["effective_severity"] == "info"
+        assert data["transition"] == "up" and data["downtime_seconds"] == 142
+
+    def test_ordinary_alert_has_no_interface_flag(self, auth_client, event):
+        data = auth_client.get(f"/api/alerts/events/{event.pk}/").json()
+        assert data["is_interface_alert"] is False
+        assert data["effective_severity"] == "critical"  # falls back to rule severity
+
+
 # ── Model Tests ───────────────────────────────────────────────────────────────
 
 class TestAlertModels:

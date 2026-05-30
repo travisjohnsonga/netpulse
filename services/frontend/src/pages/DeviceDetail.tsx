@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
@@ -35,10 +35,14 @@ export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
   const deviceId = Number(id)
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [device, setDevice] = useState<Device | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<string>('overview')
+  const initialTab = searchParams.get('tab')
+  const [tab, setTab] = useState<string>(
+    TABS.some((t) => t.id === initialTab) ? (initialTab as string) : 'overview',
+  )
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
