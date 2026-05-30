@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 class Config:
     # gRPC server
     grpc_host: str = field(default_factory=lambda: os.environ.get("GRPC_HOST", "0.0.0.0"))
-    grpc_port: int = field(default_factory=lambda: int(os.environ.get("GRPC_PORT", "50051")))
+    grpc_port: int = field(default_factory=lambda: int(os.environ.get("GRPC_PORT", "57400")))
     grpc_max_workers: int = field(default_factory=lambda: int(os.environ.get("GRPC_MAX_WORKERS", "10")))
 
     # NATS

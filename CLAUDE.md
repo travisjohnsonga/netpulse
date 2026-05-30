@@ -23,7 +23,7 @@ The platform is composed of containerized services defined by `.env.example`:
 | OpenBao | Secrets management (HashiCorp Vault-compatible fork) |
 
 **Ingest layer** receives streaming data on dedicated ports:
-- gRPC/gNMI: port 50051 (structured telemetry from network devices)
+- gRPC/gNMI: port 57400 (structured telemetry from network devices)
 - Syslog UDP/TCP: 514/601
 - NetFlow: 2055
 - sFlow: 6343
@@ -100,7 +100,7 @@ docker run -d \
   --restart always \
   -p 514:514/udp \
   -p 2055:2055/udp \
-  -p 50051:50051 \
+  -p 57400:57400 \
   -e NETPULSE_CLOUD_URL=https://cloud.netpulse.io \
   -e NETPULSE_API_KEY=their-api-key \
   netpulse/collector:latest
