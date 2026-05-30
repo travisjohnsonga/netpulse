@@ -52,6 +52,8 @@ api.interceptors.response.use(
 export interface HealthStatus {
   status: string
   db?: boolean
+  collector_ip?: string
+  ssl_cert_days_remaining?: number | null
 }
 
 export interface InfraHealth {
@@ -526,6 +528,39 @@ export async function fetchMonitoredInterfaces(deviceId: number): Promise<Monito
 
 export async function saveMonitoredInterfaces(deviceId: number, interfaces: Record<string, unknown>[]): Promise<MonitoredInterface[]> {
   const { data } = await api.post<MonitoredInterface[]>(`/devices/${deviceId}/interfaces/`, { interfaces })
+  return data
+}
+
+export interface GeneratedConfig {
+  platform: string
+  vendor: string
+  collector_ip: string
+  sections: Record<string, { enabled: boolean; config: string | null }>
+  full_config: string
+}
+
+export interface ConfigPushRecord {
+  id: number
+  sections: string[]
+  success: boolean
+  output: string
+  errors: string[]
+  pushed_by_username: string | null
+  created_at: string
+}
+
+export async function generateTelemetryConfig(deviceId: number): Promise<GeneratedConfig> {
+  const { data } = await api.get<GeneratedConfig>(`/devices/${deviceId}/telemetry-config/generate/`)
+  return data
+}
+
+export async function pushTelemetryConfig(deviceId: number, sections: string[]): Promise<{ success: boolean; pushed_sections: string[]; output: string; errors: string[] }> {
+  const { data } = await api.post(`/devices/${deviceId}/telemetry-config/push/`, { sections })
+  return data
+}
+
+export async function fetchPushHistory(deviceId: number): Promise<ConfigPushRecord[]> {
+  const { data } = await api.get<ConfigPushRecord[]>(`/devices/${deviceId}/telemetry-config/push/`)
   return data
 }
 

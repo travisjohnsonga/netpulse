@@ -4,8 +4,10 @@ import clsx from 'clsx'
 import {
   fetchTelemetryConfig, saveTelemetryConfig, fetchMonitoredInterfaces,
   discoverInterfaces, saveMonitoredInterfaces,
-  type DeviceDetail, type TelemetryConfig,
+  generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth,
+  type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
 } from '../../api/client'
+import Modal from '../../components/Modal'
 
 const inputCls =
   'px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -52,6 +54,7 @@ export default function Telemetry({ device }: { device: DeviceDetail }) {
     <div className="space-y-4">
       <DevicePolling device={device} />
       <InterfacePolling device={device} />
+      <GeneratedConfigSection device={device} />
     </div>
   )
 }
@@ -269,6 +272,150 @@ function InterfacePolling({ device }: { device: DeviceDetail }) {
         Discovery uses this device's credential profile. Manage it under{' '}
         <Link to="/settings/credentials" className="text-blue-600 hover:text-blue-800">Settings → Credentials</Link>.
       </p>
+    </div>
+  )
+}
+
+// ── Section 3: generated configuration + push ─────────────────────────────────
+
+const CONFIG_TABS = ['snmp', 'syslog', 'gnmi', 'netflow', 'all'] as const
+const TAB_LABELS: Record<string, string> = { snmp: 'SNMP', syslog: 'Syslog', gnmi: 'gNMI', netflow: 'NetFlow', all: 'All' }
+
+function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
+  const [gen, setGen] = useState<GeneratedConfig | null>(null)
+  const [tab, setTab] = useState<string>('snmp')
+  const [collectorIp, setCollectorIp] = useState<string>('')
+  const [history, setHistory] = useState<ConfigPushRecord[]>([])
+  const [copied, setCopied] = useState(false)
+  const [pushing, setPushing] = useState(false)
+  const [confirm, setConfirm] = useState<{ sections: string[]; config: string } | null>(null)
+  const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadHistory = useCallback(() => { fetchPushHistory(device.id).then(setHistory).catch(() => {}) }, [device.id])
+
+  useEffect(() => {
+    generateTelemetryConfig(device.id).then(setGen).catch(() => setError('Failed to generate config.'))
+    checkHealth().then((h) => setCollectorIp(h.collector_ip ?? '')).catch(() => {})
+    loadHistory()
+  }, [device.id, loadHistory])
+
+  const currentConfig = useMemo(() => {
+    if (!gen) return ''
+    if (tab === 'all') return gen.full_config
+    return gen.sections[tab]?.config ?? ''
+  }, [gen, tab])
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(currentConfig); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ }
+  }
+
+  const doPush = async (sections: string[]) => {
+    setPushing(true); setConfirm(null); setToast(null)
+    try {
+      const res = await pushTelemetryConfig(device.id, sections)
+      setToast(res.success
+        ? { ok: true, msg: `Config pushed successfully (${res.pushed_sections.join(', ')})` }
+        : { ok: false, msg: res.errors.join('; ') || 'Push failed' })
+      loadHistory()
+    } catch {
+      setToast({ ok: false, msg: 'Push request failed' })
+    } finally { setPushing(false) }
+  }
+
+  const openPush = () => {
+    if (!gen) return
+    const sections = tab === 'all'
+      ? Object.keys(gen.sections).filter((s) => gen.sections[s].config)
+      : [tab]
+    setConfirm({ sections, config: currentConfig })
+  }
+
+  if (error) return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">{error}</div>
+  if (!gen) return <div className="bg-white rounded-lg border border-gray-200 p-4 text-sm text-gray-400">Generating configuration…</div>
+
+  const platformLabel = gen.platform || device.platform
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+      <div className="px-4 py-3 border-b border-gray-200">
+        <h3 className="text-sm font-semibold text-gray-800">Generated Configuration</h3>
+      </div>
+
+      {!collectorIp && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800">
+          ⚠️ Collector IP not configured — snippets use a blank target.{' '}
+          <Link to="/settings/general" className="text-blue-600 hover:text-blue-800">Configure it in Settings → General</Link>.
+        </div>
+      )}
+      {toast && (
+        <div className={clsx('border-b px-4 py-2 text-sm', toast.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800')}>
+          {toast.ok ? '✅' : '❌'} {toast.msg}
+        </div>
+      )}
+
+      <div className="flex gap-1 px-4 pt-3 border-b border-gray-100">
+        {CONFIG_TABS.map((t) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={clsx('px-3 py-1.5 text-sm font-medium border-b-2 -mb-px', tab === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800')}>
+            {TAB_LABELS[t]}
+            {t !== 'all' && gen.sections[t]?.enabled && <span className="ml-1 w-1.5 h-1.5 inline-block rounded-full bg-green-500" />}
+          </button>
+        ))}
+      </div>
+
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-gray-500">{TAB_LABELS[tab]} configuration for {platformLabel}{tab !== 'all' && !gen.sections[tab]?.enabled && ' (not enabled by default)'}</p>
+          <button onClick={copy} disabled={!currentConfig} className="px-2 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">{copied ? 'Copied!' : '📋 Copy'}</button>
+        </div>
+        {tab === 'gnmi' && (
+          <p className="text-xs text-gray-400 mb-2" title="gNMI subscription interval is configured on the device. Use Generate Config to update and push a new interval.">
+            ℹ️ gNMI subscription interval is set on the device — change it here, then push.
+          </p>
+        )}
+        {currentConfig ? (
+          <pre className="bg-gray-900 text-gray-100 text-xs font-mono rounded-md p-3 overflow-x-auto max-h-72 whitespace-pre-wrap">{currentConfig}</pre>
+        ) : (
+          <p className="text-sm text-gray-400 py-6 text-center">No {TAB_LABELS[tab]} configuration available for this platform.</p>
+        )}
+        <div className="flex gap-2 mt-3">
+          <button onClick={copy} disabled={!currentConfig} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Copy to Clipboard</button>
+          <button onClick={openPush} disabled={!currentConfig || pushing} className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium">
+            {pushing ? 'Pushing…' : 'Push to Device ▶'}
+          </button>
+        </div>
+      </div>
+
+      {/* Push history */}
+      {history.length > 0 && (
+        <div className="border-t border-gray-100 px-4 py-3">
+          <h4 className="text-xs font-semibold text-gray-600 mb-2">Recent pushes</h4>
+          <div className="space-y-1">
+            {history.map((h) => (
+              <div key={h.id} className="flex items-center gap-2 text-xs">
+                <span>{h.success ? '✅' : '❌'}</span>
+                <span className="text-gray-700">{h.sections.join(', ') || '—'}</span>
+                <span className="text-gray-400">by {h.pushed_by_username ?? 'system'}</span>
+                <span className="ml-auto text-gray-400">{new Date(h.created_at).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {confirm && (
+        <Modal title={`Push config to ${device.hostname}?`} onClose={() => setConfirm(null)} size="lg"
+          footer={
+            <>
+              <button onClick={() => setConfirm(null)} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+              <button onClick={() => doPush(confirm.sections)} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Push Config</button>
+            </>
+          }>
+          <p className="text-sm text-gray-700 mb-2">This will push the following config ({confirm.sections.join(', ')}) to <span className="font-medium">{device.hostname}</span>. This operation cannot be undone automatically.</p>
+          <pre className="bg-gray-900 text-gray-100 text-xs font-mono rounded-md p-3 overflow-x-auto max-h-60 whitespace-pre-wrap">{confirm.config}</pre>
+        </Modal>
+      )}
     </div>
   )
 }
