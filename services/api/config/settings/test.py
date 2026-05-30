@@ -29,4 +29,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
+# No NATS in the unit-test environment — don't publish device configs on save.
+SNMP_DEVICE_PUBLISH = False
+
 LOGGING = {"version": 1, "disable_existing_loggers": True}

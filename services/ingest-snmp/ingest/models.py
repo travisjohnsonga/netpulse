@@ -48,6 +48,9 @@ class Device:
     port: int = 161
     version: int = 2            # 1 = SNMPv1, 2 = SNMPv2c, 3 = SNMPv3
     cred_path: str = ""         # OpenBao KV path, e.g. "snmp/router1"
+    snmp_username: str = ""     # SNMPv3 security name (non-secret, from DB)
+    snmp_auth_protocol: str = "SHA"   # auth protocol string
+    snmp_priv_protocol: str = "AES"   # priv protocol string
     poll_profiles: list[PollProfile] = field(default_factory=list)
 
     # ── Derived / convenience ──────────────────────────────────────────────
@@ -77,6 +80,9 @@ class Device:
             port=int(d.get("port", 161)),
             version=int(d.get("version", 2)),
             cred_path=d.get("cred_path", ""),
+            snmp_username=d.get("snmp_username", ""),
+            snmp_auth_protocol=d.get("snmp_auth_protocol", "SHA"),
+            snmp_priv_protocol=d.get("snmp_priv_protocol", "AES"),
             poll_profiles=profiles,
         )
 
@@ -98,9 +104,12 @@ class Device:
 # ── SNMP authentication helpers ───────────────────────────────────────────────
 
 def build_community_data(version: int, creds: dict[str, Any]):
-    """Return a pysnmp CommunityData object for v1 or v2c."""
+    """Return a pysnmp CommunityData object for v1 or v2c.
+
+    Accepts either ``community`` or the API's OpenBao key ``snmpv2c_community``.
+    """
     from pysnmp.hlapi.asyncio import CommunityData
-    community = creds.get("community", "public")
+    community = creds.get("community") or creds.get("snmpv2c_community") or "public"
     return CommunityData(community, mpModel=version - 1)   # mpModel: 0=v1, 1=v2c
 
 

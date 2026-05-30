@@ -27,6 +27,11 @@ python manage.py create_roles
 if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] ensuring superuser..."
     python manage.py ensure_superuser
+
+    # Seed the ingest-snmp poller with the current device inventory (api only).
+    # Best-effort: a NATS hiccup must not block startup.
+    echo "[entrypoint] publishing device configs to NATS..."
+    python manage.py publish_device_configs || echo "[entrypoint] device publish had issues (continuing)"
 fi
 
 echo "[entrypoint] starting: $*"

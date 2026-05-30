@@ -180,6 +180,10 @@ COLLECTOR_IP = os.environ.get("COLLECTOR_IP", "")
 # GET /api/settings/system/ so the UI can disable "Push to Device".
 ALLOW_CONFIG_PUSH = os.environ.get("ALLOW_CONFIG_PUSH", "false").lower() == "true"
 
+# Publish device SNMP config to NATS (netpulse.devices.upsert) on save so the
+# ingest-snmp poller learns about devices. Disabled in tests (no NATS).
+SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "true"
+
 # ── Django REST Framework ─────────────────────────────────────────────────────
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
