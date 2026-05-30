@@ -1463,3 +1463,36 @@ Returns: {count, results[], summary:{by_severity}}
 
 OpenSearch must be running and stream-processor must be
 consuming netpulse.logs.> from NATS to populate logs.
+
+## Topology Map
+
+### TopologyLink Model
+device_a (FK), port_a
+device_b (FK), port_b
+discovered_via: lldp (only - no CDP)
+link_speed_mbps, last_seen
+unique_together: device_a + port_a
+
+### LLDP Discovery
+POST /api/devices/{id}/topology/discover/
+SNMP walk lldpRemTable → match neighbors to Device records
+Auto-run after config collection if SNMP credential available
+
+### Topology API filters
+GET /api/devices/topology/?site=X&device=Y&depth=N&role=Z
+depth: 1/2/3/all hops from center device
+
+### Frontend filters
+Site dropdown, Device dropdown (center), 
+Depth (1/2/3/All hops), Role dropdown
+[Discover Links] button → triggers LLDP walk all devices
+
+### Node display
+Smaller nodes with device type icon
+Color by status, hostname label below
+
+### Edge display
+Lines between LLDP-connected devices
+Color by utilization, thickness by speed
+Hover: show port names each side
+Click: link detail popup
