@@ -17,10 +17,10 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import clsx from 'clsx'
 
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: 'bg-red-100 text-red-700',
-  high: 'bg-orange-100 text-orange-700',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-blue-100 text-blue-700',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  high: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  medium: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  low: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
 }
 
 const now = Date.now()
@@ -91,8 +91,8 @@ const INFRA_LABELS: Record<keyof InfraHealth['services'], string> = {
 function InfraHealthSection({ health }: { health: InfraHealth | null; loading: boolean }) {
   const services = health?.services
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-      <h2 className="font-semibold text-gray-800 mb-4">Infrastructure</h2>
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <h2 className="font-semibold text-gray-800 dark:text-gray-100 mb-4">Infrastructure</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {(Object.keys(INFRA_LABELS) as Array<keyof InfraHealth['services']>).map((key) => {
           const ok = services?.[key]
@@ -102,7 +102,7 @@ function InfraHealthSection({ health }: { health: InfraHealth | null; loading: b
               className={clsx(
                 'flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center',
                 ok === undefined
-                  ? 'border-gray-200 bg-gray-50'
+                  ? 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50'
                   : ok
                     ? 'border-green-200 bg-green-50'
                     : 'border-red-200 bg-red-50',
@@ -114,7 +114,7 @@ function InfraHealthSection({ health }: { health: InfraHealth | null; loading: b
                   ok === undefined ? 'bg-gray-300' : ok ? 'bg-green-500' : 'bg-red-500',
                 )}
               />
-              <span className="text-xs font-medium text-gray-700">{INFRA_LABELS[key]}</span>
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{INFRA_LABELS[key]}</span>
               <span
                 className={clsx(
                   'text-xs',
@@ -199,7 +199,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-center h-64">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-gray-500">Loading dashboard…</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">Loading dashboard…</span>
         </div>
       </div>
     )
@@ -210,8 +210,8 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Network overview at a glance</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Network overview at a glance</p>
         </div>
         {connected && (
           <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
@@ -265,7 +265,7 @@ export default function Dashboard() {
 
       {/* Empty state when no devices */}
       {safeDevices.length === 0 && !apiError && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
           <EmptyState
             title="No devices yet"
             description="Add your first network device to start seeing telemetry, alerts, and health data on this dashboard."
@@ -277,14 +277,14 @@ export default function Dashboard() {
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
           <ReactECharts
             option={deviceStatusChartOption}
             style={{ height: 240 }}
             opts={{ renderer: 'svg' }}
           />
         </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
           <ReactECharts
             option={topTalkersChartOption}
             style={{ height: 240 }}
@@ -294,9 +294,9 @@ export default function Dashboard() {
       </div>
 
       {/* Recent alerts table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-800">Recent Alerts</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-800 dark:text-gray-100">Recent Alerts</h2>
           <a href="/alerts" className="text-sm text-blue-600 hover:text-blue-800">
             View all
           </a>
@@ -311,7 +311,7 @@ export default function Dashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 text-gray-500 text-left">
+                <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left">
                   <th className="px-5 py-3 font-medium">Severity</th>
                   <th className="px-5 py-3 font-medium">Rule</th>
                   <th className="px-5 py-3 font-medium">Device</th>
@@ -319,22 +319,22 @@ export default function Dashboard() {
                   <th className="px-5 py-3 font-medium">State</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                 {recentAlerts.map((alert) => (
-                  <tr key={alert.id} className="hover:bg-gray-50">
+                  <tr key={alert.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-5 py-3">
                       <span
                         className={clsx(
                           'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
-                          SEVERITY_COLORS[alert.severity] ?? 'bg-gray-100 text-gray-600',
+                          SEVERITY_COLORS[alert.severity] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400',
                         )}
                       >
                         {alert.severity}
                       </span>
                     </td>
-                    <td className="px-5 py-3 text-gray-800">{alert.rule_name}</td>
-                    <td className="px-5 py-3 text-gray-600">{alert.device}</td>
-                    <td className="px-5 py-3 text-gray-500">
+                    <td className="px-5 py-3 text-gray-800 dark:text-gray-100">{alert.rule_name}</td>
+                    <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{alert.device}</td>
+                    <td className="px-5 py-3 text-gray-500 dark:text-gray-400">
                       {new Date(alert.fired_at).toLocaleString()}
                     </td>
                     <td className="px-5 py-3">
@@ -342,10 +342,10 @@ export default function Dashboard() {
                         className={clsx(
                           'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
                           alert.state === 'firing'
-                            ? 'bg-red-100 text-red-700'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                             : alert.state === 'acknowledged'
-                              ? 'bg-yellow-100 text-yellow-700'
-                              : 'bg-green-100 text-green-700',
+                              ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                              : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
                         )}
                       >
                         {alert.state}

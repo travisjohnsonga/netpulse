@@ -37,22 +37,22 @@ export default function DataSources() {
     <div>
       <SectionHeader title="Data Sources" description="CVE intelligence and end-of-life data feeds." />
 
-      {error && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 mb-4 max-w-xl">{error}</div>}
+      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4 max-w-xl">{error}</div>}
 
       {/* Feed toggles */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden divide-y divide-gray-100 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700 mb-6">
         {FEEDS.map((f) => {
           const enabled = !!settings?.[f.key]
           return (
             <div key={f.key} className="flex items-center gap-4 px-5 py-3">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-800">{f.name}</p>
-                <p className="text-xs text-gray-500">{f.description}</p>
+                <p className="font-medium text-gray-800 dark:text-gray-100">{f.name}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{f.description}</p>
               </div>
-              <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full', enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500')}>
+              <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full', enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')}>
                 {enabled ? 'Enabled' : 'Disabled'}
               </span>
-              <button onClick={() => toggle(f.key)} disabled={!settings} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">
+              <button onClick={() => toggle(f.key)} disabled={!settings} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
                 {enabled ? 'Disable' : 'Enable'}
               </button>
             </div>

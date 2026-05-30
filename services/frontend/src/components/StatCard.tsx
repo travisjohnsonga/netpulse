@@ -33,18 +33,18 @@ export default function StatCard({
   return (
     <div
       className={clsx(
-        'bg-white rounded-lg shadow-sm border-t-4 p-5 flex flex-col gap-1',
+        'bg-white dark:bg-gray-800 rounded-lg shadow-sm border-t-4 p-5 flex flex-col gap-1',
         borderColors[color],
       )}
     >
-      <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+      <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
         {title}
       </span>
       <span className={clsx('text-3xl font-bold', valueColors[color])}>
         {value}
       </span>
       {subtitle && (
-        <span className="text-xs text-gray-400 mt-0.5">{subtitle}</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subtitle}</span>
       )}
       {action && (
         <Link

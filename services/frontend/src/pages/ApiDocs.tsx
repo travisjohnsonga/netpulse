@@ -23,8 +23,8 @@ export default function ApiDocs() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">API Docs</h1>
-        <p className="text-sm text-gray-500 mt-0.5">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">API Docs</h1>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           Interactive OpenAPI reference for the NetPulse API. Authenticated with your current session.
         </p>
       </div>
@@ -36,13 +36,13 @@ export default function ApiDocs() {
       )}
 
       {isError && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400">
           Couldn't load the API schema. Make sure the API is running and you're signed in.
         </div>
       )}
 
       {data && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
           <Suspense fallback={
             <div className="flex items-center justify-center py-24">
               <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />

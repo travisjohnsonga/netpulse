@@ -6,11 +6,11 @@ import EmptyState from '../components/EmptyState'
 import Modal from '../components/Modal'
 
 const TYPE_BADGE: Record<SiteType, string> = {
-  datacenter: 'bg-purple-100 text-purple-700',
-  campus: 'bg-blue-100 text-blue-700',
-  branch: 'bg-green-100 text-green-700',
-  remote: 'bg-yellow-100 text-yellow-700',
-  cloud: 'bg-sky-100 text-sky-700',
+  datacenter: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  campus: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  branch: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  remote: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  cloud: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
 }
 const TYPE_ICON: Record<SiteType, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
@@ -18,7 +18,7 @@ const TYPE_ICON: Record<SiteType, string> = {
 const SITE_TYPES: SiteType[] = ['datacenter', 'campus', 'branch', 'remote', 'cloud']
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 export default function Sites() {
   const navigate = useNavigate()
@@ -42,13 +42,13 @@ export default function Sites() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Sites</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{sites.length} site{sites.length !== 1 ? 's' : ''}</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Sites</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{sites.length} site{sites.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex gap-2">
-          <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-            <button onClick={() => setView('table')} className={clsx('px-3 py-2 text-sm', view === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50')}>Table</button>
-            <button onClick={() => setView('tree')} className={clsx('px-3 py-2 text-sm', view === 'tree' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50')}>Hierarchy</button>
+          <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
+            <button onClick={() => setView('table')} className={clsx('px-3 py-2 text-sm', view === 'table' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700')}>Table</button>
+            <button onClick={() => setView('tree')} className={clsx('px-3 py-2 text-sm', view === 'tree' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700')}>Hierarchy</button>
           </div>
           <button onClick={() => setEditing('new')} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Add Site</button>
         </div>
@@ -56,7 +56,7 @@ export default function Sites() {
 
       {error && <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">{error}</div>}
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
         ) : sites.length === 0 ? (
@@ -90,7 +90,7 @@ function TableView({ sites, onOpen }: { sites: Site[]; onOpen: (id: number) => v
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-gray-50 text-gray-500 text-left border-b border-gray-200">
+          <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
             <th className="px-5 py-3 font-medium">Name</th>
             <th className="px-5 py-3 font-medium">Type</th>
             <th className="px-5 py-3 font-medium">City</th>
@@ -98,14 +98,14 @@ function TableView({ sites, onOpen }: { sites: Site[]; onOpen: (id: number) => v
             <th className="px-5 py-3 font-medium">Parent</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
           {sites.map((s) => (
-            <tr key={s.id} onClick={() => onOpen(s.id)} className="hover:bg-gray-50 cursor-pointer">
-              <td className="px-5 py-3 font-medium text-gray-800">{s.name}</td>
+            <tr key={s.id} onClick={() => onOpen(s.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+              <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{s.name}</td>
               <td className="px-5 py-3"><TypeBadge t={s.site_type} /></td>
-              <td className="px-5 py-3 text-gray-600">{s.city || '—'}</td>
-              <td className="px-5 py-3 text-gray-600">{s.device_count}</td>
-              <td className="px-5 py-3 text-gray-500">{s.parent_site_name || '—'}</td>
+              <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{s.city || '—'}</td>
+              <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{s.device_count}</td>
+              <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{s.parent_site_name || '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -130,13 +130,13 @@ function TreeView({ sites, onOpen }: { sites: Site[]; onOpen: (id: number) => vo
       <div key={s.id}>
         <div
           onClick={() => onOpen(s.id)}
-          className="flex items-center gap-2 px-5 py-2.5 hover:bg-gray-50 cursor-pointer border-b border-gray-50"
+          className="flex items-center gap-2 px-5 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer border-b border-gray-50 dark:border-gray-700"
           style={{ paddingLeft: `${1.25 + depth * 1.5}rem` }}
         >
-          {depth > 0 && <span className="text-gray-300">└</span>}
-          <span className="font-medium text-gray-800">{s.name}</span>
+          {depth > 0 && <span className="text-gray-300 dark:text-gray-600">└</span>}
+          <span className="font-medium text-gray-800 dark:text-gray-100">{s.name}</span>
           <TypeBadge t={s.site_type} />
-          <span className="ml-auto text-xs text-gray-400">{s.device_count} devices</span>
+          <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{s.device_count} devices</span>
         </div>
         {render(s.id, depth + 1)}
       </div>
@@ -236,5 +236,5 @@ function SiteFormModal({ site, sites, onClose, onSaved, onDelete }: {
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex-1 min-w-0"><label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>{children}</div>
+  return <div className="flex-1 min-w-0"><label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{label}</label>{children}</div>
 }

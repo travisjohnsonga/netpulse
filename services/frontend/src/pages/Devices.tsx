@@ -74,15 +74,15 @@ export default function Devices() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Devices</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Devices</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
             {total > 0 ? `${total} device${total !== 1 ? 's' : ''} managed` : 'No devices yet'}
           </p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowDiscoveryModal(true)}
-            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+            className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
           >
             Run Discovery
           </button>
@@ -103,18 +103,18 @@ export default function Devices() {
       )}
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex flex-col sm:flex-row gap-3">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 flex flex-col sm:flex-row gap-3">
         <input
           type="search"
           placeholder="Search hostname, IP, vendor..."
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <select
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>{s === 'All' ? 'All Statuses' : s}</option>
@@ -123,7 +123,7 @@ export default function Devices() {
         <select
           value={platformFilter}
           onChange={(e) => { setPlatformFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           {PLATFORM_OPTIONS.map((p) => (
             <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>
@@ -133,7 +133,7 @@ export default function Devices() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -158,18 +158,18 @@ export default function Devices() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-50 text-gray-500 text-left border-b border-gray-200">
+                  <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
                     {activeColumns.map((col) => (
                       <th key={col.key} className="px-5 py-3 font-medium whitespace-nowrap">{col.label}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                   {devices.map((device) => (
                     <tr
                       key={device.id}
                       onClick={() => navigate(`/devices/${device.id}`)}
-                      className="hover:bg-gray-50 cursor-pointer"
+                      className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
                     >
                       {activeColumns.map((col) => (
                         <td key={col.key} className="px-5 py-3">{col.render(device, colCtx)}</td>
@@ -182,22 +182,22 @@ export default function Devices() {
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 text-sm">
-                <span className="text-gray-500">
+              <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 dark:border-gray-700 text-sm">
+                <span className="text-gray-500 dark:text-gray-400">
                   Page {page} of {totalPages}
                 </span>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page === 1}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                    className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                   >
                     Previous
                   </button>
                   <button
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={page === totalPages}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                    className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                   >
                     Next
                   </button>
@@ -219,9 +219,9 @@ export default function Devices() {
       {/* Discovery Modal (stub) */}
       {showDiscoveryModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Auto-Discovery</h2>
-            <p className="text-sm text-gray-500 mb-4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">Auto-Discovery</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
               Automatically discover devices on your network using SNMP, gNMI, NETCONF, and topology walking.
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">
@@ -233,7 +233,7 @@ export default function Devices() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowDiscoveryModal(false)}
-                className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
+                className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50"
               >
                 Close
               </button>

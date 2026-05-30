@@ -3,7 +3,7 @@ import { SectionHeader } from '../Settings'
 import { fetchPollingSettings, savePollingSettings, type PollingSettings } from '../../api/client'
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 const INTERVAL_FIELDS: { key: keyof PollingSettings; label: string; hint: string }[] = [
   { key: 'device_metrics_interval',    label: 'Device metrics (CPU, memory, temp)', hint: 'CPU, memory, environmentals' },
@@ -48,8 +48,8 @@ export default function Polling() {
     }
   }
 
-  if (error && !settings) return <div className="text-sm text-red-600">{error}</div>
-  if (!settings) return <div className="text-sm text-gray-400">Loading…</div>
+  if (error && !settings) return <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
+  if (!settings) return <div className="text-sm text-gray-400 dark:text-gray-500">Loading…</div>
 
   return (
     <div>
@@ -58,34 +58,34 @@ export default function Polling() {
         description="Global SNMP polling intervals and session limits. Devices can override intervals individually on their Telemetry tab."
       />
 
-      {error && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 mb-4 max-w-2xl">{error}</div>}
+      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4 max-w-2xl">{error}</div>}
 
-      <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4 max-w-2xl">
-        <h3 className="text-sm font-semibold text-gray-800 mb-1">Collection intervals (seconds)</h3>
-        <p className="text-xs text-gray-400 mb-4">How often each metric class is polled by default. Lower = fresher data, more load.</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5 mb-4 max-w-2xl">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">Collection intervals (seconds)</h3>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">How often each metric class is polled by default. Lower = fresher data, more load.</p>
         <div className="grid sm:grid-cols-2 gap-4">
           {INTERVAL_FIELDS.map((f) => (
             <div key={f.key}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{f.label}</label>
               <input className={inputCls} type="number" min={5} value={settings[f.key] as number} onChange={(e) => setNum(f.key, e.target.value)} />
-              <p className="text-xs text-gray-400 mt-1">{f.hint}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{f.hint}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4 max-w-2xl">
-        <h3 className="text-sm font-semibold text-gray-800 mb-1">SNMP session parameters</h3>
-        <p className="text-xs text-gray-400 mb-4">Connection-level tuning applied across all SNMP polls.</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5 mb-4 max-w-2xl">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">SNMP session parameters</h3>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Connection-level tuning applied across all SNMP polls.</p>
         <div className="grid sm:grid-cols-2 gap-4">
           {SESSION_FIELDS.map((f) => (
             <div key={f.key}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{f.label}</label>
               <input className={inputCls} type="number" min={1} value={settings[f.key] as number} onChange={(e) => setNum(f.key, e.target.value)} />
-              <p className="text-xs text-gray-400 mt-1">{f.hint}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{f.hint}</p>
             </div>
           ))}
-          <label className="flex items-center gap-2 text-sm text-gray-700 sm:col-span-2 mt-1">
+          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 sm:col-span-2 mt-1">
             <input type="checkbox" checked={settings.bulk_get_enabled} onChange={(e) => setSettings((s) => (s ? { ...s, bulk_get_enabled: e.target.checked } : s))} />
             Use SNMP bulk-get (GETBULK) where supported
           </label>

@@ -4,19 +4,19 @@ import { fetchDeviceCVEs, type DeviceDetail, type DeviceCVE } from '../../api/cl
 import EmptyState from '../../components/EmptyState'
 
 const SEVERITY_BADGE: Record<string, string> = {
-  critical: 'bg-red-100 text-red-700',
-  high: 'bg-orange-100 text-orange-700',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-blue-100 text-blue-700',
-  none: 'bg-gray-100 text-gray-600',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  high: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  medium: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  low: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  none: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
 }
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'none']
 
 function statusOf(cve: DeviceCVE): { label: string; cls: string } {
-  if (cve.is_patched) return { label: 'MITIGATED', cls: 'bg-green-100 text-green-700' }
-  if (cve.severity === 'none') return { label: 'NOT_APPLICABLE', cls: 'bg-gray-100 text-gray-500' }
-  return { label: 'VULNERABLE', cls: 'bg-red-100 text-red-700' }
+  if (cve.is_patched) return { label: 'MITIGATED', cls: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }
+  if (cve.severity === 'none') return { label: 'NOT_APPLICABLE', cls: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' }
+  return { label: 'VULNERABLE', cls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' }
 }
 
 export default function CVE({ device }: { device: DeviceDetail }) {
@@ -46,9 +46,9 @@ export default function CVE({ device }: { device: DeviceDetail }) {
   )
 
   if (loading) return <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
-  if (error) return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">{error}</div>
+  if (error) return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400">{error}</div>
   if (cves.length === 0) {
-    return <div className="bg-white rounded-lg border border-gray-200"><EmptyState title="No known CVE exposure" description="No CVEs are currently associated with this device's platform and version." icon="🛡" /></div>
+    return <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"><EmptyState title="No known CVE exposure" description="No CVEs are currently associated with this device's platform and version." icon="🛡" /></div>
   }
 
   return (
@@ -63,30 +63,30 @@ export default function CVE({ device }: { device: DeviceDetail }) {
           ))}
           {Object.keys(counts).length === 0 && <span className="text-xs text-green-600 font-medium">All known CVEs mitigated</span>}
         </div>
-        <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
           {['All', ...SEVERITY_ORDER].map((s) => <option key={s} value={s}>{s === 'All' ? 'All severities' : s}</option>)}
         </select>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-gray-50 text-gray-500 text-left border-b border-gray-200">
+              <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
                 <th className="px-5 py-3 font-medium">CVE</th>
                 <th className="px-5 py-3 font-medium">Severity</th>
                 <th className="px-5 py-3 font-medium">CVSS</th>
                 <th className="px-5 py-3 font-medium">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {filtered.map((c) => {
                 const st = statusOf(c)
                 return (
-                  <tr key={c.id} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 font-mono text-xs text-gray-800">{c.cve_id}</td>
+                  <tr key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    <td className="px-5 py-3 font-mono text-xs text-gray-800 dark:text-gray-100">{c.cve_id}</td>
                     <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', SEVERITY_BADGE[c.severity])}>{c.severity}</span></td>
-                    <td className="px-5 py-3 text-gray-600">{c.cvss_score ?? '—'}</td>
+                    <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{c.cvss_score ?? '—'}</td>
                     <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium', st.cls)}>{st.label}</span></td>
                   </tr>
                 )

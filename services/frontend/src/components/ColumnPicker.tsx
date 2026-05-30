@@ -54,18 +54,18 @@ export default function ColumnPicker({ activeKeys, onChange, onReset }: {
       <button
         onClick={() => setOpen((v) => !v)}
         title="Configure columns"
-        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 text-gray-700 inline-flex items-center gap-1.5"
+        className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300 inline-flex items-center gap-1.5"
       >
         <span aria-hidden>⊞</span> Columns
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-30 text-sm">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
-            <span className="font-semibold text-gray-800">Configure Columns</span>
+        <div className="absolute right-0 mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-30 text-sm">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 dark:border-gray-700">
+            <span className="font-semibold text-gray-800 dark:text-gray-100">Configure Columns</span>
             <button onClick={onReset} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Reset</button>
           </div>
-          <div className="px-4 py-1.5 text-xs text-gray-400 border-b border-gray-50">
+          <div className="px-4 py-1.5 text-xs text-gray-400 dark:text-gray-500 border-b border-gray-50 dark:border-gray-700">
             {activeKeys.length} of {DEVICE_COLUMNS.length} columns shown
           </div>
           <div className="max-h-80 overflow-y-auto py-1">
@@ -75,7 +75,7 @@ export default function ColumnPicker({ activeKeys, onChange, onReset }: {
               const isActive = active.has(key)
               const idx = activeKeys.indexOf(key)
               return (
-                <div key={key} className="flex items-center gap-2 px-4 py-1.5 hover:bg-gray-50">
+                <div key={key} className="flex items-center gap-2 px-4 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                   <input
                     type="checkbox"
                     checked={isActive}
@@ -83,15 +83,15 @@ export default function ColumnPicker({ activeKeys, onChange, onReset }: {
                     onChange={() => toggle(key)}
                     className="shrink-0"
                   />
-                  <span className={clsx('flex-1 truncate', col.locked ? 'text-gray-400' : 'text-gray-700')}>
-                    {col.label}{col.locked && <span className="text-xs text-gray-300 ml-1">(locked)</span>}
+                  <span className={clsx('flex-1 truncate', col.locked ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300')}>
+                    {col.label}{col.locked && <span className="text-xs text-gray-300 dark:text-gray-600 ml-1">(locked)</span>}
                   </span>
                   {isActive && !col.locked && (
                     <span className="flex items-center gap-0.5">
                       <button onClick={() => move(key, -1)} disabled={idx <= locked.length}
-                        className="text-gray-400 hover:text-gray-700 disabled:opacity-30 px-1" title="Move up">▲</button>
+                        className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-30 px-1" title="Move up">▲</button>
                       <button onClick={() => move(key, 1)} disabled={idx >= activeKeys.length - 1}
-                        className="text-gray-400 hover:text-gray-700 disabled:opacity-30 px-1" title="Move down">▼</button>
+                        className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-30 px-1" title="Move down">▼</button>
                     </span>
                   )}
                 </div>

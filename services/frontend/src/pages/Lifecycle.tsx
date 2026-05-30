@@ -7,9 +7,9 @@ const DUMMY_DEVICES = [
 ]
 
 const STATUS_COLORS: Record<string, string> = {
-  healthy:  'bg-green-100 text-green-700',
-  warning:  'bg-yellow-100 text-yellow-700',
-  critical: 'bg-red-100 text-red-700',
+  healthy:  'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  warning:  'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 }
 
 export default function Lifecycle() {
@@ -19,7 +19,7 @@ export default function Lifecycle() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Device Lifecycle</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Device Lifecycle</h1>
         <button className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
           Import Lifecycle Data
         </button>
@@ -31,13 +31,13 @@ export default function Lifecycle() {
         <StatCard title="Healthy"       value={0}             color="green"  subtitle="No EOL risk" />
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200">
-        <div className="px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">End-of-Life Devices</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Sample data — connect lifecycle engine for live tracking</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">End-of-Life Devices</h2>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Sample data — connect lifecycle engine for live tracking</p>
         </div>
         <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+          <thead className="bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             <tr>
               <th className="px-4 py-2 text-left">Hostname</th>
               <th className="px-4 py-2 text-left">Model</th>
@@ -45,11 +45,11 @@ export default function Lifecycle() {
               <th className="px-4 py-2 text-left">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
             {DUMMY_DEVICES.map(d => (
-              <tr key={d.hostname} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-medium font-mono">{d.hostname}</td>
-                <td className="px-4 py-2 text-gray-600">{d.model}</td>
+              <tr key={d.hostname} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                <td className="px-4 py-2 font-medium font-mono dark:text-gray-100">{d.hostname}</td>
+                <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{d.model}</td>
                 <td className="px-4 py-2">{d.eol}</td>
                 <td className="px-4 py-2">
                   <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${STATUS_COLORS[d.status] ?? ''}`}>

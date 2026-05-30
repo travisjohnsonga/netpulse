@@ -8,15 +8,15 @@ import { SectionHeader } from '../Settings'
 // illustrative of the intended workflow (see CLAUDE.md → Device Discovery).
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 interface Job { id: number; name: string; method: string; status: string; found: number }
 
 const STATUS_BADGE: Record<string, string> = {
-  running: 'bg-blue-100 text-blue-700',
-  completed: 'bg-green-100 text-green-700',
-  pending: 'bg-gray-100 text-gray-500',
-  failed: 'bg-red-100 text-red-700',
+  running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  completed: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  pending: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+  failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 }
 
 export default function Discovery() {
@@ -36,12 +36,12 @@ export default function Discovery() {
       />
 
       {/* Jobs */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden divide-y divide-gray-100 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700 mb-6">
         {jobs.map((j) => (
           <div key={j.id} className="flex items-center gap-4 px-5 py-3">
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-800">{j.name}</p>
-              <p className="text-xs text-gray-500">{j.method} · {j.found} devices found</p>
+              <p className="font-medium text-gray-800 dark:text-gray-100">{j.name}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{j.method} · {j.found} devices found</p>
             </div>
             <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full capitalize', STATUS_BADGE[j.status])}>{j.status}</span>
           </div>
@@ -78,21 +78,21 @@ function SubnetCard({ title, hint, subnets, onAdd, onRemove, danger }: {
 }) {
   const [val, setVal] = useState('')
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <p className="font-medium text-gray-800">{title}</p>
-      <p className={clsx('text-xs mt-0.5 mb-3', danger ? 'text-red-600' : 'text-gray-400')}>{hint}</p>
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+      <p className="font-medium text-gray-800 dark:text-gray-100">{title}</p>
+      <p className={clsx('text-xs mt-0.5 mb-3', danger ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500')}>{hint}</p>
       <div className="flex gap-2 mb-3">
         <input className={inputCls} value={val} onChange={(e) => setVal(e.target.value)} placeholder="10.0.0.0/8" />
-        <button onClick={() => { if (val.trim()) { onAdd(val.trim()); setVal('') } }} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 shrink-0">Add</button>
+        <button onClick={() => { if (val.trim()) { onAdd(val.trim()); setVal('') } }} className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 shrink-0">Add</button>
       </div>
       <div className="flex flex-wrap gap-2">
         {subnets.map((s) => (
-          <span key={s} className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs font-mono px-2 py-1 rounded-md">
+          <span key={s} className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 text-xs font-mono px-2 py-1 rounded-md">
             {s}
-            <button onClick={() => onRemove(s)} className="text-gray-400 hover:text-gray-700">×</button>
+            <button onClick={() => onRemove(s)} className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">×</button>
           </span>
         ))}
-        {subnets.length === 0 && <span className="text-xs text-gray-400">None</span>}
+        {subnets.length === 0 && <span className="text-xs text-gray-400 dark:text-gray-500">None</span>}
       </div>
     </div>
   )
@@ -107,20 +107,20 @@ function NewJobModal({ onClose, onCreate }: { onClose: () => void; onCreate: (j:
       onClose={onClose}
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={() => name && onCreate({ name, method, status: 'pending', found: 0 })} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Create</button>
         </>
       }
     >
       <div className="space-y-3">
-        <div><label className="block text-sm font-medium text-gray-700 mb-1">Name</label><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></div>
+        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Method</label>
           <select className={inputCls} value={method} onChange={(e) => setMethod(e.target.value)}>
             {['Passive', 'Topology', 'Active Scan', 'Import'].map((m) => <option key={m}>{m}</option>)}
           </select>
         </div>
-        <p className="text-xs text-gray-400">Discovered devices land in PENDING and require admin approval before becoming active.</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">Discovered devices land in PENDING and require admin approval before becoming active.</p>
       </div>
     </Modal>
   )

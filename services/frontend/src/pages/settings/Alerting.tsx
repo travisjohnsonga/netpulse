@@ -15,14 +15,14 @@ const TABS = [
 ]
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 const SEVERITY_BADGE: Record<AlertSeverity, string> = {
-  critical: 'bg-red-100 text-red-700',
-  high: 'bg-orange-100 text-orange-700',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-blue-100 text-blue-700',
-  info: 'bg-gray-100 text-gray-600',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  high: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  medium: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  low: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  info: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
 }
 
 export default function Alerting() {
@@ -72,9 +72,9 @@ function RulesTab() {
       <div className="flex justify-end mb-3">
         <button onClick={() => setAdding(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Add Rule</button>
       </div>
-      {error && <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 mb-4">{error}</div>}
+      {error && <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-gray-700 rounded-lg px-4 py-3 text-sm text-yellow-800 dark:text-yellow-400 mb-4">{error}</div>}
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -85,7 +85,7 @@ function RulesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 text-gray-500 text-left border-b border-gray-200">
+                <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
                   <th className="px-5 py-3 font-medium">Name</th>
                   <th className="px-5 py-3 font-medium">Severity</th>
                   <th className="px-5 py-3 font-medium">Cooldown</th>
@@ -93,18 +93,18 @@ function RulesTab() {
                   <th className="px-5 py-3 font-medium text-right">Enabled</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                 {rules.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50">
+                  <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-5 py-3">
-                      <p className="font-medium text-gray-800">{r.name}</p>
-                      {r.description && <p className="text-xs text-gray-500">{r.description}</p>}
+                      <p className="font-medium text-gray-800 dark:text-gray-100">{r.name}</p>
+                      {r.description && <p className="text-xs text-gray-500 dark:text-gray-400">{r.description}</p>}
                     </td>
                     <td className="px-5 py-3">
                       <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', SEVERITY_BADGE[r.severity])}>{r.severity}</span>
                     </td>
-                    <td className="px-5 py-3 text-gray-600">{r.cooldown_minutes}m</td>
-                    <td className="px-5 py-3 text-gray-600">{r.channels.length}</td>
+                    <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.cooldown_minutes}m</td>
+                    <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.channels.length}</td>
                     <td className="px-5 py-3 text-right">
                       <Toggle on={r.is_active} onClick={() => toggle(r)} />
                     </td>
@@ -161,31 +161,31 @@ function AddRuleModal({ onClose, onCreated, onError }: { onClose: () => void; on
       size="lg"
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Create Rule'}</button>
         </>
       }
     >
       <div className="space-y-3">
-        {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="High CPU on core devices" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Severity</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Severity</label>
             <select className={inputCls} value={severity} onChange={(e) => setSeverity(e.target.value as AlertSeverity)}>
               {(['critical', 'high', 'medium', 'low', 'info'] as AlertSeverity[]).map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Cooldown (minutes)</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Cooldown (minutes)</label>
             <input className={inputCls} type="number" value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
           </div>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Condition (JSON)</label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Condition (JSON)</label>
           <textarea className={`${inputCls} font-mono text-xs h-32`} value={condition} onChange={(e) => setCondition(e.target.value)} />
         </div>
       </div>
@@ -208,21 +208,21 @@ function MaintenanceTab() {
       <div className="flex justify-end mb-3">
         <button onClick={() => setAdding(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Create Window</button>
       </div>
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden divide-y divide-gray-100">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
         {windows.length === 0 ? (
           <EmptyState title="No maintenance windows" description="Schedule a window to suppress alerts and exclude downtime from SLA." icon="🛠" />
         ) : windows.map((w) => (
           <div key={w.id} className="flex items-center gap-4 px-5 py-3">
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-800">{w.name}</p>
-              <p className="text-xs text-gray-500">{w.start} → {w.end} · {w.scope}</p>
+              <p className="font-medium text-gray-800 dark:text-gray-100">{w.name}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{w.start} → {w.end} · {w.scope}</p>
             </div>
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Scheduled</span>
-            <button onClick={() => setWindows((ws) => ws.filter((x) => x.id !== w.id))} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50">Cancel</button>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Scheduled</span>
+            <button onClick={() => setWindows((ws) => ws.filter((x) => x.id !== w.id))} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Cancel</button>
           </div>
         ))}
       </div>
-      <p className="text-xs text-gray-400 mt-2">Alerts are suppressed and downtime excluded from SLA during active windows.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">Alerts are suppressed and downtime excluded from SLA during active windows.</p>
 
       {adding && <CreateWindowModal onClose={() => setAdding(false)} onCreate={(w) => { setWindows((ws) => [...ws, { ...w, id: Date.now() }]); setAdding(false) }} />}
     </div>
@@ -240,18 +240,18 @@ function CreateWindowModal({ onClose, onCreate }: { onClose: () => void; onCreat
       onClose={onClose}
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={() => name && onCreate({ name, start, end, scope: scope || 'All devices' })} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Create</button>
         </>
       }
     >
       <div className="space-y-3">
-        <div><label className="block text-sm font-medium text-gray-700 mb-1">Name</label><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></div>
+        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className="block text-sm font-medium text-gray-700 mb-1">Start</label><input className={inputCls} type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-          <div><label className="block text-sm font-medium text-gray-700 mb-1">End</label><input className={inputCls} type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+          <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start</label><input className={inputCls} type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} /></div>
+          <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">End</label><input className={inputCls} type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
         </div>
-        <div><label className="block text-sm font-medium text-gray-700 mb-1">Affected devices / sites</label><input className={inputCls} value={scope} onChange={(e) => setScope(e.target.value)} placeholder="Site: DC-1" /></div>
+        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Affected devices / sites</label><input className={inputCls} value={scope} onChange={(e) => setScope(e.target.value)} placeholder="Site: DC-1" /></div>
       </div>
     </Modal>
   )
@@ -268,17 +268,17 @@ function TemplatesTab() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <label className="block text-sm font-medium text-gray-700 mb-1">Channel type</label>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Channel type</label>
         <select className={inputCls} value={active} onChange={(e) => setActive(e.target.value)}>
           {channels.map((c) => <option key={c}>{c}</option>)}
         </select>
-        <label className="block text-sm font-medium text-gray-700 mb-1 mt-4">Message template</label>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 mt-4">Message template</label>
         <textarea className={`${inputCls} font-mono text-xs h-48`} value={body} onChange={(e) => setBody(e.target.value)} />
-        <p className="text-xs text-gray-400 mt-2">Variables: {'{{severity}} {{rule_name}} {{device}} {{message}} {{fired_at}}'}</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">Variables: {'{{severity}} {{rule_name}} {{device}} {{message}} {{fired_at}}'}</p>
       </div>
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <p className="text-sm font-medium text-gray-700 mb-2">Preview — {active}</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Preview — {active}</p>
         <div className="bg-gray-900 text-gray-100 rounded-lg p-4 text-sm whitespace-pre-wrap font-mono">
           {body
             .replace('{{severity}}', 'CRITICAL')

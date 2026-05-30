@@ -17,7 +17,7 @@ const PROTOCOL_LABELS: Record<CredentialProtocol, string> = {
 const PROTOCOL_ORDER: CredentialProtocol[] = ['ssh', 'snmpv3', 'snmpv2c', 'https', 'netconf', 'gnmi']
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 const VAULT_NOTE = '🔒 Stored securely in OpenBao'
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -54,33 +54,33 @@ export default function Credentials() {
         }
       />
 
-      {error && <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 mb-4">{error}</div>}
+      {error && <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-gray-700 rounded-lg px-4 py-3 text-sm text-yellow-800 dark:text-yellow-400 mb-4">{error}</div>}
 
       {loading ? (
         <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
       ) : items.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
           <EmptyState title="No credential profiles yet" description="Create a profile and enable the protocols (SSH, SNMP, HTTPS, NETCONF, gNMI) your devices use." action={{ label: 'New Profile', onClick: () => setEditing('new') }} icon="🔑" />
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden divide-y divide-gray-100">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
           {items.map((row) => (
             <div key={row.id} className="flex items-center gap-4 px-4 py-3">
               <div className="min-w-0 flex-1">
-                <p className="font-medium text-gray-900 truncate">{row.name}</p>
+                <p className="font-medium text-gray-900 dark:text-gray-100 truncate">{row.name}</p>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {row.enabled_protocols.length === 0 && <span className="text-xs text-gray-400">No protocols enabled</span>}
+                  {row.enabled_protocols.length === 0 && <span className="text-xs text-gray-400 dark:text-gray-500">No protocols enabled</span>}
                   {row.enabled_protocols.map((p) => (
-                    <span key={p} className="text-xs font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">{PROTOCOL_LABELS[p]}</span>
+                    <span key={p} className="text-xs font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">{PROTOCOL_LABELS[p]}</span>
                   ))}
                 </div>
               </div>
-              <span className="text-xs text-gray-500 whitespace-nowrap">{row.device_count} device{row.device_count !== 1 ? 's' : ''}</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{row.device_count} device{row.device_count !== 1 ? 's' : ''}</span>
               <TestBadge result={row.last_test_result} />
               <div className="flex items-center gap-2">
-                <button onClick={() => setTesting(row)} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50">Test</button>
-                <button onClick={() => openEdit(row.id)} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50">Edit</button>
-                <button onClick={() => setDeleting(row)} className="px-2.5 py-1 text-xs border border-red-200 text-red-600 rounded-md hover:bg-red-50">Delete</button>
+                <button onClick={() => setTesting(row)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Test</button>
+                <button onClick={() => openEdit(row.id)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Edit</button>
+                <button onClick={() => setDeleting(row)} className="px-2.5 py-1 text-xs border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
               </div>
             </div>
           ))}
@@ -98,10 +98,10 @@ export default function Credentials() {
 
 function TestBadge({ result }: { result: string }) {
   const map: Record<string, string> = {
-    success: 'bg-green-100 text-green-700',
-    partial: 'bg-yellow-100 text-yellow-700',
-    failure: 'bg-red-100 text-red-700',
-    untested: 'bg-gray-100 text-gray-500',
+    success: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+    partial: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+    failure: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    untested: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
   }
   const label: Record<string, string> = { success: 'Tested OK', partial: 'Partial', failure: 'Test failed', untested: 'Untested' }
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${map[result] ?? map.untested}`}>{label[result] ?? 'Untested'}</span>
@@ -172,7 +172,7 @@ function CredentialModal({ profile, onClose, onSaved }: {
       size="xl"
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
             {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Profile'}
           </button>
@@ -180,7 +180,7 @@ function CredentialModal({ profile, onClose, onSaved }: {
       }
     >
       <div className="space-y-4">
-        {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
 
         <Field label="Name">
           <input className={inputCls} value={String(form.name)} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cisco Standard" />
@@ -189,7 +189,7 @@ function CredentialModal({ profile, onClose, onSaved }: {
           <input className={inputCls} value={String(form.description)} onChange={(e) => set('description', e.target.value)} />
         </Field>
 
-        <p className="text-xs text-gray-500 pt-1">{VAULT_NOTE}{isEdit && ' — leave secret fields blank to keep existing values.'}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 pt-1">{VAULT_NOTE}{isEdit && ' — leave secret fields blank to keep existing values.'}</p>
 
         {PROTOCOL_ORDER.map((p) => (
           <Section key={p} label={PROTOCOL_LABELS[p]} on={enabled(p)} onToggle={(v) => set(`${p}_enabled`, v)}>
@@ -279,7 +279,7 @@ function CredentialModal({ profile, onClose, onSaved }: {
                 {form.https_auth_type === 'apikey' && (
                   <Field label="API key"><Secret value={secrets.https_api_key} onChange={(v) => setSecret('https_api_key', v)} placeholder={secretPlaceholder} /></Field>
                 )}
-                <label className="flex items-center gap-2 text-sm text-gray-700">
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <input type="checkbox" checked={form.https_verify_tls as boolean} onChange={(e) => set('https_verify_tls', e.target.checked)} /> Verify TLS certificate
                 </label>
               </>
@@ -290,7 +290,7 @@ function CredentialModal({ profile, onClose, onSaved }: {
                 <Row>
                   <Field label="Port"><input type="number" className={inputCls} value={Number(form.netconf_port)} onChange={(e) => set('netconf_port', Number(e.target.value))} /></Field>
                   <div className="flex items-end">
-                    <label className="flex items-center gap-2 text-sm text-gray-700 py-2">
+                    <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 py-2">
                       <input type="checkbox" checked={form.netconf_use_ssh_creds as boolean} onChange={(e) => set('netconf_use_ssh_creds', e.target.checked)} /> Use SSH credentials
                     </label>
                   </div>
@@ -308,7 +308,7 @@ function CredentialModal({ profile, onClose, onSaved }: {
                   <Field label="Port"><input type="number" className={inputCls} value={Number(form.gnmi_port)} onChange={(e) => set('gnmi_port', Number(e.target.value))} /></Field>
                 </Row>
                 <Field label="Password"><Secret value={secrets.gnmi_password} onChange={(v) => setSecret('gnmi_password', v)} placeholder={secretPlaceholder} /></Field>
-                <label className="flex items-center gap-2 text-sm text-gray-700">
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <input type="checkbox" checked={form.gnmi_tls_enabled as boolean} onChange={(e) => set('gnmi_tls_enabled', e.target.checked)} /> TLS enabled
                 </label>
                 {form.gnmi_tls_enabled && (
@@ -330,11 +330,11 @@ function Section({ label, on, onToggle, children }: {
   label: string; on: boolean; onToggle: (v: boolean) => void; children: React.ReactNode
 }) {
   return (
-    <div className={clsx('border rounded-lg transition-colors', on ? 'border-blue-200' : 'border-gray-200')}>
-      <label className={clsx('flex items-center gap-2 px-3 py-2.5 cursor-pointer', on && 'border-b border-gray-100')}>
+    <div className={clsx('border rounded-lg transition-colors', on ? 'border-blue-200 dark:border-blue-700' : 'border-gray-200 dark:border-gray-700')}>
+      <label className={clsx('flex items-center gap-2 px-3 py-2.5 cursor-pointer', on && 'border-b border-gray-100 dark:border-gray-700')}>
         <input type="checkbox" checked={on} onChange={(e) => onToggle(e.target.checked)} />
-        <span className="text-sm font-medium text-gray-800">{label}</span>
-        {on && <span className="ml-auto text-xs text-blue-600">enabled</span>}
+        <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{label}</span>
+        {on && <span className="ml-auto text-xs text-blue-600 dark:text-blue-400">enabled</span>}
       </label>
       {on && <div className="px-3 py-3 space-y-3">{children}</div>}
     </div>
@@ -342,7 +342,7 @@ function Section({ label, on, onToggle, children }: {
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex-1 min-w-0"><label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>{children}</div>
+  return <div className="flex-1 min-w-0"><label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{label}</label>{children}</div>
 }
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col sm:flex-row gap-3">{children}</div>
@@ -375,18 +375,18 @@ function TestModal({ profile, onClose }: { profile: CredentialProfileListItem; o
       onClose={onClose}
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Close</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Close</button>
           <button onClick={run} disabled={running} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{running ? 'Testing…' : 'Run Test'}</button>
         </>
       }
     >
       <div className="space-y-3">
         <Field label="Target IP address"><input className={inputCls} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="10.0.0.1" /></Field>
-        {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
         {result && (
           <div className="space-y-2">
             {result.results.map((r) => (
-              <div key={r.protocol} className={clsx('flex items-center gap-2 rounded-md px-3 py-2 text-sm border', r.success ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800')}>
+              <div key={r.protocol} className={clsx('flex items-center gap-2 rounded-md px-3 py-2 text-sm border', r.success ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/30 dark:border-gray-700 dark:text-green-400' : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/30 dark:border-gray-700 dark:text-red-400')}>
                 <span>{r.success ? '✅' : '❌'}</span>
                 <span className="font-medium">{r.label}</span>
                 <span className="text-xs opacity-80 truncate">{r.message}</span>
@@ -394,7 +394,7 @@ function TestModal({ profile, onClose }: { profile: CredentialProfileListItem; o
             ))}
           </div>
         )}
-        <p className="text-xs text-gray-400">Probes service reachability per enabled protocol. Full auth is verified by the poller.</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">Probes service reachability per enabled protocol. Full auth is verified by the poller.</p>
       </div>
     </Modal>
   )
@@ -418,18 +418,18 @@ function DeleteModal({ profile, onClose, onDeleted }: {
       onClose={onClose}
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={confirm} disabled={busy} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{busy ? 'Deleting…' : 'Delete'}</button>
         </>
       }
     >
-      <p className="text-sm text-gray-700"><span className="font-medium">{profile.name}</span> will be removed and its secrets deleted from OpenBao.</p>
+      <p className="text-sm text-gray-700 dark:text-gray-300"><span className="font-medium">{profile.name}</span> will be removed and its secrets deleted from OpenBao.</p>
       {profile.device_count > 0 && (
-        <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-sm text-yellow-800">
+        <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-yellow-800 dark:text-yellow-400">
           ⚠ Assigned to <span className="font-medium">{profile.device_count} device{profile.device_count !== 1 ? 's' : ''}</span>. They'll be left without credentials — reassign first.
         </div>
       )}
-      {err && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="mt-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
     </Modal>
   )
 }

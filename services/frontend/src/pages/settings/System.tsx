@@ -5,7 +5,7 @@ import { SectionHeader } from '../Settings'
 import TrustedCACerts from './TrustedCACerts'
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 const RETENTION_TYPES = [
   { id: 'metrics', label: 'Telemetry metrics (InfluxDB)', def: '90' },
@@ -41,7 +41,7 @@ export default function System() {
 
       {/* Platform info */}
       <section>
-        <h3 className="text-sm font-semibold text-gray-800 mb-2">Platform</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Platform</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <InfoCard label="Version" value="0.1.0-dev" />
           <InfoCard label="Last backup" value="—" />
@@ -51,7 +51,7 @@ export default function System() {
         {infra && (
           <div className="flex flex-wrap gap-2 mt-3">
             {Object.entries(infra.services).map(([svc, up]) => (
-              <span key={svc} className={clsx('inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md', up ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600')}>
+              <span key={svc} className={clsx('inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md', up ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400')}>
                 <span className={clsx('w-1.5 h-1.5 rounded-full', up ? 'bg-green-500' : 'bg-red-500')} />
                 {svc}
               </span>
@@ -62,18 +62,18 @@ export default function System() {
 
       {/* Data retention */}
       <section>
-        <h3 className="text-sm font-semibold text-gray-800 mb-2">Data retention</h3>
-        <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Data retention</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
           {RETENTION_TYPES.map((r) => (
             <div key={r.id} className="flex items-center gap-4 px-5 py-3">
-              <span className="flex-1 text-sm text-gray-700">{r.label}</span>
+              <span className="flex-1 text-sm text-gray-700 dark:text-gray-300">{r.label}</span>
               <input
                 className={`${inputCls} w-24`}
                 type="number"
                 value={retention[r.id]}
                 onChange={(e) => setRetention((p) => ({ ...p, [r.id]: e.target.value }))}
               />
-              <span className="text-xs text-gray-400 w-10">days</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500 w-10">days</span>
             </div>
           ))}
         </div>
@@ -84,26 +84,26 @@ export default function System() {
 
       {/* Audit log */}
       <section>
-        <h3 className="text-sm font-semibold text-gray-800 mb-2">Audit log <span className="font-normal text-gray-400">(recent)</span></h3>
-        <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Audit log <span className="font-normal text-gray-400 dark:text-gray-500">(recent)</span></h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
           {AUDIT_SAMPLE.map((a, i) => (
             <div key={i} className="flex items-center gap-4 px-5 py-2.5 text-sm">
-              <span className="text-xs text-gray-400 font-mono w-36 shrink-0">{a.ts}</span>
-              <span className="font-medium text-gray-700 w-16 shrink-0">{a.user}</span>
-              <span className="text-gray-600 truncate">{a.action}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500 font-mono w-36 shrink-0">{a.ts}</span>
+              <span className="font-medium text-gray-700 dark:text-gray-300 w-16 shrink-0">{a.user}</span>
+              <span className="text-gray-600 dark:text-gray-400 truncate">{a.action}</span>
             </div>
           ))}
         </div>
-        <p className="text-xs text-gray-400 mt-2">Full audit log viewer (last 100 actions) lands with the audit backend.</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">Full audit log viewer (last 100 actions) lands with the audit backend.</p>
       </section>
 
       {/* About */}
       <section>
-        <h3 className="text-sm font-semibold text-gray-800 mb-2">About & licenses</h3>
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <p className="text-sm text-gray-600 mb-3">NetPulse — push-first, open-source network intelligence platform.</p>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">About & licenses</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">NetPulse — push-first, open-source network intelligence platform.</p>
           <div className="flex flex-wrap gap-2">
-            {LICENSES.map((l) => <span key={l} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-md">{l}</span>)}
+            {LICENSES.map((l) => <span key={l} className="text-xs bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-1 rounded-md">{l}</span>)}
           </div>
         </div>
       </section>
@@ -113,9 +113,9 @@ export default function System() {
 
 function InfoCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className="text-lg font-semibold text-gray-900 mt-0.5">{value}</p>
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+      <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+      <p className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-0.5">{value}</p>
     </div>
   )
 }

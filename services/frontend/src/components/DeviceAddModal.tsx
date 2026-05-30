@@ -8,7 +8,7 @@ import {
 } from '../api/client'
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:text-gray-100'
 
 const PLATFORMS = [
   { value: 'ios', label: 'Cisco IOS', vendor: 'cisco' },
@@ -205,24 +205,24 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
         {/* Header + stepper */}
-        <div className="px-6 py-4 border-b border-gray-200">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-gray-900">Add Device</h2>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Add Device</h2>
+            <button onClick={onClose} className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">×</button>
           </div>
           <div className="flex items-center gap-1 mt-3">
             {STEPS.map((label, i) => (
               <div key={label} className="flex items-center gap-1 flex-1 last:flex-none">
-                <div className={clsx('flex items-center gap-1.5 text-xs font-medium', i <= step ? 'text-blue-700' : 'text-gray-400')}>
+                <div className={clsx('flex items-center gap-1.5 text-xs font-medium', i <= step ? 'text-blue-700' : 'text-gray-400 dark:text-gray-500')}>
                   <span className={clsx('w-5 h-5 rounded-full flex items-center justify-center text-[11px]',
-                    i < step ? 'bg-blue-600 text-white' : i === step ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-600' : 'bg-gray-100 text-gray-400')}>
+                    i < step ? 'bg-blue-600 text-white' : i === step ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-600' : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500')}>
                     {i < step ? '✓' : i + 1}
                   </span>
                   <span className="hidden sm:inline">{label}</span>
                 </div>
-                {i < STEPS.length - 1 && <div className={clsx('h-px flex-1', i < step ? 'bg-blue-600' : 'bg-gray-200')} />}
+                {i < STEPS.length - 1 && <div className={clsx('h-px flex-1', i < step ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700')} />}
               </div>
             ))}
           </div>
@@ -230,7 +230,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
 
         {/* Body */}
         <div className="px-6 py-5 overflow-y-auto">
-          {error && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 mb-4">{error}</div>}
+          {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4">{error}</div>}
 
           {/* Step 1 — Basic Info */}
           {step === 0 && (
@@ -253,7 +253,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
                         <option value="">— None —</option>
                         {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
-                      <button onClick={() => setAddingSite(true)} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 shrink-0">+ New</button>
+                      <button onClick={() => setAddingSite(true)} className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300 shrink-0">+ New</button>
                     </div>
                   )}
                 </Field>
@@ -267,8 +267,8 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
               <Field label="Tags">
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {tags.map((t) => (
-                    <span key={t} className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded-md">
-                      {t}<button onClick={() => setTags((x) => x.filter((v) => v !== t))} className="text-gray-400 hover:text-gray-700">×</button>
+                    <span key={t} className="inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded-md">
+                      {t}<button onClick={() => setTags((x) => x.filter((v) => v !== t))} className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">×</button>
                     </span>
                   ))}
                 </div>
@@ -282,20 +282,20 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {/* Step 2 — Credentials */}
           {step === 1 && (
             <div className="space-y-3">
-              <p className="text-sm text-gray-500">How should NetPulse connect to this device? Pick one profile covering every protocol it needs. SSH is required for platform auto-detection.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">How should NetPulse connect to this device? Pick one profile covering every protocol it needs. SSH is required for platform auto-detection.</p>
               <div className="flex gap-2">
                 <select className={inputCls} value={credentialId ?? ''} onChange={(e) => { setCredentialId(e.target.value ? Number(e.target.value) : null); setCredTest(null); setDetect(null) }}>
                   <option value="">— No profile —</option>
                   {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.enabled_protocols.join(', ') || 'none'})</option>)}
                 </select>
-                <button onClick={loadProfiles} title="Refresh" className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 shrink-0">↻</button>
+                <button onClick={loadProfiles} title="Refresh" className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 shrink-0 dark:text-gray-300">↻</button>
               </div>
               {credentialId != null && !hasSSH && (
                 <p className="text-xs text-amber-600">⚠ This profile has no SSH — platform auto-detection won't be available.</p>
               )}
               <a href="/settings/credentials" target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-600 hover:text-blue-800">+ New profile (opens Settings → Credentials)</a>
               <div>
-                <button onClick={testCred} disabled={credentialId == null || credTest === 'running'} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
+                <button onClick={testCred} disabled={credentialId == null || credTest === 'running'} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">
                   {credTest === 'running' ? 'Testing…' : 'Test All'}
                 </button>
               </div>
@@ -316,7 +316,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {step === 2 && (
             <div className="space-y-4">
               {!hasSSH ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 text-sm text-amber-800">
+                <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-3 text-sm text-amber-800 dark:text-amber-400">
                   Select an SSH credential profile in the previous step to enable auto-detection.
                 </div>
               ) : (
@@ -352,8 +352,8 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
               )}
 
               {/* Manual override */}
-              <div className="border-t border-gray-100 pt-3">
-                <button onClick={() => setManualOpen((o) => !o)} className="text-sm font-medium text-gray-700 hover:text-gray-900">
+              <div className="border-t border-gray-100 dark:border-gray-700 pt-3">
+                <button onClick={() => setManualOpen((o) => !o)} className="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100">
                   {manualOpen ? '▾' : '▸'} Override manually
                 </button>
                 {(manualOpen || platform !== 'other' || vendor) && (
@@ -383,10 +383,10 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {/* Step 4 — Telemetry */}
           {step === 3 && (
             <div className="space-y-3">
-              <p className="text-sm text-gray-500">Enable telemetry sources, then apply the matching CLI for <strong>{PLATFORMS.find((p) => p.value === platform)?.label}</strong>.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Enable telemetry sources, then apply the matching CLI for <strong>{PLATFORMS.find((p) => p.value === platform)?.label}</strong>.</p>
               {TELEMETRY_FEATURES.map((f) => (
-                <div key={f.key} className="border border-gray-200 rounded-lg p-3">
-                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                <div key={f.key} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                     <input type="checkbox" checked={features.has(f.key)} onChange={(e) => setFeatures((s) => { const n = new Set(s); e.target.checked ? n.add(f.key) : n.delete(f.key); return n })} />
                     {f.label}
                   </label>
@@ -401,12 +401,12 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {/* Step 5 — Confirm */}
           {step === 4 && created && (
             <div className="text-center py-6">
-              <div className="w-14 h-14 mx-auto rounded-full bg-green-100 text-green-600 flex items-center justify-center text-2xl mb-3">✓</div>
-              <h3 className="text-lg font-semibold text-gray-900">{created.hostname} added</h3>
-              <p className="text-sm text-gray-500 mt-1">{created.ip_address} · {PLATFORMS.find((p) => p.value === created.platform)?.label}</p>
+              <div className="w-14 h-14 mx-auto rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center text-2xl mb-3">✓</div>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{created.hostname} added</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{created.ip_address} · {PLATFORMS.find((p) => p.value === created.platform)?.label}</p>
               <div className="flex gap-3 justify-center mt-6">
                 <Link to={`/devices/${created.id}`} onClick={onClose} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">View Device</Link>
-                <button onClick={reset} className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Add Another Device</button>
+                <button onClick={reset} className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Add Another Device</button>
               </div>
             </div>
           )}
@@ -414,8 +414,8 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
 
         {/* Footer nav */}
         {step < 4 && (
-          <div className="flex gap-3 px-6 py-4 border-t border-gray-200">
-            <button onClick={() => (step === 0 ? onClose() : setStep((s) => s - 1))} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">
+          <div className="flex gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+            <button onClick={() => (step === 0 ? onClose() : setStep((s) => s - 1))} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">
               {step === 0 ? 'Cancel' : 'Back'}
             </button>
             {step < 3 ? (
@@ -437,7 +437,7 @@ function platformLabel(p?: string) {
   return PLATFORMS.find((x) => x.value === p)?.label ?? p ?? ''
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex-1 min-w-0"><label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>{children}</div>
+  return <div className="flex-1 min-w-0"><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>{children}</div>
 }
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col sm:flex-row gap-3">{children}</div>

@@ -16,7 +16,7 @@ interface ConfigRow {
 type Mode = 'unified' | 'side' | 'summary'
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 function fetchConfigs(deviceId: number): Promise<ConfigRow[]> {
   return api
@@ -68,7 +68,7 @@ export default function ConfigCompare() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Configuration Compare</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Configuration Compare</h1>
 
       {/* Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -85,10 +85,10 @@ export default function ConfigCompare() {
       </div>
 
       {/* Mode toggle */}
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+      <div className="flex gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-1 w-fit">
         {([['unified', 'Unified'], ['side', 'Side by Side'], ['summary', 'Summary']] as [Mode, string][]).map(([m, lbl]) => (
           <button key={m} onClick={() => setMode(m)}
-            className={clsx('px-3 py-1.5 text-sm rounded-md font-medium', mode === m ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600 hover:text-gray-900')}>
+            className={clsx('px-3 py-1.5 text-sm rounded-md font-medium', mode === m ? 'bg-white dark:bg-gray-800 shadow-sm text-blue-700' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100')}>
             {lbl}
           </button>
         ))}
@@ -96,12 +96,12 @@ export default function ConfigCompare() {
 
       {/* Diff */}
       {!ready ? (
-        <div className="bg-white rounded-lg border border-gray-200 py-16 text-center text-sm text-gray-500">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 py-16 text-center text-sm text-gray-500 dark:text-gray-400">
           Select a device and version on both sides to compare.
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-200 text-xs text-gray-500 flex justify-between">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 flex justify-between">
             <span className="text-red-600 font-mono truncate">− {leftLabel}</span>
             <span className="text-green-600 font-mono truncate">+ {rightLabel}</span>
           </div>
@@ -137,17 +137,17 @@ function Selector({ title, devices, device, setDevice, configs, version, setVers
   setVersion: (v: number | null) => void
 }) {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-      <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{title}</h3>
       <div>
-        <label className="block text-xs text-gray-500 mb-1">Device</label>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Device</label>
         <select className={inputCls} value={device ?? ''} onChange={(e) => setDevice(e.target.value ? Number(e.target.value) : null)}>
           <option value="">Select device…</option>
           {devices.map((d) => <option key={d.id} value={d.id}>{d.hostname}</option>)}
         </select>
       </div>
       <div>
-        <label className="block text-xs text-gray-500 mb-1">Version</label>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Version</label>
         <select className={inputCls} value={version ?? ''} disabled={!device} onChange={(e) => setVersion(e.target.value ? Number(e.target.value) : null)}>
           <option value="">{configs.length ? 'Select version…' : 'No snapshots'}</option>
           {configs.map((c, i) => (
@@ -205,10 +205,10 @@ function SideBySide({ left, right }: { left: string; right: string }) {
         <tbody>
           {rows.map((r, i) => (
             <tr key={i}>
-              <td className={clsx('px-3 py-0.5 align-top whitespace-pre-wrap w-1/2 border-r border-gray-100',
-                r.kind === 'del' && 'bg-red-50 text-red-700')}>{r.left ?? ''}</td>
+              <td className={clsx('px-3 py-0.5 align-top whitespace-pre-wrap w-1/2 border-r border-gray-100 dark:border-gray-700',
+                r.kind === 'del' && 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400')}>{r.left ?? ''}</td>
               <td className={clsx('px-3 py-0.5 align-top whitespace-pre-wrap w-1/2',
-                r.kind === 'add' && 'bg-green-50 text-green-700')}>{r.right ?? ''}</td>
+                r.kind === 'add' && 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400')}>{r.right ?? ''}</td>
             </tr>
           ))}
         </tbody>
@@ -234,7 +234,7 @@ function Summary({ left, right }: { left: string; right: string }) {
       <Stat value={`-${removed}`} label="lines removed" color="text-red-600" />
       <Stat value={String(sections)} label="sections changed" color="text-gray-800" />
       {added === 0 && removed === 0 && (
-        <p className="col-span-3 text-sm text-gray-500">The two configurations are identical.</p>
+        <p className="col-span-3 text-sm text-gray-500 dark:text-gray-400">The two configurations are identical.</p>
       )}
     </div>
   )
@@ -244,7 +244,7 @@ function Stat({ value, label, color }: { value: string; label: string; color: st
   return (
     <div>
       <p className={clsx('text-3xl font-bold', color)}>{value}</p>
-      <p className="text-xs text-gray-400 mt-1">{label}</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{label}</p>
     </div>
   )
 }

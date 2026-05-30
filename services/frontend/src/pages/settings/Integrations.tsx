@@ -61,7 +61,7 @@ const CATEGORIES: Category[] = [
 ]
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 export default function Integrations() {
   // id → summary string when connected (local-only for now).
@@ -82,33 +82,33 @@ export default function Integrations() {
         {CATEGORIES.map((cat) => (
           <section key={cat.title}>
             <div className="mb-3">
-              <h3 className="text-sm font-semibold text-gray-800">{cat.title}</h3>
-              <p className="text-xs text-gray-500">{cat.description}</p>
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{cat.title}</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{cat.description}</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {cat.items.map((it) => {
                 const status = statusOf(it.id)
                 return (
-                  <div key={it.id} className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col gap-3">
+                  <div key={it.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 flex flex-col gap-3">
                     <div className="flex items-start gap-3">
                       <span className="text-2xl leading-none" aria-hidden>{it.icon}</span>
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium text-gray-900">{it.name}</p>
-                        <p className="text-xs text-gray-500">{it.description}</p>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">{it.name}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">{it.description}</p>
                       </div>
                       <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${
-                        status === 'connected' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        status === 'connected' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
                       }`}>
                         {status === 'connected' ? 'Connected' : 'Not configured'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between mt-auto">
-                      <span className="text-xs text-gray-500 truncate">
+                      <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
                         {status === 'connected' ? connected[it.id] : ''}
                       </span>
                       <button
                         onClick={() => (it.id === 'netbox' ? setNetboxOpen(true) : setSetup(it))}
-                        className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+                        className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300"
                       >
                         {it.id === 'netbox' ? 'Import' : status === 'connected' ? 'Configure' : 'Connect'}
                       </button>
@@ -156,9 +156,9 @@ function SetupModal({ integration, connected, onClose, onConnect, onDisconnect }
       footer={
         <>
           {connected ? (
-            <button onClick={onDisconnect} className="flex-1 py-2.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50">Disconnect</button>
+            <button onClick={onDisconnect} className="flex-1 py-2.5 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-50 dark:hover:bg-red-900/30">Disconnect</button>
           ) : (
-            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           )}
           <button onClick={onConnect} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
             {connected ? 'Save' : 'Test & Connect'}
@@ -167,14 +167,14 @@ function SetupModal({ integration, connected, onClose, onConnect, onDisconnect }
       }
     >
       <div className="space-y-3">
-        <p className="text-sm text-gray-500">{integration.description}</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">{integration.description}</p>
         {integration.fields.map((f) => (
           <div key={f.key}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{f.label}</label>
             <input type={f.secret ? 'password' : 'text'} placeholder={f.placeholder} className={inputCls} autoComplete="off" />
           </div>
         ))}
-        <p className="text-xs text-gray-400">🔒 Credentials are stored securely in OpenBao.</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">🔒 Credentials are stored securely in OpenBao.</p>
       </div>
     </Modal>
   )

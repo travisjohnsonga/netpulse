@@ -7,15 +7,15 @@ import {
 } from '../../api/client'
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 const EXPIRY_BADGE: Record<string, string> = {
-  ok: 'bg-green-100 text-green-700',
-  warning: 'bg-yellow-100 text-yellow-700',
-  critical: 'bg-orange-100 text-orange-700',
-  expired: 'bg-red-100 text-red-700',
-  not_yet_valid: 'bg-gray-100 text-gray-600',
-  none: 'bg-gray-100 text-gray-500',
+  ok: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  warning: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  critical: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  expired: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  not_yet_valid: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+  none: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
 }
 
 type Mode = 'self_signed' | 'csr' | 'upload'
@@ -83,13 +83,13 @@ export default function Certificates() {
         description="NetPulse's own HTTPS server certificate — the cert nginx serves the web UI and API with. This is not for network devices."
       />
 
-      {error && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 mb-4 max-w-3xl">{error}</div>}
-      {msg && <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700 mb-4 max-w-3xl">{msg}</div>}
+      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4 max-w-3xl">{error}</div>}
+      {msg && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-green-700 dark:text-green-400 mb-4 max-w-3xl">{msg}</div>}
 
       {/* Current status */}
-      <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4 max-w-3xl">
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5 mb-4 max-w-3xl">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-gray-800">Installed certificate</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Installed certificate</h3>
           {status && (
             <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full', EXPIRY_BADGE[status.expiry_status])}>
               {!status.installed ? 'None installed'
@@ -100,9 +100,9 @@ export default function Certificates() {
             </span>
           )}
         </div>
-        {!status ? <p className="text-sm text-gray-400">Loading…</p>
+        {!status ? <p className="text-sm text-gray-400 dark:text-gray-500">Loading…</p>
           : !status.installed ? (
-            <p className="text-sm text-gray-500">No certificate installed yet. A temporary self-signed cert is used until you install one below.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">No certificate installed yet. A temporary self-signed cert is used until you install one below.</p>
           ) : (
             <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm">
               <Info label="Common name" value={status.common_name || '—'} />
@@ -116,19 +116,19 @@ export default function Certificates() {
             </dl>
           )}
         {status?.pending_csr && (
-          <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <div className="mt-3 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-gray-700 rounded-lg px-3 py-2">
             A CSR is pending — upload the CA-signed certificate to complete installation.
           </div>
         )}
       </div>
 
       {/* Install / replace */}
-      <div className="bg-white rounded-lg border border-gray-200 p-5 max-w-3xl">
-        <h3 className="text-sm font-semibold text-gray-800 mb-3">Install / replace certificate</h3>
-        <div className="flex gap-1 border-b border-gray-200 mb-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5 max-w-3xl">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Install / replace certificate</h3>
+        <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 mb-4">
           {([['self_signed', 'Self-signed'], ['csr', 'Generate CSR'], ['upload', 'Upload']] as [Mode, string][]).map(([m, label]) => (
             <button key={m} onClick={() => { setMode(m); setError(null); setMsg(null) }}
-              className={clsx('px-4 py-2 text-sm font-medium border-b-2 -mb-px', mode === m ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800')}>
+              className={clsx('px-4 py-2 text-sm font-medium border-b-2 -mb-px', mode === m ? 'border-blue-600 text-blue-700 dark:text-blue-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100')}>
               {label}
             </button>
           ))}
@@ -136,7 +136,7 @@ export default function Certificates() {
 
         {mode === 'self_signed' && (
           <div className="space-y-4">
-            <p className="text-xs text-gray-500">Quickest option — good for internal/lab use. Browsers will warn unless the cert is trusted manually.</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Quickest option — good for internal/lab use. Browsers will warn unless the cert is trusted manually.</p>
             <Field label="Common name (FQDN)"><input className={inputCls} value={cn} onChange={(e) => setCn(e.target.value)} placeholder="netpulse.example.com" /></Field>
             <Field label="Subject alternative names (comma/space separated)"><input className={inputCls} value={sans} onChange={(e) => setSans(e.target.value)} placeholder="netpulse.example.com, 10.0.0.5" /></Field>
             <Field label="Validity (days)"><input className={`${inputCls} max-w-[10rem]`} type="number" value={days} onChange={(e) => setDays(e.target.value)} /></Field>
@@ -148,7 +148,7 @@ export default function Certificates() {
 
         {mode === 'csr' && (
           <div className="space-y-4">
-            <p className="text-xs text-gray-500">Generates a private key (kept on the server) and a CSR to send to your CA. Upload the signed cert under the Upload tab afterwards.</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Generates a private key (kept on the server) and a CSR to send to your CA. Upload the signed cert under the Upload tab afterwards.</p>
             <Field label="Common name (FQDN)"><input className={inputCls} value={cn} onChange={(e) => setCn(e.target.value)} placeholder="netpulse.example.com" /></Field>
             <Field label="Subject alternative names"><input className={inputCls} value={sans} onChange={(e) => setSans(e.target.value)} placeholder="netpulse.example.com, www.example.com" /></Field>
             <div className="grid grid-cols-2 gap-4">
@@ -161,8 +161,8 @@ export default function Certificates() {
             {csrOut && (
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium text-gray-600">Certificate Signing Request</span>
-                  <button onClick={() => navigator.clipboard.writeText(csrOut)} className="text-xs border border-gray-300 rounded-md px-2 py-1 hover:bg-gray-50">📋 Copy</button>
+                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Certificate Signing Request</span>
+                  <button onClick={() => navigator.clipboard.writeText(csrOut)} className="text-xs border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">📋 Copy</button>
                 </div>
                 <pre className="bg-gray-900 text-gray-100 text-xs font-mono rounded-md p-3 overflow-x-auto max-h-60 whitespace-pre-wrap">{csrOut}</pre>
               </div>
@@ -172,7 +172,7 @@ export default function Certificates() {
 
         {mode === 'upload' && (
           <div className="space-y-4">
-            <p className="text-xs text-gray-500">Paste a PEM certificate. Omit the private key to reuse the one generated with your CSR. The private key is stored on the server and never displayed.</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Paste a PEM certificate. Omit the private key to reuse the one generated with your CSR. The private key is stored on the server and never displayed.</p>
             <Field label="Certificate (PEM)"><textarea className={`${inputCls} font-mono text-xs h-32`} value={certPem} onChange={(e) => setCertPem(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" /></Field>
             <Field label="Private key (PEM) — optional if you used Generate CSR"><textarea className={`${inputCls} font-mono text-xs h-24`} value={keyPem} onChange={(e) => setKeyPem(e.target.value)} placeholder="-----BEGIN PRIVATE KEY----- (leave blank to reuse CSR key)" /></Field>
             <Field label="Intermediate chain (PEM) — optional"><textarea className={`${inputCls} font-mono text-xs h-24`} value={chainPem} onChange={(e) => setChainPem(e.target.value)} /></Field>
@@ -189,7 +189,7 @@ export default function Certificates() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
       {children}
     </div>
   )
@@ -198,8 +198,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <dt className="text-xs text-gray-400">{label}</dt>
-      <dd className={clsx('text-gray-800 break-all', mono && 'font-mono text-xs')}>{value}</dd>
+      <dt className="text-xs text-gray-400 dark:text-gray-500">{label}</dt>
+      <dd className={clsx('text-gray-800 dark:text-gray-100 break-all', mono && 'font-mono text-xs')}>{value}</dd>
     </div>
   )
 }

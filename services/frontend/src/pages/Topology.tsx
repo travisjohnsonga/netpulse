@@ -20,7 +20,7 @@ const UTILIZATION_COLORS: Record<string, string> = {
   green: '#22c55e', yellow: '#eab308', orange: '#f97316', red: '#ef4444', gray: '#9ca3af',
 }
 const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
-const selCls = 'px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
+const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 function typeIcon(type: string): string {
   const t = (type || '').toLowerCase()
@@ -190,17 +190,17 @@ export default function Topology() {
     <div className="flex flex-col h-full space-y-3">
       <div className="flex items-center justify-between flex-shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Network Topology</h1>
-          {!loading && !error && <p className="text-sm text-gray-500 mt-0.5">{nodeCount} devices · {edgeCount} links</p>}
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Network Topology</h1>
+          {!loading && !error && <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{nodeCount} devices · {edgeCount} links</p>}
         </div>
         <div className="flex gap-2">
-          <button onClick={fitView} className="px-3 py-1.5 border border-gray-300 text-sm text-gray-700 rounded-lg hover:bg-gray-50">Fit</button>
-          <button onClick={resetZoom} className="px-3 py-1.5 border border-gray-300 text-sm text-gray-700 rounded-lg hover:bg-gray-50">Reset</button>
+          <button onClick={fitView} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50">Fit</button>
+          <button onClick={resetZoom} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50">Reset</button>
         </div>
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2 bg-white rounded-lg border border-gray-200 p-3 flex-shrink-0">
+      <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 flex-shrink-0">
         <select className={selCls} value={site} onChange={(e) => setSite(e.target.value)}>
           <option value="">All Sites</option>
           {sites.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
@@ -227,28 +227,28 @@ export default function Topology() {
 
       {/* Legend */}
       <div className="flex flex-wrap gap-4 text-xs flex-shrink-0">
-        <div className="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-2">
-          <span className="font-medium text-gray-600">Status:</span>
+        <div className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2">
+          <span className="font-medium text-gray-600 dark:text-gray-400">Status:</span>
           {Object.entries(STATUS_COLORS).slice(0, 4).map(([k, c]) => (
-            <span key={k} className="flex items-center gap-1.5 capitalize text-gray-600"><span className="w-3 h-3 rounded-full" style={{ background: c }} />{k}</span>
+            <span key={k} className="flex items-center gap-1.5 capitalize text-gray-600 dark:text-gray-400"><span className="w-3 h-3 rounded-full" style={{ background: c }} />{k}</span>
           ))}
         </div>
-        <div className="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-2">
-          <span className="font-medium text-gray-600">Link util:</span>
+        <div className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2">
+          <span className="font-medium text-gray-600 dark:text-gray-400">Link util:</span>
           {[['<60%', 'green'], ['60-80%', 'yellow'], ['80-90%', 'orange'], ['>90%', 'red'], ['down', 'gray']].map(([label, color]) => (
-            <span key={label} className="flex items-center gap-1.5 text-gray-600"><span className="w-6 h-1.5 rounded" style={{ background: UTILIZATION_COLORS[color] }} />{label}</span>
+            <span key={label} className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400"><span className="w-6 h-1.5 rounded" style={{ background: UTILIZATION_COLORS[color] }} />{label}</span>
           ))}
         </div>
       </div>
 
       {/* Graph */}
-      <div className="relative flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" style={{ minHeight: 460 }}>
-        {loading && <div className="absolute inset-0 flex items-center justify-center bg-white z-10"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}
-        {error && <div className="absolute inset-0 flex items-center justify-center bg-white z-10 text-center"><div><p className="text-5xl mb-3">🗺</p><p className="text-sm text-gray-500 max-w-xs">{error}</p></div></div>}
+      <div className="relative flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden" style={{ minHeight: 460 }}>
+        {loading && <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-800 z-10"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}
+        {error && <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-800 z-10 text-center"><div><p className="text-5xl mb-3">🗺</p><p className="text-sm text-gray-500 dark:text-gray-400 max-w-xs">{error}</p></div></div>}
         {!loading && !error && nodeCount === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white z-10 text-center">
-            <div><p className="text-5xl mb-3">🌐</p><p className="text-lg font-semibold text-gray-700 mb-1">No devices match</p>
-              <p className="text-sm text-gray-500">Adjust filters, or click Discover Links to map LLDP neighbors.</p></div>
+          <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-800 z-10 text-center">
+            <div><p className="text-5xl mb-3">🌐</p><p className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-1">No devices match</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Adjust filters, or click Discover Links to map LLDP neighbors.</p></div>
           </div>
         )}
         <div ref={containerRef} className="w-full h-full" />
@@ -265,13 +265,13 @@ export default function Topology() {
         )}
 
         {popup && (
-          <div className="absolute z-20 bg-white rounded-xl shadow-xl border border-gray-200 p-4 w-64 text-sm"
+          <div className="absolute z-20 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 w-64 text-sm"
             style={{ left: Math.min(popup.x + 12, (containerRef.current?.clientWidth ?? 600) - 270), top: popup.y + 12 }}>
-            <button className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 text-lg leading-none" onClick={() => setPopup(null)}>×</button>
+            <button className="absolute top-2 right-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-lg leading-none" onClick={() => setPopup(null)}>×</button>
             {popup.kind === 'node' ? (
               <>
-                <p className="font-semibold text-gray-900 pr-4">{popup.data.label}</p>
-                <p className="text-gray-500 text-xs mt-0.5 mb-3">{popup.data.type}{popup.data.role ? ` · ${popup.data.role}` : ''}</p>
+                <p className="font-semibold text-gray-900 dark:text-gray-100 pr-4">{popup.data.label}</p>
+                <p className="text-gray-500 dark:text-gray-400 text-xs mt-0.5 mb-3">{popup.data.type}{popup.data.role ? ` · ${popup.data.role}` : ''}</p>
                 <div className="space-y-1.5">
                   <Row k="Status" v={<span className="capitalize font-medium" style={{ color: STATUS_COLORS[popup.data.status] ?? '#6b7280' }}>{popup.data.status}</span>} />
                   {popup.data.vendor && <Row k="Vendor" v={popup.data.vendor} />}
@@ -283,13 +283,13 @@ export default function Topology() {
               </>
             ) : (
               <>
-                <p className="font-semibold text-gray-900 mb-2">Link</p>
-                <p className="text-xs font-mono text-gray-700 mb-3">{popup.data.port_a} ↔ {popup.data.port_b}</p>
+                <p className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Link</p>
+                <p className="text-xs font-mono text-gray-700 dark:text-gray-300 mb-3">{popup.data.port_a} ↔ {popup.data.port_b}</p>
                 <div className="space-y-1.5">
                   <Row k="Speed" v={fmtSpeed(popup.data.speed_mbps)} />
                   <Row k="Utilization" v={`${popup.data.utilization_pct}%`} />
                 </div>
-                <button onClick={() => navigate(`/devices/${popup.data.source}`)} className="mt-3 w-full py-1.5 text-xs border border-gray-300 rounded-md font-medium hover:bg-gray-50">View Interface →</button>
+                <button onClick={() => navigate(`/devices/${popup.data.source}`)} className="mt-3 w-full py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-md font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300">View Interface →</button>
               </>
             )}
           </div>
@@ -300,5 +300,5 @@ export default function Topology() {
 }
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
-  return <div className="flex justify-between"><span className="text-gray-500">{k}</span><span className="text-gray-800">{v}</span></div>
+  return <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">{k}</span><span className="text-gray-800 dark:text-gray-100">{v}</span></div>
 }

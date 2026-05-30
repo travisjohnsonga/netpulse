@@ -10,7 +10,7 @@ import { usePreferencesStore } from '../store/preferencesStore'
 
 const DEFAULT_PAGE_SIZE = 50
 const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
-const selCls = 'px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
+const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 export default function Logs() {
   const navigate = useNavigate()
@@ -96,16 +96,16 @@ export default function Logs() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Network Logs</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Network Logs</h1>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-gray-600"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Auto-refresh 30s</label>
-          <button onClick={exportCsv} disabled={!rows.length} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Export</button>
-          <button onClick={() => { setPage(1); load(1, false) }} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">🔄</button>
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Auto-refresh 30s</label>
+          <button onClick={exportCsv} disabled={!rows.length} className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">Export</button>
+          <button onClick={() => { setPage(1); load(1, false) }} className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300">🔄</button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-3">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 space-y-3">
         <div className="flex flex-wrap gap-2">
           <select className={selCls} value={deviceHost} onChange={(e) => setDeviceHost(e.target.value)}>
             <option value="">All Devices</option>
@@ -122,15 +122,15 @@ export default function Logs() {
           <select className={selCls} value={range} onChange={(e) => setRange(e.target.value)}>
             {TIME_RANGES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
           </select>
-          <input className="flex-1 min-w-[12rem] px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          <input className="flex-1 min-w-[12rem] px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search message text…" />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-gray-500 mr-1">Severity:</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">Severity:</span>
           {SEVERITY_ORDER.map((s) => (
             <button key={s} onClick={() => toggleSev(s)}
               className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize border',
-                severities.has(s) ? severityBadge(s) + ' border-transparent' : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50')}>{s}</button>
+                severities.has(s) ? severityBadge(s) + ' border-transparent' : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700')}>{s}</button>
           ))}
           {severities.size > 0 && <button onClick={() => setSeverities(new Set())} className="text-xs text-blue-600 ml-1">clear</button>}
         </div>
@@ -138,7 +138,7 @@ export default function Logs() {
 
       {/* Summary bar */}
       <div className="flex flex-wrap gap-3 text-sm">
-        <span className="font-medium text-gray-700">{count.toLocaleString()} messages</span>
+        <span className="font-medium text-gray-700 dark:text-gray-300">{count.toLocaleString()} messages</span>
         {(['critical', 'error', 'warning', 'info'] as const).map((s) => (
           <span key={s} className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', severityBadge(s))}>
             {(summary[s] ?? 0).toLocaleString()} {s}
@@ -148,42 +148,42 @@ export default function Logs() {
 
       {error && <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-800">{error}</div>}
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {loading && page === 1 ? (
           <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
         ) : rows.length === 0 ? (
-          <p className="py-12 text-center text-sm text-gray-400">No log messages match these filters.</p>
+          <p className="py-12 text-center text-sm text-gray-400 dark:text-gray-500">No log messages match these filters.</p>
         ) : (
           <div className="overflow-x-auto max-h-[34rem]">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-gray-50">
-                <tr className="text-gray-500 text-left border-b border-gray-200">
+              <thead className="sticky top-0 bg-gray-50 dark:bg-gray-900/50">
+                <tr className="text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
                   <th className="px-4 py-2 font-medium w-40">Time</th>
                   <th className="px-4 py-2 font-medium w-32">Device</th>
                   <th className="px-4 py-2 font-medium w-24">Severity</th>
                   <th className="px-4 py-2 font-medium">Message</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                 {rows.map((r) => (
                   <Fragment key={r.id}>
-                    <tr onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="hover:bg-gray-50 cursor-pointer align-top">
-                      <td className="px-4 py-1.5 text-gray-500 font-mono text-xs whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
+                    <tr onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer align-top">
+                      <td className="px-4 py-1.5 text-gray-500 dark:text-gray-400 font-mono text-xs whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
                       <td className="px-4 py-1.5">
                         <button onClick={(e) => { e.stopPropagation(); const id = hostToId[r.hostname]; if (id) navigate(`/devices/${id}`) }}
                           className="text-blue-600 hover:text-blue-800 font-medium">{r.hostname}</button>
                       </td>
                       <td className="px-4 py-1.5"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', severityBadge(r.severity))}>{r.severity}</span></td>
-                      <td className="px-4 py-1.5 text-gray-700 truncate max-w-0">{r.program && <span className="text-gray-400">{r.program}: </span>}{r.message}</td>
+                      <td className="px-4 py-1.5 text-gray-700 dark:text-gray-300 truncate max-w-0">{r.program && <span className="text-gray-400 dark:text-gray-500">{r.program}: </span>}{r.message}</td>
                     </tr>
                     {expanded === r.id && (
-                      <tr className="bg-gray-50">
-                        <td colSpan={4} className="px-4 py-3 text-xs text-gray-600">
+                      <tr className="bg-gray-50 dark:bg-gray-900/50">
+                        <td colSpan={4} className="px-4 py-3 text-xs text-gray-600 dark:text-gray-400">
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
-                            <div><span className="text-gray-400">Facility:</span> {r.facility || '—'}</div>
-                            <div><span className="text-gray-400">Program:</span> {r.program || '—'}</div>
-                            <div><span className="text-gray-400">PID:</span> {r.pid || '—'}</div>
-                            <div><span className="text-gray-400">Source IP:</span> {r.source_ip || '—'}</div>
+                            <div><span className="text-gray-400 dark:text-gray-500">Facility:</span> {r.facility || '—'}</div>
+                            <div><span className="text-gray-400 dark:text-gray-500">Program:</span> {r.program || '—'}</div>
+                            <div><span className="text-gray-400 dark:text-gray-500">PID:</span> {r.pid || '—'}</div>
+                            <div><span className="text-gray-400 dark:text-gray-500">Source IP:</span> {r.source_ip || '—'}</div>
                           </div>
                           <pre className="bg-gray-900 text-gray-100 rounded-md p-2 overflow-x-auto whitespace-pre-wrap">{r.raw || r.message}</pre>
                         </td>
@@ -195,9 +195,9 @@ export default function Logs() {
             </table>
           </div>
         )}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 text-xs text-gray-500">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
           <span>{rows.length} of {count.toLocaleString()} shown</span>
-          {rows.length < count && <button onClick={loadMore} disabled={loading} className="px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">{loading ? 'Loading…' : 'Load more'}</button>}
+          {rows.length < count && <button onClick={loadMore} disabled={loading} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{loading ? 'Loading…' : 'Load more'}</button>}
         </div>
       </div>
     </div>

@@ -7,10 +7,10 @@ const TYPE_ICON: Record<string, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
 }
 const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-700',
-  inactive: 'bg-gray-100 text-gray-600',
-  maintenance: 'bg-yellow-100 text-yellow-700',
-  decommissioned: 'bg-red-100 text-red-700',
+  active: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  inactive: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+  maintenance: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  decommissioned: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 }
 const TABS = ['Overview', 'Devices', 'Availability', 'WAN Circuits'] as const
 
@@ -47,18 +47,18 @@ export default function SiteDetail() {
       <div>
         <Link to="/sites" className="text-sm text-blue-600 hover:text-blue-800">&larr; Sites</Link>
         <div className="flex items-center gap-3 mt-2">
-          <h1 className="text-2xl font-bold text-gray-900">{TYPE_ICON[site.site_type]} {site.name}</h1>
-          <span className="px-2 py-0.5 rounded-full text-xs font-medium capitalize bg-blue-100 text-blue-700">{site.site_type}</span>
-          {site.parent_site_name && <span className="text-sm text-gray-400">in {site.parent_site_name}</span>}
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{TYPE_ICON[site.site_type]} {site.name}</h1>
+          <span className="px-2 py-0.5 rounded-full text-xs font-medium capitalize bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">{site.site_type}</span>
+          {site.parent_site_name && <span className="text-sm text-gray-400 dark:text-gray-500">in {site.parent_site_name}</span>}
         </div>
-        <p className="text-sm text-gray-500 mt-0.5">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           {[site.city, site.state, site.country].filter(Boolean).join(', ') || 'No location set'}
         </p>
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
         {TABS.map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={clsx('px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap', tab === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800')}>{t}</button>
+          <button key={t} onClick={() => setTab(t)} className={clsx('px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap', tab === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200')}>{t}</button>
         ))}
       </div>
 
@@ -71,7 +71,7 @@ export default function SiteDetail() {
 }
 
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={clsx('bg-white rounded-lg shadow-sm border border-gray-200 p-4', className)}>{children}</div>
+  return <div className={clsx('bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4', className)}>{children}</div>
 }
 
 function Overview({ site }: { site: Site }) {
@@ -79,17 +79,17 @@ function Overview({ site }: { site: Site }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
-        <h3 className="text-sm font-semibold text-gray-800 mb-3">Location</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Location</h3>
         {hasGeo ? (
           <a
             href={`https://www.openstreetmap.org/?mlat=${site.latitude}&mlon=${site.longitude}#map=12/${site.latitude}/${site.longitude}`}
             target="_blank" rel="noreferrer"
-            className="block bg-gradient-to-br from-blue-50 to-gray-100 border border-gray-200 rounded-lg h-40 flex items-center justify-center text-center hover:from-blue-100"
+            className="block bg-gradient-to-br from-blue-50 to-gray-100 dark:from-blue-900/20 dark:to-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg h-40 flex items-center justify-center text-center hover:from-blue-100 dark:hover:from-blue-900/30"
           >
-            <span className="text-sm text-gray-600">📍 {site.latitude}, {site.longitude}<br /><span className="text-xs text-blue-600">Open in map →</span></span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">📍 {site.latitude}, {site.longitude}<br /><span className="text-xs text-blue-600">Open in map →</span></span>
           </a>
         ) : (
-          <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg h-40 flex items-center justify-center text-sm text-gray-400">No coordinates set</div>
+          <div className="bg-gray-50 dark:bg-gray-900/50 border border-dashed border-gray-200 dark:border-gray-600 rounded-lg h-40 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">No coordinates set</div>
         )}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-4">
           <Info label="Address" value={site.address || '—'} />
@@ -100,7 +100,7 @@ function Overview({ site }: { site: Site }) {
       </Card>
       <div className="space-y-4">
         <Card>
-          <h3 className="text-sm font-semibold text-gray-800 mb-3">Contact</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Contact</h3>
           <dl className="space-y-2 text-sm">
             <Info label="Name" value={site.contact_name || '—'} />
             <Info label="Email" value={site.contact_email || '—'} />
@@ -108,8 +108,8 @@ function Overview({ site }: { site: Site }) {
           </dl>
         </Card>
         <Card>
-          <h3 className="text-sm font-semibold text-gray-800 mb-2">Notes</h3>
-          <p className="text-sm text-gray-600 whitespace-pre-wrap">{site.notes || '—'}</p>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Notes</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{site.notes || '—'}</p>
         </Card>
       </div>
     </div>
@@ -125,23 +125,23 @@ function Devices({ siteId, onOpen }: { siteId: number; onOpen: (id: number) => v
   if (devices.length === 0) return <Placeholder text="No devices are located at this site yet." icon="📡" />
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-gray-50 text-gray-500 text-left border-b border-gray-200">
+          <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
             <th className="px-5 py-3 font-medium">Hostname</th>
             <th className="px-5 py-3 font-medium">IP</th>
             <th className="px-5 py-3 font-medium">Platform</th>
             <th className="px-5 py-3 font-medium">Status</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
           {devices.map((d) => (
-            <tr key={d.id} onClick={() => onOpen(d.id)} className="hover:bg-gray-50 cursor-pointer">
-              <td className="px-5 py-3 font-medium text-gray-800">{d.hostname}</td>
-              <td className="px-5 py-3 text-gray-600 font-mono text-xs">{d.ip_address}</td>
-              <td className="px-5 py-3 text-gray-600">{d.platform}</td>
-              <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>{d.status}</span></td>
+            <tr key={d.id} onClick={() => onOpen(d.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+              <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{d.hostname}</td>
+              <td className="px-5 py-3 text-gray-600 dark:text-gray-400 font-mono text-xs">{d.ip_address}</td>
+              <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{d.platform}</td>
+              <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400')}>{d.status}</span></td>
             </tr>
           ))}
         </tbody>
@@ -152,13 +152,13 @@ function Devices({ siteId, onOpen }: { siteId: number; onOpen: (id: number) => v
 
 function Placeholder({ text, icon }: { text: string; icon: string }) {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 py-16 text-center">
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 py-16 text-center">
       <div className="text-4xl mb-2">{icon}</div>
-      <p className="text-sm text-gray-500">{text}</p>
+      <p className="text-sm text-gray-500 dark:text-gray-400">{text}</p>
     </div>
   )
 }
 
 function Info({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-xs text-gray-400">{label}</dt><dd className="text-gray-800">{value}</dd></div>
+  return <div><dt className="text-xs text-gray-400 dark:text-gray-500">{label}</dt><dd className="text-gray-800 dark:text-gray-100">{value}</dd></div>
 }

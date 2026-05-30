@@ -81,9 +81,9 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
 
   if (configs.length === 0) {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 py-16 text-center">
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 py-16 text-center">
         <div className="text-4xl mb-2">📄</div>
-        <p className="text-sm text-gray-500 mb-4">No configurations collected yet</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">No configurations collected yet</p>
         {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
         <button onClick={collectNow} disabled={collecting} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {collecting ? 'Collecting…' : 'Collect Now'}
@@ -95,28 +95,28 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       {/* Version history */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h3 className="text-sm font-semibold text-gray-800">Version History</h3>
-          <button onClick={collectNow} disabled={collecting} className="px-2.5 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Version History</h3>
+          <button onClick={collectNow} disabled={collecting} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">
             {collecting ? '…' : 'Collect Now'}
           </button>
         </div>
         {error && <p className="text-xs text-red-600 px-4 py-2">{error}</p>}
-        <div className="divide-y divide-gray-100 max-h-[28rem] overflow-y-auto">
+        <div className="divide-y divide-gray-100 dark:divide-gray-700 max-h-[28rem] overflow-y-auto">
           {configs.map((c, i) => {
             const label = i === 0 ? `v${configs.length} (current)` : `v${configs.length - i}`
             return (
               <button
                 key={c.id}
                 onClick={() => setSelectedId(c.id)}
-                className={clsx('w-full text-left px-4 py-3 hover:bg-gray-50', selectedId === c.id && 'bg-blue-50')}
+                className={clsx('w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50', selectedId === c.id && 'bg-blue-50 dark:bg-blue-900/20')}
               >
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-gray-800">{label}</p>
-                  {c.changed_from_previous && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">changed</span>}
+                  <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{label}</p>
+                  {c.changed_from_previous && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">changed</span>}
                 </div>
-                <p className="text-xs text-gray-400">{c.collected_by} · {relativeTime(c.collected_at)}</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{c.collected_by} · {relativeTime(c.collected_at)}</p>
               </button>
             )
           })}
@@ -124,15 +124,15 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
       </div>
 
       {/* Config viewer */}
-      <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h3 className="text-sm font-semibold text-gray-800">Running Config</h3>
+      <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Running Config</h3>
           <div className="flex gap-2">
             <button
               onClick={() => navigate(`/configs/compare?left=${deviceId}${selectedId ? `&leftVersion=${selectedId}` : ''}`)}
-              className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50"
             >Compare</button>
-            <button onClick={download} disabled={!selected} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Download</button>
+            <button onClick={download} disabled={!selected} className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">Download</button>
           </div>
         </div>
         <pre className="bg-gray-900 text-gray-100 text-xs font-mono p-4 overflow-x-auto leading-relaxed max-h-[28rem]">

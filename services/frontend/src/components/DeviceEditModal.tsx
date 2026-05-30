@@ -3,7 +3,7 @@ import Modal from './Modal'
 import { fetchSites, updateDevice, type DeviceDetail, type Site } from '../api/client'
 
 const inputCls =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:text-gray-100'
 
 const PLATFORMS = [
   ['ios', 'Cisco IOS'], ['ios_xe', 'Cisco IOS-XE'], ['ios_xr', 'Cisco IOS-XR'],
@@ -101,13 +101,13 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
       size="lg"
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={save} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Save Changes'}</button>
         </>
       }
     >
       <div className="space-y-3">
-        {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
         <Field label="Hostname"><input className={inputCls} value={hostname} onChange={(e) => setHostname(e.target.value)} /></Field>
         <Row>
           <Field label="IP Address"><input className={inputCls} value={ip} onChange={(e) => setIp(e.target.value)} /></Field>
@@ -141,8 +141,8 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
         <Field label="Tags">
           <div className="flex flex-wrap gap-1.5 mb-2">
             {tags.map((t) => (
-              <span key={t} className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded-md">
-                {t}<button onClick={() => setTags((x) => x.filter((v) => v !== t))} className="text-gray-400 hover:text-gray-700">×</button>
+              <span key={t} className="inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded-md">
+                {t}<button onClick={() => setTags((x) => x.filter((v) => v !== t))} className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">×</button>
               </span>
             ))}
           </div>
@@ -157,7 +157,7 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex-1 min-w-0"><label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>{children}</div>
+  return <div className="flex-1 min-w-0"><label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{label}</label>{children}</div>
 }
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col sm:flex-row gap-3">{children}</div>

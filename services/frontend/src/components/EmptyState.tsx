@@ -11,8 +11,8 @@ export default function EmptyState({ title, description, action, icon = '📭' }
       <span className="text-5xl mb-4" role="img" aria-label="empty">
         {icon}
       </span>
-      <h3 className="text-lg font-semibold text-gray-700 mb-2">{title}</h3>
-      <p className="text-sm text-gray-500 max-w-sm mb-6">{description}</p>
+      <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">{title}</h3>
+      <p className="text-sm text-gray-500 dark:text-gray-400 max-w-sm mb-6">{description}</p>
       {action && (
         <button
           onClick={action.onClick}
