@@ -35,6 +35,7 @@ urlpatterns = [
     path("api/import/",      include("apps.integrations.urls")),
     path("api/settings/",     include("apps.configbackup.urls")),
     path("api/configbackup/",  include("apps.configbackup.urls")),
+    path("api/logs/",         include("apps.logs.urls")),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),

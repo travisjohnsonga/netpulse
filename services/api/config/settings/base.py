@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "apps.collectors",
     "apps.integrations",
     "apps.configbackup",
+    "apps.logs",
 ]
 
 MIDDLEWARE = [
