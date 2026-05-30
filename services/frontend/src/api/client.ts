@@ -267,7 +267,24 @@ export interface DeviceMetrics {
     memory_used_pct: MetricPoint[]
     cpu_pct: MetricPoint[]
   }
-  interfaces: Record<string, number>
+  interfaces: InterfaceStat[]
+}
+
+export interface InterfaceStat {
+  if_name: string
+  if_index: number | string
+  in_bps: number | null
+  out_bps: number | null
+  in_pps: number | null
+  out_pps: number | null
+  in_errors_rate: number | null
+  out_errors_rate: number | null
+  in_discards_rate: number | null
+  out_discards_rate: number | null
+  in_util_pct: number | null
+  out_util_pct: number | null
+  oper_status: string | null
+  series: { in_bps: MetricPoint[]; out_bps: MetricPoint[] }
 }
 
 export async function fetchDeviceMetrics(deviceId: number, period = '1h'): Promise<DeviceMetrics> {

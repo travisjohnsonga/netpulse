@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
@@ -606,6 +606,28 @@ function formatUptime(seconds: number | null): string {
   return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
+function formatBps(bps: number | null): string {
+  if (bps == null) return '—'
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(2)} Gbps`
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(0)} Kbps`
+  return `${Math.round(bps)} bps`
+}
+
+// Bytes total from a bps over the window — kept simple for the expanded view.
+function formatRate(v: number | null): string {
+  if (v == null) return '—'
+  return v === 0 ? '0' : v < 1 ? v.toFixed(2) : v.toFixed(0)
+}
+
+function utilColor(pct: number | null): string {
+  if (pct == null) return 'text-gray-400 dark:text-gray-500'
+  if (pct >= 90) return 'text-red-600 dark:text-red-400'
+  if (pct >= 80) return 'text-orange-600 dark:text-orange-400'
+  if (pct >= 60) return 'text-yellow-600 dark:text-yellow-500'
+  return 'text-green-600 dark:text-green-400'
+}
+
 export default function Telemetry({ device, onConfigure }: { device: DeviceDetail; onConfigure?: () => void }) {
   const [ifaces, setIfaces] = useState<MonitoredInterface[] | null>(null)
   const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
@@ -627,6 +649,13 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
   }, [device.id, range])
 
   const health = metrics?.metrics
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  // Merge selected interfaces with their live stats (matched by name).
+  const ifaceRows = useMemo(() => {
+    const byName = new Map((metrics?.interfaces ?? []).map((s) => [s.if_name, s]))
+    return (ifaces ?? []).map((i) => ({ iface: i, stat: byName.get(i.if_name) ?? null }))
+  }, [ifaces, metrics])
 
   const lldp = useMemo(() => (ifaces || []).filter((i) => i.lldp_neighbor_hostname), [ifaces])
 
@@ -705,20 +734,55 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
             <thead>
               <tr className="text-gray-500 dark:text-gray-400 text-left border-b border-gray-100 dark:border-gray-800">
                 <th className="px-4 py-2 font-medium">Interface</th>
+                <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">In</th>
                 <th className="px-4 py-2 font-medium">Out</th>
-                <th className="px-4 py-2 font-medium">{range} Traffic</th>
+                <th className="px-4 py-2 font-medium">Util</th>
+                <th className="px-4 py-2 font-medium">Errors</th>
+                <th className="px-4 py-2 font-medium">Drops</th>
+                <th className="px-4 py-2 font-medium">{range}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {ifaces.map((i) => (
-                <tr key={i.id}>
-                  <td className="px-4 py-2 font-mono text-xs text-gray-800 dark:text-gray-200">{i.if_name}</td>
-                  <td className="px-4 py-2 text-gray-300 dark:text-gray-600">—</td>
-                  <td className="px-4 py-2 text-gray-300 dark:text-gray-600">—</td>
-                  <td className="px-4 py-2"><Sparkline /></td>
-                </tr>
-              ))}
+              {ifaceRows.map(({ iface: i, stat }) => {
+                const down = stat?.oper_status === 'down'
+                const errs = (stat?.in_errors_rate ?? 0) + (stat?.out_errors_rate ?? 0)
+                const drops = (stat?.in_discards_rate ?? 0) + (stat?.out_discards_rate ?? 0)
+                const util = Math.max(stat?.in_util_pct ?? 0, stat?.out_util_pct ?? 0)
+                const isOpen = expanded === i.if_name
+                return (
+                <Fragment key={i.id}>
+                  <tr className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50" onClick={() => setExpanded(isOpen ? null : i.if_name)}>
+                    <td className="px-4 py-2 font-mono text-xs text-gray-800 dark:text-gray-200">{i.if_name}</td>
+                    <td className="px-4 py-2">
+                      {stat?.oper_status
+                        ? <span className={clsx('inline-flex items-center gap-1.5 text-xs', down ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400')}>
+                            <span className={clsx('w-1.5 h-1.5 rounded-full', down ? 'bg-red-500' : 'bg-green-500')} />{stat.oper_status}
+                          </span>
+                        : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                    </td>
+                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{formatBps(stat?.in_bps ?? null)}</td>
+                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{formatBps(stat?.out_bps ?? null)}</td>
+                    <td className={clsx('px-4 py-2', utilColor(stat ? util : null))}>{stat ? `${util.toFixed(1)}%` : '—'}</td>
+                    <td className={clsx('px-4 py-2', errs > 0 ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-400 dark:text-gray-500')}>{stat ? formatRate(errs) : '—'}</td>
+                    <td className={clsx('px-4 py-2', drops > 0 ? 'text-orange-600 dark:text-orange-400 font-medium' : 'text-gray-400 dark:text-gray-500')}>{stat ? formatRate(drops) : '—'}</td>
+                    <td className="px-4 py-2">{stat && stat.series.in_bps.length > 1 ? <MiniSpark series={stat.series.in_bps} color="#3b82f6" /> : <Sparkline />}</td>
+                  </tr>
+                  {isOpen && stat && (
+                    <tr className="bg-gray-50 dark:bg-gray-900/40">
+                      <td colSpan={8} className="px-4 py-3">
+                        <div className="text-xs font-mono space-y-1 text-gray-700 dark:text-gray-300">
+                          <div className="font-semibold text-gray-800 dark:text-gray-100">{i.if_name} · <span className={down ? 'text-red-500' : 'text-green-500'}>{stat.oper_status ?? '?'}</span>{i.if_speed_mbps ? ` · ${i.if_speed_mbps >= 1000 ? `${i.if_speed_mbps / 1000}Gbps` : `${i.if_speed_mbps}Mbps`}` : ''}</div>
+                          <div>In:&nbsp; {formatBps(stat.in_bps)}&nbsp;&nbsp;{formatRate(stat.in_pps)} pps&nbsp;&nbsp;{(stat.in_util_pct ?? 0).toFixed(2)}% util</div>
+                          <div>Out: {formatBps(stat.out_bps)}&nbsp;&nbsp;{formatRate(stat.out_pps)} pps&nbsp;&nbsp;{(stat.out_util_pct ?? 0).toFixed(2)}% util</div>
+                          <div>Input errors: {formatRate(stat.in_errors_rate)}/s&nbsp;&nbsp; Output errors: {formatRate(stat.out_errors_rate)}/s</div>
+                          <div>Input drops:&nbsp; {formatRate(stat.in_discards_rate)}/s&nbsp;&nbsp; Output drops:&nbsp; {formatRate(stat.out_discards_rate)}/s</div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )})}
             </tbody>
           </table>
         )}
