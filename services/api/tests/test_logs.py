@@ -69,7 +69,7 @@ class TestLogQuery:
         assert resp.json()["count"] == 0
         assert resp.json()["summary"]["by_severity"]["error"] == 0
 
-    def test_site_filter_resolves_hostnames(self, auth_client, monkeypatch):
+    def test_site_filter_resolves_hostnames_and_ips(self, auth_client, monkeypatch):
         from apps.devices.models import Device, Site
         site = Site.objects.create(name="DC-X")
         Device.objects.create(hostname="sw-x1", ip_address="10.0.1.1", site=site)
@@ -77,7 +77,30 @@ class TestLogQuery:
         monkeypatch.setattr(logs_views, "_execute", lambda body: captured.update(body) or _fake_response())
         auth_client.get(f"/api/logs/?site={site.id}")
         musts = captured["query"]["bool"]["must"]
-        assert {"terms": {"hostname.keyword": ["sw-x1"]}} in musts
+        # Matches hostname OR source_ip against the device's identifiers.
+        assert {"bool": {"should": [
+            {"terms": {"hostname.keyword": ["10.0.1.1", "sw-x1"]}},
+            {"terms": {"source_ip.keyword": ["10.0.1.1", "sw-x1"]}},
+        ], "minimum_should_match": 1}} in musts
+
+    def test_known_hostname_matches_hostname_or_ip(self, auth_client, monkeypatch):
+        from apps.devices.models import Device
+        Device.objects.create(hostname="router-a", ip_address="192.0.2.7")
+        captured = {}
+        monkeypatch.setattr(logs_views, "_execute", lambda body: captured.update({"body": body}) or _fake_response())
+        auth_client.get("/api/logs/?device_hostname=router-a")
+        musts = captured["body"]["query"]["bool"]["must"]
+        assert {"bool": {"should": [
+            {"terms": {"hostname.keyword": ["192.0.2.7", "router-a"]}},
+            {"terms": {"source_ip.keyword": ["192.0.2.7", "router-a"]}},
+        ], "minimum_should_match": 1}} in musts
+
+    def test_unknown_hostname_falls_back_to_exact(self, auth_client, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(logs_views, "_execute", lambda body: captured.update({"body": body}) or _fake_response())
+        auth_client.get("/api/logs/?device_hostname=ghost")
+        musts = captured["body"]["query"]["bool"]["must"]
+        assert {"term": {"hostname.keyword": "ghost"}} in musts
 
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/logs/").status_code == 401

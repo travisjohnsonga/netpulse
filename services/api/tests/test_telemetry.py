@@ -160,6 +160,32 @@ class TestConfigGenerate:
         assert "logging host 192.168.98.134" in secs["syslog"]["config"]
         assert "192.168.98.134" in body["full_config"]
 
+    def test_cisco_xe_syslog_has_origin_id(self, auth_client, device, settings):
+        settings.COLLECTOR_IP = "192.168.98.134"
+        resp = auth_client.get(f"/api/devices/{device.id}/telemetry-config/generate/")
+        syslog = resp.json()["sections"]["syslog"]["config"]
+        assert "logging origin-id hostname" in syslog
+        assert "logging host 192.168.98.134" in syslog
+
+    def test_nxos_uses_logging_server(self, auth_client, ssh_profile, settings):
+        settings.COLLECTOR_IP = "10.0.0.20"
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="nx1", ip_address="10.0.0.21", vendor="Cisco",
+                                  platform="nxos", status="active", credential_profile=ssh_profile)
+        syslog = auth_client.get(f"/api/devices/{d.id}/telemetry-config/generate/").json()["sections"]["syslog"]["config"]
+        assert "logging origin-id hostname" in syslog
+        assert "logging server 10.0.0.20" in syslog
+        assert "logging host" not in syslog  # not IOS-XE syntax
+
+    def test_xr_uses_hostnameprefix(self, auth_client, ssh_profile, settings):
+        settings.COLLECTOR_IP = "10.0.0.30"
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="xr1", ip_address="10.0.0.31", vendor="Cisco",
+                                  platform="ios_xr", status="active", credential_profile=ssh_profile)
+        syslog = auth_client.get(f"/api/devices/{d.id}/telemetry-config/generate/").json()["sections"]["syslog"]["config"]
+        assert "logging hostnameprefix xr1" in syslog
+        assert "logging 10.0.0.30" in syslog
+
     def test_generate_juniper_no_gnmi(self, auth_client, ssh_profile, settings):
         settings.COLLECTOR_IP = "10.0.0.10"
         from apps.devices.models import Device

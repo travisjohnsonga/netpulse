@@ -27,6 +27,13 @@ _PLATFORM_FAMILY = {
     "nxos": "cisco_xe", "asa": "cisco_xe",
     "junos": "juniper_junos", "eos": "arista_eos",
 }
+
+# Some platforms share most templates with cisco_xe but need their own syslog
+# syntax (NX-OS "logging server", IOS-XR "logging <ip>"/"hostnameprefix").
+_SYSLOG_TEMPLATE = {
+    "nxos": "cisco_nxos_syslog",
+    "ios_xr": "cisco_xr_syslog",
+}
 # Sections available per family (i.e. which .j2 templates exist).
 _FAMILY_SECTIONS = {
     "cisco_xe": ["snmp", "syslog", "gnmi", "netflow"],
@@ -52,6 +59,8 @@ def _context(device, cfg: TelemetryConfig) -> dict:
     return {
         "collector_ip": getattr(settings, "COLLECTOR_IP", "") or "",
         "management_interface": "Loopback0",
+        "platform": (device.platform or "").lower(),
+        "hostname": device.hostname or "",
         "snmpv3": bool(profile and profile.snmpv3_enabled),
         "group_name": "V3GROUP",
         "username": (profile.snmpv3_username if profile else "") or "netpulse",
@@ -83,13 +92,19 @@ def generate(device) -> dict:
         "netflow": False,
     }
 
+    platform = (device.platform or "").lower()
     sections: dict[str, dict] = {}
     for sec in SECTIONS:
         if sec in available:
+            # Platforms with bespoke syslog syntax get a dedicated template.
+            if sec == "syslog" and platform in _SYSLOG_TEMPLATE:
+                tmpl_name = _SYSLOG_TEMPLATE[platform]
+            else:
+                tmpl_name = f"{tmpl_family}_{sec}"
             try:
-                config = env.get_template(f"{tmpl_family}_{sec}.j2").render(**ctx).strip()
+                config = env.get_template(f"{tmpl_name}.j2").render(**ctx).strip()
             except Exception as exc:
-                logger.warning("template render failed for %s_%s: %s", tmpl_family, sec, exc)
+                logger.warning("template render failed for %s: %s", tmpl_name, exc)
                 config = None
         else:
             config = None
