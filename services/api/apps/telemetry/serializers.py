@@ -1,12 +1,33 @@
 from rest_framework import serializers
 
-from .models import ConfigPush, MonitoredInterface, TelemetryConfig
+from .models import ConfigPush, MonitoredInterface, SNMPGlobalSettings, TelemetryConfig
 
 
 class TelemetryConfigSerializer(serializers.ModelSerializer):
+    effective_intervals = serializers.SerializerMethodField()
+
     class Meta:
         model = TelemetryConfig
         exclude = ("device",)
+        read_only_fields = ("created_at", "updated_at")
+
+    def get_effective_intervals(self, obj) -> dict:
+        g = SNMPGlobalSettings.load()
+        use = obj.override_intervals
+        def eff(dev_val, glob_val):
+            return dev_val if (use and dev_val is not None) else glob_val
+        return {
+            "device_metrics": eff(obj.device_metrics_interval, g.device_metrics_interval),
+            "interface_traffic": eff(obj.interface_traffic_interval, g.interface_traffic_interval),
+            "interface_status": eff(obj.interface_status_interval, g.interface_status_interval),
+            "bgp": eff(obj.bgp_interval, g.bgp_interval),
+        }
+
+
+class PollingSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SNMPGlobalSettings
+        exclude = ("id",)
         read_only_fields = ("created_at", "updated_at")
 
 

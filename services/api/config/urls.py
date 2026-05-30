@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 
 from apps.devices.views import SiteViewSet
+from apps.telemetry.views import PollingSettingsView
 
 # Top-level sites router (also available under /api/devices/sites/).
 _sites_router = DefaultRouter()
@@ -36,6 +37,7 @@ urlpatterns = [
     path("api/settings/",     include("apps.configbackup.urls")),
     path("api/configbackup/",  include("apps.configbackup.urls")),
     path("api/logs/",         include("apps.logs.urls")),
+    path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),

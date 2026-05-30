@@ -10,13 +10,14 @@ from apps.credentials import vault
 from apps.devices.models import Device
 
 from . import config_gen, discovery
-from .models import ConfigPush, MonitoredInterface, TelemetryConfig
+from .models import ConfigPush, MonitoredInterface, SNMPGlobalSettings, TelemetryConfig
 from .serializers import (
     ConfigPushSerializer,
     DiscoveredInterfaceSerializer,
     GeneratedConfigSerializer,
     InterfaceBulkSaveSerializer,
     MonitoredInterfaceSerializer,
+    PollingSettingsSerializer,
     PushRequestSerializer,
     PushResponseSerializer,
     TelemetryConfigSerializer,
@@ -43,6 +44,29 @@ class TelemetryConfigView(generics.RetrieveUpdateAPIView):
         device = get_object_or_404(Device, pk=self.kwargs["device_id"])
         cfg, _ = TelemetryConfig.objects.get_or_create(device=device)
         return cfg
+
+    def perform_update(self, serializer):
+        import logging
+        before = {f: getattr(serializer.instance, f) for f in
+                  ("device_metrics_interval", "interface_traffic_interval",
+                   "interface_status_interval", "bgp_interval", "override_intervals")}
+        obj = serializer.save()
+        after = {f: getattr(obj, f) for f in before}
+        if before != after:
+            user = getattr(self.request.user, "username", "?")
+            logging.getLogger(__name__).info(
+                "audit: %s changed SNMP polling intervals for %s — %s → %s",
+                user, obj.device.hostname, before, after,
+            )
+
+
+class PollingSettingsView(generics.RetrieveUpdateAPIView):
+    """Get or update the global SNMP polling intervals + session parameters."""
+
+    serializer_class = PollingSettingsSerializer
+
+    def get_object(self):
+        return SNMPGlobalSettings.load()
 
 
 class DiscoverInterfacesView(APIView):

@@ -32,8 +32,44 @@ class TelemetryConfig(TimestampedModel):
     collect_inventory = models.BooleanField(default=True)
     collect_lldp = models.BooleanField(default=True)
 
+    # Per-device polling-interval overrides (null → use the global default).
+    override_intervals = models.BooleanField(default=False)
+    device_metrics_interval = models.IntegerField(null=True, blank=True)
+    interface_traffic_interval = models.IntegerField(null=True, blank=True)
+    interface_status_interval = models.IntegerField(null=True, blank=True)
+    bgp_interval = models.IntegerField(null=True, blank=True)
+
     def __str__(self):
         return f"TelemetryConfig({self.device.hostname})"
+
+
+class SNMPGlobalSettings(TimestampedModel):
+    """Singleton (pk=1): global SNMP polling intervals + session parameters."""
+
+    device_metrics_interval = models.IntegerField(default=300)
+    interface_traffic_interval = models.IntegerField(default=300)
+    interface_status_interval = models.IntegerField(default=60)
+    bgp_interval = models.IntegerField(default=60)
+    inventory_interval = models.IntegerField(default=3600)
+    lldp_interval = models.IntegerField(default=3600)
+
+    max_concurrent_sessions = models.IntegerField(default=10)
+    snmp_timeout = models.IntegerField(default=5)
+    snmp_retries = models.IntegerField(default=3)
+    bulk_get_enabled = models.BooleanField(default=True)
+    bulk_get_max_repetitions = models.IntegerField(default=25)
+
+    class Meta:
+        verbose_name = "SNMP global settings"
+        verbose_name_plural = "SNMP global settings"
+
+    def __str__(self):
+        return "SNMP global settings"
+
+    @classmethod
+    def load(cls) -> "SNMPGlobalSettings":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
 
 
 class MonitoredInterface(TimestampedModel):

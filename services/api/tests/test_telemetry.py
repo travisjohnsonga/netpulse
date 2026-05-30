@@ -221,3 +221,51 @@ class TestHealthCollectorIp:
         resp = api_client.get("/api/health/")
         assert resp.status_code == 200
         assert resp.json()["collector_ip"] == "192.168.98.134"
+
+
+# ── polling intervals (global + per-device override) ──────────────────────────
+
+
+class TestPollingSettings:
+    def test_get_defaults(self, auth_client):
+        resp = auth_client.get("/api/settings/polling/")
+        assert resp.status_code == 200
+        b = resp.json()
+        assert b["device_metrics_interval"] == 300 and b["interface_status_interval"] == 60
+        assert b["bgp_interval"] == 60 and b["inventory_interval"] == 3600
+        assert b["max_concurrent_sessions"] == 10 and b["bulk_get_max_repetitions"] == 25
+
+    def test_update(self, auth_client):
+        resp = auth_client.put("/api/settings/polling/", {"interface_traffic_interval": 600, "snmp_timeout": 10}, format="json")
+        assert resp.status_code == 200
+        from apps.telemetry.models import SNMPGlobalSettings
+        g = SNMPGlobalSettings.load()
+        assert g.interface_traffic_interval == 600 and g.snmp_timeout == 10
+
+    def test_unauthenticated(self, api_client):
+        assert api_client.get("/api/settings/polling/").status_code == 401
+
+
+class TestEffectiveIntervals:
+    def test_uses_global_when_not_overridden(self, auth_client, device):
+        resp = auth_client.get(f"/api/devices/{device.id}/telemetry-config/")
+        eff = resp.json()["effective_intervals"]
+        assert eff["device_metrics"] == 300 and eff["interface_status"] == 60
+
+    def test_uses_device_override(self, auth_client, device):
+        auth_client.put(f"/api/devices/{device.id}/telemetry-config/", {
+            "override_intervals": True, "device_metrics_interval": 30,
+            "interface_traffic_interval": 30,
+        }, format="json")
+        resp = auth_client.get(f"/api/devices/{device.id}/telemetry-config/")
+        eff = resp.json()["effective_intervals"]
+        assert eff["device_metrics"] == 30 and eff["interface_traffic"] == 30
+        # bgp not overridden → falls back to global
+        assert eff["bgp"] == 60
+
+    def test_override_off_ignores_device_values(self, auth_client, device):
+        auth_client.put(f"/api/devices/{device.id}/telemetry-config/", {
+            "override_intervals": False, "device_metrics_interval": 30,
+        }, format="json")
+        eff = auth_client.get(f"/api/devices/{device.id}/telemetry-config/").json()["effective_intervals"]
+        assert eff["device_metrics"] == 300  # global, since override is off
