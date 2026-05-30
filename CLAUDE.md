@@ -1401,3 +1401,36 @@ API endpoints:
   POST /api/settings/system/ssl/self-signed/
   POST /api/settings/system/ssl/enable-https/
   GET  /api/settings/system/ssl/status/
+
+## CA Certificate Management
+Settings → System → SSL/TLS → Trusted CA Certificates
+
+Model: CACertificate
+  name, subject, issuer, fingerprint (unique)
+  not_before, not_after, cert_pem
+  file_path, is_root, is_intermediate
+  added_by (FK User), created_at
+
+Storage:
+  Individual: /etc/ssl/netpulse/ca-certs/{uuid}.crt
+  Bundle: /etc/ssl/netpulse/ca-bundle.crt (auto-rebuilt)
+  
+Used for:
+  - nginx ssl_trusted_certificate (OCSP stapling)
+  - All outbound HTTPS: CVE feeds, vendor APIs, git sync
+  - Python requests via REQUESTS_CA_BUNDLE env var
+  - Critical for orgs with SSL inspection/internal PKI
+
+API:
+  GET/POST /api/settings/system/ssl/ca-certs/
+  DELETE   /api/settings/system/ssl/ca-certs/{id}/
+  POST     /api/settings/system/ssl/ca-certs/{id}/verify/
+
+Supported upload formats: PEM, DER (auto-convert), PKCS#7
+Rebuild ca-bundle.crt + reload nginx on every add/delete
+Warn before deleting CA that issued installed server cert
+
+Expiry monitoring:
+  Red: expired
+  Orange: < 90 days remaining
+  Dashboard warning included
