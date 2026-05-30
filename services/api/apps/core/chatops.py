@@ -73,9 +73,17 @@ def _resolve_intent(intent: str, params: dict) -> str:
             from apps.devices.models import Device
             name = params.get("name", "")
             try:
-                d = Device.objects.filter(
-                    hostname__icontains=name
-                ).first() or Device.objects.filter(ip_address=name).first()
+                d = Device.objects.filter(hostname__icontains=name).first()
+                if not d:
+                    # Only try the IP lookup when the term parses as an IP —
+                    # ip_address is an INET column and a non-IP string errors.
+                    import ipaddress
+                    try:
+                        ipaddress.ip_address(name)
+                    except ValueError:
+                        pass
+                    else:
+                        d = Device.objects.filter(ip_address=name).first()
                 if d:
                     return f"*{d.hostname}* — status: `{d.status}`, vendor: {d.vendor or 'unknown'}"
                 return f"Device `{name}` not found."
@@ -157,7 +165,7 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
     user  = event.get("user", "unknown")
     channel = event.get("channel", "unknown")
 
-    logger.info("slack query from %s in %s: %q", user, channel, text[:200])
+    logger.info("slack query from %s in %s: %s", user, channel, text[:200])
     intent, params = _parse_intent(text)
     response_text  = _resolve_intent(intent, params)
 
