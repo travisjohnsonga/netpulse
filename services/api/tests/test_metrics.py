@@ -1,0 +1,60 @@
+import pytest
+
+pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def device():
+    from apps.devices.models import Device
+    return Device.objects.create(hostname="router1", ip_address="192.168.98.100", status="active")
+
+
+class TestMetricsEndpoint:
+    def test_requires_auth(self, api_client, device):
+        assert api_client.get(f"/api/devices/{device.id}/metrics/").status_code == 401
+
+    def test_returns_query_result(self, auth_client, device, monkeypatch):
+        from apps.devices import metrics_influx
+        sample = {"device_id": str(device.id), "period": "6h",
+                  "metrics": {"uptime_seconds": 194185.8, "memory_used_pct": 9.6, "cpu_pct": None},
+                  "timeseries": {"uptime": [], "memory_used_pct": [], "cpu_pct": []}, "interfaces": {}}
+        called = {}
+        def fake(dev_id, metric, period):
+            called.update(dev_id=dev_id, metric=metric, period=period)
+            return sample
+        monkeypatch.setattr(metrics_influx, "query_device_metrics", fake)
+        resp = auth_client.get(f"/api/devices/{device.id}/metrics/?metric=memory&period=6h")
+        assert resp.status_code == 200
+        assert resp.json()["metrics"]["memory_used_pct"] == 9.6
+        assert called == {"dev_id": str(device.id), "metric": "memory", "period": "6h"}
+
+    def test_default_period_is_1h(self, auth_client, device, monkeypatch):
+        from apps.devices import metrics_influx
+        captured = {}
+        monkeypatch.setattr(metrics_influx, "query_device_metrics",
+                            lambda d, m, p: captured.update(p=p) or metrics_influx._empty(d, p))
+        auth_client.get(f"/api/devices/{device.id}/metrics/")
+        assert captured["p"] == "1h"
+
+
+class TestMetricsModule:
+    def test_pct_used(self):
+        from apps.devices.metrics_influx import _pct_used
+        assert _pct_used(200121296, 1878994416) == 9.6
+        assert _pct_used(None, 5) is None
+        assert _pct_used(0, 0) is None
+
+    def test_invalid_period_normalised_and_degrades(self, monkeypatch):
+        # Bad period → 1h; InfluxDB client error → empty structure (no raise).
+        from apps.devices import metrics_influx
+        monkeypatch.setattr(metrics_influx, "_client", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+        out = metrics_influx.query_device_metrics("3", "all", "999d")
+        assert out["period"] == "1h"
+        assert out["metrics"]["uptime_seconds"] is None
+        assert out["timeseries"] == {"uptime": [], "memory_used_pct": [], "cpu_pct": []}
+
+    def test_field_map_covers_spec(self):
+        from apps.devices.metrics_influx import FIELD_MAP
+        assert FIELD_MAP["sysUpTime_0"] == "uptime_seconds"
+        assert FIELD_MAP["1_3_6_1_4_1_9_9_48_1_1_1_5_1"] == "memory_used_bytes"
+        assert FIELD_MAP["1_3_6_1_4_1_9_9_109_1_1_1_1_8_1"] == "cpu_5min_pct"

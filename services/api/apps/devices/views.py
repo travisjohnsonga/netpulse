@@ -1,4 +1,4 @@
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -158,6 +158,26 @@ class DeviceViewSet(viewsets.ModelViewSet):
             req.validated_data["ip"], profile.ssh_username, password, profile.ssh_port
         )
         return Response(DetectPlatformResponseSerializer(result).data)
+
+    @extend_schema(
+        summary="Time-series telemetry metrics for a device (from InfluxDB)",
+        parameters=[
+            OpenApiParameter("metric", str, description="cpu|memory|uptime|interfaces|all"),
+            OpenApiParameter("period", str, description="1h|6h|24h|7d (default 1h)"),
+        ],
+        responses=None,
+    )
+    @action(detail=True, methods=["get"], url_path="metrics")
+    def metrics(self, request, pk=None):
+        """Latest snapshot + windowed time-series for the device's SNMP metrics."""
+        from . import metrics_influx
+        device = self.get_object()
+        data = metrics_influx.query_device_metrics(
+            str(device.id),
+            request.query_params.get("metric", "all"),
+            request.query_params.get("period", "1h"),
+        )
+        return Response(data)
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="topology/discover")
