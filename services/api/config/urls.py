@@ -38,6 +38,7 @@ urlpatterns = [
     path("api/configbackup/",  include("apps.configbackup.urls")),
     path("api/logs/",         include("apps.logs.urls")),
     path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
+    path("api/settings/",      include("apps.tls.urls")),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),

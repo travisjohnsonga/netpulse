@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.configbackup",
     "apps.logs",
+    "apps.tls",
 ]
 
 MIDDLEWARE = [
@@ -148,6 +149,12 @@ NATS_PASSWORD = os.environ.get("NATS_PASSWORD", "")
 
 OPENBAO_ADDR = os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
 OPENBAO_TOKEN = os.environ.get("OPENBAO_TOKEN", "")
+
+# ── TLS ───────────────────────────────────────────────────────────────────────
+# Directory holding NetPulse's OWN HTTPS server cert/key (not device certs).
+# Shared with the nginx container via the ssl-certs volume. The private key
+# lives here on disk (mode 0600) and is never returned by the API.
+SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 
 # IP/host of the NetPulse collector that devices send telemetry to (used when
 # generating device telemetry config). Configured under Settings → General.
