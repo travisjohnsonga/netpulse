@@ -80,8 +80,22 @@ export interface Device {
   site_name: string | null
   credential_profile: number | null
   last_seen: string | null
+  is_reachable?: boolean
+  consecutive_failures?: number
+  last_reachability_check?: string | null
   notes: string
   created_at: string
+}
+
+// Reachability state derived from is_reachable + last_seen recency.
+export type Reachability = 'reachable' | 'degraded' | 'unreachable'
+export function reachabilityOf(d: { is_reachable?: boolean; last_seen?: string | null }): Reachability {
+  if (d.is_reachable === false) return 'unreachable'
+  if (!d.last_seen) return 'unreachable'
+  const age = (Date.now() - new Date(d.last_seen).getTime()) / 1000
+  if (age > 300) return 'unreachable'
+  if (age > 60) return 'degraded'
+  return 'reachable'
 }
 
 export interface DeviceListResponse {
@@ -963,6 +977,13 @@ export interface DeviceDetail {
   site: number | null
   groups: number[]
   credential_profile: number | null
+  last_seen?: string | null
+  is_reachable?: boolean
+  consecutive_failures?: number
+  last_reachability_check?: string | null
+  collector_name?: string | null
+  collector_ip?: string | null
+  collector_status?: string | null
   notes: string
   created_at: string
   updated_at: string

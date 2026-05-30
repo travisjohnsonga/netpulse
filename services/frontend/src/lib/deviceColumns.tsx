@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
-import { type Device } from '../api/client'
+import { type Device, reachabilityOf } from '../api/client'
 import { sshUrl, sshTooltip } from './ssh'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -8,6 +8,12 @@ const STATUS_COLORS: Record<string, string> = {
   inactive: 'bg-gray-100 text-gray-600',
   pending: 'bg-yellow-100 text-yellow-700',
   unreachable: 'bg-red-100 text-red-700',
+}
+
+const REACH_DOT: Record<string, string> = {
+  reachable: 'bg-green-500',
+  degraded: 'bg-yellow-500',
+  unreachable: 'bg-red-500',
 }
 
 export interface ColCtx {
@@ -58,11 +64,17 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
   },
   {
     key: 'status', label: 'Status', default: true,
-    render: (d) => (
-      <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>
-        {d.status}
-      </span>
-    ),
+    render: (d) => {
+      const reach = reachabilityOf(d)
+      return (
+        <span className="inline-flex items-center gap-1.5">
+          <span className={clsx('w-2 h-2 rounded-full', REACH_DOT[reach])} title={`Reachability: ${reach}`} />
+          <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>
+            {d.status}
+          </span>
+        </span>
+      )
+    },
   },
   { key: 'ip_address', label: 'IP Address', default: true, render: (d) => <span className="font-mono text-xs text-gray-600">{d.ip_address}</span> },
   { key: 'vendor', label: 'Vendor', default: true, render: (d) => <span className="text-gray-600">{dash(d.vendor)}</span> },

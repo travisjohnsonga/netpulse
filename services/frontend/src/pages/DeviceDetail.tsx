@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, type DeviceDetail as Device } from '../api/client'
+import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, reachabilityOf, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import Overview from './device/Overview'
 import Telemetry, { TelemetryConfigPanel } from './device/Telemetry'
@@ -122,6 +122,7 @@ export default function DeviceDetail() {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-900">{device.hostname}</h1>
             <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600')}>{device.status}</span>
+            <ReachabilityIndicator device={device} />
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500 font-mono">{device.management_ip || device.ip_address}</span>
@@ -198,5 +199,29 @@ export default function DeviceDetail() {
         </Modal>
       )}
     </div>
+  )
+}
+
+function relAge(iso?: string | null): string {
+  if (!iso) return 'never'
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
+
+function ReachabilityIndicator({ device }: { device: Device }) {
+  const reach = reachabilityOf(device)
+  const dot = reach === 'reachable' ? 'bg-green-500' : reach === 'degraded' ? 'bg-yellow-500' : 'bg-red-500'
+  const label = reach === 'unreachable' ? 'Unreachable' : reach === 'degraded' ? 'Degraded' : 'Reachable'
+  const detail = reach === 'reachable' || reach === 'degraded'
+    ? `checked ${relAge(device.last_reachability_check ?? device.last_seen)}`
+    : `last seen ${relAge(device.last_seen)}`
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+      <span className={clsx('w-2 h-2 rounded-full', dot)} />
+      {label} — {detail}
+    </span>
   )
 }

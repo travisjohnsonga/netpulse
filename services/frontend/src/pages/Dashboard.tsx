@@ -9,6 +9,7 @@ import {
   fetchAlerts,
   checkHealth,
   checkInfraHealth,
+  reachabilityOf,
   type Device,
   type Alert,
   type InfraHealth,
@@ -231,6 +232,24 @@ export default function Dashboard() {
 
       {/* Infrastructure health */}
       <InfraHealthSection health={infraHealth} loading={infraLoading} />
+
+      {/* Device reachability summary */}
+      {safeDevices.length > 0 && (() => {
+        const reach = safeDevices.map(reachabilityOf)
+        const up = reach.filter((r) => r === 'reachable').length
+        const degraded = reach.filter((r) => r === 'degraded').length
+        const down = reach.filter((r) => r === 'unreachable').length
+        return (
+          <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 text-sm">
+            <span className="font-medium text-gray-700 dark:text-gray-200">{safeDevices.length} devices</span>
+            <span className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400"><span className="w-2 h-2 rounded-full bg-green-500" />{up} reachable</span>
+            {degraded > 0 && <span className="inline-flex items-center gap-1.5 text-yellow-600 dark:text-yellow-500"><span className="w-2 h-2 rounded-full bg-yellow-500" />{degraded} degraded</span>}
+            <span className={clsx('inline-flex items-center gap-1.5', down > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500')}>
+              <span className={clsx('w-2 h-2 rounded-full', down > 0 ? 'bg-red-500' : 'bg-gray-300')} />{down} unreachable {down > 0 ? '⚠️' : ''}
+            </span>
+          </div>
+        )
+      })()}
 
       {/* Stat cards — always visible even with no devices */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
