@@ -5,8 +5,9 @@ Bootstraps a file-storage OpenBao on first run and auto-unseals on every run.
 
 First run (uninitialised):
   - POST /v1/sys/init {secret_shares: 1, secret_threshold: 1}
-  - persist the unseal key + root token to OPENBAO_KEYS_FILE (chmod 600) on the
-    shared openbao-data volume
+  - persist the unseal key + root token to OPENBAO_KEYS_FILE (chmod 640, group
+    readable so the gid-1000 services can read it) on the shared openbao-data
+    volume
   - unseal, enable the KV-v2 engine at secret/, and create the `netpulse`
     AppRole (role_id/secret_id also written to the keys file)
 
@@ -155,8 +156,14 @@ class Command(BaseCommand):
         try:
             with open(KEYS_FILE, "w") as fh:
                 json.dump(keys, fh)
-            os.chmod(KEYS_FILE, 0o600)
-            self.stdout.write(f"Wrote OpenBao keys to {KEYS_FILE} (chmod 600).")
+            # 0640 (not 0600): the openbao-data volume is shared and the
+            # openbao-init one-shot chowns it to group 1000 (netpulse), the gid
+            # the api/config-manager run as. They read this file as the *group*,
+            # not the owner (OpenBao's uid 100 owns it after that chown), so the
+            # group read bit is required for auto-unseal and the vault token
+            # fallback to work. World stays unreadable.
+            os.chmod(KEYS_FILE, 0o640)
+            self.stdout.write(f"Wrote OpenBao keys to {KEYS_FILE} (chmod 640).")
         except Exception as exc:
             self.stderr.write(f"could not write keys file: {exc}")
 
