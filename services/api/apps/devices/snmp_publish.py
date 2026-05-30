@@ -191,6 +191,19 @@ def publish_device_remove(device_id) -> None:
     _run([(REMOVE_SUBJECT, {"device_id": str(device_id)})])
 
 
+def publish_poll_now(device) -> bool:
+    """
+    Explicit user-triggered poll: (re)publish the device config so the poller
+    re-adds it and polls immediately. Bypasses the SNMP_DEVICE_PUBLISH gate
+    (this is a direct action, not a side effect of a save). Returns False if the
+    device isn't pollable.
+    """
+    payload = build_device_payload(device)
+    if payload is None:
+        return False
+    return _run([(UPSERT_SUBJECT, payload)])
+
+
 def publish_all_active() -> int:
     """Publish every pollable device. Returns the count published."""
     from .models import Device

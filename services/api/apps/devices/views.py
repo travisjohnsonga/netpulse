@@ -179,6 +179,22 @@ class DeviceViewSet(viewsets.ModelViewSet):
         )
         return Response(data)
 
+    @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="poll-now")
+    def poll_now(self, request, pk=None):
+        """Republish the device config so the ingest-snmp poller polls it now."""
+        from . import snmp_publish
+        device = self.get_object()
+        if snmp_publish.build_device_payload(device) is None:
+            return Response(
+                {"status": "not pollable", "device_id": device.id,
+                 "detail": "device is inactive or has no SNMP credential profile"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ok = snmp_publish.publish_poll_now(device)
+        return Response({"status": "poll triggered" if ok else "publish failed",
+                         "device_id": device.id})
+
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="topology/discover")
     def topology_discover(self, request, pk=None):

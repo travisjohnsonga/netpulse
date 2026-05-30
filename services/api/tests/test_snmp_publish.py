@@ -107,3 +107,24 @@ class TestPlatformOIDs:
         # _default = just sysUpTime + hrProcessorLoad (+ any interface OIDs)
         assert SYSUPTIME in oids and HRPROCLOAD in oids
         assert "1.3.6.1.4.1.9.9.48.1.1.1.5.1" not in oids
+
+
+class TestPollNow:
+    def test_poll_now_triggers_publish(self, auth_client, snmp_v3_device, monkeypatch):
+        from apps.devices import snmp_publish
+        captured = {}
+        monkeypatch.setattr(snmp_publish, "_run", lambda msgs: captured.setdefault("msgs", msgs) or True)
+        resp = auth_client.post(f"/api/devices/{snmp_v3_device.id}/poll-now/")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "poll triggered"
+        assert captured["msgs"][0][0] == snmp_publish.UPSERT_SUBJECT
+
+    def test_poll_now_not_pollable(self, auth_client):
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="nosnmp2", ip_address="10.0.0.77", status="active")
+        resp = auth_client.post(f"/api/devices/{d.id}/poll-now/")
+        assert resp.status_code == 400
+        assert resp.json()["status"] == "not pollable"
+
+    def test_poll_now_requires_auth(self, api_client, snmp_v3_device):
+        assert api_client.post(f"/api/devices/{snmp_v3_device.id}/poll-now/").status_code == 401
