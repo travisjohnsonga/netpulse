@@ -1750,3 +1750,42 @@ Audit trail regardless of setting:
   even in read-only mode.
 
 Do NOT build until requested.
+
+## PINNED — gNMI/SNMP Adaptive Polling
+
+When a device is actively pushing gNMI telemetry, SNMP polling
+for the same metrics is redundant and wastes device resources.
+
+### Logic:
+1. Track last gNMI message received per device in Valkey:
+   Key: "gnmi:last_seen:{device_id}"
+   Value: timestamp
+   TTL: 120 seconds (2x the expected gNMI interval)
+
+2. In publish_device_configs / SNMP poller:
+   Before publishing SNMP poll config, check Valkey:
+   If gnmi:last_seen:{device_id} exists and is recent:
+     → Skip SNMP polling for device metrics (CPU/memory/uptime)
+     → Keep SNMP polling for anything not covered by gNMI
+     → Log: "device {hostname}: gNMI active, skipping SNMP metrics"
+   
+   If gNMI stream goes stale (TTL expires):
+     → Re-enable SNMP polling automatically
+     → Log: "device {hostname}: gNMI stream lost, falling back to SNMP"
+
+3. ingest-grpc on receiving gNMI message:
+   → Update Valkey key: SET gnmi:last_seen:{device_id} {timestamp} EX 120
+   → Publish to NATS as normal
+
+4. UI indicator on Telemetry tab:
+   Show collection method badge:
+   "📡 gNMI streaming" (green) when gNMI active
+   "📊 SNMP polling" (blue) when SNMP only
+   "⚠️ No telemetry" (yellow) when neither
+
+5. TelemetryConfig.primary_method field already exists:
+   Values: snmp, gnmi, otlp
+   Update automatically based on what's actually received.
+
+### Priority: implement after gNMI port fix is verified working
+### Do NOT build until requested.
