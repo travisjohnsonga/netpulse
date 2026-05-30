@@ -188,6 +188,8 @@ services:
       # OpenBao keys file (.init_keys) — api initialises/unseals and reads the
       # root token from here when OPENBAO_TOKEN is unset.
       - openbao-data:/openbao/data
+      # Community advisory YAML (Juniper/Arista/…) for load_community_advisories.
+      - ./advisories:/app/advisories:ro
     networks:
       - netpulse-net
     depends_on:
@@ -431,6 +433,8 @@ services:
     volumes:
       # Trust admin-added CA certs for outbound CVE-feed HTTPS (ca-bundle.crt).
       - ssl-certs:/app/ssl:ro
+      # Community advisory YAML (Juniper/Arista/…) for load_community_advisories.
+      - ./advisories:/app/advisories:ro
     networks:
       - netpulse-net
     depends_on:

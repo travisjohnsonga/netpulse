@@ -1,0 +1,33 @@
+# Juniper JSAs — community-maintained (no machine-readable API).
+advisories:
+  - id: JSA79134
+    cve_ids: [CVE-2024-21619]
+    title: "Junos OS: J-Web sensitive information exposure to an unauthenticated attacker"
+    description: >-
+      A Missing Authentication for Critical Function vulnerability in J-Web of
+      Juniper Networks Junos OS allows an unauthenticated, network-based
+      attacker to access sensitive system information.
+    severity: high
+    cvss_score: 5.3
+    cvss_vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    published: 2024-01-10
+    url: https://supportportal.juniper.net/s/article/JSA79134
+    affected:
+      vendor: juniper
+      platforms: [junos]
+      versions: ["<20.4R3-S9", "21.2", "21.3", "21.4", "22.1", "22.2", "22.3", "22.4"]
+
+  - id: JSA75729
+    cve_ids: [CVE-2023-36844]
+    title: "Junos OS EX/SRX: J-Web PHP environment variable modification"
+    description: >-
+      A PHP External Variable Modification vulnerability in J-Web of Juniper
+      Networks Junos OS on EX Series and SRX Series allows an unauthenticated,
+      network-based attacker to control certain environment variables.
+    severity: medium
+    cvss_score: 5.3
+    published: 2023-08-17
+    url: https://supportportal.juniper.net/s/article/JSA75729
+    affected:
+      vendor: juniper
+      platforms: [junos]

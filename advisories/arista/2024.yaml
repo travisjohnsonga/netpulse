@@ -1,0 +1,30 @@
+# Arista EOS advisories — community-maintained (no machine-readable API).
+advisories:
+  - id: SA0084
+    cve_ids: [CVE-2024-2059]
+    title: "Arista EOS: TerminAttr / streaming telemetry denial of service"
+    description: >-
+      On affected Arista EOS releases, a crafted sequence of operations against
+      the streaming telemetry agent can cause the agent to restart, resulting in
+      a temporary loss of telemetry streaming.
+    severity: medium
+    cvss_score: 5.3
+    published: 2024-03-12
+    url: https://www.arista.com/en/support/advisories-notices/security-advisory/0084
+    affected:
+      vendor: arista
+      platforms: [eos]
+
+  - id: SA0088
+    cve_ids: [CVE-2024-3661]
+    title: "Arista EOS: DHCP option 121 route injection (TunnelVision)"
+    description: >-
+      DHCP can add routes via option 121 that take precedence over VPN routes,
+      potentially allowing traffic redirection on affected EOS-based hosts.
+    severity: high
+    cvss_score: 7.6
+    published: 2024-05-06
+    url: https://www.arista.com/en/support/advisories-notices/security-advisory/0088
+    affected:
+      vendor: arista
+      platforms: [eos]

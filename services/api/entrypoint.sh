@@ -32,6 +32,10 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     # Best-effort: a NATS hiccup must not block startup.
     echo "[entrypoint] publishing device configs to NATS..."
     python manage.py publish_device_configs || echo "[entrypoint] device publish had issues (continuing)"
+
+    # Load community advisory feeds (Juniper/Arista YAML) and correlate to devices.
+    echo "[entrypoint] loading community advisories..."
+    python manage.py load_community_advisories || echo "[entrypoint] advisory load had issues (continuing)"
 fi
 
 echo "[entrypoint] starting: $*"

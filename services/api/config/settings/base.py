@@ -184,6 +184,10 @@ ALLOW_CONFIG_PUSH = os.environ.get("ALLOW_CONFIG_PUSH", "false").lower() == "tru
 # ingest-snmp poller learns about devices. Disabled in tests (no NATS).
 SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "true"
 
+# Directory of community-maintained vendor advisory YAML (Juniper/Arista/…),
+# loaded by `load_community_advisories`. Mounted from the repo's advisories/.
+COMMUNITY_ADVISORIES_DIR = os.environ.get("COMMUNITY_ADVISORIES_DIR", "/app/advisories")
+
 # ── Django REST Framework ─────────────────────────────────────────────────────
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
