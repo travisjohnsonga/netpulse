@@ -5,7 +5,7 @@ import {
   fetchTelemetryConfig, saveTelemetryConfig, fetchMonitoredInterfaces,
   discoverInterfaces, saveMonitoredInterfaces,
   generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth, fetchSystemSettings,
-  fetchDeviceMetrics,
+  fetchDeviceMetrics, pollDeviceNow,
   type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
   type MonitoredInterface, type DeviceMetrics, type MetricPoint,
 } from '../../api/client'
@@ -650,6 +650,24 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
 
   const health = metrics?.metrics
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [polling, setPolling] = useState(false)
+  const [pollToast, setPollToast] = useState<string | null>(null)
+
+  const pollNow = async () => {
+    setPolling(true); setPollToast(null)
+    try {
+      await pollDeviceNow(device.id)
+      await new Promise((r) => setTimeout(r, 5000))   // give the poller a cycle
+      const m = await fetchDeviceMetrics(device.id, range)
+      setMetrics(m)
+      setPollToast('Poll complete — metrics refreshed')
+    } catch {
+      setPollToast('Poll request failed')
+    } finally {
+      setPolling(false)
+      setTimeout(() => setPollToast(null), 4000)
+    }
+  }
 
   // Merge selected interfaces with their live stats (matched by name).
   const ifaceRows = useMemo(() => {
@@ -694,9 +712,14 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
                 </button>
               ))}
             </div>
+            <button onClick={pollNow} disabled={polling}
+              className="px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
+              {polling ? '↻ Polling…' : '↻ Poll Now'}
+            </button>
             <button onClick={configure} className="text-xs font-medium text-blue-600 hover:text-blue-800">Configure →</button>
           </div>
         </div>
+        {pollToast && <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{pollToast}</p>}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <HealthCard label="CPU" value={health?.cpu_pct != null ? `${health.cpu_pct.toFixed(1)}%` : null}
             series={metrics?.timeseries.cpu_pct} color="#f59e0b" />

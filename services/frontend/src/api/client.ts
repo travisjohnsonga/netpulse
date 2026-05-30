@@ -292,6 +292,11 @@ export async function fetchDeviceMetrics(deviceId: number, period = '1h'): Promi
   return data
 }
 
+export async function pollDeviceNow(deviceId: number): Promise<{ status: string; device_id: number }> {
+  const { data } = await api.post(`/devices/${deviceId}/poll-now/`)
+  return data
+}
+
 export interface SystemSettings {
   allow_config_push: boolean
   collector_ip: string
