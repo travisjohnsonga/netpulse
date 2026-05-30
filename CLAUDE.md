@@ -1322,6 +1322,41 @@ Regex filter box
 [Save] button → saves selected interfaces
 Collection method badge per interface: [gNMI 10s] or [SNMP 5m]
 
+## Interface State-Change Alerting
+
+Per-interface up/down alerting driven by MonitoredInterface settings.
+
+### MonitoredInterface fields (apps/telemetry)
+  alert_on_down (default True) — alert when the interface goes down
+  alert_on_up   (default True) — alert on recovery too
+  alert_severity (critical/high/medium/low, default high)
+  consecutive_polls_before_alert (default 1) — flap suppression
+  last_status, last_status_changed — track state + downtime duration
+
+### Alert engine (apps/alerts/interface_monitor.py)
+  process_interface_status(iface, new_status, now) is called as interface
+  status is observed (poller/stream-processor). On an up→down or down→up
+  transition it persists the new state and raises an AlertEvent under a single
+  system AlertRule ("Interface State Change"). Per-event severity, device,
+  interface and title/message live in the event labels/annotations (the schema
+  keeps severity on the rule). Recovery events are severity "info" and include
+  the downtime duration. The first observation (from "unknown") only sets a
+  baseline — no alert. Down/up alerts are suppressed when the matching toggle
+  is off.
+
+### API
+  Interface alert fields are returned by GET /api/devices/{id}/interfaces/ and
+  saved with the bulk interface selection. Bulk-apply alert settings:
+  POST /api/devices/{id}/interfaces/alert-config/
+    { if_names: [...], alert_on_down, alert_on_up, alert_severity,
+      consecutive_polls_before_alert }
+
+### UI
+  Telemetry Configuration slide-over → interface table: per-row alert toggle
+  + expandable alert settings; toolbar bulk Enable/Disable Alerts for selected.
+  Alerts page / device Recent Alerts: interface alerts show the interface name,
+  red for down / green for recovery, link to the device.
+
 ## SNMP Polling Timer Settings
 
 Two levels:

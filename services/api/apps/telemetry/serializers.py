@@ -38,7 +38,8 @@ class MonitoredInterfaceSerializer(serializers.ModelSerializer):
             "id", "if_index", "if_name", "if_description", "if_speed_mbps", "if_type",
             "lldp_neighbor_hostname", "lldp_neighbor_port", "lldp_neighbor_desc",
             "poll_traffic", "poll_errors", "poll_status", "collection_method",
-            "last_discovered", "last_status",
+            "last_discovered", "last_status", "last_status_changed",
+            "alert_on_down", "alert_on_up", "alert_severity", "consecutive_polls_before_alert",
         )
 
 
@@ -72,10 +73,25 @@ class _BulkInterfaceItemSerializer(serializers.Serializer):
     collection_method = serializers.ChoiceField(
         choices=["auto", "snmp", "gnmi"], required=False, default="auto")
     oper_status = serializers.CharField(required=False, allow_blank=True)
+    alert_on_down = serializers.BooleanField(required=False, default=True)
+    alert_on_up = serializers.BooleanField(required=False, default=True)
+    alert_severity = serializers.ChoiceField(
+        choices=MonitoredInterface.AlertSeverity.choices, required=False, default="high")
+    consecutive_polls_before_alert = serializers.IntegerField(required=False, default=1, min_value=1)
 
 
 class InterfaceBulkSaveSerializer(serializers.Serializer):
     interfaces = _BulkInterfaceItemSerializer(many=True)
+
+
+class InterfaceAlertConfigSerializer(serializers.Serializer):
+    """Bulk-apply alert settings to a set of the device's interfaces (by name)."""
+    if_names = serializers.ListField(child=serializers.CharField())
+    alert_on_down = serializers.BooleanField(required=False)
+    alert_on_up = serializers.BooleanField(required=False)
+    alert_severity = serializers.ChoiceField(
+        choices=["critical", "high", "medium", "low"], required=False)
+    consecutive_polls_before_alert = serializers.IntegerField(required=False, min_value=1)
 
 
 class _ConfigSectionSerializer(serializers.Serializer):

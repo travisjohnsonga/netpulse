@@ -15,6 +15,7 @@ from .serializers import (
     ConfigPushSerializer,
     DiscoveredInterfaceSerializer,
     GeneratedConfigSerializer,
+    InterfaceAlertConfigSerializer,
     InterfaceBulkSaveSerializer,
     MonitoredInterfaceSerializer,
     PollingSettingsSerializer,
@@ -121,6 +122,10 @@ class InterfaceListCreateView(APIView):
                 poll_errors=it.get("poll_errors", True),
                 poll_status=it.get("poll_status", True),
                 collection_method=it.get("collection_method", "auto"),
+                alert_on_down=it.get("alert_on_down", True),
+                alert_on_up=it.get("alert_on_up", True),
+                alert_severity=it.get("alert_severity", "high"),
+                consecutive_polls_before_alert=it.get("consecutive_polls_before_alert", 1),
                 last_discovered=now,
                 last_status=it.get("oper_status") or "unknown",
             )
@@ -139,6 +144,24 @@ class InterfaceDeleteView(APIView):
         obj = get_object_or_404(MonitoredInterface, device_id=device_id, if_name=if_name)
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InterfaceAlertConfigView(APIView):
+    """Bulk-apply state-change alert settings to a device's interfaces (by name)."""
+
+    @extend_schema(request=InterfaceAlertConfigSerializer, responses=MonitoredInterfaceSerializer(many=True))
+    def post(self, request, device_id):
+        get_object_or_404(Device, pk=device_id)
+        req = InterfaceAlertConfigSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        data = req.validated_data
+        if_names = data.pop("if_names")
+        updates = {k: v for k, v in data.items() if v is not None}
+        qs = MonitoredInterface.objects.filter(device_id=device_id, if_name__in=if_names)
+        if updates:
+            qs.update(**updates)
+        result = MonitoredInterface.objects.filter(device_id=device_id).order_by("if_name")
+        return Response(MonitoredInterfaceSerializer(result, many=True).data)
 
 
 @extend_schema(responses=GeneratedConfigSerializer)

@@ -97,6 +97,20 @@ class MonitoredInterface(TimestampedModel):
     # NOTE: circuit_override FK omitted until a CircuitOverride model exists.
     last_discovered = models.DateTimeField(null=True, blank=True)
     last_status = models.CharField(max_length=16, default="unknown")
+    last_status_changed = models.DateTimeField(null=True, blank=True)
+
+    # State-change alerting
+    class AlertSeverity(models.TextChoices):
+        CRITICAL = "critical", "Critical"
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+        LOW = "low", "Low"
+
+    alert_on_down = models.BooleanField(default=True)
+    alert_on_up = models.BooleanField(default=True)  # notify recovery too
+    alert_severity = models.CharField(max_length=10, choices=AlertSeverity.choices, default=AlertSeverity.HIGH)
+    # Require N consecutive down polls before alerting (flap suppression).
+    consecutive_polls_before_alert = models.IntegerField(default=1)
 
     class Meta(TimestampedModel.Meta):
         unique_together = ["device", "if_name"]

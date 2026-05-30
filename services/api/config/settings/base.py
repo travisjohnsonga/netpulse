@@ -212,6 +212,7 @@ SPECTACULAR_SETTINGS = {
         "DiscoveryJobStatusEnum": "apps.devices.models.DiscoveryJob.Status",
         "DiscoveredDeviceStatusEnum": "apps.devices.models.DiscoveredDevice.Status",
         "CollectorStatusEnum": "apps.collectors.models.Collector.Status",
+        "InterfaceAlertSeverityEnum": "apps.telemetry.models.MonitoredInterface.AlertSeverity",
     },
 }
 
