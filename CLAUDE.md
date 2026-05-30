@@ -1355,3 +1355,49 @@ gNMI/gRPC intervals: controlled on device via generated config
   To change: regenerate config → push to device
 
 Settings sub-nav: add "Polling" between General and Credentials
+
+## SSL/TLS Certificate Management (NetPulse UI)
+Settings → System → SSL/TLS section
+Secures NetPulse web UI with HTTPS — NOT for network devices.
+
+Workflow:
+1. Generate CSR + private key (key stays on server)
+2. Admin submits CSR to CA (Let's Encrypt, DigiCert, internal PKI)
+3. Admin uploads signed cert back to NetPulse
+4. NetPulse validates cert+key pair, writes nginx SSL config
+5. Nginx reloads → HTTPS enabled, HTTP redirects to HTTPS
+
+Three install methods:
+- Generate CSR → get cert from CA (recommended)
+- Self-signed → testing/internal (browser warning)
+- Upload existing → bring your own cert+key
+
+Files stored in Docker volume ssl-certs:
+  /etc/ssl/netpulse/netpulse.key (mode 600)
+  /etc/ssl/netpulse/netpulse.crt
+  /etc/ssl/netpulse/netpulse-chain.crt (optional)
+  /etc/ssl/netpulse/netpulse.csr
+
+Private key NEVER returned to browser — server-side only.
+
+Nginx SSL config:
+  TLS 1.2 + 1.3 only
+  Strong cipher suites
+  HTTP → HTTPS redirect
+  HSTS header
+  X-Forwarded-Proto: https to Django
+
+Docker Compose:
+  ssl-certs volume shared between api and frontend
+  Port 443 exposed on frontend service
+
+Monitoring:
+  /api/health/ returns ssl_cert_days_remaining
+  Dashboard warning when < 30 days remaining
+  
+API endpoints:
+  POST /api/settings/system/ssl/generate-csr/
+  POST /api/settings/system/ssl/upload-certificate/
+  POST /api/settings/system/ssl/self-signed/
+  POST /api/settings/system/ssl/enable-https/
+  GET  /api/settings/system/ssl/status/
