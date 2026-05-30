@@ -1600,3 +1600,99 @@ Flapping protection:
 
 UI: Bell icon toggle per interface in Telemetry Config
 Bulk enable/disable for selected interfaces
+
+## PINNED — First-Run Setup Script
+
+### scripts/setup.sh
+Interactive bash script for first-time deployment.
+Run once after git clone, before docker compose up.
+
+Prompts for:
+1. Basic config:
+   - Platform hostname/domain (for SSL cert SANs)
+   - Collector IP address (COLLECTOR_IP)
+   - Timezone
+
+2. Credentials (with validation):
+   - Django admin username (default: admin)
+   - Django admin password (min 12 chars, complexity check)
+   - PostgreSQL password
+   - OpenBao root token / unseal key (auto-generate option)
+   - NATS username + password
+   - InfluxDB admin password
+   - OpenSearch admin password
+   - Valkey password (optional)
+
+3. Optional integrations:
+   - NVD API key (show signup URL)
+   - Cisco PSIRT client ID + secret (show signup URL)
+   - SMTP settings for email alerts
+   - Collector IP confirmation
+
+4. Script behavior:
+   - Reads .env.example as template
+   - Writes values to .env (never commits)
+   - Generates secure random passwords if user skips
+     (using openssl rand -base64 32)
+   - Shows summary of what was configured
+   - Validates each input before accepting
+   - Idempotent — can be re-run to update specific values
+   - Colorized output (green=ok, yellow=warning, red=error)
+
+5. After .env is written:
+   - Optionally run: docker compose pull
+   - Optionally run: docker compose up -d
+   - Show access URLs:
+     "NetPulse is available at http://{COLLECTOR_IP}:3000"
+     "API docs: http://{COLLECTOR_IP}:8000/api/docs/"
+
+6. Security checks:
+   - Warn if default passwords are kept
+   - Warn if running as root
+   - Warn if ports 80/443 already in use
+   - Check Docker and Docker Compose are installed
+   - Check minimum RAM (4GB recommended)
+   - Check disk space (20GB recommended)
+
+Example flow:
+  $ ./scripts/setup.sh
+  
+  ╔═══════════════════════════════╗
+  ║   NetPulse First-Run Setup   ║
+  ╚═══════════════════════════════╝
+  
+  This script configures NetPulse for first deployment.
+  Press Enter to accept defaults shown in [brackets].
+  
+  → Platform hostname [netpulse.local]: netpulse.company.com
+  → Collector IP [auto-detect: 192.168.98.134]: 
+  → Admin username [admin]: 
+  → Admin password (min 12 chars): ************
+  → Confirm password: ************
+  ✅ Password strength: good
+  
+  → Configure NVD API key? (y/N): y
+  → NVD API key: ****
+  → Signup at: https://nvd.nist.gov/developers/request-an-api-key
+  
+  ┌─────────────────────────────────┐
+  │ Configuration Summary           │
+  ├─────────────────────────────────┤
+  │ Hostname:    netpulse.company   │
+  │ Collector:   192.168.98.134     │
+  │ Admin user:  admin              │
+  │ NVD API:     configured ✅      │
+  │ Cisco PSIRT: not configured     │
+  └─────────────────────────────────┘
+  
+  Write configuration to .env? (Y/n): 
+  ✅ .env written successfully
+  
+  Start NetPulse now? (Y/n):
+  🚀 Starting NetPulse...
+  ✅ NetPulse is running!
+  
+  Access at: http://192.168.98.134:3000
+  API docs:  http://192.168.98.134:8000/api/docs/
+
+Do NOT build until requested.
