@@ -1,0 +1,8 @@
+netconf-yang
+restconf
+telemetry ietf subscription 101
+ encoding encode-kvgpb
+ filter xpath /interfaces-ios-xe-oper:interfaces
+ stream yang-push
+ update-policy periodic {{ gnmi_interval_centisecs }}
+ receiver ip address {{ collector_ip }} 57400 protocol grpc-tcp

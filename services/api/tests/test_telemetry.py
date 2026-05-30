@@ -140,3 +140,84 @@ class TestInterfaces:
         MonitoredInterface.objects.create(device=device, if_name="Gi0/0")
         with pytest.raises(Exception):
             MonitoredInterface.objects.create(device=device, if_name="Gi0/0")
+
+
+# ── config generation + push ──────────────────────────────────────────────────
+
+
+class TestConfigGenerate:
+    def test_generate_cisco_sections(self, auth_client, device, settings):
+        settings.COLLECTOR_IP = "192.168.98.134"
+        resp = auth_client.get(f"/api/devices/{device.id}/telemetry-config/generate/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["platform"] == "ios_xe" and body["collector_ip"] == "192.168.98.134"
+        secs = body["sections"]
+        assert set(secs.keys()) == {"snmp", "syslog", "gnmi", "netflow"}
+        # SNMP enabled by default (primary_method=snmp); config references collector.
+        assert secs["snmp"]["enabled"] is True
+        assert "192.168.98.134" in secs["snmp"]["config"]
+        assert "logging host 192.168.98.134" in secs["syslog"]["config"]
+        assert "192.168.98.134" in body["full_config"]
+
+    def test_generate_juniper_no_gnmi(self, auth_client, ssh_profile, settings):
+        settings.COLLECTOR_IP = "10.0.0.10"
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="jnpr", ip_address="10.0.0.7", vendor="Juniper",
+                                  platform="junos", status="active", credential_profile=ssh_profile)
+        resp = auth_client.get(f"/api/devices/{d.id}/telemetry-config/generate/")
+        secs = resp.json()["sections"]
+        assert secs["snmp"]["config"] is not None
+        assert "set system syslog host 10.0.0.10" in secs["syslog"]["config"]
+        assert secs["gnmi"]["config"] is None  # no juniper gnmi template
+
+
+class TestConfigPush:
+    def test_push_success(self, auth_client, device, monkeypatch, settings):
+        settings.COLLECTOR_IP = "10.0.0.10"
+        captured = {}
+
+        class FakeConn:
+            def send_config_set(self, lines):
+                captured.setdefault("lines", []).extend(lines)
+                return "applied " + " / ".join(lines[:1])
+            def disconnect(self):
+                captured["disconnected"] = True
+
+        import apps.telemetry.views as v
+        monkeypatch.setattr("netmiko.ConnectHandler", lambda **k: FakeConn())
+        resp = auth_client.post(f"/api/devices/{device.id}/telemetry-config/push/",
+                                {"sections": ["snmp", "syslog"]}, format="json")
+        assert resp.status_code == 200, resp.content
+        body = resp.json()
+        assert body["success"] is True
+        assert set(body["pushed_sections"]) == {"snmp", "syslog"}
+        from apps.telemetry.models import ConfigPush
+        rec = ConfigPush.objects.filter(device=device).latest("created_at")
+        assert rec.success is True and set(rec.sections) == {"snmp", "syslog"}
+
+    def test_push_no_ssh(self, auth_client, settings):
+        from apps.credentials.models import CredentialProfile
+        from apps.devices.models import Device
+        p = CredentialProfile.objects.create(name="snmp2", snmpv2c_enabled=True, vault_path="x")
+        d = Device.objects.create(hostname="nossh", ip_address="10.0.0.8", platform="ios_xe",
+                                  status="active", credential_profile=p)
+        resp = auth_client.post(f"/api/devices/{d.id}/telemetry-config/push/",
+                                {"sections": ["snmp"]}, format="json")
+        assert resp.status_code == 400
+        assert resp.json()["success"] is False
+
+    def test_push_history(self, auth_client, device):
+        from apps.telemetry.models import ConfigPush
+        ConfigPush.objects.create(device=device, sections=["snmp"], success=True, output="ok")
+        resp = auth_client.get(f"/api/devices/{device.id}/telemetry-config/push/")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1 and resp.json()[0]["sections"] == ["snmp"]
+
+
+class TestHealthCollectorIp:
+    def test_health_exposes_collector_ip(self, api_client, settings):
+        settings.COLLECTOR_IP = "192.168.98.134"
+        resp = api_client.get("/api/health/")
+        assert resp.status_code == 200
+        assert resp.json()["collector_ip"] == "192.168.98.134"

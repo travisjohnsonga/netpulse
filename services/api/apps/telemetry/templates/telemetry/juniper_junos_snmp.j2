@@ -1,0 +1,6 @@
+set snmp community {{ community }} authorization read-only
+set snmp trap-group NETPULSE targets {{ collector_ip }}
+{% if snmpv3 %}
+set snmp v3 usm local-engine user {{ username }} authentication-sha authentication-key {{ auth_key }}
+set snmp v3 usm local-engine user {{ username }} privacy-aes128 privacy-key {{ priv_key }}
+{% endif %}

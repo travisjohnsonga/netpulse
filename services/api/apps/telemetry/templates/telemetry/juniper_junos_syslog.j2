@@ -1,0 +1,3 @@
+set system syslog host {{ collector_ip }} any info
+set system syslog host {{ collector_ip }} match "!(.*CRON.*)"
+set system syslog host {{ collector_ip }} port 514

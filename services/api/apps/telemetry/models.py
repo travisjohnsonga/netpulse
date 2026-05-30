@@ -5,6 +5,7 @@ Time-series telemetry data itself lives in InfluxDB; these models hold the
 *configuration* of what to collect per device: device-level metric toggles
 (TelemetryConfig) and the set of interfaces to poll (MonitoredInterface).
 """
+from django.contrib.auth import get_user_model
 from django.db import models
 
 from apps.core.models import TimestampedModel
@@ -67,3 +68,23 @@ class MonitoredInterface(TimestampedModel):
 
     def __str__(self):
         return f"{self.device.hostname}:{self.if_name}"
+
+
+class ConfigPush(TimestampedModel):
+    """Audit record of a telemetry-config push to a device."""
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="config_pushes")
+    pushed_by = models.ForeignKey(
+        get_user_model(), null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="config_pushes",
+    )
+    sections = models.JSONField(default=list)
+    success = models.BooleanField(default=False)
+    output = models.TextField(blank=True)
+    errors = models.JSONField(default=list)
+
+    class Meta(TimestampedModel.Meta):
+        indexes = [models.Index(fields=["device", "-created_at"])]
+
+    def __str__(self):
+        return f"push {self.device.hostname} {self.sections} ({'ok' if self.success else 'fail'})"

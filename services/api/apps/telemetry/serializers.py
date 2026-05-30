@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import MonitoredInterface, TelemetryConfig
+from .models import ConfigPush, MonitoredInterface, TelemetryConfig
 
 
 class TelemetryConfigSerializer(serializers.ModelSerializer):
@@ -55,3 +55,36 @@ class _BulkInterfaceItemSerializer(serializers.Serializer):
 
 class InterfaceBulkSaveSerializer(serializers.Serializer):
     interfaces = _BulkInterfaceItemSerializer(many=True)
+
+
+class _ConfigSectionSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    config = serializers.CharField(allow_null=True)
+
+
+class GeneratedConfigSerializer(serializers.Serializer):
+    platform = serializers.CharField(allow_blank=True)
+    vendor = serializers.CharField(allow_blank=True)
+    collector_ip = serializers.CharField(allow_blank=True)
+    sections = serializers.DictField(child=_ConfigSectionSerializer())
+    full_config = serializers.CharField(allow_blank=True)
+
+
+class PushRequestSerializer(serializers.Serializer):
+    sections = serializers.ListField(child=serializers.CharField())
+
+
+class PushResponseSerializer(serializers.Serializer):
+    success = serializers.BooleanField()
+    pushed_sections = serializers.ListField(child=serializers.CharField())
+    output = serializers.CharField(allow_blank=True)
+    errors = serializers.ListField(child=serializers.CharField())
+
+
+class ConfigPushSerializer(serializers.ModelSerializer):
+    pushed_by_username = serializers.CharField(source="pushed_by.username", read_only=True, default=None)
+
+    class Meta:
+        model = ConfigPush
+        fields = ("id", "sections", "success", "output", "errors",
+                  "pushed_by", "pushed_by_username", "created_at")

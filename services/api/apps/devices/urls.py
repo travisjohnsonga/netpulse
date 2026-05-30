@@ -3,8 +3,10 @@ from rest_framework.routers import DefaultRouter
 
 from apps.telemetry.views import (
     DiscoverInterfacesView,
+    GenerateConfigView,
     InterfaceDeleteView,
     InterfaceListCreateView,
+    PushConfigView,
     TelemetryConfigView,
 )
 
@@ -19,6 +21,8 @@ router.register("", DeviceViewSet)
 # route). if_name may contain slashes, so use the <path:> converter.
 urlpatterns = [
     path("<int:device_id>/telemetry-config/", TelemetryConfigView.as_view(), name="device-telemetry-config"),
+    path("<int:device_id>/telemetry-config/generate/", GenerateConfigView.as_view(), name="device-telemetry-generate"),
+    path("<int:device_id>/telemetry-config/push/", PushConfigView.as_view(), name="device-telemetry-push"),
     path("<int:device_id>/interfaces/discover/", DiscoverInterfacesView.as_view(), name="device-interfaces-discover"),
     path("<int:device_id>/interfaces/", InterfaceListCreateView.as_view(), name="device-interfaces"),
     path("<int:device_id>/interfaces/<path:if_name>/", InterfaceDeleteView.as_view(), name="device-interface-delete"),

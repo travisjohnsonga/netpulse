@@ -14,15 +14,23 @@ from rest_framework.response import Response
 
 @extend_schema(
     summary="Liveness / database health",
-    description="Returns overall service status and whether the database is reachable.",
+    description="Returns overall service status, DB reachability, the configured "
+                "collector IP, and SSL certificate days-remaining (if any).",
     responses=inline_serializer(
         "HealthStatus",
-        {"status": serializers.CharField(), "db": serializers.BooleanField()},
+        {
+            "status": serializers.CharField(),
+            "db": serializers.BooleanField(),
+            "collector_ip": serializers.CharField(allow_blank=True),
+            "ssl_cert_days_remaining": serializers.IntegerField(allow_null=True),
+        },
     ),
 )
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
+    from django.conf import settings as dj_settings
+
     try:
         connection.ensure_connection()
         db_ok = True
@@ -30,7 +38,15 @@ def health(request):
         db_ok = False
 
     status = "ok" if db_ok else "degraded"
-    return Response({"status": status, "db": db_ok}, status=200 if db_ok else 503)
+    return Response(
+        {
+            "status": status,
+            "db": db_ok,
+            "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
+            "ssl_cert_days_remaining": None,
+        },
+        status=200 if db_ok else 503,
+    )
 
 
 def _tcp_ok(host: str, port: int, timeout: float = 2.0) -> bool:

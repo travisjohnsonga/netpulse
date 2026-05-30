@@ -148,6 +148,10 @@ NATS_PASSWORD = os.environ.get("NATS_PASSWORD", "")
 OPENBAO_ADDR = os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
 OPENBAO_TOKEN = os.environ.get("OPENBAO_TOKEN", "")
 
+# IP/host of the NetPulse collector that devices send telemetry to (used when
+# generating device telemetry config). Configured under Settings → General.
+COLLECTOR_IP = os.environ.get("COLLECTOR_IP", "")
+
 # ── Django REST Framework ─────────────────────────────────────────────────────
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
