@@ -112,6 +112,18 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot: make the openbao-data volume writable by both OpenBao (uid 100)
+  # and the api/config-manager (gid 1000). Docker creates named volumes
+  # root-owned, which would block OpenBao's file storage and the api's
+  # .init_keys write. Runs once and exits before openbao starts.
+  openbao-init:
+    image: alpine:3.20
+    command: sh -c "mkdir -p /openbao/data && chown -R 100:1000 /openbao/data && chmod 0775 /openbao/data"
+    volumes:
+      - openbao-data:/openbao/data
+    networks:
+      - netpulse-net
+
   openbao:
     image: openbao/openbao:2.1
     restart: unless-stopped
@@ -119,19 +131,26 @@ services:
     # It prevents OpenBao from swapping secret memory pages to disk.
     cap_add:
       - IPC_LOCK
-    command: server  -dev -dev-listen-address=0.0.0.0:8200
+    depends_on:
+      openbao-init:
+        condition: service_completed_successfully
+    # Persistent file storage (not -dev). The image's entrypoint runs
+    # `bao server -config=/openbao/config`, auto-loading our mounted
+    # openbao.hcl. Initialised + auto-unsealed by the api service's
+    # init_openbao command; keys persist on the openbao-data volume so secrets
+    # survive restarts.
+    command: server
     environment:
-      BAO_API_ADDR: http://openbao:8200
-      BAO_CLUSTER_ADDR: http://openbao:8201
-      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_TOKEN}
+      OPENBAO_ADDR: http://0.0.0.0:8200
     volumes:
       - openbao-data:/openbao/data
+      - ./openbao/config:/openbao/config
     networks:
       - netpulse-net
     healthcheck:
-      # exit 0 = initialized + unsealed; exit 2 = sealed (running, needs manual unseal).
-      # Both indicate the process is healthy. exit 1 = error / not running.
-      test: ["CMD-SHELL", "BAO_ADDR=http://127.0.0.1:8200 bao status 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
+      # sealedcode/uninitcode=200 → "running but sealed/uninitialised" counts as
+      # healthy so dependents can start and the api can auto-unseal it.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -149,15 +168,20 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
       SSL_DIR: /app/ssl
-      # Only the api service seeds the initial superuser (idempotent). Other
-      # api-image services share the entrypoint but must not create users.
+      # Only the api service seeds the initial superuser (idempotent) and
+      # initialises/unseals OpenBao. Other api-image services share the
+      # entrypoint but must not.
       SEED_SUPERUSER: "1"
+      INIT_OPENBAO: "1"
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
       # NetPulse's own HTTPS cert/key — the API generates them here; nginx
       # (frontend) reads them from the same volume to serve TLS.
       - ssl-certs:/app/ssl
+      # OpenBao keys file (.init_keys) — api initialises/unseals and reads the
+      # root token from here when OPENBAO_TOKEN is unset.
+      - openbao-data:/openbao/data
     networks:
       - netpulse-net
     depends_on:
@@ -344,6 +368,9 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    volumes:
+      # Read the OpenBao root token from the shared keys file (git creds).
+      - openbao-data:/openbao/data:ro
     networks:
       - netpulse-net
     depends_on:

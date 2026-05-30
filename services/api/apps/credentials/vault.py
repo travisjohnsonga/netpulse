@@ -22,9 +22,32 @@ logger = logging.getLogger(__name__)
 _MOUNT_POINT = "secret"
 
 
+import json
+import os
+
+_KEYS_FILE = os.environ.get("OPENBAO_KEYS_FILE", "/openbao/data/.init_keys")
+
+
+def _resolve_token() -> str:
+    """
+    Resolve the OpenBao token. Prefer the configured OPENBAO_TOKEN; otherwise
+    fall back to the root token written by ``init_openbao`` to the shared
+    openbao-data volume (file-storage mode generates a dynamic root token, so
+    there is no static env token to use).
+    """
+    env_token = getattr(settings, "OPENBAO_TOKEN", "") or ""
+    if env_token:
+        return env_token
+    try:
+        with open(_KEYS_FILE) as fh:
+            return json.load(fh).get("root_token", "") or ""
+    except Exception:
+        return ""
+
+
 def vault_enabled() -> bool:
-    """True only when a token is configured — otherwise we run secret-less."""
-    return bool(getattr(settings, "OPENBAO_TOKEN", ""))
+    """True only when a token is resolvable — otherwise we run secret-less."""
+    return bool(_resolve_token())
 
 
 def _client():
@@ -32,7 +55,7 @@ def _client():
 
     return hvac.Client(
         url=getattr(settings, "OPENBAO_ADDR", "http://openbao:8200"),
-        token=settings.OPENBAO_TOKEN,
+        token=_resolve_token(),
     )
 
 

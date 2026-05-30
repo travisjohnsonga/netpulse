@@ -10,6 +10,9 @@
 secrets/
 vault/data/
 openbao/data/
+# OpenBao auto-generated unseal key + root token — NEVER commit
+.init_keys
+**/.init_keys
 
 # Python
 __pycache__/

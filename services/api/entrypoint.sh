@@ -7,6 +7,13 @@ echo "[entrypoint] waiting for postgres..."
 # pg_isready isn't available in the slim image; the depends_on healthcheck
 # in docker-compose guarantees postgres is healthy before this container starts.
 
+# Initialise + auto-unseal OpenBao (api service only — it mounts the data
+# volume). Runs before migrations so secrets are reachable as the app starts.
+if [ "$INIT_OPENBAO" = "1" ]; then
+    echo "[entrypoint] initialising / unsealing OpenBao..."
+    python manage.py init_openbao || echo "[entrypoint] OpenBao init/unseal had issues (continuing)"
+fi
+
 echo "[entrypoint] running database migrations..."
 python manage.py migrate --noinput
 
