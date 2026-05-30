@@ -24,6 +24,18 @@ from .publisher import NATSPublisher
 logger = logging.getLogger(__name__)
 
 
+
+def _map_snmp_creds(raw: dict, device) -> dict:
+    """Map OpenBao field names to pysnmp expected names."""
+    return {
+        "security_name": device.snmp_username or raw.get("security_name", ""),
+        "auth_key": raw.get("snmpv3_auth_key") or raw.get("auth_key", ""),
+        "priv_key": raw.get("snmpv3_priv_key") or raw.get("priv_key", ""),
+        "auth_protocol": device.snmp_auth_protocol or raw.get("auth_protocol", "SHA"),
+        "priv_protocol": device.snmp_priv_protocol or raw.get("priv_protocol", "AES"),
+    }
+
+
 class SNMPPoller:
     def __init__(
         self,
@@ -144,7 +156,7 @@ class SNMPPoller:
 
         engine = self._get_engine()
         auth = (
-            build_usm_data(creds) if device.version == 3
+            build_usm_data(_map_snmp_creds(creds, device)) if device.version == 3
             else build_community_data(device.version, creds)
         )
         target = UdpTransportTarget(

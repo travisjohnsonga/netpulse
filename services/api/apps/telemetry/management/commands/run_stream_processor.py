@@ -285,19 +285,18 @@ class Command(BaseCommand):
         Returns the subscription or None if the stream does not exist.
         """
         try:
-            consumer_name = "stream-processor"
+            consumer_name = f"sp-{stream_name.lower()}"
             sub = await js.subscribe(
                 subject,
                 durable=consumer_name,
                 stream=stream_name,
                 cb=cb,
-                config=None,  # use server defaults; deliver_last_per_subject requires JetStream ≥ 2.10
                 manual_ack=False,
             )
             return sub
         except Exception as exc:
-            logger.debug(
-                "stream-processor: JetStream subscribe failed for %s/%s (%s) — falling back to core NATS",
+            logger.warning(
+                "stream-processor: JetStream subscribe failed for %s/%s: %s",
                 stream_name,
                 subject,
                 exc,
@@ -786,6 +785,26 @@ class Command(BaseCommand):
                     fields[k] = float(v)
                 except ValueError:
                     pass  # skip non-numeric strings
+
+        # Parse nested metrics dict from SNMP poller
+        nested = payload.get("metrics", {})
+        for oid, m in nested.items():
+            if not isinstance(m, dict):
+                continue
+            val = m.get("value")
+            mib_type = m.get("type", "")
+            name = m.get("name", oid).replace(".", "_").replace("-", "_")
+            # Skip error values
+            if not isinstance(val, (int, float)):
+                try:
+                    val = float(val)
+                except (TypeError, ValueError):
+                    continue
+            # Convert TimeTicks to seconds
+            if mib_type == "TimeTicks":
+                val = float(val) / 100.0
+            fields[name] = val
+
         return fields
 
 
