@@ -20,6 +20,8 @@ def discover_links(device) -> list[dict]:
     Returns the discovered neighbors (matched or not). Raises DiscoveryError on
     a discovery failure (no usable credential, unreachable, …).
     """
+    from django.db.models import Q
+
     from apps.telemetry import discovery
     from .models import Device, TopologyLink
 
@@ -28,12 +30,22 @@ def discover_links(device) -> list[dict]:
     found = []
     for iface in interfaces:
         neighbor = iface.get("lldp_neighbor_hostname")
-        if not neighbor:
+        mgmt_ip = iface.get("lldp_neighbor_mgmt_ip")
+        if not neighbor and not mgmt_ip:
             continue
-        match = (
-            Device.objects.filter(hostname__iexact=neighbor).first()
-            or Device.objects.filter(hostname__iexact=neighbor.split(".")[0]).first()
-        )
+        # Match by stripped hostname (drop the domain suffix) first, then by the
+        # neighbor's advertised management IP. First match wins.
+        match = None
+        if neighbor:
+            short = neighbor.split(".")[0]
+            match = (
+                Device.objects.filter(hostname__iexact=short).first()
+                or Device.objects.filter(hostname__iexact=neighbor).first()
+            )
+        if not match and mgmt_ip:
+            match = Device.objects.filter(
+                Q(ip_address=mgmt_ip) | Q(management_ip=mgmt_ip)
+            ).first()
         if match and match.id != device.id:
             TopologyLink.objects.update_or_create(
                 device_a=device, port_a=iface["if_name"],
@@ -47,6 +59,7 @@ def discover_links(device) -> list[dict]:
             )
         found.append({
             "neighbor_hostname": neighbor,
+            "neighbor_mgmt_ip": mgmt_ip,
             "local_port": iface["if_name"],
             "remote_port": iface.get("lldp_neighbor_port"),
             "matched_device_id": match.id if (match and match.id != device.id) else None,

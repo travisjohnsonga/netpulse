@@ -27,6 +27,22 @@ class TestDiscoverLinks:
         link = TopologyLink.objects.get(device_a=a, port_a="Gi4")
         assert link.device_b == b and link.port_b == "Gi4" and link.link_speed_mbps == 1000
 
+    def test_matches_by_stripped_hostname(self, devices, monkeypatch):
+        a, b = devices  # b.hostname == "router2"
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi6", "lldp_neighbor_hostname": "router2.dnstest.local", "lldp_neighbor_port": "Gi1"}])
+        found = topology.discover_links(a)
+        assert found[0]["matched_device_id"] == b.id
+
+    def test_matches_by_management_ip(self, devices, monkeypatch):
+        a, b = devices  # b.ip_address == "10.0.0.2"
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi7", "lldp_neighbor_hostname": "mystery", "lldp_neighbor_mgmt_ip": "10.0.0.2",
+             "lldp_neighbor_port": "Gi2"}])
+        found = topology.discover_links(a)
+        assert found[0]["matched_device_id"] == b.id
+        assert TopologyLink.objects.filter(device_a=a, device_b=b, port_a="Gi7").exists()
+
     def test_idempotent_update(self, devices, monkeypatch):
         a, b = devices
         monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [

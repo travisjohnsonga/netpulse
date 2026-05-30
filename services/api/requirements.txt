@@ -31,6 +31,8 @@ hvac~=2.1
 
 # Device access (config collection / interface discovery) — imported lazily
 netmiko~=4.4
+ntc-templates~=9.1   # TextFSM templates for show-command parsing (LLDP, interfaces)
+textfsm~=2.1
 ncclient~=0.6
 pysnmp~=7.1
 Jinja2~=3.1

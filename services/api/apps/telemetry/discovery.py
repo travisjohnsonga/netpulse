@@ -160,36 +160,67 @@ async def _snmp_walk_all(host: str, community: str, port: int) -> list[dict]:
             "lldp_neighbor_hostname": lldp_name_by_port.get(if_index) or None,
             "lldp_neighbor_port": lldp_port_by_port.get(if_index) or None,
             "lldp_neighbor_desc": lldp_port_by_port.get(if_index) or None,
+            "lldp_neighbor_mgmt_ip": None,
         })
     return rows
 
 
-# ── SSH (fallback) ────────────────────────────────────────────────────────────
+# ── SSH (TextFSM via ntc-templates) ───────────────────────────────────────────
+
+# netmiko device_type → ntc-templates platform for LLDP parsing. IOS-XE shares
+# the cisco_ios templates; IOS-XR uses cisco_xr.
+LLDP_NTC_PLATFORM = {
+    "cisco_ios":     "cisco_ios",
+    "cisco_xe":      "cisco_ios",
+    "cisco_nxos":    "cisco_nxos",
+    "cisco_xr":      "cisco_xr",
+    "juniper_junos": "juniper_junos",
+    "arista_eos":    "arista_eos",
+}
+INTERFACES_NTC_PLATFORM = dict(LLDP_NTC_PLATFORM)
+
+
+def _ntc_parse(platform: str, command: str, raw: str) -> list[dict]:
+    """Parse raw show-command output with ntc-templates; [] if no template/match."""
+    try:
+        from ntc_templates.parse import parse_output
+        return parse_output(platform=platform, command=command, data=raw)
+    except Exception as exc:  # no template, parse failure, etc.
+        logger.debug("ntc parse failed (%s / %s): %s", platform, command, exc)
+        return []
+
 
 def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
     from netmiko import ConnectHandler
     from apps.compliance.collector import netmiko_device_type
 
     host = str(device.management_ip or device.ip_address)
+    device_type = netmiko_device_type(device.vendor, device.platform)
+    if device_type == "autodetect":
+        device_type = "cisco_ios"
     params = {
-        "device_type": netmiko_device_type(device.vendor, device.platform),
+        "device_type": device_type,
         "host": host,
         "username": profile.ssh_username,
         "password": creds.get("ssh_password", ""),
         "port": profile.ssh_port or 22,
         "fast_cli": False,
     }
-    if params["device_type"] == "autodetect":
-        params["device_type"] = "cisco_ios"
+
+    ntc_platform = LLDP_NTC_PLATFORM.get(device_type, "cisco_ios")
 
     try:
         conn = ConnectHandler(**params)
     except Exception as exc:
         raise DiscoveryError(f"SSH connection failed: {exc}") from exc
     try:
+        # Interfaces: Netmiko's built-in TextFSM (auto-selects the platform template).
         intf = conn.send_command("show interfaces", use_textfsm=True)
+        # LLDP: parse the raw text with an explicit ntc-templates platform so the
+        # right template is used even when device_type is a generic fallback.
         try:
-            lldp = conn.send_command("show lldp neighbors detail", use_textfsm=True)
+            lldp_raw = conn.send_command("show lldp neighbors detail")
+            lldp = _ntc_parse(ntc_platform, "show lldp neighbors detail", lldp_raw)
         except Exception:
             lldp = []
     finally:
@@ -198,17 +229,24 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
     if not isinstance(intf, list):
         raise DiscoveryError("could not parse 'show interfaces' output")
 
+    # Map LLDP neighbors by normalised local interface.
     lldp_map: dict[str, dict] = {}
-    if isinstance(lldp, list):
-        for n in lldp:
-            n = {k.lower(): v for k, v in n.items()}
-            local = _norm(n.get("local_interface") or n.get("local_port") or "")
-            if local:
-                lldp_map[local] = {
-                    "host": n.get("neighbor") or n.get("neighbor_name") or n.get("system_name") or "",
-                    "port": n.get("neighbor_interface") or n.get("neighbor_port_id") or n.get("port_id") or "",
-                    "desc": n.get("neighbor_port_description") or n.get("port_description") or "",
-                }
+    for n in (lldp or []):
+        n = {k.lower(): v for k, v in n.items()}
+        local = _norm(n.get("local_interface") or n.get("local_port") or "")
+        if not local:
+            continue
+        host_full = (n.get("neighbor_name") or n.get("neighbor") or n.get("system_name")
+                     or n.get("chassis_id") or "")
+        lldp_map[local] = {
+            "host": host_full,
+            "port": (n.get("neighbor_interface") or n.get("neighbor_port_id")
+                     or n.get("port_id") or ""),
+            "desc": (n.get("neighbor_description") or n.get("neighbor_port_description")
+                     or n.get("port_description") or ""),
+            "mgmt_ip": (n.get("management_ip") or n.get("mgmt_address")
+                        or n.get("mgmt_ip") or n.get("management_address") or ""),
+        }
 
     rows = []
     for row in intf:
@@ -220,6 +258,7 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
         oper = "up" if "up" in link and "down" not in link else "down"
         admin = "down" if "administratively" in link else "up"
         bw = r.get("bandwidth") or r.get("speed") or ""
+        nb = lldp_map.get(_norm(if_name)) or {}
         rows.append({
             "if_index": None,
             "if_name": if_name,
@@ -228,15 +267,30 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
             "if_type": r.get("hardware_type", "") or "",
             "oper_status": oper,
             "admin_status": admin,
-            "lldp_neighbor_hostname": (lldp_map.get(_norm(if_name)) or {}).get("host") or None,
-            "lldp_neighbor_port": (lldp_map.get(_norm(if_name)) or {}).get("port") or None,
-            "lldp_neighbor_desc": (lldp_map.get(_norm(if_name)) or {}).get("desc") or None,
+            "lldp_neighbor_hostname": nb.get("host") or None,
+            "lldp_neighbor_port": nb.get("port") or None,
+            "lldp_neighbor_desc": nb.get("desc") or None,
+            "lldp_neighbor_mgmt_ip": nb.get("mgmt_ip") or None,
         })
     return rows
 
 
 def _norm(name: str) -> str:
-    return (name or "").replace(" ", "").lower()
+    """
+    Canonical interface key so abbreviated and full names join.
+
+    LLDP detail reports the local port abbreviated (``Gi1``) while
+    ``show interfaces`` uses the full name (``GigabitEthernet1``). Collapse the
+    alphabetic prefix to its first two letters + the numeric/slash tail so both
+    map to the same key (``gi1``).
+    """
+    import re
+
+    raw = (name or "").strip().lower().replace(" ", "")
+    m = re.match(r"([a-z]+)(.*)", raw)
+    if not m:
+        return raw
+    return m.group(1)[:2] + m.group(2)
 
 
 def _bandwidth_to_mbps(bw: str) -> int | None:
