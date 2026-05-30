@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchSites, createSite, fetchCredentials, createDevice, detectPlatform, testCredential,
-  type Site, type CredentialProfileListItem, type DeviceDetail,
+  fetchCredential, checkHealth, fetchSystemSettings, pushTelemetryConfig,
+  type Site, type CredentialProfileListItem, type CredentialProfile, type DeviceDetail,
   type DetectPlatformResult, type CredentialTestResult,
 } from '../api/client'
 
@@ -34,31 +35,82 @@ function vendorFamily(platform: string): 'cisco' | 'juniper' | 'arista' | 'gener
   return 'generic'
 }
 
-const SNIPPETS: Record<string, Record<string, string>> = {
-  cisco: {
-    snmp: 'snmp-server community netpulse RO\nsnmp-server host 10.0.0.10 version 2c netpulse',
-    syslog: 'logging host 10.0.0.10\nlogging trap informational',
-    gnmi: 'telemetry ietf subscription 1\n stream yang-push\n receiver ip address 10.0.0.10 57400 protocol grpc-tcp',
-    netflow: 'flow exporter netpulse\n destination 10.0.0.10\n transport udp 2055',
-  },
-  juniper: {
-    snmp: 'set snmp community netpulse authorization read-only\nset snmp trap-group netpulse targets 10.0.0.10',
-    syslog: 'set system syslog host 10.0.0.10 any info',
-    gnmi: 'set system services extension-service request-response grpc clear-text port 57400',
-    netflow: 'set services flow-monitoring version-ipfix template netpulse',
-  },
-  arista: {
-    snmp: 'snmp-server community netpulse ro\nsnmp-server host 10.0.0.10 version 2c netpulse',
-    syslog: 'logging host 10.0.0.10\nlogging level informational',
-    gnmi: 'management api gnmi\n transport grpc default',
-    netflow: 'sflow destination 10.0.0.10\nsflow run',
-  },
-  generic: {
-    snmp: '# Configure SNMP read-only community "netpulse" pointing at 10.0.0.10',
-    syslog: '# Forward syslog to 10.0.0.10:514',
-    gnmi: '# Enable gNMI dial-out to 10.0.0.10:57400',
-    netflow: '# Export NetFlow/sFlow to 10.0.0.10:2055',
-  },
+// Build a CLI snippet for a telemetry feature using the real collector IP and
+// (for SNMP) the selected credential profile's type/username/protocols.
+function buildSnippet(
+  fam: 'cisco' | 'juniper' | 'arista' | 'generic',
+  feature: string,
+  ip: string,
+  profile?: CredentialProfile | null,
+): string {
+  const C = ip || '<collector-ip>'
+  if (fam === 'cisco') {
+    if (feature === 'snmp') {
+      if (profile?.snmpv3_enabled) {
+        const user = profile.snmpv3_username || 'netpulse'
+        const auth = profile.snmpv3_auth_protocol || 'SHA'
+        const priv = profile.snmpv3_priv_protocol || 'AES'
+        return [
+          'snmp-server group V3GROUP v3 auth read VIEW-ALL write VIEW-ALL',
+          'snmp-server view VIEW-ALL iso included',
+          `snmp-server user ${user} V3GROUP v3 auth ${auth} your-auth-key priv ${priv} your-priv-key`,
+          `snmp-server host ${C} version 3 auth ${user}`,
+        ].join('\n')
+      }
+      return [`snmp-server community netpulse RO`, `snmp-server host ${C} version 2c netpulse`].join('\n')
+    }
+    if (feature === 'syslog') {
+      return [
+        'logging origin-id hostname',
+        `logging host ${C} session-id hostname`,
+        'logging trap informational',
+        'service timestamps log datetime msec',
+      ].join('\n')
+    }
+    if (feature === 'gnmi') {
+      return [
+        'telemetry ietf subscription 101',
+        ' encoding encode-kvgpb',
+        ' filter xpath /interfaces-ios-xe-oper:interfaces',
+        ' stream yang-push',
+        ' update-policy periodic 3000',
+        ` receiver ip address ${C} 57400 protocol grpc-tcp`,
+      ].join('\n')
+    }
+    if (feature === 'netflow') {
+      return [
+        'flow exporter NETPULSE',
+        ` destination ${C}`,
+        ' transport udp 2055',
+        ' export-protocol netflow-v9',
+      ].join('\n')
+    }
+  }
+  if (fam === 'juniper') {
+    const m: Record<string, string> = {
+      snmp: `set snmp community netpulse authorization read-only\nset snmp trap-group netpulse targets ${C}`,
+      syslog: `set system syslog host ${C} any info`,
+      gnmi: 'set system services extension-service request-response grpc clear-text port 57400',
+      netflow: 'set services flow-monitoring version-ipfix template netpulse',
+    }
+    return m[feature] ?? ''
+  }
+  if (fam === 'arista') {
+    const m: Record<string, string> = {
+      snmp: `snmp-server community netpulse ro\nsnmp-server host ${C} version 2c netpulse`,
+      syslog: `logging host ${C}\nlogging level informational`,
+      gnmi: 'management api gnmi\n transport grpc default',
+      netflow: `sflow destination ${C}\nsflow run`,
+    }
+    return m[feature] ?? ''
+  }
+  const m: Record<string, string> = {
+    snmp: `# Configure SNMP read-only community "netpulse" pointing at ${C}`,
+    syslog: `# Forward syslog to ${C}:514`,
+    gnmi: `# Enable gNMI dial-out to ${C}:57400`,
+    netflow: `# Export NetFlow/sFlow to ${C}:2055`,
+  }
+  return m[feature] ?? ''
 }
 
 const TELEMETRY_FEATURES = [
@@ -111,23 +163,45 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
 
   // Step 4 — Telemetry
   const [features, setFeatures] = useState<Set<string>>(new Set(['snmp', 'syslog']))
+  const [collectorIp, setCollectorIp] = useState('')
+  const [credProfile, setCredProfile] = useState<CredentialProfile | null>(null)
+  const [pushAllowed, setPushAllowed] = useState(false)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
   // Step 5 — result
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<DeviceDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pushAfter, setPushAfter] = useState(false)
+  const [pushResult, setPushResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [pushing, setPushing] = useState(false)
 
   const loadProfiles = () => fetchCredentials().then(setProfiles).catch(() => {})
-  useEffect(() => { fetchSites().then(setSites).catch(() => {}); loadProfiles() }, [])
+  useEffect(() => {
+    fetchSites().then(setSites).catch(() => {}); loadProfiles()
+    checkHealth().then((h) => setCollectorIp(h.collector_ip ?? '')).catch(() => {})
+    fetchSystemSettings().then((s) => setPushAllowed(s.allow_config_push)).catch(() => {})
+  }, [])
+
+  // Pull the full credential profile so Step 4 can tailor the SNMP snippet.
+  useEffect(() => {
+    if (credentialId == null) { setCredProfile(null); return }
+    fetchCredential(credentialId).then(setCredProfile).catch(() => setCredProfile(null))
+  }, [credentialId])
 
   const selectedProfile = profiles.find((p) => p.id === credentialId)
   const hasSSH = !!selectedProfile?.enabled_protocols.includes('ssh')
+
+  const copySnippet = (key: string, text: string) => {
+    navigator.clipboard.writeText(text).then(() => { setCopiedKey(key); setTimeout(() => setCopiedKey(null), 1500) }).catch(() => {})
+  }
 
   const reset = () => {
     setStep(0); setHostname(''); setIp(''); setMgmtIp(''); setSiteId(''); setRole(''); setTags([]); setTagInput('')
     setCredentialId(null); setCredTest(null)
     setPlatform('other'); setVendor(''); setOsVersion(''); setModel(''); setSerial(''); setDetect(null); setManualOpen(false)
     setFeatures(new Set(['snmp', 'syslog'])); setCreated(null); setError(null)
+    setCredProfile(null); setPushAfter(false); setPushResult(null)
   }
 
   const addTag = () => {
@@ -194,10 +268,25 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
         notes: noteParts.join('\n'),
       })
       setCreated(device); setStep(4); onCreated()
+      if (pushAfter && pushAllowed) doPush(device.id)
     } catch (e) {
       const detail = (e as { response?: { data?: unknown } })?.response?.data
       setError(typeof detail === 'object' ? JSON.stringify(detail) : 'Failed to create device.')
     } finally { setCreating(false) }
+  }
+
+  const doPush = async (deviceId: number) => {
+    const sections = [...features]
+    if (!sections.length) return
+    setPushing(true); setPushResult(null)
+    try {
+      const res = await pushTelemetryConfig(deviceId, sections)
+      setPushResult(res.success
+        ? { ok: true, msg: `Pushed ${res.pushed_sections.join(', ')}` }
+        : { ok: false, msg: res.errors.join('; ') || 'Push failed' })
+    } catch {
+      setPushResult({ ok: false, msg: 'Push request failed' })
+    } finally { setPushing(false) }
   }
 
   const canNext = step === 0 ? hostname.trim() !== '' && ip.trim() !== '' : true
@@ -384,17 +473,41 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {step === 3 && (
             <div className="space-y-3">
               <p className="text-sm text-gray-500 dark:text-gray-400">Enable telemetry sources, then apply the matching CLI for <strong>{PLATFORMS.find((p) => p.value === platform)?.label}</strong>.</p>
-              {TELEMETRY_FEATURES.map((f) => (
+              {collectorIp
+                ? <p className="text-xs text-gray-500 dark:text-gray-400">Telemetry will be sent to <span className="font-mono text-gray-700 dark:text-gray-200">{collectorIp}</span>.</p>
+                : <div className="text-sm bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 rounded-lg px-3 py-2">⚠️ Collector IP not configured — set it in Settings → General. Snippets use a placeholder.</div>}
+              {TELEMETRY_FEATURES.map((f) => {
+                const snippet = buildSnippet(fam, f.key, collectorIp, credProfile)
+                const isV3Snmp = f.key === 'snmp' && fam === 'cisco' && !!credProfile?.snmpv3_enabled
+                return (
                 <div key={f.key} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                     <input type="checkbox" checked={features.has(f.key)} onChange={(e) => setFeatures((s) => { const n = new Set(s); e.target.checked ? n.add(f.key) : n.delete(f.key); return n })} />
                     {f.label}
                   </label>
                   {features.has(f.key) && (
-                    <pre className="bg-gray-900 text-gray-100 text-xs font-mono rounded-md p-2 mt-2 overflow-x-auto whitespace-pre-wrap">{SNIPPETS[fam][f.key]}</pre>
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between mb-1">
+                        {isV3Snmp
+                          ? <span className="text-[11px] text-amber-700 dark:text-amber-400">Replace <code>your-auth-key</code> / <code>your-priv-key</code> with your actual SNMPv3 keys.</span>
+                          : <span />}
+                        <button onClick={() => copySnippet(f.key, snippet)} className="px-2 py-0.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300">
+                          {copiedKey === f.key ? 'Copied!' : '📋 Copy'}
+                        </button>
+                      </div>
+                      <pre className="bg-gray-900 text-gray-100 text-xs font-mono rounded-md p-2 overflow-x-auto whitespace-pre-wrap">{snippet}</pre>
+                    </div>
                   )}
                 </div>
-              ))}
+              )})}
+              {pushAllowed
+                ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                    <input type="checkbox" checked={pushAfter} onChange={(e) => setPushAfter(e.target.checked)} />
+                    Push the selected telemetry config to the device after it's created
+                  </label>
+                )
+                : <p className="text-xs text-gray-400 dark:text-gray-500">Config push is disabled — copy the snippets and apply them manually.</p>}
             </div>
           )}
 
@@ -404,6 +517,20 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
               <div className="w-14 h-14 mx-auto rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center text-2xl mb-3">✓</div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{created.hostname} added</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{created.ip_address} · {PLATFORMS.find((p) => p.value === created.platform)?.label}</p>
+
+              {/* Telemetry push status / action */}
+              {pushing && <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">Pushing telemetry config…</p>}
+              {pushResult && (
+                <p className={clsx('text-sm mt-4', pushResult.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                  {pushResult.ok ? '✅' : '❌'} {pushResult.msg}
+                </p>
+              )}
+              {pushAllowed && !pushing && !pushResult && features.size > 0 && (
+                <button onClick={() => doPush(created.id)} className="mt-4 px-4 py-2 text-sm border border-blue-600 text-blue-600 dark:text-blue-400 rounded-lg font-medium hover:bg-blue-50 dark:hover:bg-blue-950">
+                  Push telemetry config to device
+                </button>
+              )}
+
               <div className="flex gap-3 justify-center mt-6">
                 <Link to={`/devices/${created.id}`} onClick={onClose} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">View Device</Link>
                 <button onClick={reset} className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Add Another Device</button>

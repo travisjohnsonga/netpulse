@@ -106,3 +106,71 @@ class TestUpload:
         resp = auth_client.post("/api/settings/ssl/upload/",
                                 {"certificate": "not a pem", "private_key": "nope"}, format="json")
         assert resp.status_code == 400
+
+
+def _make_ca_pem(cn="NetPulse Test Root CA", days=400, ca=True):
+    """Return a CA (or leaf) cert PEM for trust-store tests."""
+    import datetime as dt
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = dt.datetime.now(dt.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - dt.timedelta(minutes=1))
+            .not_valid_after(now + dt.timedelta(days=days))
+            .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
+            .sign(key, hashes.SHA256()))
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+class TestCATrustStore:
+    def test_list_empty(self, auth_client):
+        resp = auth_client.get("/api/settings/ssl/ca-certs/")
+        assert resp.status_code == 200 and resp.json() == []
+
+    def test_requires_auth(self, api_client):
+        assert api_client.get("/api/settings/ssl/ca-certs/").status_code == 401
+
+    def test_add_ca_builds_bundle(self, auth_client, ssl_dir):
+        pem = _make_ca_pem()
+        resp = auth_client.post("/api/settings/ssl/ca-certs/",
+                                {"name": "Corp Root", "certificate": pem}, format="json")
+        assert resp.status_code == 201, resp.content
+        body = resp.json()
+        assert len(body) == 1
+        ca = body[0]
+        assert ca["name"] == "Corp Root" and ca["is_root"] is True
+        assert ca["expiry_status"] == "ok" and ca["days_remaining"] > 300
+        # bundle written to disk and contains the cert
+        bundle = ssl_dir / "ca-bundle.crt"
+        assert bundle.exists() and "BEGIN CERTIFICATE" in bundle.read_text()
+
+    def test_duplicate_fingerprint_skipped(self, auth_client):
+        pem = _make_ca_pem(cn="Dup CA")
+        auth_client.post("/api/settings/ssl/ca-certs/", {"certificate": pem}, format="json")
+        resp = auth_client.post("/api/settings/ssl/ca-certs/", {"certificate": pem}, format="json")
+        assert resp.status_code == 200  # nothing added
+        assert len(resp.json()) == 1
+
+    def test_delete_rebuilds(self, auth_client):
+        pem = _make_ca_pem(cn="Deletable CA")
+        created = auth_client.post("/api/settings/ssl/ca-certs/", {"certificate": pem}, format="json").json()
+        cid = created[0]["id"]
+        resp = auth_client.delete(f"/api/settings/ssl/ca-certs/{cid}/")
+        assert resp.status_code == 204
+        assert auth_client.get("/api/settings/ssl/ca-certs/").json() == []
+
+    def test_verify_valid(self, auth_client):
+        pem = _make_ca_pem(cn="Verify CA")
+        cid = auth_client.post("/api/settings/ssl/ca-certs/", {"certificate": pem}, format="json").json()[0]["id"]
+        resp = auth_client.post(f"/api/settings/ssl/ca-certs/{cid}/verify/")
+        assert resp.status_code == 200
+        assert resp.json()["valid"] is True and resp.json()["expiry_status"] == "ok"
+
+    def test_invalid_upload_rejected(self, auth_client):
+        resp = auth_client.post("/api/settings/ssl/ca-certs/", {"certificate": "garbage"}, format="json")
+        assert resp.status_code == 400

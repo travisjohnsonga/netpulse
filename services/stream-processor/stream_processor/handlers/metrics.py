@@ -26,6 +26,26 @@ def handle_telemetry_metrics(
         k: v for k, v in data.items()
         if isinstance(v, (int, float)) and k not in _SKIP_FIELDS
     }
+
+    # Parse nested metrics dict from SNMP poller
+    nested = data.get("metrics", {})
+    for oid, m in nested.items():
+        if not isinstance(m, dict):
+            continue
+        name = m.get("name", oid).replace(".", "_").replace("-", "_")
+        val = m.get("value")
+        mib_type = m.get("type", "")
+        # Skip non-numeric values
+        if not isinstance(val, (int, float)):
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                continue
+        # Convert TimeTicks to seconds
+        if mib_type == "TimeTicks":
+            val = float(val) / 100.0
+        fields[name] = val
+
     if not fields:
         logger.debug("no numeric fields in telemetry message from %s", device_id)
         return
