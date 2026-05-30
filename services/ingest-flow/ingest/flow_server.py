@@ -112,3 +112,12 @@ async def start_servers(
     logger.info("sFlow listening on %s:%d/udp", host, sflow_port)
 
     return nf_transport, sf_transport
+
+
+if __name__ == "__main__":
+    # Runnable entrypoint (python -m ingest.flow_server). The full server
+    # lifecycle lives in main.serve(); import lazily to avoid a circular import
+    # (main imports start_servers from this module).
+    from .main import main
+
+    main()

@@ -53,7 +53,6 @@ class NATSPublisher:
             await self._js.add_stream(
                 name=self._stream_name,
                 subjects=[f"{self._subject_prefix}.>"],
-                max_age=self._stream_max_age_ns,
             )
             logger.info(
                 "created JetStream stream %r covering %s.>",

@@ -19,6 +19,7 @@ import logging
 from typing import Callable
 
 from aiohttp import web
+from multidict import CIMultiDictProxy
 
 from .models import VendorAlert, VendorDevice
 from .publisher import NATSPublisher
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
 
 
-def _verify_mist_signature(body: bytes, headers: web.CIMultiDictProxy, secret: str) -> bool:
+def _verify_mist_signature(body: bytes, headers: CIMultiDictProxy, secret: str) -> bool:
     """
     Verify X-Mist-Signature-v2 HMAC-SHA256.
     Returns True if secret is not configured (skip verification).
