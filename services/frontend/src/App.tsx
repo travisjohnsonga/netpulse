@@ -10,6 +10,7 @@ import SiteDetail from './pages/SiteDetail'
 import ConfigCompare from './pages/ConfigCompare'
 import Alerts from './pages/Alerts'
 import Logs from './pages/Logs'
+import Checks from './pages/Checks'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
 import Settings from './pages/Settings'
@@ -75,6 +76,7 @@ function AppRoutes() {
                 <Route path="/api-docs" element={<ApiDocs />} />
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/logs" element={<Logs />} />
+                <Route path="/checks" element={<Checks />} />
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />
                 <Route path="/settings" element={<Settings />}>

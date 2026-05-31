@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.configbackup",
     "apps.logs",
     "apps.tls",
+    "apps.checks",
 ]
 
 MIDDLEWARE = [

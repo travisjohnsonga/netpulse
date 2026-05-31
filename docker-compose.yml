@@ -423,6 +423,21 @@ services:
       valkey:
         condition: service_healthy
 
+  check-engine:
+    build: ./services/api
+    restart: unless-stopped
+    command: python manage.py run_check_engine
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    networks:
+      - netpulse-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
   cve-engine:
     build: ./services/api
     restart: unless-stopped

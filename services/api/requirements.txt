@@ -26,6 +26,11 @@ influxdb-client~=1.43
 # [async] pulls aiohttp so `from opensearchpy import AsyncOpenSearch` works.
 opensearch-py[async]~=2.7
 
+# Service checks (agentless synthetic monitoring) — async HTTP probes.
+# aiohttp is already present transitively (opensearch-py[async]); pinned here
+# so the check-engine declares it directly. Later stages add icmplib/aiodns/…
+aiohttp~=3.10
+
 # Secrets
 hvac~=2.1
 

@@ -7,12 +7,14 @@ import EmptyState from '../components/EmptyState'
 import {
   fetchDevices,
   fetchAlerts,
+  fetchCheckSummary,
   checkHealth,
   checkInfraHealth,
   reachabilityOf,
   type Device,
   type Alert,
   type InfraHealth,
+  type CheckSummary,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import clsx from 'clsx'
@@ -142,7 +144,12 @@ export default function Dashboard() {
   const [infraLoading, setInfraLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [checkSummary, setCheckSummary] = useState<CheckSummary | null>(null)
   const { connected } = useWebSocket('/ws/telemetry/')
+
+  useEffect(() => {
+    fetchCheckSummary().then(setCheckSummary).catch(() => {})
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -275,10 +282,21 @@ export default function Dashboard() {
           action={{ label: 'Configure CVE feed', href: '/settings' }}
         />
         <StatCard
-          title="Flows/sec"
-          value="—"
-          subtitle="awaiting NetFlow data"
-          color="blue"
+          title="Service Checks"
+          value={checkSummary ? checkSummary.total : '—'}
+          subtitle={checkSummary
+            ? (checkSummary.down > 0
+              ? `${checkSummary.down} down`
+              : checkSummary.degraded > 0
+                ? `${checkSummary.degraded} degraded`
+                : 'all healthy')
+            : 'no checks yet'}
+          color={checkSummary && checkSummary.down > 0
+            ? 'red'
+            : checkSummary && checkSummary.degraded > 0
+              ? 'yellow'
+              : 'green'}
+          action={{ label: 'View checks', href: '/checks' }}
         />
       </div>
 

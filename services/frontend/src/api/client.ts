@@ -1173,3 +1173,92 @@ export async function fetchDeviceAlerts(deviceId: number, hostname: string): Pro
       String(l.device_id) === String(deviceId) || String(l.device) === String(deviceId)
   })
 }
+
+// ── Service checks (agentless synthetic monitoring) ──────────────────────────
+export type CheckType =
+  | 'http' | 'https' | 'tcp' | 'udp' | 'icmp' | 'dns' | 'tls'
+  | 'smtp' | 'ftp' | 'ssh' | 'ldap' | 'custom'
+export type CheckStatus = 'up' | 'down' | 'degraded' | 'unknown'
+
+export interface ServiceCheck {
+  id: number
+  name: string
+  check_type: CheckType
+  host: string
+  port: number | null
+  effective_port: number | null
+  interval_seconds: number
+  timeout_seconds: number
+  device: number | null
+  device_hostname: string | null
+  site: number | null
+  site_name: string | null
+  is_active: boolean
+  is_enabled: boolean
+  current_status: CheckStatus
+  last_checked: string | null
+  last_status_change: string | null
+  consecutive_failures: number
+  failures_before_alert: number
+  config: Record<string, unknown>
+  response_time_warning_ms: number | null
+  response_time_critical_ms: number | null
+  last_response_ms: number | null
+  tags: string[]
+  notes: string
+  created_at: string
+}
+
+export type ServiceCheckPayload = Partial<Omit<ServiceCheck,
+  'id' | 'effective_port' | 'device_hostname' | 'site_name' | 'current_status' |
+  'last_checked' | 'last_status_change' | 'consecutive_failures' | 'created_at'>>
+  & { name: string; check_type: CheckType; host: string }
+
+export interface CheckResult {
+  id: number
+  check: number
+  status: CheckStatus
+  response_time_ms: number | null
+  checked_at: string
+  error: string
+  details: Record<string, unknown>
+}
+
+export interface CheckSummary {
+  up: number
+  down: number
+  degraded: number
+  unknown: number
+  total: number
+}
+
+export async function fetchChecks(params?: Record<string, string>): Promise<ServiceCheck[]> {
+  const { data } = await api.get<ServiceCheck[] | Paginated<ServiceCheck>>('/checks/', { params })
+  return unwrap(data)
+}
+
+export async function fetchCheckSummary(): Promise<CheckSummary> {
+  const { data } = await api.get<CheckSummary>('/checks/summary/')
+  return data
+}
+
+export async function saveCheck(payload: ServiceCheckPayload, id?: number): Promise<ServiceCheck> {
+  const { data } = id
+    ? await api.patch<ServiceCheck>(`/checks/${id}/`, payload)
+    : await api.post<ServiceCheck>('/checks/', payload)
+  return data
+}
+
+export async function deleteCheck(id: number): Promise<void> {
+  await api.delete(`/checks/${id}/`)
+}
+
+export async function runCheckNow(id: number): Promise<CheckResult & { current_status: CheckStatus }> {
+  const { data } = await api.post(`/checks/${id}/run-now/`)
+  return data
+}
+
+export async function fetchCheckResults(id: number, period = '24h'): Promise<{ count: number; results: CheckResult[] }> {
+  const { data } = await api.get(`/checks/${id}/results/`, { params: { period } })
+  return data
+}

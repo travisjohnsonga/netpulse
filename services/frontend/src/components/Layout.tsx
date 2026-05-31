@@ -21,6 +21,7 @@ const navItems: NavItem[] = [
   { label: 'Topology', href: '/topology', icon: '🌐' },
   { label: 'Alerts', href: '/alerts', icon: '⚠' },
   { label: 'Logs', href: '/logs', icon: '🧾' },
+  { label: 'Checks', href: '/checks', icon: '✓' },
   { label: 'CVE', href: '/cve', icon: '🛡' },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
   { label: 'API Docs', href: '/api-docs', icon: '📖' },
