@@ -29,7 +29,7 @@ class ServiceCheckViewSet(viewsets.ModelViewSet):
     queryset = ServiceCheck.objects.select_related("device", "site").all()
     serializer_class = ServiceCheckSerializer
     filterset_fields = ["check_type", "current_status", "device", "site", "is_active", "is_enabled"]
-    search_fields = ["name", "host"]
+    search_fields = ["name", "host", "notes"]
     ordering_fields = ["name", "check_type", "current_status", "last_checked", "created_at"]
     ordering = ["name"]
 

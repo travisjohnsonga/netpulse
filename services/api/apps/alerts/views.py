@@ -1,5 +1,7 @@
 from rest_framework import viewsets
+from rest_framework.decorators import action
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, UpdateModelMixin
+from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
 from .models import AlertChannel, AlertEvent, AlertRule
@@ -48,3 +50,41 @@ class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, Ge
     serializer_class = AlertEventSerializer
     filterset_fields = ["rule", "state", "rule__severity"]
     ordering_fields = ["created_at", "resolved_at"]
+
+    def _record_ack(self, event, user, note, snooze_minutes):
+        """Create an acknowledgement, stop escalation (cancel pending sends)."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.alerting.models import AlertAcknowledgement, AlertNotification
+
+        now = timezone.now()
+        snoozed = now + timedelta(minutes=int(snooze_minutes)) if snooze_minutes else None
+        ack = AlertAcknowledgement.objects.create(
+            alert_event=event, acknowledged_by=user, acknowledged_at=now,
+            note=note or "", snoozed_until=snoozed,
+        )
+        # Stop escalation: pending notifications for this event become cancelled.
+        AlertNotification.objects.filter(
+            alert_event=event, status=AlertNotification.Status.PENDING,
+        ).update(status=AlertNotification.Status.CANCELLED)
+        return ack, snoozed
+
+    @action(detail=True, methods=["post"])
+    def acknowledge(self, request, pk=None):
+        """Acknowledge an alert (optionally snooze): stops escalation."""
+        from apps.alerting.serializers import AlertAcknowledgementSerializer
+        event = self.get_object()
+        ack, _ = self._record_ack(
+            event, request.user, request.data.get("note"), request.data.get("snooze_minutes"))
+        return Response(AlertAcknowledgementSerializer(ack).data)
+
+    @action(detail=True, methods=["post"])
+    def snooze(self, request, pk=None):
+        """Snooze an alert for N minutes (re-escalates afterwards)."""
+        from apps.alerting.serializers import AlertAcknowledgementSerializer
+        event = self.get_object()
+        minutes = request.data.get("minutes") or request.data.get("snooze_minutes") or 30
+        ack, _ = self._record_ack(event, request.user, request.data.get("note"), minutes)
+        return Response(AlertAcknowledgementSerializer(ack).data)

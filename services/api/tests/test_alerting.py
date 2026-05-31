@@ -1,8 +1,11 @@
 import pytest
 
-from apps.alerting.engine import find_matching_route, route_matches, step_email_recipients
+from apps.alerting.engine import (
+    find_matching_route, get_on_call_user, route_matches, step_email_recipients,
+)
 from apps.alerting.models import (
-    AlertRoute, EscalationPolicy, EscalationStep, Team, TeamMember,
+    AlertRoute, EscalationPolicy, EscalationStep, OnCallSchedule, OnCallShift,
+    Team, TeamMember,
 )
 
 pytestmark = pytest.mark.django_db
@@ -61,14 +64,14 @@ class TestRouteMatching:
 # ── Recipients + email ───────────────────────────────────────────────────────
 
 class TestNotification:
-    def test_step_recipients_from_team(self, team, policy, django_user_model):
-        u1 = django_user_model.objects.create_user(username="a", password="x", email="a@co", role="engineer")
-        u2 = django_user_model.objects.create_user(username="b", password="x", email="b@co", role="engineer")
-        TeamMember.objects.create(team=team, user=u1, notify_email=True)
-        TeamMember.objects.create(team=team, user=u2, notify_email=False)  # opted out
+    def test_step_recipients_team_uses_on_call_lead(self, team, policy, django_user_model):
+        # No active shift → on-call falls back to the team lead (single recipient).
+        lead = django_user_model.objects.create_user(username="a", password="x", email="a@co", role="engineer")
+        member = django_user_model.objects.create_user(username="b", password="x", email="b@co", role="engineer")
+        TeamMember.objects.create(team=team, user=member, role="member", notify_email=True)
+        TeamMember.objects.create(team=team, user=lead, role="lead", notify_email=True)
         step = EscalationStep.objects.create(policy=policy, step_number=1, notify_team=team)
-        emails = [e for _, e in step_email_recipients(step)]
-        assert emails == ["a@co"]
+        assert step_email_recipients(step) == [(lead, "a@co")]
 
     def test_step_recipients_explicit_user(self, policy, django_user_model):
         u = django_user_model.objects.create_user(username="c", password="x", email="c@co", role="engineer")
@@ -134,3 +137,100 @@ class TestAlertingApi:
         assert hit["matched"] is True and hit["route"]["name"] == "crit"
         miss = auth_client.post("/api/alerting/routes/test/", {"severity": "low"}, format="json").json()
         assert miss["matched"] is False and miss["route"] is None
+
+
+# ── Stage 2: on-call resolution ──────────────────────────────────────────────
+
+class TestOnCall:
+    def test_active_shift_user(self, team, django_user_model):
+        from django.utils import timezone
+        from datetime import timedelta
+        u = django_user_model.objects.create_user(username="oncall", password="x", email="o@co", role="engineer")
+        sched = OnCallSchedule.objects.create(team=team, name="Primary")
+        now = timezone.now()
+        OnCallShift.objects.create(schedule=sched, user=u,
+                                   start_datetime=now - timedelta(hours=1), end_datetime=now + timedelta(hours=1))
+        assert get_on_call_user(team) == u
+
+    def test_falls_back_to_lead_then_member(self, team, django_user_model):
+        lead = django_user_model.objects.create_user(username="lead", password="x", email="l@co", role="engineer")
+        member = django_user_model.objects.create_user(username="mem", password="x", email="m@co", role="engineer")
+        TeamMember.objects.create(team=team, user=member, role="member")
+        TeamMember.objects.create(team=team, user=lead, role="lead")
+        assert get_on_call_user(team) == lead  # no active shift → lead
+
+    def test_none_when_empty(self, team):
+        assert get_on_call_user(team) is None
+
+    def test_step_recipients_prefer_on_call(self, team, policy, django_user_model):
+        from django.utils import timezone
+        from datetime import timedelta
+        oncall = django_user_model.objects.create_user(username="oc", password="x", email="oc@co", role="engineer")
+        other = django_user_model.objects.create_user(username="ot", password="x", email="ot@co", role="engineer")
+        TeamMember.objects.create(team=team, user=other, notify_email=True)
+        sched = OnCallSchedule.objects.create(team=team)
+        now = timezone.now()
+        OnCallShift.objects.create(schedule=sched, user=oncall,
+                                   start_datetime=now - timedelta(hours=1), end_datetime=now + timedelta(hours=1))
+        step = EscalationStep.objects.create(policy=policy, step_number=1, notify_team=team)
+        assert step_email_recipients(step) == [(oncall, "oc@co")]
+
+
+class TestSlackChannel:
+    def test_send_slack_posts(self, monkeypatch):
+        from apps.alerting import channels
+        calls = {}
+        class Resp: status_code = 200
+        def fake_post(url, json=None, timeout=None):
+            calls["url"] = url; calls["json"] = json; return Resp()
+        import sys, types
+        fake_requests = types.ModuleType("requests"); fake_requests.post = fake_post
+        monkeypatch.setitem(sys.modules, "requests", fake_requests)
+        ok, err = channels.send_slack("https://hooks.slack/x", "hello")
+        assert ok and calls["json"] == {"text": "hello"}
+
+    def test_send_slack_no_url(self):
+        from apps.alerting import channels
+        ok, err = channels.send_slack("", "x")
+        assert ok is False
+
+
+# ── Stage 2: acknowledge / snooze ────────────────────────────────────────────
+
+class TestAcknowledge:
+    def _event(self):
+        from apps.alerts.models import AlertRule, AlertEvent
+        rule = AlertRule.objects.create(name="r", severity="high", condition={})
+        return AlertEvent.objects.create(rule=rule, state="firing")
+
+    def test_acknowledge_records_and_cancels_pending(self, auth_client, user):
+        from apps.alerting.models import AlertNotification
+        ev = self._event()
+        AlertNotification.objects.create(alert_event=ev, channel="email", status="pending")
+        resp = auth_client.post(f"/api/alerts/events/{ev.id}/acknowledge/",
+                                {"note": "on it", "snooze_minutes": 30}, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["note"] == "on it" and body["snoozed_until"] is not None
+        assert AlertNotification.objects.get(alert_event=ev).status == "cancelled"
+
+    def test_snooze(self, auth_client, user):
+        ev = self._event()
+        resp = auth_client.post(f"/api/alerts/events/{ev.id}/snooze/", {"minutes": 15}, format="json")
+        assert resp.status_code == 200 and resp.json()["snoozed_until"] is not None
+
+
+class TestOnCallApi:
+    def test_schedule_with_shift_and_current(self, auth_client, team, django_user_model):
+        from django.utils import timezone
+        from datetime import timedelta
+        u = django_user_model.objects.create_user(username="s1", password="x", email="s1@co", role="engineer")
+        sched = auth_client.post("/api/alerting/schedules/", {"team": team.id, "name": "Primary"}, format="json").json()
+        now = timezone.now()
+        auth_client.post(f"/api/alerting/schedules/{sched['id']}/shifts/", {
+            "user": u.id, "start_datetime": (now - timedelta(hours=1)).isoformat(),
+            "end_datetime": (now + timedelta(hours=1)).isoformat(),
+        }, format="json")
+        oncall = auth_client.get("/api/alerting/on-call/").json()
+        row = next(r for r in oncall if r["team"] == team.id)
+        assert row["username"] == "s1"

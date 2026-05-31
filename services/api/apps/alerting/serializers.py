@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
 from .models import (
-    AlertNotification, AlertRoute, ContactMethod, EscalationPolicy,
-    EscalationStep, Team, TeamMember,
+    AlertAcknowledgement, AlertNotification, AlertRoute, ContactMethod,
+    EscalationPolicy, EscalationStep, OnCallSchedule, OnCallShift, Team, TeamMember,
 )
 
 
@@ -21,7 +21,8 @@ class TeamSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Team
-        fields = ("id", "name", "description", "color", "member_count", "created_at", "updated_at")
+        fields = ("id", "name", "description", "color", "slack_webhook_url",
+                  "member_count", "created_at", "updated_at")
         read_only_fields = ("created_at", "updated_at")
 
 
@@ -57,6 +58,35 @@ class AlertRouteSerializer(serializers.ModelSerializer):
         model = AlertRoute
         fields = "__all__"
         read_only_fields = ("created_at", "updated_at")
+
+
+class OnCallShiftSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = OnCallShift
+        fields = ("id", "schedule", "user", "username", "start_datetime",
+                  "end_datetime", "recurrence", "recurrence_days")
+        read_only_fields = ("schedule",)
+
+
+class OnCallScheduleSerializer(serializers.ModelSerializer):
+    shifts = OnCallShiftSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = OnCallSchedule
+        fields = ("id", "team", "name", "timezone", "shifts", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
+
+
+class AlertAcknowledgementSerializer(serializers.ModelSerializer):
+    acknowledged_by_username = serializers.CharField(source="acknowledged_by.username", read_only=True)
+
+    class Meta:
+        model = AlertAcknowledgement
+        fields = ("id", "alert_event", "acknowledged_by", "acknowledged_by_username",
+                  "acknowledged_at", "note", "snoozed_until")
+        read_only_fields = fields
 
 
 class AlertNotificationSerializer(serializers.ModelSerializer):

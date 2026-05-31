@@ -19,6 +19,8 @@ class Team(TimestampedModel):
     description = models.TextField(blank=True)
     color = models.CharField(max_length=9, default="#3b82f6", help_text="Hex colour for the UI.")
     members = models.ManyToManyField(settings.AUTH_USER_MODEL, through="TeamMember", related_name="alert_teams")
+    # Stage 2: per-team Slack incoming-webhook URL for notifications.
+    slack_webhook_url = models.CharField(max_length=500, blank=True)
 
     def __str__(self):
         return self.name
@@ -122,6 +124,49 @@ class AlertRoute(TimestampedModel):
 
     def __str__(self):
         return self.name
+
+
+class OnCallSchedule(TimestampedModel):
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="schedules")
+    name = models.CharField(max_length=255, default="Primary On-Call")
+    timezone = models.CharField(max_length=64, default="UTC")
+
+    def __str__(self):
+        return f"{self.name} ({self.team_id})"
+
+
+class OnCallShift(TimestampedModel):
+    class Recurrence(models.TextChoices):
+        NONE = "none", "None"
+        DAILY = "daily", "Daily"
+        WEEKLY = "weekly", "Weekly"
+
+    schedule = models.ForeignKey(OnCallSchedule, on_delete=models.CASCADE, related_name="shifts")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="oncall_shifts")
+    start_datetime = models.DateTimeField()
+    end_datetime = models.DateTimeField()
+    recurrence = models.CharField(max_length=8, choices=Recurrence.choices, default=Recurrence.NONE)
+    recurrence_days = models.JSONField(default=list, blank=True)  # e.g. ["MON","WED","FRI"]
+
+    class Meta(TimestampedModel.Meta):
+        ordering = ["start_datetime"]
+
+    def __str__(self):
+        return f"{self.user_id} {self.start_datetime}–{self.end_datetime}"
+
+
+class AlertAcknowledgement(TimestampedModel):
+    alert_event = models.ForeignKey("alerts.AlertEvent", on_delete=models.CASCADE, related_name="acknowledgements")
+    acknowledged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ack_alerts")
+    acknowledged_at = models.DateTimeField()
+    note = models.TextField(blank=True)
+    snoozed_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        indexes = [models.Index(fields=["alert_event", "-acknowledged_at"])]
+
+    def __str__(self):
+        return f"ack {self.alert_event_id} by {self.acknowledged_by_id}"
 
 
 class AlertNotification(TimestampedModel):

@@ -7,12 +7,12 @@ from rest_framework.viewsets import GenericViewSet
 from . import engine
 from .models import (
     AlertNotification, AlertRoute, ContactMethod, EscalationPolicy,
-    EscalationStep, Team, TeamMember,
+    EscalationStep, OnCallSchedule, OnCallShift, Team, TeamMember,
 )
 from .serializers import (
     AlertNotificationSerializer, AlertRouteSerializer, ContactMethodSerializer,
-    EscalationPolicySerializer, EscalationStepSerializer, TeamMemberSerializer,
-    TeamSerializer,
+    EscalationPolicySerializer, EscalationStepSerializer, OnCallScheduleSerializer,
+    OnCallShiftSerializer, TeamMemberSerializer, TeamSerializer,
 )
 
 
@@ -112,3 +112,40 @@ class AlertNotificationViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSe
     serializer_class = AlertNotificationSerializer
     filterset_fields = ["alert_event", "status", "channel", "team"]
     ordering = ["-created_at"]
+
+
+class OnCallScheduleViewSet(viewsets.ModelViewSet):
+    """On-call schedules and their shifts."""
+
+    queryset = OnCallSchedule.objects.select_related("team").prefetch_related("shifts").all()
+    serializer_class = OnCallScheduleSerializer
+    filterset_fields = ["team"]
+
+    @action(detail=True, methods=["get", "post"])
+    def shifts(self, request, pk=None):
+        schedule = self.get_object()
+        if request.method == "GET":
+            return Response(OnCallShiftSerializer(schedule.shifts.select_related("user"), many=True).data)
+        ser = OnCallShiftSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save(schedule=schedule)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="current")
+    def current(self, request):
+        """Who is on-call right now, per team."""
+        out = []
+        for team in Team.objects.all():
+            user = engine.get_on_call_user(team)
+            out.append({
+                "team": team.id, "team_name": team.name,
+                "user": user.id if user else None,
+                "username": user.username if user else None,
+            })
+        return Response(out)
+
+
+class OnCallShiftViewSet(viewsets.ModelViewSet):
+    queryset = OnCallShift.objects.select_related("user", "schedule").all()
+    serializer_class = OnCallShiftSerializer
+    filterset_fields = ["schedule", "user"]

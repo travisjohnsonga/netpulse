@@ -45,10 +45,34 @@ def find_matching_route(severity=None, source=None, check_type=None, site_id=Non
     return None
 
 
+def get_on_call_user(team):
+    """
+    Current on-call user for a team: an active OnCallShift (start ≤ now ≤ end),
+    else a team lead, else any member, else None. Recurrence expansion beyond a
+    plain window is a later refinement.
+    """
+    from django.utils import timezone
+
+    from .models import OnCallShift
+
+    now = timezone.now()
+    shift = (OnCallShift.objects
+             .filter(schedule__team=team, start_datetime__lte=now, end_datetime__gte=now)
+             .select_related("user").order_by("start_datetime").first())
+    if shift:
+        return shift.user
+    lead = team.memberships.filter(role="lead").select_related("user").first()
+    if lead:
+        return lead.user
+    member = team.memberships.select_related("user").first()
+    return member.user if member else None
+
+
 def step_email_recipients(step) -> list[tuple]:
     """
-    (user, email) recipients for an escalation step. Stage 1 (no on-call):
-    an explicit notify_user, else every team member opted in to email.
+    (user, email) recipients for an escalation step. An explicit notify_user
+    wins; for a team, prefer the current on-call user, else every member opted
+    in to email.
     """
     out: list[tuple] = []
     if step.notify_user_id:
@@ -56,6 +80,9 @@ def step_email_recipients(step) -> list[tuple]:
         if email:
             out.append((step.notify_user, email))
     elif step.notify_team_id:
+        on_call = get_on_call_user(step.notify_team)
+        if on_call and on_call.email:
+            return [(on_call, on_call.email)]
         for m in step.notify_team.memberships.filter(notify_email=True).select_related("user"):
             if m.user.email:
                 out.append((m.user, m.user.email))
