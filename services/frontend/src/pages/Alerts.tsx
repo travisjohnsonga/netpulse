@@ -3,7 +3,14 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
 import { Fragment } from 'react'
-import { fetchAlerts, acknowledgeAlert, fetchAlertNotifications, type Alert, type AlertNotificationRecord } from '../api/client'
+import { fetchAlerts, acknowledgeAlert, resolveAlertEvent, fetchAlertNotifications, type Alert, type AlertNotificationRecord } from '../api/client'
+
+type View = 'false' | 'true' | 'all'
+const VIEW_TABS: { key: View; label: string }[] = [
+  { key: 'false', label: 'Active' },
+  { key: 'true', label: 'Resolved' },
+  { key: 'all', label: 'All' },
+]
 
 type Severity = 'all' | 'critical' | 'high' | 'medium' | 'low'
 
@@ -44,8 +51,20 @@ export default function Alerts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<Severity>('all')
+  const [view, setView] = useState<View>('false')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [timeline, setTimeline] = useState<Record<number, AlertNotificationRecord[]>>({})
+
+  const reload = (v: View) => {
+    setView(v)
+    setLoading(true)
+    fetchAlerts(v).then(setAlerts).catch(() => setError('Could not load alerts.')).finally(() => setLoading(false))
+  }
+  const handleResolve = (id: number) => {
+    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, state: 'resolved' as const } : a)))
+    resolveAlertEvent(id).then(() => { if (view === 'false') reload('false') })
+      .catch(() => setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, state: 'firing' as const } : a))))
+  }
 
   const toggleTimeline = (id: number) => {
     setExpandedId((cur) => (cur === id ? null : id))
@@ -119,6 +138,20 @@ export default function Alerts() {
           {error}
         </div>
       )}
+
+      {/* Active / Resolved / All toggle */}
+      <div className="flex gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-1 w-fit">
+        {VIEW_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => reload(tab.key)}
+            className={clsx('px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+              view === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50')}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       {/* Severity filter tabs */}
       <div className="flex gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-1 w-fit">
@@ -195,6 +228,7 @@ export default function Alerts() {
                   <Fragment key={alert.id}>
                   <tr onClick={() => toggleTimeline(alert.id)} className={clsx(
                     'hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer',
+                    alert.state === 'resolved' && 'opacity-60',
                     isDown && 'border-l-2 border-l-red-500',
                     isRecovery && 'border-l-2 border-l-green-500',
                   )}>
@@ -244,23 +278,34 @@ export default function Alerts() {
                       {new Date(alert.fired_at).toLocaleString()}
                     </td>
                     <td className="px-5 py-3">
-                      <span
-                        className={clsx(
-                          'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
-                          STATE_BADGE[alert.state] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
-                        )}
-                      >
-                        {alert.state}
-                      </span>
+                      {alert.state === 'resolved' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                          title={alert.resolved_at ? `Resolved ${new Date(alert.resolved_at).toLocaleString()}` : 'Resolved'}>
+                          ✅ {alert.resolved_by === 'user' ? 'Resolved by user' : alert.resolved_by === 'auto' ? 'Resolved automatically' : 'Resolved'}
+                        </span>
+                      ) : (
+                        <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize',
+                          STATE_BADGE[alert.state] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300')}>
+                          {alert.state}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-5 py-3">
+                    <td className="px-5 py-3 whitespace-nowrap">
                       {alert.state === 'firing' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleAcknowledge(alert.id) }}
-                          className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 font-medium"
-                        >
-                          Acknowledge
-                        </button>
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleAcknowledge(alert.id) }}
+                            className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 font-medium mr-3"
+                          >
+                            Acknowledge
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleResolve(alert.id) }}
+                            className="text-xs text-green-600 dark:text-green-400 hover:text-green-800 font-medium"
+                          >
+                            Resolve
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>

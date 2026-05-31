@@ -153,6 +153,9 @@ export interface Alert {
   fired_at: string
   state: 'firing' | 'acknowledged' | 'resolved'
   message: string
+  is_resolved?: boolean
+  resolved_by?: string
+  resolved_at?: string | null
 }
 
 export interface TopologyNode {
@@ -382,9 +385,14 @@ export async function fetchDevices(params?: Record<string, string>): Promise<Dev
 // Defensively coerce to array regardless of shape.
 type MaybePaginated<T> = T[] | { results: T[]; count: number; next: string | null; previous: string | null }
 
-export async function fetchAlerts(): Promise<Alert[]> {
-  const { data } = await api.get<MaybePaginated<Alert>>('/alerts/events/')
+// resolved: 'false' (default, active only) | 'true' (resolved only) | 'all'.
+export async function fetchAlerts(resolved: 'false' | 'true' | 'all' = 'false'): Promise<Alert[]> {
+  const { data } = await api.get<MaybePaginated<Alert>>('/alerts/events/', { params: { resolved } })
   return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+export async function resolveAlertEvent(id: number, note?: string): Promise<void> {
+  await api.post(`/alerts/events/${id}/resolve/`, { note })
 }
 
 export async function checkInfraHealth(): Promise<InfraHealth> {
@@ -1214,9 +1222,11 @@ export interface AlertEvent {
   created_at: string
 }
 
-// Fetch recent alert events whose labels reference this device (by hostname or id).
+// Fetch recent alert events whose labels reference this device (by hostname or
+// id). Includes resolved events so the device's recent-alerts list isn't empty
+// once issues clear.
 export async function fetchDeviceAlerts(deviceId: number, hostname: string): Promise<AlertEvent[]> {
-  const { data } = await api.get<AlertEvent[] | Paginated<AlertEvent>>('/alerts/events/', { params: { ordering: '-created_at' } })
+  const { data } = await api.get<AlertEvent[] | Paginated<AlertEvent>>('/alerts/events/', { params: { ordering: '-created_at', resolved: 'all' } })
   const events = unwrap(data)
   return events.filter((e) => {
     const l = e.labels || {}
