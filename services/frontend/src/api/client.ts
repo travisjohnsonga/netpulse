@@ -1251,6 +1251,9 @@ export interface ServiceCheck {
   last_status_change: string | null
   consecutive_failures: number
   failures_before_alert: number
+  alert_on_down: boolean
+  alert_on_recovery: boolean
+  alert_on_degraded: boolean
   config: Record<string, unknown>
   response_time_warning_ms: number | null
   response_time_critical_ms: number | null

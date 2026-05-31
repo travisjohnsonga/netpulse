@@ -442,12 +442,15 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
     name: check.name, check_type: check.check_type, host: check.host, port: check.port,
     interval_seconds: check.interval_seconds, timeout_seconds: check.timeout_seconds,
     failures_before_alert: check.failures_before_alert,
+    alert_on_down: check.alert_on_down, alert_on_recovery: check.alert_on_recovery,
+    alert_on_degraded: check.alert_on_degraded,
     device: check.device, site: check.site, notes: check.notes,
     response_time_warning_ms: check.response_time_warning_ms,
     response_time_critical_ms: check.response_time_critical_ms,
   } : {
     name: '', check_type: 'https', host: '', interval_seconds: 60, timeout_seconds: 10,
     failures_before_alert: 2,
+    alert_on_down: true, alert_on_recovery: true, alert_on_degraded: false,
   })
   // Free-form per-type config (path, query, warn_days, helo, …).
   const [cfg, setCfg] = useState<Record<string, unknown>>(check ? { ...(check.config || {}) } : { path: '/' })
@@ -636,6 +639,25 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
           <div>
             <label className={label}>Fails→alert</label>
             <input type="number" className={input} value={form.failures_before_alert} onChange={(e) => setForm({ ...form, failures_before_alert: Number(e.target.value) })} />
+          </div>
+        </div>
+
+        {/* Alert toggles */}
+        <div>
+          <label className={label}>Alerts</label>
+          <div className="flex flex-wrap gap-4 text-sm text-gray-700 dark:text-gray-300">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={form.alert_on_down ?? true} onChange={(e) => setForm({ ...form, alert_on_down: e.target.checked })} />
+              On down
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={form.alert_on_recovery ?? true} onChange={(e) => setForm({ ...form, alert_on_recovery: e.target.checked })} />
+              On recovery
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={form.alert_on_degraded ?? false} onChange={(e) => setForm({ ...form, alert_on_degraded: e.target.checked })} />
+              On degraded
+            </label>
           </div>
         </div>
 
