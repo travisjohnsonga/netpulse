@@ -207,6 +207,7 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
     from apps.compliance.collector import netmiko_device_type
 
     host = str(device.management_ip or device.ip_address)
+    platform = (device.platform or "").lower()
     device_type = netmiko_device_type(device.vendor, device.platform)
     if device_type == "autodetect":
         device_type = "cisco_ios"
@@ -218,6 +219,11 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
         "port": profile.ssh_port or 22,
         "fast_cli": False,
     }
+
+    # FortiOS uses its own "get system interface" syntax — "show interfaces" and
+    # the Cisco TextFSM templates do not apply. Dispatch to a dedicated parser.
+    if platform == "fortios" or device_type == "fortinet":
+        return _discover_via_ssh_fortios(params)
 
     ntc_platform = LLDP_NTC_PLATFORM.get(device_type, "cisco_ios")
 
@@ -284,6 +290,140 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
             "lldp_neighbor_desc": nb.get("desc") or None,
             "lldp_neighbor_mgmt_ip": nb.get("mgmt_ip") or None,
         })
+    return rows
+
+
+import re as _re
+
+# FortiOS field tokens in "get system interface" output. Each value is captured
+# lazily up to the next "key:" token (so multi-word values like the ip+mask pair
+# "1.2.3.4 255.255.255.0" stay intact).
+_FORTIOS_FIELD = _re.compile(
+    r"\b(name|mode|ip|status|type|speed|alias|description):\s*(.*?)(?=\s+[\w-]+:\s|$)"
+)
+# Interface types that are virtual/internal and not worth monitoring.
+_FORTIOS_SKIP_TYPES = {"loopback", "tunnel", "vap-switch", "wl-mesh"}
+
+
+def _fortios_speed_mbps(speed: str) -> int | None:
+    """Parse FortiOS speed strings ('1000Mbps', '10Gbps', '1000full') to Mbps."""
+    if not speed:
+        return None
+    s = str(speed).lower()
+    num = "".join(c for c in s if c.isdigit() or c == ".")
+    if not num:
+        return None
+    try:
+        val = float(num)
+    except ValueError:
+        return None
+    if "gbps" in s or "gbit" in s:
+        val *= 1000
+    return int(val) or None
+
+
+def parse_fortios_interfaces(raw: str) -> list[dict]:
+    """
+    Parse FortiOS 'get system interface' output into discovery rows. Handles both
+    the '== [ portN ]'-delimited block form and the flat one-line-per-interface
+    form. Returns the same row shape as the Cisco/TextFSM path.
+    """
+    if not raw:
+        return []
+    blocks = _re.split(r"==\s*\[[^\]]*\]", raw)
+    candidates = blocks if len(blocks) > 1 else raw.splitlines()
+    rows: list[dict] = []
+    for body in candidates:
+        if "name:" not in body:
+            continue
+        fields = {k.lower(): v.strip() for k, v in _FORTIOS_FIELD.findall(body)}
+        if_name = fields.get("name")
+        if not if_name:
+            continue
+        if_type = (fields.get("type") or "").lower()
+        if if_type in _FORTIOS_SKIP_TYPES:
+            continue
+        status = (fields.get("status") or "").lower()
+        oper = "up" if status == "up" else "down"
+        rows.append({
+            "if_index": None,
+            "if_name": if_name,
+            "if_description": fields.get("description") or fields.get("alias") or "",
+            "if_speed_mbps": _fortios_speed_mbps(fields.get("speed", "")),
+            "if_type": if_type,
+            "oper_status": oper,
+            "admin_status": "up",
+            "lldp_neighbor_hostname": None,
+            "lldp_neighbor_port": None,
+            "lldp_neighbor_desc": None,
+            "lldp_neighbor_mgmt_ip": None,
+        })
+    return rows
+
+
+def parse_fortios_lldp(raw: str) -> dict[str, dict]:
+    """
+    Parse FortiOS 'get system lldp neighbors-detail' into {local_iface: neighbor}.
+    Output is loosely structured; we pull the System Name / Port ID / Port Descr
+    under each 'Interface: <name>' header. Best-effort — returns {} if unparsable.
+    """
+    if not raw:
+        return {}
+    out: dict[str, dict] = {}
+    local = None
+    cur: dict = {}
+
+    def _flush():
+        if local and cur:
+            out[_norm(local)] = {
+                "host": cur.get("system name") or cur.get("chassis id") or "",
+                "port": cur.get("port id") or "",
+                "desc": cur.get("port description") or "",
+                "mgmt_ip": cur.get("management address") or "",
+            }
+
+    for line in raw.splitlines():
+        m = _re.match(r"\s*Interface:\s*(\S+)", line, _re.IGNORECASE)
+        if m:
+            _flush()
+            local = m.group(1)
+            cur = {}
+            continue
+        m = _re.match(r"\s*([A-Za-z ]+?):\s*(.+)$", line)
+        if m and local:
+            cur[m.group(1).strip().lower()] = m.group(2).strip()
+    _flush()
+    return out
+
+
+def _discover_via_ssh_fortios(params: dict) -> list[dict]:
+    """FortiOS interface discovery via 'get system interface' + LLDP (best-effort)."""
+    from netmiko import ConnectHandler
+
+    try:
+        conn = ConnectHandler(**params)
+    except Exception as exc:
+        raise DiscoveryError(f"SSH connection failed: {exc}") from exc
+    try:
+        intf_raw = conn.send_command("get system interface")
+        try:
+            lldp_raw = conn.send_command("get system lldp neighbors-detail")
+            lldp_map = parse_fortios_lldp(lldp_raw)
+        except Exception:
+            lldp_map = {}
+    finally:
+        conn.disconnect()
+
+    rows = parse_fortios_interfaces(intf_raw)
+    if not rows:
+        raise DiscoveryError("could not parse 'get system interface' output")
+    for r in rows:
+        nb = lldp_map.get(_norm(r["if_name"]))
+        if nb:
+            r["lldp_neighbor_hostname"] = nb.get("host") or None
+            r["lldp_neighbor_port"] = nb.get("port") or None
+            r["lldp_neighbor_desc"] = nb.get("desc") or None
+            r["lldp_neighbor_mgmt_ip"] = nb.get("mgmt_ip") or None
     return rows
 
 

@@ -52,6 +52,58 @@ class TestAutoSelect:
             {"if_name": name, "oper_status": "up", "lldp_neighbor_hostname": "sw1"}) is False
 
 
+# ── FortiOS interface parsing ─────────────────────────────────────────────────
+
+
+class TestFortiOSParse:
+    SAMPLE = (
+        "== [ port1 ]\n"
+        "name: port1   mode: static   ip: 192.168.1.99 255.255.255.0   status: up"
+        "   type: physical   speed: 1000Mbps   alias: WAN1\n"
+        "== [ port2 ]\n"
+        "name: port2   mode: dhcp   ip: 0.0.0.0 0.0.0.0   status: down"
+        "   type: physical   speed: auto\n"
+        "== [ loop1 ]\n"
+        "name: loop1   mode: static   ip: 10.0.0.1 255.255.255.255   status: up"
+        "   type: loopback\n"
+    )
+
+    def test_parses_physical_interfaces(self):
+        rows = discovery.parse_fortios_interfaces(self.SAMPLE)
+        names = [r["if_name"] for r in rows]
+        assert names == ["port1", "port2"]  # loopback skipped
+
+    def test_status_and_speed(self):
+        rows = {r["if_name"]: r for r in discovery.parse_fortios_interfaces(self.SAMPLE)}
+        assert rows["port1"]["oper_status"] == "up"
+        assert rows["port1"]["if_speed_mbps"] == 1000
+        assert rows["port1"]["if_description"] == "WAN1"
+        assert rows["port2"]["oper_status"] == "down"
+
+    def test_flat_form_without_headers(self):
+        flat = ("name: wan1   status: up   type: physical   speed: 10Gbps\n"
+                "name: tunnel.1   status: up   type: tunnel\n")
+        rows = discovery.parse_fortios_interfaces(flat)
+        assert [r["if_name"] for r in rows] == ["wan1"]  # tunnel skipped
+        assert rows[0]["if_speed_mbps"] == 10000
+
+    def test_empty(self):
+        assert discovery.parse_fortios_interfaces("") == []
+
+    def test_lldp_merge(self):
+        lldp = (
+            "Interface: port1\n"
+            "    System Name: core-sw-1\n"
+            "    Port ID: GigabitEthernet1/0/24\n"
+            "    Port Description: uplink-to-fw\n"
+            "    Management Address: 10.0.0.5\n"
+        )
+        nb = discovery.parse_fortios_lldp(lldp)
+        key = discovery._norm("port1")
+        assert nb[key]["host"] == "core-sw-1"
+        assert nb[key]["port"] == "GigabitEthernet1/0/24"
+
+
 # ── telemetry-config ──────────────────────────────────────────────────────────
 
 

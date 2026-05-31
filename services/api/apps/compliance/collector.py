@@ -38,6 +38,7 @@ _NETMIKO_TYPES = {
     "eos": "arista_eos",
     "junos": "juniper_junos",
     "sonic": "linux",
+    "fortios": "fortinet",
     "other": "",
 }
 
