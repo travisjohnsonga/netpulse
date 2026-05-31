@@ -478,9 +478,16 @@ class Command(BaseCommand):
             self._iface_prev[state_key] = new_state
 
             if out_fields:
+                # For gNMI the bucket key IS the interface name (parsed from the
+                # part before "/" in e.g. "GigabitEthernet1/rx_kbps"), so also
+                # write it as an if_name tag. SNMP buckets are numeric ifIndex
+                # and carry no name here (the reader resolves it).
+                tags = {"device_id": device_id, "if_index": idx}
+                if not str(idx).isdigit():
+                    tags["if_name"] = idx
                 await self._write_influx(
                     measurement="interface_stats",
-                    tags={"device_id": device_id, "if_index": idx},
+                    tags=tags,
                     fields=out_fields,
                     timestamp=timestamp,
                 )

@@ -78,8 +78,8 @@ class TestGnmiInterfaceStats:
         asyncio.run(cmd._interface_stats("3", f2, "2026-05-30T20:00:10+00:00"))
         m, tags, fields = writes[-1]
         assert m == "interface_stats"
-        # if_index tag carries the interface NAME for gNMI devices.
-        assert tags == {"device_id": "3", "if_index": "GigabitEthernet1"}
+        # gNMI rows carry both if_index (the name) AND an explicit if_name tag.
+        assert tags == {"device_id": "3", "if_index": "GigabitEthernet1", "if_name": "GigabitEthernet1"}
         assert fields["in_bps"] == 1_000_000.0
         assert fields["out_bps"] == 100_000.0
         assert fields["in_pps"] == 198.0
@@ -93,5 +93,14 @@ class TestGnmiInterfaceStats:
         asyncio.run(cmd._interface_stats("9", f1, "2026-05-30T20:00:00+00:00"))
         asyncio.run(cmd._interface_stats("9", f2, "2026-05-30T20:00:10+00:00"))
         m, tags, fields = writes[-1]
-        assert tags == {"device_id": "9", "if_index": "GigabitEthernet0/0/0"}
+        assert tags == {"device_id": "9", "if_index": "GigabitEthernet0/0/0", "if_name": "GigabitEthernet0/0/0"}
         assert fields["in_bps"] == 800.0
+
+    def test_snmp_rows_have_no_if_name_tag(self):
+        # SNMP buckets are numeric ifIndex and must NOT get an if_name tag here.
+        cmd, writes = _cmd()
+        asyncio.run(cmd._interface_stats("3", {"ifHCInOctets_2": 0}, "2026-05-30T20:00:00+00:00"))
+        asyncio.run(cmd._interface_stats("3", {"ifHCInOctets_2": 1000}, "2026-05-30T20:00:10+00:00"))
+        _, tags, _ = writes[-1]
+        assert tags == {"device_id": "3", "if_index": "2"}
+        assert "if_name" not in tags
