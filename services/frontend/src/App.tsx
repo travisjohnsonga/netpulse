@@ -20,6 +20,7 @@ import Users from './pages/settings/Users'
 import Credentials from './pages/settings/Credentials'
 import Integrations from './pages/settings/Integrations'
 import Alerting from './pages/settings/Alerting'
+import AlertRouting from './pages/settings/AlertRouting'
 import Discovery from './pages/settings/Discovery'
 import Collectors from './pages/settings/Collectors'
 import DataSources from './pages/settings/DataSources'
@@ -87,6 +88,7 @@ function AppRoutes() {
                   <Route path="credentials" element={<Credentials />} />
                   <Route path="integrations" element={<Integrations />} />
                   <Route path="alerting" element={<Alerting />} />
+                  <Route path="alert-routing" element={<AlertRouting />} />
                   <Route path="discovery" element={<Discovery />} />
                   <Route path="collectors" element={<Collectors />} />
                   <Route path="data-sources" element={<DataSources />} />

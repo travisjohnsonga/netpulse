@@ -1325,3 +1325,86 @@ export async function fetchCheckResults(id: number, period = '24h'): Promise<Che
   const { data } = await api.get<CheckResultsResponse>(`/checks/${id}/results/`, { params: { period } })
   return data
 }
+
+// ── Alert routing (apps/alerting, Stage 1) ───────────────────────────────────
+export interface AlertTeam {
+  id: number
+  name: string
+  description: string
+  color: string
+  member_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface EscalationStep {
+  id: number
+  policy: number
+  step_number: number
+  delay_minutes: number
+  notify_team: number | null
+  notify_user: number | null
+  notify_type: string
+}
+
+export interface EscalationPolicy {
+  id: number
+  name: string
+  description: string
+  team: number
+  repeat_interval_minutes: number
+  steps: EscalationStep[]
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertRoute {
+  id: number
+  name: string
+  description: string
+  is_active: boolean
+  priority: number
+  match_severity: string[]
+  match_source: string[]
+  match_device_tags: string[]
+  match_check_types: string[]
+  match_sites: number[]
+  escalation_policy: number
+  policy_name: string
+  suppress_during_maintenance: boolean
+  suppress_if_parent_down: boolean
+  created_at: string
+}
+
+export async function fetchTeams(): Promise<AlertTeam[]> {
+  const { data } = await api.get<AlertTeam[] | Paginated<AlertTeam>>('/alerting/teams/')
+  return unwrap(data)
+}
+export async function saveTeam(payload: Partial<AlertTeam> & { name: string }, id?: number): Promise<AlertTeam> {
+  const { data } = id ? await api.patch(`/alerting/teams/${id}/`, payload) : await api.post('/alerting/teams/', payload)
+  return data
+}
+export async function deleteTeam(id: number): Promise<void> { await api.delete(`/alerting/teams/${id}/`) }
+
+export async function fetchPolicies(): Promise<EscalationPolicy[]> {
+  const { data } = await api.get<EscalationPolicy[] | Paginated<EscalationPolicy>>('/alerting/policies/')
+  return unwrap(data)
+}
+export async function savePolicy(payload: { name: string; team: number; description?: string }, id?: number): Promise<EscalationPolicy> {
+  const { data } = id ? await api.patch(`/alerting/policies/${id}/`, payload) : await api.post('/alerting/policies/', payload)
+  return data
+}
+
+export async function fetchRoutes(): Promise<AlertRoute[]> {
+  const { data } = await api.get<AlertRoute[] | Paginated<AlertRoute>>('/alerting/routes/')
+  return unwrap(data)
+}
+export async function saveRoute(payload: Partial<AlertRoute> & { name: string; escalation_policy: number }, id?: number): Promise<AlertRoute> {
+  const { data } = id ? await api.patch(`/alerting/routes/${id}/`, payload) : await api.post('/alerting/routes/', payload)
+  return data
+}
+export async function deleteRoute(id: number): Promise<void> { await api.delete(`/alerting/routes/${id}/`) }
+export async function testRoute(sample: { severity?: string; source?: string; check_type?: string; site?: number }): Promise<{ matched: boolean; route: AlertRoute | null }> {
+  const { data } = await api.post('/alerting/routes/test/', sample)
+  return data
+}
