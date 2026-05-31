@@ -2,8 +2,9 @@ from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
+from rest_framework_simplejwt.views import TokenVerifyView
 
+from apps.core.throttled_auth import ThrottledTokenObtainPairView, ThrottledTokenRefreshView
 from apps.core.views import SystemSettingsView
 from apps.devices.views import SiteViewSet
 from apps.telemetry.views import PollingSettingsView
@@ -16,8 +17,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
 
     # ── Authentication ────────────────────────────────────────────────────────
-    path("api/auth/token/",         TokenObtainPairView.as_view(),  name="token-obtain"),
-    path("api/auth/token/refresh/", TokenRefreshView.as_view(),     name="token-refresh"),
+    path("api/auth/token/",         ThrottledTokenObtainPairView.as_view(),  name="token-obtain"),
+    path("api/auth/token/refresh/", ThrottledTokenRefreshView.as_view(),     name="token-refresh"),
     path("api/auth/token/verify/",  TokenVerifyView.as_view(),      name="token-verify"),
 
     # ── Core (health check, chatops webhooks) ─────────────────────────────────

@@ -32,4 +32,8 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 # No NATS in the unit-test environment — don't publish device configs on save.
 SNMP_DEVICE_PUBLISH = False
 
+# Disable the auth throttle by default so the suite is deterministic; the
+# throttle test re-enables a tiny rate via override_settings.
+REST_FRAMEWORK = {**REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": None}}  # noqa: F405
+
 LOGGING = {"version": 1, "disable_existing_loggers": True}

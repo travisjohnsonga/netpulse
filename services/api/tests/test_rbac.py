@@ -86,6 +86,22 @@ class TestJWTEndpoints:
         assert "access" in resp.json()
         assert "refresh" in resp.json()
 
+    def test_token_endpoint_is_rate_limited(self, api_client, monkeypatch):
+        # H1: brute-force protection. The "auth" rate is disabled in test
+        # settings; patch the throttle class to a tiny rate and confirm the
+        # endpoint returns 429 once exceeded.
+        from django.core.cache import cache
+        from rest_framework.throttling import SimpleRateThrottle
+        cache.clear()
+        monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", {"auth": "2/min"})
+        try:
+            codes = [api_client.post("/api/auth/token/",
+                                     {"username": "x", "password": "y"}).status_code
+                     for _ in range(4)]
+            assert 429 in codes, f"expected a 429 after the limit, got {codes}"
+        finally:
+            cache.clear()
+
     def test_token_contains_role_claim(self, user, api_client):
         import base64, json
         resp = api_client.post(

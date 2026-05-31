@@ -244,6 +244,12 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # No global throttle (avoids limiting health checks / normal API traffic);
+    # the "auth" scope is applied only to the JWT token endpoints to slow
+    # credential brute-force. Backed by the Valkey cache.
+    "DEFAULT_THROTTLE_RATES": {
+        "auth": os.environ.get("AUTH_THROTTLE_RATE", "10/min"),
+    },
 }
 
 SPECTACULAR_SETTINGS = {

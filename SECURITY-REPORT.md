@@ -15,7 +15,7 @@ paramiko CVE) before production; the MEDIUM items should follow shortly after.**
 | Severity | Count | Must fix before prod? |
 |---|---|---|
 | CRITICAL | 0 | — |
-| HIGH | 2 | Yes |
+| HIGH | 2 (H1 ✅ resolved) | H2 track |
 | MEDIUM | 2 | Recommended |
 | LOW / INFO | 6 | First patch / accept |
 
@@ -26,13 +26,13 @@ None found.
 
 ## HIGH
 
-### H1 — No rate limiting on authentication endpoints
-`/api/auth/token/` (and the API generally) has **no DRF throttling configured**
-(`DEFAULT_THROTTLE_CLASSES`/`_RATES` absent in `config/settings/base.py`). This
-allows unthrottled credential brute-force / token-refresh abuse.
-**Fix:** add `AnonRateThrottle` + a scoped throttle on the token-obtain view
-(e.g. `5/min` per IP), and a global authenticated rate. Front with the reverse
-proxy as defence-in-depth.
+### H1 — No rate limiting on authentication endpoints — ✅ RESOLVED
+`/api/auth/token/` had no DRF throttling, allowing unthrottled credential
+brute-force. **Fixed:** the token-obtain and token-refresh views now use a
+`ScopedRateThrottle` ("auth" scope, default `10/min` per IP, configurable via
+`AUTH_THROTTLE_RATE`), backed by the Valkey cache. The rest of the API is
+intentionally left unthrottled to avoid limiting health checks / normal traffic.
+Verified by `test_token_endpoint_is_rate_limited` (429 after the limit).
 
 ### H2 — Vulnerable transitive dependency: paramiko 4.0.0
 `pip-audit` flags **paramiko 4.0.0 — CVE-2026-44405** (pulled in transitively by
@@ -88,7 +88,7 @@ context, but the flag warrants an explicit decision.
 | No secrets in logs | ✅ PASS | Credentials scrubbed; `test_snmp_publish` asserts no secrets in NATS payloads |
 | OpenBao used for all credentials | ✅ PASS | `vault_path` references in PostgreSQL; secret values never stored in DB |
 | JWT tokens have appropriate expiry | ✅ PASS | access 1h, refresh 7d (`SIMPLE_JWT`) |
-| Rate limiting on auth endpoints | ❌ FAIL | See H1 |
+| Rate limiting on auth endpoints | ✅ PASS | H1 resolved — ScopedRateThrottle on token endpoints |
 | CORS configured correctly | ✅ PASS | Production uses `CORS_ALLOWED_ORIGINS` env allowlist; dev allows all |
 | Containers run as non-root | ✅ PASS | `USER netpulse` in all 8 service Dockerfiles |
 | All dependencies have permissive licenses | ✅ PASS | MIT/BSD/Apache-2.0/MPL-2.0 (PostgreSQL, OpenSearch, Valkey, NATS, OpenBao); no copyleft-on-use |
