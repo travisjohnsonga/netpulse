@@ -54,6 +54,18 @@ class TestLogQuery:
         assert {"terms": {"severity_name.keyword": ["info", "informational", "warn", "warning"]}} in musts
         assert {"match": {"message": "BGP"}} in musts
 
+    def test_time_filter_uses_at_timestamp(self, auth_client, monkeypatch):
+        # Regression: the syslog `timestamp` field is often null, so the range
+        # filter + sort must target @timestamp or every time window returns empty.
+        captured = {}
+        monkeypatch.setattr(logs_views, "_execute", lambda body: captured.update(body) or _fake_response())
+        auth_client.get("/api/logs/?from=2026-05-24T00:00:00Z&to=2026-05-31T00:00:00Z")
+        musts = captured["query"]["bool"]["must"]
+        assert {"range": {"@timestamp": {"gte": "2026-05-24T00:00:00Z", "lte": "2026-05-31T00:00:00Z"}}} in musts
+        assert captured["sort"] == [{"@timestamp": {"order": "desc"}}]
+        # The null-prone `timestamp` field must NOT be used for ranges.
+        assert all("timestamp" not in (m.get("range") or {}) for m in musts)
+
     def test_pagination_params(self, auth_client, monkeypatch):
         captured = {}
         monkeypatch.setattr(logs_views, "_execute", lambda body: captured.update(body) or _fake_response())
