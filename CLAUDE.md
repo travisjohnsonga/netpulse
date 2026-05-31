@@ -2020,3 +2020,86 @@ After audit, produce:
 
 Do NOT run this audit until explicitly requested.
 This is a pre-production gate, not a development task.
+
+## PINNED — ChatOps User Identity & Profile Integration
+
+### Problem:
+When escalating alerts to specific users, we need to know
+their identity on each chat platform (Slack, Discord, etc).
+Email is easy (user.email) but chat platforms need handles.
+
+### User Profile ChatOps Fields:
+Add to UserPreferences or User model:
+
+slack_user_id: CharField(null=True, blank=True)
+  ← Slack member ID (e.g. U01234ABCDE)
+  ← Found in Slack: click profile → ... → Copy member ID
+  
+discord_user_id: CharField(null=True, blank=True)
+  ← Discord user ID (18-digit number)
+  ← Found in Discord: enable Developer Mode → right-click → Copy ID
+  
+pagerduty_email: CharField(null=True, blank=True)
+  ← Email address used in PagerDuty account
+
+teams_user_id: CharField(null=True, blank=True)
+  ← Microsoft Teams user ID (for future)
+
+### Profile Page - Conditional Display:
+Only show chat platform fields if that platform
+is configured/enabled at the system level.
+
+Check: does any Team have slack_webhook_url set?
+  → Show Slack user ID field in profile
+  
+Check: does any Team have discord_webhook_url set?
+  → Show Discord user ID field in profile
+
+Check: PAGERDUTY_DEFAULT_KEY in settings?
+  → Show PagerDuty email field in profile
+
+Profile UI section:
+  ── Chat & Alerting ────────────────────────────
+  
+  [Only shown if Slack is configured]
+  Slack Member ID: [U01234ABCDE        ]
+  How to find: Slack → Your profile → ⋮ → Copy member ID
+  
+  [Only shown if Discord is configured]  
+  Discord User ID: [123456789012345678 ]
+  How to find: Discord → Settings → Advanced → 
+               Enable Developer Mode → Right-click 
+               your name → Copy User ID
+  
+  [Only shown if PagerDuty configured]
+  PagerDuty Email: [john@company.com   ]
+  
+  ── ────────────────────────────────────────────
+
+### Alert Escalation with ChatOps:
+When executing escalation step for specific user:
+
+For Slack DM:
+  POST to Slack API chat.postMessage
+  channel: user.slack_user_id (DM to user)
+  vs
+  channel: team.slack_channel (team channel)
+
+For Discord DM:
+  Requires bot token (not just webhook)
+  OR: mention user in channel webhook:
+  f"<@{user.discord_user_id}> Alert: {message}"
+  
+  Simplest approach: include @mention in webhook message
+  so user gets notified in the channel:
+  "🔴 <@123456789012345678> Device Down: router1"
+
+### Implementation Priority:
+1. Add fields to UserPreferences model
+2. Show conditionally in /profile based on 
+   enabled chat platforms
+3. Use in escalation engine when notifying
+   specific users (mention in channel)
+4. Later: true DMs require bot tokens
+
+### Do NOT build until requested.
