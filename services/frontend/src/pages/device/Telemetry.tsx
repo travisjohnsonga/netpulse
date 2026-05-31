@@ -726,7 +726,7 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
           <HealthCard label="Memory" value={health?.memory_used_pct != null ? `${health.memory_used_pct.toFixed(1)}%` : null}
             series={metrics?.timeseries.memory_used_pct} color="#3b82f6" />
           <HealthCard label="Uptime" value={health?.uptime_seconds != null ? formatUptime(health.uptime_seconds) : null}
-            series={metrics?.timeseries.uptime} color="#10b981" />
+            subtitle="since last reboot" />
           <HealthCard label="Poll" value={health?.poll_duration_ms != null ? `${health.poll_duration_ms.toFixed(0)} ms` : null} />
         </div>
       </div>
@@ -865,9 +865,11 @@ function Sparkline() {
   )
 }
 
-// A health metric tile: big current value + an ECharts sparkline of the series.
-function HealthCard({ label, value, series, color = '#3b82f6' }: {
-  label: string; value: string | null; series?: MetricPoint[]; color?: string
+// A health metric tile: big current value + either an ECharts sparkline of the
+// series or a static subtitle. Single-value metrics (e.g. uptime) pass a
+// subtitle and no series — a trend chart for a monotonic counter is noise.
+function HealthCard({ label, value, series, color = '#3b82f6', subtitle }: {
+  label: string; value: string | null; series?: MetricPoint[]; color?: string; subtitle?: string
 }) {
   const hasData = value != null
   return (
@@ -880,9 +882,11 @@ function HealthCard({ label, value, series, color = '#3b82f6' }: {
           </p>
         </div>
       </div>
-      {series && series.length > 1
-        ? <MiniSpark series={series} color={color} />
-        : <p className="text-[10px] text-gray-300 dark:text-gray-600">{hasData ? '' : 'no data'}</p>}
+      {subtitle
+        ? <p className="text-[10px] text-gray-400 dark:text-gray-500">{hasData ? subtitle : 'no data'}</p>
+        : series && series.length > 1
+          ? <MiniSpark series={series} color={color} />
+          : <p className="text-[10px] text-gray-300 dark:text-gray-600">{hasData ? '' : 'no data'}</p>}
     </div>
   )
 }
