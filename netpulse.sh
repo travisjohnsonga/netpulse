@@ -59,3 +59,17 @@ token() {
       -d '{"username":"admin","password":"netmagic"}' | \
       python3 -m json.tool | grep '"access"' | cut -d'"' -f4
 }
+
+# Rebuild and restart all api-based services
+rebuild-api() {
+    echo "Rebuilding api image and restarting all api-based services..."
+    docker compose build api
+    docker compose up -d \
+        api websocket config-manager scheduler \
+        alert-engine cve-engine lifecycle-engine \
+        security-engine stream-processor check-engine
+    echo "Done. Waiting for health..."
+    sleep 15
+    docker compose ps | grep -E "api|engine|processor|manager|scheduler|websocket" | \
+        grep -v "ingest" | awk '{print $1, $NF}'
+}

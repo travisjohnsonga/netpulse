@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from ingest.parser import FACILITIES, SEVERITIES, _parse_sd, parse
+from ingest.parser import FACILITIES, SEVERITIES, _parse_sd, clean_syslog_message, parse
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -322,3 +322,37 @@ class TestSanitiseToken:
     def test_none_like_returns_unknown(self):
         from ingest.publisher import _sanitise_token
         assert _sanitise_token(None) == "unknown"  # type: ignore[arg-type]
+
+
+class TestCleanSyslogMessage:
+    def test_anchors_on_ios_mnemonic(self):
+        raw = "478: *May 30 2026 12:00:00.123 UTC: %BGP-5-ADJCHANGE: neighbor 10.0.0.2 Up"
+        assert clean_syslog_message(raw) == "%BGP-5-ADJCHANGE: neighbor 10.0.0.2 Up"
+
+    def test_strips_leading_sequence_number(self):
+        assert clean_syslog_message("478: Interface up") == "Interface up"
+
+    def test_strips_hostname_echo(self):
+        assert clean_syslog_message("router1: link down", hostname="router1") == "link down"
+
+    def test_strips_origin_tag(self):
+        assert clean_syslog_message("[origin@1234]: something happened") == "something happened"
+
+    def test_strips_device_timestamp_prefix(self):
+        assert clean_syslog_message("*May 30 12:00:00: port flap") == "port flap"
+
+    def test_clean_message_is_idempotent(self):
+        once = clean_syslog_message("478: %BGP-5-ADJCHANGE: up")
+        assert clean_syslog_message(once) == once == "%BGP-5-ADJCHANGE: up"
+
+    def test_already_clean_message_unchanged(self):
+        assert clean_syslog_message("Interface GigabitEthernet1 is up") == "Interface GigabitEthernet1 is up"
+
+    def test_empty_message_unchanged(self):
+        assert clean_syslog_message("") == ""
+
+    def test_parse_applies_cleaning_to_cisco_log(self):
+        raw = "<189>478: *May 30 2026 12:00:00 UTC: %LINK-3-UPDOWN: Interface Gi1 changed state to down"
+        msg = parse(raw.encode(), "10.0.0.1", 514, "udp")
+        assert msg["message"] == "%LINK-3-UPDOWN: Interface Gi1 changed state to down"
+        assert msg["raw"] == raw

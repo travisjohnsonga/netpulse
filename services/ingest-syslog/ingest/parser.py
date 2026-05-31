@@ -52,6 +52,41 @@ _RFC3164_HEADER_RE = re.compile(
     re.DOTALL,
 )
 
+# Cisco IOS/IOS-XE/NX-OS log mnemonic, e.g. "%BGP-5-ADJCHANGE:" — the real
+# start of the message. Network gear prefixes this with a sequence number and a
+# device-local timestamp that add noise; anchoring here drops the prefix.
+_IOS_MNEMONIC = re.compile(r"%[A-Z0-9_]+-\d-[A-Z0-9_]+:")
+_RE_SEQ = re.compile(r"^\d+:\s*")
+_RE_PRI = re.compile(r"^<\d+>")
+_RE_SD_TAG = re.compile(r"^\[[^\]]*\]:\s*")
+# A leading device-local timestamp like "*May 30 2026 12:00:00.123 UTC:".
+_RE_TS_PREFIX = re.compile(r"^\*?[A-Z][a-z]{2}\s+\d+\s+[\d:.]+(\s+\S+)?:\s*")
+
+
+def clean_syslog_message(msg: str, hostname: str | None = None) -> str:
+    """
+    Strip transport/device noise from a syslog message, leaving the human text.
+
+    Anchors on the Cisco IOS mnemonic (``%FAC-SEV-MNEMONIC:``) when present —
+    everything before it (sequence number, device timestamp) is noise. Otherwise
+    peels common leading prefixes in order: residual <PRI>, a sequence number,
+    the device's own ``hostname:`` echo, an ``[origin]:`` tag, and a leading
+    device-local timestamp. Idempotent and safe on already-clean messages.
+    """
+    if not msg:
+        return msg
+    m = _IOS_MNEMONIC.search(msg)
+    if m:
+        return msg[m.start():].strip()
+    s = _RE_PRI.sub("", msg)
+    s = _RE_SEQ.sub("", s)
+    if hostname:
+        s = re.sub(rf"^{re.escape(hostname)}:\s*", "", s)
+    s = _RE_SD_TAG.sub("", s)
+    s = _RE_TS_PREFIX.sub("", s)
+    return s.strip()
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def parse(
@@ -77,8 +112,14 @@ def parse(
     rest = raw[m.end():]
 
     if rest and rest[0].isdigit():
-        return _parse_rfc5424(raw, priority, rest, source_ip, source_port, transport)
-    return _parse_rfc3164(raw, priority, rest, source_ip, source_port, transport)
+        result = _parse_rfc5424(raw, priority, rest, source_ip, source_port, transport)
+    else:
+        result = _parse_rfc3164(raw, priority, rest, source_ip, source_port, transport)
+
+    # Normalise the message at ingest: drop sequence numbers / device timestamps
+    # so stored + displayed text is the actual log content. raw is preserved.
+    result["message"] = clean_syslog_message(result.get("message") or "", result.get("hostname"))
+    return result
 
 
 # ── RFC 5424 ──────────────────────────────────────────────────────────────────
