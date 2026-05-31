@@ -1,3 +1,18 @@
+config system snmp sysinfo
+    set status enable
+end
+{% if snmpv3 %}
+config system snmp user
+    edit "{{ username }}"
+        set security-level auth-priv
+        set auth-proto {{ auth_protocol }}
+        set auth-pwd {{ auth_key }}
+        set priv-proto {{ priv_protocol }}
+        set priv-pwd {{ priv_key }}
+        set notify-hosts {{ collector_ip }}
+    next
+end
+{% else %}
 config system snmp community
     edit 1
         set name "{{ community }}"
@@ -9,6 +24,4 @@ config system snmp community
         end
     next
 end
-config system snmp sysinfo
-    set status enable
-end
+{% endif %}

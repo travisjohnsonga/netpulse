@@ -1,2 +1,9 @@
+{% if snmpv3 %}
+snmp-server view VIEW-ALL iso included
+snmp-server group {{ group_name }} v3 auth read VIEW-ALL
+snmp-server user {{ username }} {{ group_name }} v3 auth {{ auth_protocol }} {{ auth_key }} priv {{ priv_protocol }} {{ priv_key }}
+snmp-server host {{ collector_ip }} version 3 auth {{ username }}
+{% else %}
 snmp-server community {{ community }} ro
 snmp-server host {{ collector_ip }} version 2c {{ community }}
+{% endif %}

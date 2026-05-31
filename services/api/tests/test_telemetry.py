@@ -278,6 +278,62 @@ class TestConfigGenerate:
         assert "set services analytics" in secs["gnmi"]["config"]
 
 
+class TestSNMPv3Config:
+    """SNMPv3 authPriv config generation per platform."""
+
+    def _v3_profile(self, auth="SHA", priv="AES128"):
+        return CredentialProfile.objects.create(
+            name=f"v3-{auth}-{priv}", snmpv3_enabled=True, snmpv3_username="netpulse-mon",
+            snmpv3_auth_protocol=auth, snmpv3_priv_protocol=priv, vault_path="v3")
+
+    def _gen(self, auth_client, platform, vendor, profile):
+        d = Device.objects.create(
+            hostname=f"v3-{platform}", ip_address="10.5.0.1", management_ip="10.5.0.1",
+            vendor=vendor, platform=platform, status="active", credential_profile=profile)
+        return auth_client.get(f"/api/devices/{d.id}/telemetry-config/generate/").json()
+
+    def test_cisco_xe_v3(self, auth_client):
+        body = self._gen(auth_client, "ios_xe", "Cisco", self._v3_profile("SHA", "AES256"))
+        cfg = body["sections"]["snmp"]["config"]
+        assert "snmp-server user netpulse-mon" in cfg
+        assert "v3 auth sha YOUR-AUTH-KEY-HERE priv aes 256 YOUR-PRIV-KEY-HERE" in cfg
+        assert "version 3 auth netpulse-mon" in cfg
+        assert body["snmpv3"] is True
+        assert body["snmp_warning"] == ""
+        assert "community" not in cfg.lower()
+
+    def test_nxos_v3_uses_dedicated_syntax(self, auth_client):
+        cfg = self._gen(auth_client, "nxos", "Cisco", self._v3_profile("SHA", "AES128"))["sections"]["snmp"]["config"]
+        # NX-OS: "aes-128" not "aes 128", no view/group RW lines.
+        assert "snmp-server user netpulse-mon V3GROUP auth sha" in cfg
+        assert "priv aes-128" in cfg
+        assert "snmp-server view" not in cfg
+
+    def test_arista_v3(self, auth_client):
+        cfg = self._gen(auth_client, "eos", "Arista", self._v3_profile("MD5", "AES128"))["sections"]["snmp"]["config"]
+        assert "snmp-server user netpulse-mon V3GROUP v3 auth md5" in cfg
+        assert "priv aes" in cfg
+
+    def test_juniper_v3(self, auth_client):
+        cfg = self._gen(auth_client, "junos", "Juniper", self._v3_profile("SHA256", "AES128"))["sections"]["snmp"]["config"]
+        assert "authentication-sha256 authentication-key YOUR-AUTH-KEY-HERE" in cfg
+        assert "privacy-aes128 privacy-key YOUR-PRIV-KEY-HERE" in cfg
+        assert "set snmp community" not in cfg  # no v2c when v3 active
+
+    def test_fortios_v3(self, auth_client):
+        cfg = self._gen(auth_client, "fortios", "Fortinet", self._v3_profile("SHA", "AES128"))["sections"]["snmp"]["config"]
+        assert "config system snmp user" in cfg
+        assert "set security-level auth-priv" in cfg
+        assert "set auth-proto sha1" in cfg
+        assert "set priv-proto aes" in cfg
+        assert "config system snmp community" not in cfg
+
+    def test_v2c_warning_when_not_v3(self, auth_client, ssh_profile):
+        body = self._gen(auth_client, "ios_xe", "Cisco", ssh_profile)
+        assert body["snmpv3"] is False
+        assert "plaintext" in body["snmp_warning"]
+
+
 class TestConfigPush:
     def test_push_success(self, auth_client, device, monkeypatch, settings):
         settings.COLLECTOR_IP = "10.0.0.10"

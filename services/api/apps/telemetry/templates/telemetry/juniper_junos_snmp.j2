@@ -1,6 +1,12 @@
-set snmp community {{ community }} authorization read-only
 set snmp trap-group NETPULSE targets {{ collector_ip }}
 {% if snmpv3 %}
-set snmp v3 usm local-engine user {{ username }} authentication-sha authentication-key {{ auth_key }}
-set snmp v3 usm local-engine user {{ username }} privacy-aes128 privacy-key {{ priv_key }}
+set snmp v3 usm local-engine user {{ username }} {{ auth_protocol }} authentication-key {{ auth_key }}
+set snmp v3 usm local-engine user {{ username }} {{ priv_protocol }} privacy-key {{ priv_key }}
+set snmp v3 vacm security-to-group security-model usm security-name {{ username }} group {{ group_name }}
+set snmp v3 vacm access group {{ group_name }} default-context-prefix security-model usm security-level privacy read-view all
+set snmp view all oid .1 include
+set snmp v3 target-address NETPULSE address {{ collector_ip }} target-parameters NETPULSE-PARAMS
+set snmp v3 target-parameters NETPULSE-PARAMS parameters security-name {{ username }} security-model usm security-level privacy
+{% else %}
+set snmp community {{ community }} authorization read-only
 {% endif %}

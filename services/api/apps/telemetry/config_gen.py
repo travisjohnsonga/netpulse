@@ -35,6 +35,17 @@ _SYSLOG_TEMPLATE = {
     "nxos": "cisco_nxos_syslog",
     "ios_xr": "cisco_xr_syslog",
 }
+# NX-OS SNMPv3 user/group syntax differs from IOS-XE (no view/group RW lines,
+# "aes-128" not "aes 128"), so it gets a dedicated SNMP template.
+_SNMP_TEMPLATE = {
+    "nxos": "cisco_nxos_snmp",
+}
+# Override the protocol-token family for platforms whose SNMP syntax differs
+# from their general template family (NX-OS shares cisco_xe but spells priv
+# protocols "aes-128").
+_SNMP_TOKEN_FAMILY = {
+    "nxos": "cisco_nxos",
+}
 # Sections available per family (i.e. which .j2 templates exist).
 _FAMILY_SECTIONS = {
     "cisco_xe": ["snmp", "syslog", "gnmi", "netflow"],
@@ -55,11 +66,71 @@ def _env():
     )
 
 
-def _context(device, cfg: TelemetryConfig) -> dict:
+# ── SNMPv3 protocol token mapping (per template family) ───────────────────────
+# Network OSes spell the same crypto algorithm differently on the CLI. Normalise
+# the credential profile's free-text protocol to a canonical key, then render the
+# family-specific token. authPriv (auth + priv) is the default security level.
+def _canon_auth(p: str) -> str:
+    p = (p or "").lower().replace("-", "").replace(" ", "")
+    for k in ("sha512", "sha384", "sha256", "sha224"):
+        if k in p:
+            return k
+    if "sha" in p:
+        return "sha"
+    if "md5" in p:
+        return "md5"
+    return "sha"  # default
+
+
+def _canon_priv(p: str) -> str:
+    p = (p or "").lower().replace("-", "").replace(" ", "")
+    if "aes256" in p:
+        return "aes256"
+    if "aes192" in p:
+        return "aes192"
+    if "aes128" in p or p == "aes":
+        return "aes128"
+    if "3des" in p:
+        return "3des"
+    if "des" in p:
+        return "des"
+    return "aes128"  # default
+
+
+_AUTH_CLI = {
+    "cisco_xe":      {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
+    "cisco_nxos":    {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
+    "juniper_junos": {"md5": "authentication-md5", "sha": "authentication-sha1", "sha224": "authentication-sha224",
+                      "sha256": "authentication-sha256", "sha384": "authentication-sha256", "sha512": "authentication-sha256"},
+    "arista_eos":    {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
+    "fortinet_fortios": {"md5": "md5", "sha": "sha1", "sha224": "sha224", "sha256": "sha256", "sha384": "sha384", "sha512": "sha512"},
+}
+_PRIV_CLI = {
+    "cisco_xe":      {"des": "des", "3des": "3des", "aes128": "aes 128", "aes192": "aes 192", "aes256": "aes 256"},
+    "cisco_nxos":    {"des": "des", "3des": "des", "aes128": "aes-128", "aes192": "aes-128", "aes256": "aes-128"},
+    "juniper_junos": {"des": "privacy-des", "3des": "privacy-3des", "aes128": "privacy-aes128",
+                      "aes192": "privacy-aes128", "aes256": "privacy-aes128"},
+    "arista_eos":    {"des": "des", "3des": "des", "aes128": "aes", "aes192": "aes192", "aes256": "aes256"},
+    "fortinet_fortios": {"des": "des", "3des": "des", "aes128": "aes", "aes192": "aes", "aes256": "aes256"},
+}
+
+
+def _snmpv3_tokens(family: str, profile) -> tuple[str, str]:
+    """(auth_cli, priv_cli) tokens for the given template family + profile."""
+    fam = family or "cisco_xe"
+    auth = _canon_auth(profile.snmpv3_auth_protocol if profile else "")
+    priv = _canon_priv(profile.snmpv3_priv_protocol if profile else "")
+    auth_cli = _AUTH_CLI.get(fam, _AUTH_CLI["cisco_xe"]).get(auth, auth)
+    priv_cli = _PRIV_CLI.get(fam, _PRIV_CLI["cisco_xe"]).get(priv, priv)
+    return auth_cli, priv_cli
+
+
+def _context(device, cfg: TelemetryConfig, family: str | None = None) -> dict:
     from apps.collectors.resolve import effective_collector_ip
 
     profile = device.credential_profile
     creds = vault.read_secret(profile.vault_path) if (profile and profile.vault_path) else {}
+    auth_cli, priv_cli = _snmpv3_tokens(family, profile)
     return {
         # Device's assigned collector → site default → global default →
         # settings.COLLECTOR_IP.
@@ -72,10 +143,13 @@ def _context(device, cfg: TelemetryConfig) -> dict:
         "group_name": "V3GROUP",
         "username": (profile.snmpv3_username if profile else "") or "netpulse",
         "community": creds.get("snmpv2c_community") or "netpulse",
-        "auth_protocol": (profile.snmpv3_auth_protocol if profile else "") or "sha",
-        "priv_protocol": (profile.snmpv3_priv_protocol if profile else "") or "aes 128",
-        "auth_key": creds.get("snmpv3_auth_key") or "<AUTH_KEY>",
-        "priv_key": creds.get("snmpv3_priv_key") or "<PRIV_KEY>",
+        "auth_protocol": auth_cli,
+        "priv_protocol": priv_cli,
+        # Keys are write-only: the real values live in OpenBao and are only
+        # injected when actually pushing. Generated/previewed config shows a
+        # placeholder the engineer fills in (or the push path substitutes).
+        "auth_key": creds.get("snmpv3_auth_key") or "YOUR-AUTH-KEY-HERE",
+        "priv_key": creds.get("snmpv3_priv_key") or "YOUR-PRIV-KEY-HERE",
         # cisco_xe gNMI uses centiseconds (periodic 3000 == 30s)
         "gnmi_interval_centisecs": (cfg.gnmi_interval or 30) * 100,
     }
@@ -84,8 +158,10 @@ def _context(device, cfg: TelemetryConfig) -> dict:
 def generate(device) -> dict:
     """Build the full generated-config structure for a device."""
     cfg, _ = TelemetryConfig.objects.get_or_create(device=device)
-    family = _PLATFORM_FAMILY.get((device.platform or "").lower())
-    ctx = _context(device, cfg)
+    platform = (device.platform or "").lower()
+    family = _PLATFORM_FAMILY.get(platform)
+    token_family = _SNMP_TOKEN_FAMILY.get(platform, family)
+    ctx = _context(device, cfg, token_family)
     env = _env()
 
     # cisco_xr reuses cisco_xe template files.
@@ -99,13 +175,14 @@ def generate(device) -> dict:
         "netflow": False,
     }
 
-    platform = (device.platform or "").lower()
     sections: dict[str, dict] = {}
     for sec in SECTIONS:
         if sec in available:
-            # Platforms with bespoke syslog syntax get a dedicated template.
+            # Platforms with bespoke syslog/snmp syntax get a dedicated template.
             if sec == "syslog" and platform in _SYSLOG_TEMPLATE:
                 tmpl_name = _SYSLOG_TEMPLATE[platform]
+            elif sec == "snmp" and platform in _SNMP_TEMPLATE:
+                tmpl_name = _SNMP_TEMPLATE[platform]
             else:
                 tmpl_name = f"{tmpl_family}_{sec}"
             try:
@@ -139,10 +216,22 @@ def generate(device) -> dict:
         for sec in SECTIONS if sections[sec]["config"]
     )
 
+    # Security warning: SNMP enabled but the credential is not SNMPv3. v2c
+    # community strings cross the wire in plaintext — flag it in the UI.
+    snmp_warning = ""
+    if sections["snmp"]["config"] and not ctx["snmpv3"]:
+        snmp_warning = (
+            "This device uses an SNMPv2c credential. v2c community strings are "
+            "sent in plaintext and offer no authentication or encryption. Use an "
+            "SNMPv3 (authPriv) credential profile for production devices."
+        )
+
     return {
         "platform": device.platform or "",
         "vendor": device.vendor or "",
         "collector_ip": ctx["collector_ip"],
+        "snmpv3": ctx["snmpv3"],
+        "snmp_warning": snmp_warning,
         "sections": sections,
         "full_config": sanitize_config_for_push(full),
     }

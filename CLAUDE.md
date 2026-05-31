@@ -2290,3 +2290,119 @@ While generating show:
   [████████░░] 80% - Collecting logs...
 
 ### Do NOT build until requested.
+
+
+## PINNED — Firewall Traffic Log Analytics
+
+### Vision:
+Forward firewall traffic logs to NetPulse instead of
+logging into FortiManager, Panorama, or each firewall
+individually. OpenSearch handles the volume easily.
+
+### Supported Sources:
+- Fortinet FortiOS (syslog key=value format) ✅ already ingesting
+- Palo Alto PAN-OS (syslog CEF or custom format)
+- Cisco ASA/FTD (syslog)
+- pfSense/OPNsense (syslog)
+- iptables/nftables (via rsyslog)
+- AWS VPC Flow Logs (via OTLP/S3)
+- Azure NSG Flow Logs (planned)
+
+### Data Model:
+New OpenSearch index: netpulse-firewall-{YYYY.MM}
+
+FirewallTrafficLog:
+  timestamp: datetime
+  device_id: FK → Device
+  device_name: str
+  
+  # Traffic
+  action: allow/deny/drop/reset/client-rst/server-rst
+  direction: inbound/outbound/forward/local
+  
+  # Source
+  src_ip: IP
+  src_port: int
+  src_country: str
+  src_zone: str (FortiOS vdom/zone)
+  src_interface: str
+  
+  # Destination  
+  dst_ip: IP
+  dst_port: int
+  dst_country: str
+  dst_zone: str
+  dst_interface: str
+  
+  # Application
+  application: str (HTTPS, SSH, DNS, etc)
+  service: str
+  protocol: TCP/UDP/ICMP
+  
+  # Policy
+  policy_id: int
+  policy_name: str
+  
+  # Stats
+  duration_seconds: int
+  bytes_sent: int
+  bytes_received: int
+  packets_sent: int
+  packets_received: int
+  
+  # Security
+  threat_name: str (null if clean)
+  threat_level: str
+  action_taken: str (blocked/allowed/monitored)
+  
+  # Raw
+  raw_message: str
+
+### UI: /firewall page
+
+Traffic Log Viewer:
+  Similar to Logs page but firewall-specific filters:
+  
+  Filters:
+  [Source IP/CIDR] [Dest IP/CIDR] [Port] 
+  [Action: Allow/Deny] [Application] [Policy]
+  [Device] [Time range]
+  
+  Table:
+  Time | Device | Action | Src IP | Dst IP | Port | App | Bytes | Duration
+
+Traffic Analytics:
+  Top denied destinations (blocked threats)
+  Top talkers by bytes
+  Geographic map of traffic sources
+  Application breakdown pie chart
+  Hourly traffic volume chart
+  Policy hit counts
+
+Security Dashboard:
+  Blocked connections by country
+  Top blocked applications
+  Policy violations
+  Geographic threat map
+
+### Alerting on traffic patterns:
+  High deny rate from single IP → possible scan/attack
+  New country seen in traffic → anomaly
+  Large data transfer → possible exfiltration
+  Port scan detection (many ports, same src)
+
+### Performance:
+  OpenSearch handles millions of logs/day easily
+  Retention: configurable (default 30 days for traffic)
+  Aggregations for analytics (pre-computed)
+  Index lifecycle management for cost control
+
+### Syslog already working for FortiOS:
+  FortiOS traffic logs already arriving via syslog
+  Just need to:
+  1. Parse traffic-specific fields
+  2. Store in separate firewall index
+  3. Build traffic analytics UI
+
+### Do NOT build until requested.
+### Priority: Medium (after core features complete)
