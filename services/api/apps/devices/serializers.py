@@ -59,7 +59,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
             "id", "hostname", "ip_address", "management_ip", "platform", "vendor",
             "model", "os_version", "serial_number", "status", "site_name",
             "credential_profile", "last_seen", "is_reachable", "consecutive_failures",
-            "last_reachability_check", "notes", "created_at",
+            "last_reachability_check", "unreachable_since", "notes", "created_at",
         )
 
 

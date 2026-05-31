@@ -44,6 +44,7 @@ class TestReachabilityApply:
         assert device.consecutive_failures == 3
         assert device.status == Device.Status.UNREACHABLE
         assert device.is_reachable is False
+        assert device.unreachable_since is not None  # outage clock started
         assert trans and trans[0][0] == "high" and "unreachable" in trans[0][3]
 
     def test_recovery_flips_back_to_active(self, device):
@@ -51,12 +52,15 @@ class TestReachabilityApply:
         device.status = Device.Status.UNREACHABLE
         device.consecutive_failures = 5
         device.is_reachable = False
+        from django.utils import timezone
+        device.unreachable_since = timezone.now()
         device.save()
         cmd = _cmd()
         trans = cmd._apply_all([(_row(device), True, "tcp")])
         device.refresh_from_db()
         assert device.status == "active" and device.is_reachable is True
         assert device.consecutive_failures == 0
+        assert device.unreachable_since is None  # outage clock cleared on recovery
         assert trans and trans[0][0] == "info" and "reachable again" in trans[0][3]
 
 

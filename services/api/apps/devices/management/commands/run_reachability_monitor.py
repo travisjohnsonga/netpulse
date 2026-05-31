@@ -104,6 +104,7 @@ class Command(BaseCommand):
                 Device.objects.filter(pk=d["id"]).update(
                     is_reachable=True, last_seen=now, last_reachability_check=now,
                     reachability_method=method, consecutive_failures=0, status=new_status,
+                    unreachable_since=None,
                 )
                 if prev_status == Device.Status.UNREACHABLE:
                     transitions.append(("info", d["hostname"], d["id"], f"Device {d['hostname']} reachable again"))
@@ -113,6 +114,8 @@ class Command(BaseCommand):
                                reachability_method=method, consecutive_failures=fails)
                 if fails >= FAILURE_THRESHOLD and prev_status == Device.Status.ACTIVE:
                     updates["status"] = Device.Status.UNREACHABLE
+                    # Stamp the start of the outage for downtime reporting.
+                    updates["unreachable_since"] = now
                     transitions.append(("high", d["hostname"], d["id"], f"Device {d['hostname']} unreachable"))
                 Device.objects.filter(pk=d["id"]).update(**updates)
         return transitions

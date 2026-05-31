@@ -106,6 +106,9 @@ class Device(TimestampedModel):
     last_reachability_check = models.DateTimeField(null=True, blank=True)
     reachability_method = models.CharField(max_length=8, blank=True)  # ping/tcp/snmp
     consecutive_failures = models.IntegerField(default=0)
+    # When the device first transitioned to 'unreachable' (cleared on recovery).
+    # Drives the downtime duration shown in the device-list status badge.
+    unreachable_since = models.DateTimeField(null=True, blank=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     groups = models.ManyToManyField(DeviceGroup, blank=True, related_name="devices")
     # A device uses one multi-protocol credential profile (secrets in OpenBao).

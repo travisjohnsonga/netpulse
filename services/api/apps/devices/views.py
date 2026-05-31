@@ -71,7 +71,11 @@ class DeviceViewSet(viewsets.ModelViewSet):
     queryset = Device.objects.select_related("site").prefetch_related("groups").all()
     filterset_fields = ["status", "platform", "vendor", "site"]
     search_fields = ["hostname", "ip_address", "serial_number"]
-    ordering_fields = ["hostname", "status", "created_at"]
+    ordering_fields = [
+        "hostname", "status", "ip_address", "vendor", "platform", "model",
+        "os_version", "serial_number", "last_seen", "created_at", "site__name",
+    ]
+    ordering = ["hostname"]
 
     def get_serializer_class(self):
         if self.action == "list":

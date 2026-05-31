@@ -83,6 +83,7 @@ export interface Device {
   is_reachable?: boolean
   consecutive_failures?: number
   last_reachability_check?: string | null
+  unreachable_since?: string | null
   notes: string
   created_at: string
 }

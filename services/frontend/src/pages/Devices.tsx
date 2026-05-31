@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
-import { fetchDevices, fetchCredentials, type Device } from '../api/client'
+import { fetchDevices, fetchCredentials, fetchSites, type Device, type Site } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
@@ -34,6 +34,10 @@ export default function Devices() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [platformFilter, setPlatformFilter] = useState('All')
+  const [siteFilter, setSiteFilter] = useState('All')
+  const [sites, setSites] = useState<Site[]>([])
+  // Sort: column sortKey with optional leading '-' for descending (DRF ordering).
+  const [ordering, setOrdering] = useState('hostname')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -45,6 +49,7 @@ export default function Devices() {
     fetchCredentials()
       .then((profiles) => setCredNames(Object.fromEntries(profiles.map((p) => [p.id, p.name]))))
       .catch(() => {})
+    fetchSites().then(setSites).catch(() => {})
   }, [])
 
   // Live reachability updates: patch the matching row when the monitor pushes.
@@ -52,10 +57,26 @@ export default function Devices() {
   useEffect(() => {
     const m = lastMessage as { type?: string; device_id?: number; is_reachable?: boolean; status?: string } | null
     if (!m || m.type !== 'device_status' || m.device_id == null) return
-    setDevices((prev) => prev.map((d) => d.id === m.device_id
-      ? { ...d, is_reachable: m.is_reachable, status: (m.status as Device['status']) ?? d.status, last_seen: m.is_reachable ? new Date().toISOString() : d.last_seen }
-      : d))
+    const nowIso = new Date().toISOString()
+    setDevices((prev) => prev.map((d) => {
+      if (d.id !== m.device_id) return d
+      const status = (m.status as Device['status']) ?? d.status
+      return {
+        ...d,
+        is_reachable: m.is_reachable,
+        status,
+        last_seen: m.is_reachable ? nowIso : d.last_seen,
+        // Start/stop the downtime clock so the badge updates live.
+        unreachable_since: status === 'unreachable' ? (d.unreachable_since ?? nowIso) : null,
+      }
+    }))
   }, [lastMessage])
+
+  // Click a sortable header: toggle asc/desc, or switch sort column.
+  const toggleSort = (sortKey: string) => {
+    setPage(1)
+    setOrdering((cur) => (cur === sortKey ? `-${sortKey}` : cur === `-${sortKey}` ? sortKey : sortKey))
+  }
 
   const setColumns = (keys: string[]) => { setColumnKeys(keys); saveColumnKeys(keys) }
   const resetColumns = () => {
@@ -75,6 +96,8 @@ export default function Devices() {
     if (search) params.search = search
     if (statusFilter !== 'All') params.status = statusFilter
     if (platformFilter !== 'All') params.platform = platformFilter
+    if (siteFilter !== 'All') params.site = siteFilter
+    if (ordering) params.ordering = ordering
 
     fetchDevices(params)
       .then((data) => {
@@ -87,7 +110,7 @@ export default function Devices() {
         setError('Failed to load devices. Check that the API is running.')
         setLoading(false)
       })
-  }, [page, search, statusFilter, platformFilter])
+  }, [page, search, statusFilter, platformFilter, siteFilter, ordering])
 
   useEffect(() => { load() }, [load])
 
@@ -160,6 +183,16 @@ export default function Devices() {
             <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>
           ))}
         </select>
+        <select
+          value={siteFilter}
+          onChange={(e) => { setSiteFilter(e.target.value); setPage(1) }}
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="All">All Sites</option>
+          {sites.map((s) => (
+            <option key={s.id} value={String(s.id)}>{s.name}</option>
+          ))}
+        </select>
         <ColumnPicker activeKeys={columnKeys} onChange={setColumns} onReset={resetColumns} />
       </div>
 
@@ -173,13 +206,13 @@ export default function Devices() {
           <EmptyState
             title="No devices found"
             description={
-              search || statusFilter !== 'All' || platformFilter !== 'All'
+              search || statusFilter !== 'All' || platformFilter !== 'All' || siteFilter !== 'All'
                 ? 'No devices match your current filters. Try adjusting your search.'
                 : 'Add your first device or run auto-discovery to populate this list.'
             }
             action={
-              search || statusFilter !== 'All' || platformFilter !== 'All'
-                ? { label: 'Clear Filters', onClick: () => { setSearch(''); setStatusFilter('All'); setPlatformFilter('All') } }
+              search || statusFilter !== 'All' || platformFilter !== 'All' || siteFilter !== 'All'
+                ? { label: 'Clear Filters', onClick: () => { setSearch(''); setStatusFilter('All'); setPlatformFilter('All'); setSiteFilter('All') } }
                 : { label: 'Add Device', onClick: () => setShowAddModal(true) }
             }
             icon="📡"
@@ -190,9 +223,20 @@ export default function Devices() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
-                    {activeColumns.map((col) => (
-                      <th key={col.key} className="px-5 py-3 font-medium whitespace-nowrap">{col.label}</th>
-                    ))}
+                    {activeColumns.map((col) => {
+                      const sortable = !!col.sortKey
+                      const active = col.sortKey === ordering || `-${col.sortKey}` === ordering
+                      const arrow = !active ? '' : ordering.startsWith('-') ? ' ↓' : ' ↑'
+                      return (
+                        <th
+                          key={col.key}
+                          onClick={sortable ? () => toggleSort(col.sortKey as string) : undefined}
+                          className={`px-5 py-3 font-medium whitespace-nowrap ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''} ${active ? 'text-gray-700 dark:text-gray-200' : ''}`}
+                        >
+                          {col.label}<span className="text-blue-500">{arrow}</span>
+                        </th>
+                      )
+                    })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
