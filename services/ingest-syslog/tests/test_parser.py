@@ -356,3 +356,69 @@ class TestCleanSyslogMessage:
         msg = parse(raw.encode(), "10.0.0.1", 514, "udp")
         assert msg["message"] == "%LINK-3-UPDOWN: Interface Gi1 changed state to down"
         assert msg["raw"] == raw
+
+
+# ── FortiOS structured-log normalization ─────────────────────────────────────
+
+class TestFortiOS:
+    def _fortios(self, body: str) -> dict:
+        # FortiOS sends a PRI header then the key=value record (no RFC timestamp).
+        return parse(f"<189>{body}".encode(), "192.168.98.1", 514, "udp")
+
+    def test_traffic_allowed(self):
+        body = ('date=2026-05-31 time=11:41:41 devname="fw1" devid="FGT001" '
+                'type="traffic" subtype="forward" level="notice" action="accept" '
+                'service="HTTPS" srcip=192.168.98.153 srcport=10996 '
+                'dstip=154.52.23.136 dstport=443')
+        m = self._fortios(body)
+        assert m["message"] == "ACCEPT HTTPS 192.168.98.153:10996 → 154.52.23.136:443"
+        assert m["program"] == "TRAFFIC"
+        assert m["severity"] == 5  # notice
+        assert m["vendor"] == "fortinet"
+        assert m["extras"]["fortios_srcip"] == "192.168.98.153"
+        assert m["raw"].endswith("dstport=443")
+
+    def test_traffic_denied(self):
+        body = ('devname="fw1" devid="FGT001" type="traffic" subtype="forward" '
+                'level="warning" action="deny" service="SSH" '
+                'srcip=10.0.0.5 srcport=2222 dstip=10.0.0.9 dstport=22 policyid=7')
+        m = self._fortios(body)
+        assert m["message"] == "DENY SSH 10.0.0.5:2222 → 10.0.0.9:22"
+        assert m["severity"] == 4  # warning
+        assert m["extras"]["fortios_policyid"] == "7"
+
+    def test_admin_login_event(self):
+        body = ('devname="fw1" devid="FGT001" type="event" subtype="system" '
+                'level="information" logdesc="Admin login successful" '
+                'user="admin" ui="GUI(10.1.1.1)"')
+        m = self._fortios(body)
+        assert m["message"] == "Admin login successful"
+        assert m["program"] == "SYSTEM"
+        assert m["severity"] == 6  # information
+        assert m["extras"]["fortios_user"] == "admin"
+
+    def test_system_event_msg(self):
+        body = ('devname="fw1" devid="FGT001" type="event" subtype="system" '
+                'level="notice" msg="syslogd status has changed"')
+        m = self._fortios(body)
+        assert m["message"] == "syslogd status has changed"
+        assert m["program"] == "SYSTEM"
+
+    def test_security_rating(self):
+        body = ('devname="fw1" devid="FGT001" type="event" subtype="security-rating" '
+                'level="warning" logdesc="Security rating run completed"')
+        m = self._fortios(body)
+        assert m["program"] == "SECURITY"
+        assert m["message"] == "Security rating run completed"
+
+    def test_non_fortios_untouched(self):
+        # A Cisco mnemonic log must not be treated as FortiOS.
+        raw = "<189>478: %LINK-3-UPDOWN: Interface Gi1 changed state to down"
+        m = parse(raw.encode(), "10.0.0.1", 514, "udp")
+        assert m["message"] == "%LINK-3-UPDOWN: Interface Gi1 changed state to down"
+        assert "vendor" not in m
+
+    def test_detection_predicate(self):
+        from ingest import fortios
+        assert fortios.is_fortios_log('devname="x" type="traffic" level="notice"') is True
+        assert fortios.is_fortios_log("%BGP-5-ADJCHANGE: up") is False
