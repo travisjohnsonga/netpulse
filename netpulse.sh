@@ -34,9 +34,11 @@ case "$1" in
     docker compose ps
     ;;
   rebuild-api)
-    # Rebuild the shared api image and recreate every api-based service.
-    echo "Rebuilding api image and restarting all api-based services..."
-    docker compose build api
+    # Each api-based service builds its OWN image (netpulse-<service>) from the
+    # shared ./services/api context — they do NOT share one image — so build them
+    # all (layer cache makes this fast) before recreating with --no-deps.
+    echo "Rebuilding all api-based service images and restarting them..."
+    docker compose build $API_SERVICES
     docker compose up -d --no-deps $API_SERVICES
     sleep 10
     docker compose ps $API_SERVICES
