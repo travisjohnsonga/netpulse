@@ -114,6 +114,16 @@ def generate(device) -> dict:
             config = None
         sections[sec] = {"enabled": bool(enabled_default.get(sec) and config), "config": config}
 
+    # gNMI / push-telemetry: generated in Python (per-platform, targeted to the
+    # device's monitored interfaces) rather than from a single Jinja template, so
+    # every platform gets device-level + per-interface subscriptions — and
+    # non-gNMI platforms (PAN-OS→OTLP, FortiOS→SNMP) get their native push config.
+    from . import gnmi_subscriptions
+
+    interfaces = list(device.monitored_interfaces.all().order_by("if_index", "if_name"))
+    push_cfg = gnmi_subscriptions.generate_push_config(device, ctx["collector_ip"], interfaces, cfg)
+    sections["gnmi"] = {"enabled": bool(enabled_default.get("gnmi")), "config": push_cfg}
+
     full = "\n!\n".join(
         f"! ── {sec.upper()} ──\n{sections[sec]['config']}"
         for sec in SECTIONS if sections[sec]["config"]
