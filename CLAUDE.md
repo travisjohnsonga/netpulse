@@ -2103,3 +2103,190 @@ For Discord DM:
 4. Later: true DMs require bot tokens
 
 ### Do NOT build until requested.
+## PINNED — Support Bundle Generator
+
+### Purpose:
+Generate a diagnostic bundle that gives Claude (or any
+engineer) enough context to diagnose and fix issues
+without needing live access to the system.
+Attach to GitHub issues for async troubleshooting.
+
+### UI Location:
+Settings → Support (new section)
+Or: Help → Generate Support Bundle
+
+### Page Layout:
+┌─────────────────────────────────────────────────────┐
+│ Support Bundle                                       │
+│ Generate a diagnostic package for troubleshooting   │
+├─────────────────────────────────────────────────────┤
+│ Describe your issue:                                │
+│ ┌───────────────────────────────────────────────┐  │
+│ │ Device 2 isn't showing LLDP neighbors in the  │  │
+│ │ topology map despite being connected to       │  │
+│ │ router1 via GigabitEthernet1...               │  │
+│ └───────────────────────────────────────────────┘  │
+│ Placeholder: "e.g. Device 2 isn't showing LLDP     │
+│ neighbors, or alerts aren't escalating for item X" │
+│                                                     │
+│ Bundle Type:                                        │
+│ ○ Quick Bundle (last 1h - logs, recent errors)     │
+│   ~500KB - fast to generate                        │
+│ ● Full Bundle (last 24h - all diagnostic data)     │
+│   ~5MB - comprehensive                             │
+│                                                     │
+│ [Generate Quick Bundle] [Generate Full Bundle]      │
+└─────────────────────────────────────────────────────┘
+
+### Bundle Contents:
+
+#### Quick Bundle (last 1h):
+support_bundle_{timestamp}/
+├── ISSUE_DESCRIPTION.txt     ← user's description
+├── SYSTEM_INFO.json          ← platform version, config
+├── SERVICE_STATUS.json       ← all container health
+├── logs/
+│   ├── api_errors.log        ← ERROR level only, last 1h
+│   ├── stream_processor.log  ← last 1h
+│   ├── ingest_snmp.log       ← last 1h
+│   ├── ingest_grpc.log       ← last 1h
+│   └── check_engine.log      ← last 1h
+├── database/
+│   ├── devices.json          ← all devices + status
+│   ├── topology_links.json   ← all topology links
+│   ├── monitored_interfaces.json
+│   ├── service_checks.json   ← checks + recent results
+│   ├── alert_events.json     ← last 50 alerts
+│   └── alert_rules.json      ← configured rules
+├── telemetry/
+│   ├── influxdb_summary.json ← measurements + counts
+│   └── recent_metrics.json   ← last 10min per device
+├── config/
+│   ├── settings_summary.json ← non-secret settings
+│   └── enabled_features.json
+└── README.txt                ← how to use bundle
+
+#### Full Bundle (last 24h) - adds:
+├── logs/
+│   └── {all services}_24h.log
+├── database/
+│   ├── alert_history.json    ← all alerts 24h
+│   ├── check_results.json    ← all check results 24h
+│   ├── config_backups.json   ← recent configs
+│   └── topology_history.json
+├── telemetry/
+│   └── influxdb_export.json  ← full 24h metrics
+├── opensearch/
+│   ├── log_sample.json       ← 100 recent logs
+│   └── index_stats.json
+└── network/
+    ├── nats_stats.json
+    ├── openbao_health.json   ← NO secrets, just health
+    └── service_connectivity.json
+
+### SECURITY - Never include in bundle:
+❌ Passwords or API keys
+❌ SSH private keys
+❌ OpenBao secrets
+❌ JWT tokens
+❌ SNMP community strings or auth keys
+❌ User passwords
+❌ .env file contents
+❌ TLS private keys
+
+Scrub before including:
+- Replace secrets with "[REDACTED]"
+- Mask IP addresses option (for privacy)
+- Remove sensitive log lines containing passwords
+
+### SYSTEM_INFO.json contents:
+{
+  "netpulse_version": "git describe --tags",
+  "generated_at": "2026-05-31T...",
+  "issue_description": "user text here",
+  "bundle_type": "full|quick",
+  "platform": {
+    "os": "Ubuntu 24.04",
+    "docker_version": "29.5.2",
+    "python_version": "3.13",
+    "django_version": "6.0"
+  },
+  "services": {
+    "total": 24,
+    "healthy": 24,
+    "unhealthy": 0
+  },
+  "devices": {
+    "total": 2,
+    "active": 2,
+    "unreachable": 0
+  },
+  "telemetry": {
+    "snmp_polling": true,
+    "gnmi_streaming": true,
+    "devices_streaming": 2
+  },
+  "features": {
+    "allow_config_push": false,
+    "https_enabled": true,
+    "openbao_sealed": false
+  }
+}
+
+### API Endpoint:
+POST /api/support/bundle/
+Body: {
+  "description": "user text",
+  "bundle_type": "quick|full"
+}
+
+Response: 
+{
+  "bundle_id": "uuid",
+  "status": "generating",
+  "estimated_seconds": 30
+}
+
+GET /api/support/bundle/{id}/status/
+→ {status: "ready", download_url: "/api/support/bundle/{id}/download/"}
+
+GET /api/support/bundle/{id}/download/
+→ Returns ZIP file: netpulse_support_{timestamp}.zip
+
+### Generation:
+Backend generates bundle asynchronously:
+- Collect all data
+- Scrub secrets
+- Write to temp directory
+- ZIP compress
+- Store in /tmp/netpulse_bundles/ (TTL 1h)
+- Return download URL
+
+### GitHub Issue Template:
+Include in bundle README.txt:
+"To report this issue:
+1. Go to https://github.com/travisjohnsonga/netpulse/issues/new
+2. Click 'Bug Report'
+3. Attach netpulse_support_{timestamp}.zip
+4. Copy your issue description from ISSUE_DESCRIPTION.txt
+5. Include NetPulse version from SYSTEM_INFO.json"
+
+Also add .github/ISSUE_TEMPLATE/bug_report.md:
+  Fields: 
+  - NetPulse version
+  - Issue description  
+  - Steps to reproduce
+  - Expected vs actual behavior
+  - [ ] Support bundle attached
+
+### Frontend progress indicator:
+While generating show:
+  Collecting service status... ✅
+  Collecting device data... ✅
+  Collecting logs... ⏳
+  Scrubbing sensitive data... 
+  Compressing bundle...
+  
+  [████████░░] 80% - Collecting logs...
+
+### Do NOT build until requested.
