@@ -108,6 +108,10 @@ class Command(BaseCommand):
                 )
                 if prev_status == Device.Status.UNREACHABLE:
                     transitions.append(("info", d["hostname"], d["id"], f"Device {d['hostname']} reachable again"))
+                    # Auto-resolve the firing reachability alert(s) for this device.
+                    from apps.alerts.resolve import resolve_matching
+                    resolve_matching(note=f"Device {d['hostname']} became reachable",
+                                     now=now, source="reachability_monitor", device_id=d["id"])
             else:
                 fails = (d["consecutive_failures"] or 0) + 1
                 updates = dict(is_reachable=False, last_reachability_check=now,

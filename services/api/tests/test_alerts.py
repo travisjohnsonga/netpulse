@@ -256,3 +256,94 @@ class TestAlertModels:
             "condition": {},
         }, format="json")
         assert resp.json()["cooldown_minutes"] == 60
+
+
+class TestAutoResolution:
+    def test_resolve_matching_by_labels(self, rule):
+        from apps.alerts.models import AlertEvent
+        from apps.alerts.resolve import resolve_matching
+        e = AlertEvent.objects.create(rule=rule, state="firing",
+                                      labels={"source": "reachability_monitor", "device_id": 7})
+        other = AlertEvent.objects.create(rule=rule, state="firing",
+                                          labels={"source": "reachability_monitor", "device_id": 8})
+        n = resolve_matching(note="back up", source="reachability_monitor", device_id=7)
+        assert n == 1
+        e.refresh_from_db(); other.refresh_from_db()
+        assert e.state == "resolved" and e.resolved_by == "auto" and e.resolution_note == "back up" and e.resolved_at
+        assert other.state == "firing"  # different device untouched
+
+    def test_list_defaults_to_active_only(self, auth_client, rule):
+        from apps.alerts.models import AlertEvent
+        AlertEvent.objects.create(rule=rule, state="firing")
+        AlertEvent.objects.create(rule=rule, state="resolved")
+        body = auth_client.get("/api/alerts/events/").json()
+        assert body["count"] == 1
+        assert all(e["state"] == "firing" for e in body["results"])
+
+    def test_list_resolved_true(self, auth_client, rule):
+        from apps.alerts.models import AlertEvent
+        AlertEvent.objects.create(rule=rule, state="firing")
+        AlertEvent.objects.create(rule=rule, state="resolved")
+        body = auth_client.get("/api/alerts/events/?resolved=true").json()
+        assert body["count"] == 1 and body["results"][0]["state"] == "resolved"
+
+    def test_list_resolved_all(self, auth_client, rule):
+        from apps.alerts.models import AlertEvent
+        AlertEvent.objects.create(rule=rule, state="firing")
+        AlertEvent.objects.create(rule=rule, state="resolved")
+        assert auth_client.get("/api/alerts/events/?resolved=all").json()["count"] == 2
+
+    def test_is_resolved_in_serializer(self, auth_client, rule):
+        from apps.alerts.models import AlertEvent
+        e = AlertEvent.objects.create(rule=rule, state="resolved")
+        body = auth_client.get(f"/api/alerts/events/{e.pk}/").json()
+        assert body["is_resolved"] is True
+
+    def test_manual_resolve_action(self, auth_client, event):
+        resp = auth_client.post(f"/api/alerts/events/{event.pk}/resolve/", {"note": "fixed by hand"}, format="json")
+        assert resp.status_code == 200
+        event.refresh_from_db()
+        assert event.state == "resolved" and event.resolved_by == "user" and event.resolution_note == "fixed by hand"
+
+    def test_purge_resolved_alerts(self, rule):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.alerts.models import AlertEvent
+        from apps.alerts.management.commands.purge_resolved_alerts import purge_resolved_alerts
+        old = AlertEvent.objects.create(rule=rule, state="resolved")
+        AlertEvent.objects.filter(pk=old.pk).update(resolved_at=timezone.now() - timedelta(days=120))
+        recent = AlertEvent.objects.create(rule=rule, state="resolved", resolved_at=timezone.now())
+        firing = AlertEvent.objects.create(rule=rule, state="firing")
+        assert purge_resolved_alerts(90) == 1
+        assert not AlertEvent.objects.filter(pk=old.pk).exists()
+        assert AlertEvent.objects.filter(pk=recent.pk).exists()
+        assert AlertEvent.objects.filter(pk=firing.pk).exists()
+
+    def test_reachability_recovery_auto_resolves(self, rule):
+        # Firing reachability alert is auto-resolved when the device recovers.
+        from apps.alerts.models import AlertEvent
+        from apps.devices.models import Device
+        from apps.devices.management.commands.run_reachability_monitor import Command
+        d = Device.objects.create(hostname="r1", ip_address="10.0.0.1", status="unreachable", is_reachable=False)
+        AlertEvent.objects.create(rule=rule, state="firing",
+                                  labels={"source": "reachability_monitor", "device_id": d.id})
+        cmd = Command()
+        row = {"id": d.id, "hostname": d.hostname, "ip_address": d.ip_address,
+               "status": "unreachable", "consecutive_failures": 5}
+        cmd._apply_all([(row, True, "tcp")])  # device came back up
+        assert AlertEvent.objects.filter(state="firing").count() == 0
+        assert AlertEvent.objects.get(state="resolved").resolved_by == "auto"
+
+    def test_interface_recovery_auto_resolves(self, rule):
+        from apps.alerts.models import AlertEvent
+        from apps.alerts import interface_monitor
+        from apps.devices.models import Device
+        from apps.telemetry.models import MonitoredInterface
+        from django.utils import timezone
+        d = Device.objects.create(hostname="sw1", ip_address="10.0.0.2")
+        iface = MonitoredInterface.objects.create(device=d, if_name="Gi0/1", last_status="down", alert_on_up=False)
+        AlertEvent.objects.create(rule=rule, state="firing",
+                                  labels={"source": "interface_monitor", "device_id": d.id, "interface": "Gi0/1"})
+        # up alerts muted, but the firing down alert must still be resolved.
+        interface_monitor.process_interface_status(iface, "up", timezone.now())
+        assert AlertEvent.objects.get(labels__source="interface_monitor").state == "resolved"

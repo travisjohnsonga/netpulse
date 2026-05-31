@@ -80,6 +80,13 @@ def process_interface_status(iface, new_status: str, now=None) -> "object | None
     iface.last_status_changed = now
     iface.save(update_fields=["last_status", "last_status_changed"])
 
+    # On recovery, auto-resolve the firing down alert for this interface — even
+    # when up alerts are muted, the prior down alert should still be closed.
+    if cur == "up" and prev == "down":
+        from .resolve import resolve_matching
+        resolve_matching(note=f"{iface.if_name} on {iface.device.hostname} recovered",
+                         now=now, source=SOURCE, device_id=iface.device_id, interface=iface.if_name)
+
     if cur == "down" and not iface.alert_on_down:
         return None
     if cur == "up" and not iface.alert_on_up:

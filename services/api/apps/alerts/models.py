@@ -50,6 +50,9 @@ class AlertEvent(TimestampedModel):
     labels = models.JSONField(default=dict)
     annotations = models.JSONField(default=dict)
     resolved_at = models.DateTimeField(null=True, blank=True)
+    # Who/what resolved it: "auto" (recovery transition), "user", or "" while firing.
+    resolved_by = models.CharField(max_length=32, blank=True)
+    resolution_note = models.TextField(blank=True)
 
     class Meta(TimestampedModel.Meta):
         indexes = [models.Index(fields=["rule", "state", "-created_at"])]

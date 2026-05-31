@@ -51,6 +51,38 @@ class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, Ge
     filterset_fields = ["rule", "state", "rule__severity"]
     ordering_fields = ["created_at", "resolved_at"]
 
+    def get_queryset(self):
+        """
+        Default to active (firing) alerts only. ?resolved=true → resolved only;
+        ?resolved=all → no filter. An explicit ?state= filter takes precedence.
+        """
+        qs = super().get_queryset()
+        # Only the list view defaults to active-only; retrieve/actions must still
+        # reach resolved events by pk.
+        if self.action != "list":
+            return qs
+        params = self.request.query_params
+        if params.get("state"):
+            return qs  # explicit state filter handled by django-filter
+        resolved = params.get("resolved")
+        if resolved == "all":
+            return qs
+        if resolved == "true":
+            return qs.filter(state=AlertEvent.State.RESOLVED)
+        return qs.exclude(state=AlertEvent.State.RESOLVED)
+
+    @action(detail=True, methods=["post"])
+    def resolve(self, request, pk=None):
+        """Manually resolve an alert."""
+        from django.utils import timezone
+        event = self.get_object()
+        event.state = AlertEvent.State.RESOLVED
+        event.resolved_at = timezone.now()
+        event.resolved_by = "user"
+        event.resolution_note = request.data.get("note", "") or ""
+        event.save(update_fields=["state", "resolved_at", "resolved_by", "resolution_note", "updated_at"])
+        return Response(self.get_serializer(event).data)
+
     def _record_ack(self, event, user, note, snooze_minutes):
         """Create an acknowledgement, stop escalation (cancel pending sends)."""
         from datetime import timedelta

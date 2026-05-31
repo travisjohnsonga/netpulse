@@ -33,11 +33,15 @@ class AlertEventSerializer(serializers.ModelSerializer):
     transition = serializers.SerializerMethodField()
     downtime_seconds = serializers.SerializerMethodField()
     is_interface_alert = serializers.SerializerMethodField()
+    is_resolved = serializers.SerializerMethodField()
 
     class Meta:
         model = AlertEvent
         fields = "__all__"
-        read_only_fields = ("created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at", "resolved_at", "resolved_by", "resolution_note")
+
+    def get_is_resolved(self, obj):
+        return obj.state == AlertEvent.State.RESOLVED
 
     def get_effective_severity(self, obj):
         return (obj.annotations or {}).get("severity") \

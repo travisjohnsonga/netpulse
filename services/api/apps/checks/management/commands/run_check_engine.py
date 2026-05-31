@@ -92,8 +92,16 @@ class Command(BaseCommand):
         async with self._sem:
             result = await run_check(check_to_dict(check))
         alert = await sync_to_async(self._persist, thread_sensitive=True)(check, result)
+        if alert == "recovery":
+            await sync_to_async(self._resolve_alerts, thread_sensitive=True)(check)
         if alert:
             await self._maybe_alert(check, result, alert)
+
+    @staticmethod
+    def _resolve_alerts(check):
+        from apps.alerts.resolve import resolve_matching
+        resolve_matching(note=f"Service check {check.name} recovered",
+                         source="check_engine", check_id=check.id)
 
     @staticmethod
     def _persist(check, result) -> str | None:
