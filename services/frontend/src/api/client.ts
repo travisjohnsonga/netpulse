@@ -1443,3 +1443,45 @@ export async function acknowledgeAlertEvent(eventId: number, note?: string, snoo
 export async function snoozeAlertEvent(eventId: number, minutes: number): Promise<void> {
   await api.post(`/alerts/events/${eventId}/snooze/`, { minutes })
 }
+
+// ── Maintenance windows (apps/alerting) ──────────────────────────────────────
+export interface MaintenanceWindow {
+  id: number
+  name: string
+  description: string
+  start_time: string
+  end_time: string
+  timezone: string
+  recurrence: 'none' | 'daily' | 'weekly' | 'monthly'
+  recurrence_days: string[]
+  devices: number[]
+  sites: number[]
+  device_names: string[]
+  site_names: string[]
+  check_types: string[]
+  severity_filter: string[]
+  is_active: boolean
+  is_currently_active: boolean
+  created_at: string
+}
+
+export type MaintenanceWindowPayload = Partial<Omit<MaintenanceWindow,
+  'id' | 'is_currently_active' | 'device_names' | 'site_names' | 'created_at'>>
+  & { name: string; start_time: string; end_time: string }
+
+export async function fetchMaintenanceWindows(): Promise<MaintenanceWindow[]> {
+  const { data } = await api.get<MaintenanceWindow[] | Paginated<MaintenanceWindow>>('/alerting/maintenance/')
+  return unwrap(data)
+}
+export async function fetchActiveMaintenance(): Promise<MaintenanceWindow[]> {
+  const { data } = await api.get<MaintenanceWindow[]>('/alerting/maintenance/active/')
+  return Array.isArray(data) ? data : []
+}
+export async function saveMaintenanceWindow(payload: MaintenanceWindowPayload, id?: number): Promise<MaintenanceWindow> {
+  const { data } = id
+    ? await api.patch(`/alerting/maintenance/${id}/`, payload)
+    : await api.post('/alerting/maintenance/', payload)
+  return data
+}
+export async function deleteMaintenanceWindow(id: number): Promise<void> { await api.delete(`/alerting/maintenance/${id}/`) }
+export async function endMaintenanceNow(id: number): Promise<void> { await api.post(`/alerting/maintenance/${id}/end-now/`) }

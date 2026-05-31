@@ -4,7 +4,9 @@ import Modal from '../../components/Modal'
 import {
   fetchTeams, saveTeam, deleteTeam, fetchPolicies, savePolicy,
   fetchRoutes, saveRoute, deleteRoute, testRoute,
+  fetchMaintenanceWindows, saveMaintenanceWindow, deleteMaintenanceWindow, endMaintenanceNow, fetchDevices,
   type AlertTeam, type EscalationPolicy, type AlertRoute,
+  type MaintenanceWindow, type MaintenanceWindowPayload, type Device,
 } from '../../api/client'
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info']
@@ -18,13 +20,15 @@ export default function AlertRouting() {
   const [teams, setTeams] = useState<AlertTeam[]>([])
   const [policies, setPolicies] = useState<EscalationPolicy[]>([])
   const [routes, setRoutes] = useState<AlertRoute[]>([])
-  const [modal, setModal] = useState<null | 'team' | 'policy' | 'route'>(null)
+  const [windows, setWindows] = useState<MaintenanceWindow[]>([])
+  const [modal, setModal] = useState<null | 'team' | 'policy' | 'route' | 'maint'>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const load = () => {
     fetchTeams().then(setTeams).catch(() => setErr('Could not load alert routing.'))
     fetchPolicies().then(setPolicies).catch(() => {})
     fetchRoutes().then(setRoutes).catch(() => {})
+    fetchMaintenanceWindows().then(setWindows).catch(() => {})
   }
   useEffect(load, [])
 
@@ -100,9 +104,40 @@ export default function AlertRouting() {
 
       <RouteTester />
 
+      {/* Maintenance windows */}
+      <Section title="Maintenance Windows" onAdd={() => setModal('maint')}>
+        {windows.length === 0 ? <Empty text="No maintenance windows. Schedule one to suppress alerts during maintenance." /> : (
+          <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+            {windows.map((w) => {
+              const scope = w.device_names.length ? w.device_names.join(', ')
+                : w.site_names.length ? `sites: ${w.site_names.join(', ')}` : 'all devices'
+              return (
+                <li key={w.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                  <span>{w.is_currently_active ? '🔵' : new Date(w.start_time) > new Date() ? '⏰' : '✅'}</span>
+                  <div>
+                    <span className="font-medium text-gray-800 dark:text-gray-100">{w.name}</span>
+                    <span className="block text-xs text-gray-500 dark:text-gray-400">
+                      {new Date(w.start_time).toLocaleString()} → {new Date(w.end_time).toLocaleString()} · {scope}
+                      {w.recurrence !== 'none' ? ` · ${w.recurrence}` : ''}
+                    </span>
+                  </div>
+                  <span className="ml-auto flex gap-3">
+                    {w.is_currently_active && (
+                      <button onClick={() => endMaintenanceNow(w.id).then(load)} className="text-xs text-amber-600 hover:text-amber-800">End now</button>
+                    )}
+                    <button onClick={() => deleteMaintenanceWindow(w.id).then(load)} className="text-xs text-red-600 hover:text-red-800">Delete</button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Section>
+
       {modal === 'team' && <TeamModal onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
       {modal === 'policy' && <PolicyModal teams={teams} onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
       {modal === 'route' && <RouteModal policies={policies} onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
+      {modal === 'maint' && <MaintenanceModal onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
     </div>
   )
 }
@@ -252,5 +287,87 @@ function RouteTester() {
         )}
       </div>
     </div>
+  )
+}
+
+function toLocalInput(d: Date): string {
+  // datetime-local value (local time, no seconds/zone).
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function MaintenanceModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const now = new Date()
+  const [name, setName] = useState('')
+  const [start, setStart] = useState(toLocalInput(now))
+  const [end, setEnd] = useState(toLocalInput(new Date(now.getTime() + 2 * 3600_000)))
+  const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none')
+  const [scopeAll, setScopeAll] = useState(true)
+  const [deviceIds, setDeviceIds] = useState<number[]>([])
+  const [severity, setSeverity] = useState<string[]>([])
+  const [devices, setDevices] = useState<Device[]>([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => { fetchDevices({ page_size: '500' }).then((r) => setDevices(r.results)).catch(() => {}) }, [])
+
+  const submit = async () => {
+    setErr(null)
+    if (!name.trim()) { setErr('Name is required.'); return }
+    setBusy(true)
+    try {
+      const payload: MaintenanceWindowPayload = {
+        name,
+        start_time: new Date(start).toISOString(),
+        end_time: new Date(end).toISOString(),
+        recurrence,
+        severity_filter: severity,
+        devices: scopeAll ? [] : deviceIds,
+      }
+      await saveMaintenanceWindow(payload)
+      onSaved()
+    } catch { setErr('Could not save the maintenance window.') } finally { setBusy(false) }
+  }
+
+  return (
+    <Modal title="Schedule Maintenance" size="lg" onClose={onClose} footer={
+      <>
+        <button onClick={onClose} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm">Cancel</button>
+        <button disabled={busy || !name.trim()} onClick={submit} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50">Schedule</button>
+      </>
+    }>
+      <div className="space-y-4">
+        {err && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{err}</div>}
+        <div><label className={label}>Name</label><input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Router1 IOS Upgrade" /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={label}>Start</label><input type="datetime-local" className={input} value={start} onChange={(e) => setStart(e.target.value)} /></div>
+          <div><label className={label}>End</label><input type="datetime-local" className={input} value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+        </div>
+        <div><label className={label}>Recurrence</label>
+          <select className={input} value={recurrence} onChange={(e) => setRecurrence(e.target.value as typeof recurrence)}>
+            {(['none', 'daily', 'weekly', 'monthly'] as const).map((r) => <option key={r} value={r}>{r === 'none' ? 'One-time' : r}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={label}>Scope</label>
+          <div className="space-y-2 text-sm">
+            <label className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" checked={scopeAll} onChange={() => setScopeAll(true)} /> All devices and services
+            </label>
+            <label className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" checked={!scopeAll} onChange={() => setScopeAll(false)} /> Specific devices
+            </label>
+            {!scopeAll && (
+              <select multiple className={clsx(input, 'h-28')} value={deviceIds.map(String)}
+                onChange={(e) => setDeviceIds(Array.from(e.target.selectedOptions, (o) => Number(o.value)))}>
+                {devices.map((d) => <option key={d.id} value={d.id}>{d.hostname}</option>)}
+              </select>
+            )}
+          </div>
+        </div>
+        <div><label className={label}>Suppress severities <span className="text-gray-400">(none = all)</span></label>
+          <MultiCheck options={SEVERITIES} value={severity} onChange={setSeverity} /></div>
+      </div>
+    </Modal>
   )
 }
