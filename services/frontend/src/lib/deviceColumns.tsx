@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
-import { type Device, reachabilityOf } from '../api/client'
+import { type Device, reachabilityOf, reachabilityReason } from '../api/client'
 import { sshUrl, sshTooltip } from './ssh'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -84,7 +84,7 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
       const down = d.status === 'unreachable' ? downtime(d.unreachable_since) : null
       return (
         <span className="inline-flex items-center gap-1.5">
-          <span className={clsx('w-2 h-2 rounded-full', REACH_DOT[reach])} title={`Reachability: ${reach}`} />
+          <span className={clsx('w-2 h-2 rounded-full', REACH_DOT[reach])} title={reachabilityReason(d)} />
           <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>
             {d.status}{down ? ` · ${down}` : ''}
           </span>

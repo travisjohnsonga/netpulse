@@ -99,6 +99,38 @@ export function reachabilityOf(d: { is_reachable?: boolean; last_seen?: string |
   return 'reachable'
 }
 
+function _ageStr(iso: string): string {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.round(s / 60)}m`
+  if (s < 86400) return `${Math.round(s / 3600)}h`
+  return `${Math.round(s / 86400)}d`
+}
+
+// Human explanation of the derived reachability state — used as the badge
+// tooltip. The list-level state is derived purely from is_reachable + last_seen
+// recency, so the reason reflects that (telemetry staleness / outage duration),
+// not per-metric causes which the list doesn't load.
+export function reachabilityReason(d: {
+  is_reachable?: boolean; last_seen?: string | null
+  unreachable_since?: string | null; consecutive_failures?: number
+}): string {
+  const reach = reachabilityOf(d)
+  if (reach === 'unreachable') {
+    if (d.unreachable_since) return `Unreachable — down for ${_ageStr(d.unreachable_since)}`
+    if (d.is_reachable === false) {
+      const f = d.consecutive_failures ? ` (${d.consecutive_failures} failed checks)` : ''
+      return `Unreachable — last reachability check failed${f}`
+    }
+    if (!d.last_seen) return 'Unreachable — no successful contact yet'
+    return `Unreachable — no telemetry for ${_ageStr(d.last_seen)}`
+  }
+  if (reach === 'degraded') {
+    return `Degraded — telemetry stale, last seen ${d.last_seen ? _ageStr(d.last_seen) : '?'} ago (expected within 1m)`
+  }
+  return d.last_seen ? `Reachable — last seen ${_ageStr(d.last_seen)} ago` : 'Reachable'
+}
+
 export interface DeviceListResponse {
   count: number
   next: string | null
