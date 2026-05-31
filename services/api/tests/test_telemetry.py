@@ -25,26 +25,31 @@ def device(ssh_profile):
 
 
 class TestAutoSelect:
-    def test_up_with_description_selected(self):
-        assert discovery.should_auto_select(
-            {"if_name": "GigabitEthernet0/0", "oper_status": "up", "if_description": "uplink"}) is True
-
     def test_up_with_lldp_selected(self):
+        # Network-to-network link: up + has LLDP neighbour → auto-selected.
         assert discovery.should_auto_select(
             {"if_name": "Gi0/1", "oper_status": "up", "if_description": "", "lldp_neighbor_hostname": "sw1"}) is True
+
+    def test_up_description_only_not_selected(self):
+        # A description without an LLDP neighbour is an edge/access port — the
+        # engineer opts in manually; not auto-selected.
+        assert discovery.should_auto_select(
+            {"if_name": "GigabitEthernet0/0", "oper_status": "up", "if_description": "uplink"}) is False
 
     def test_up_no_context_not_selected(self):
         assert discovery.should_auto_select(
             {"if_name": "Gi0/2", "oper_status": "up", "if_description": ""}) is False
 
-    def test_down_not_selected(self):
+    def test_down_with_lldp_not_selected(self):
+        # Even with a neighbour, a down interface is not auto-selected.
         assert discovery.should_auto_select(
-            {"if_name": "Gi0/3", "oper_status": "down", "if_description": "x"}) is False
+            {"if_name": "Gi0/3", "oper_status": "down", "lldp_neighbor_hostname": "sw1"}) is False
 
-    @pytest.mark.parametrize("name", ["Loopback0", "Tunnel1", "Null0"])
-    def test_excluded_virtual(self, name):
+    @pytest.mark.parametrize("name", ["Loopback0", "Tunnel1", "Null0", "Management1", "mgmt0", "GigabitEthernet0/0/0/0-mgmt"])
+    def test_excluded_virtual_and_mgmt(self, name):
+        # Excluded types/names are never auto-selected, even with a neighbour.
         assert discovery.should_auto_select(
-            {"if_name": name, "oper_status": "up", "if_description": "x"}) is False
+            {"if_name": name, "oper_status": "up", "lldp_neighbor_hostname": "sw1"}) is False
 
 
 # ── telemetry-config ──────────────────────────────────────────────────────────
@@ -186,7 +191,9 @@ class TestConfigGenerate:
         assert "logging hostnameprefix xr1" in syslog
         assert "logging 10.0.0.30" in syslog
 
-    def test_generate_juniper_no_gnmi(self, auth_client, ssh_profile, settings):
+    def test_generate_juniper_jti_telemetry(self, auth_client, ssh_profile, settings):
+        # Juniper streams via JTI (Junos Telemetry Interface) "set services
+        # analytics …", not OpenConfig gNMI — the multi-vendor generator emits it.
         settings.COLLECTOR_IP = "10.0.0.10"
         from apps.devices.models import Device
         d = Device.objects.create(hostname="jnpr", ip_address="10.0.0.7", vendor="Juniper",
@@ -195,7 +202,8 @@ class TestConfigGenerate:
         secs = resp.json()["sections"]
         assert secs["snmp"]["config"] is not None
         assert "set system syslog host 10.0.0.10" in secs["syslog"]["config"]
-        assert secs["gnmi"]["config"] is None  # no juniper gnmi template
+        assert secs["gnmi"]["config"] is not None
+        assert "set services analytics" in secs["gnmi"]["config"]
 
 
 class TestConfigPush:

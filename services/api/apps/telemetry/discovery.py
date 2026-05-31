@@ -36,20 +36,32 @@ OID_LLDP_REM_PORTDESC = "1.0.8802.1.1.2.1.4.1.1.8"
 _OPER_MAP = {"1": "up", "2": "down", "3": "testing"}
 
 
+# Interface names/types that are never auto-selected for traffic monitoring.
+_EXCLUDE_TOKENS = ("loopback", "tunnel", "null", "management", "mgmt")
+
+
 def should_auto_select(iface: dict) -> bool:
-    """Smart default selection: real, up, described/connected access interfaces."""
+    """
+    Smart default selection for traffic monitoring: auto-select network-to-
+    network links — an interface that is operationally UP and has an LLDP
+    neighbour, and is not a loopback/tunnel/null/management interface.
+
+    LLDP-neighbour-driven on purpose: edge/access ports (no neighbour) and
+    down/virtual/management interfaces are left for the engineer to opt in.
+    """
     name = (iface.get("if_name") or "").strip()
     if not name:
         return False
     low = name.lower()
-    if low.startswith(("lo", "tu", "nu")):  # loopback / tunnel / null
+    if low.startswith(("lo", "tu", "nu")):  # short forms: Lo0 / Tu1 / Nu0
+        return False
+    if any(tok in low for tok in _EXCLUDE_TOKENS):
         return False
     itype = (iface.get("if_type") or "").lower()
     if any(k in itype for k in ("loopback", "tunnel", "null")):
         return False
     up = (iface.get("oper_status") or "").lower() == "up"
-    has_context = bool((iface.get("if_description") or "").strip()) or bool(iface.get("lldp_neighbor_hostname"))
-    return up and has_context
+    return up and bool(iface.get("lldp_neighbor_hostname"))
 
 
 def discover_interfaces(device) -> list[dict]:

@@ -399,7 +399,12 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
                     <td className="px-3 py-1.5"><input type="checkbox" checked={selected.has(r.if_name)} onChange={() => toggle(r.if_name)} /></td>
                     <td className="px-3 py-1.5 font-mono text-xs text-gray-800">{r.if_name}</td>
                     <td className={clsx('px-3 py-1.5', r.if_description ? 'text-gray-700' : 'text-gray-300')}>{r.if_description || '—'}</td>
-                    <td className="px-3 py-1.5">{r.lldp_neighbor_hostname ? <span className="text-blue-600">{r.lldp_neighbor_hostname}</span> : <span className="text-gray-300">—</span>}</td>
+                    <td className="px-3 py-1.5">{r.lldp_neighbor_hostname
+                      ? <span className="inline-flex flex-col">
+                          <span className="text-blue-600">{r.lldp_neighbor_hostname}</span>
+                          <span className="text-[10px] text-green-600 dark:text-green-400" title="Network link — auto-selected for monitoring">● LLDP neighbor detected</span>
+                        </span>
+                      : <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-1.5 text-gray-600">{formatSpeed(r.if_speed_mbps)}</td>
                     <td className="px-3 py-1.5"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_BADGE[r.status] ?? STATUS_BADGE.unknown)}>{r.status}</span></td>
                     <td className="px-3 py-1.5">
