@@ -6,8 +6,9 @@ import EmptyState from '../components/EmptyState'
 import Modal from '../components/Modal'
 import {
   fetchChecks, fetchCheckSummary, saveCheck, deleteCheck, runCheckNow, fetchCheckResults,
+  fetchDevices, fetchSites,
   type ServiceCheck, type CheckStatus, type CheckType, type CheckSummary,
-  type ServiceCheckPayload, type CheckResultsResponse,
+  type ServiceCheckPayload, type CheckResultsResponse, type Device, type Site,
 } from '../api/client'
 
 const STATUS_BADGE: Record<CheckStatus, string> = {
@@ -58,8 +59,11 @@ export default function Checks() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [editCheck, setEditCheck] = useState<ServiceCheck | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -95,6 +99,10 @@ export default function Checks() {
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
         >+ Add Check</button>
       </div>
+
+      {toast && (
+        <div className="bg-green-50 border border-green-200 dark:bg-green-900/30 dark:border-green-800 rounded-lg px-4 py-3 text-sm text-green-800 dark:text-green-300">{toast}</div>
+      )}
 
       {error && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">{error}</div>
@@ -187,6 +195,10 @@ export default function Checks() {
                         className="text-blue-600 hover:text-blue-800 disabled:opacity-40 text-xs font-medium mr-3"
                       >Run now</button>
                       <button
+                        onClick={(e) => { e.stopPropagation(); setEditCheck(c) }}
+                        className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 text-xs font-medium mr-3"
+                      >Edit</button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleDelete(c.id) }}
                         disabled={busyId === c.id}
                         className="text-red-600 hover:text-red-800 disabled:opacity-40 text-xs font-medium"
@@ -196,7 +208,13 @@ export default function Checks() {
                   {open && (
                     <tr className="bg-gray-50/60 dark:bg-gray-900/40">
                       <td colSpan={7} className="px-5 py-4">
-                        <CheckHistoryPanel check={c} />
+                        <CheckHistoryPanel
+                          check={c}
+                          busy={busyId === c.id}
+                          onEdit={() => setEditCheck(c)}
+                          onRunNow={() => handleRunNow(c.id)}
+                          onDelete={() => handleDelete(c.id)}
+                        />
                       </td>
                     </tr>
                   )}
@@ -209,7 +227,17 @@ export default function Checks() {
       </div>
 
       {showAdd && (
-        <AddCheckModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />
+        <CheckModal
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); load(); showToast('Check created') }}
+        />
+      )}
+      {editCheck && (
+        <CheckModal
+          check={editCheck}
+          onClose={() => setEditCheck(null)}
+          onSaved={() => { setEditCheck(null); load(); showToast('Check updated') }}
+        />
       )}
     </div>
   )
@@ -251,7 +279,13 @@ function formatResultDetails(type: CheckType, d: Record<string, unknown> | undef
   }
 }
 
-function CheckHistoryPanel({ check }: { check: ServiceCheck }) {
+function CheckHistoryPanel({ check, busy, onEdit, onRunNow, onDelete }: {
+  check: ServiceCheck
+  busy: boolean
+  onEdit: () => void
+  onRunNow: () => void
+  onDelete: () => void
+}) {
   const [period, setPeriod] = useState('24h')
   const [cache, setCache] = useState<Record<string, CheckResultsResponse>>({})
   const [loading, setLoading] = useState(false)
@@ -296,6 +330,16 @@ function CheckHistoryPanel({ check }: { check: ServiceCheck }) {
 
   return (
     <div className="space-y-3">
+      {/* Action button group */}
+      <div className="flex gap-2">
+        <button onClick={onEdit}
+          className="px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800">Edit Check</button>
+        <button onClick={onRunNow} disabled={busy}
+          className="px-3 py-1.5 text-xs font-medium border border-blue-300 dark:border-blue-800 rounded-md text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950 disabled:opacity-40">Run Now</button>
+        <button onClick={onDelete} disabled={busy}
+          className="px-3 py-1.5 text-xs font-medium border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-40">Delete</button>
+      </div>
+
       {/* Period tabs + uptime */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1">
@@ -392,20 +436,37 @@ function CheckHistoryPanel({ check }: { check: ServiceCheck }) {
   )
 }
 
-function AddCheckModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState<ServiceCheckPayload>({
+function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose: () => void; onSaved: () => void }) {
+  const editing = !!check
+  const [form, setForm] = useState<ServiceCheckPayload>(check ? {
+    name: check.name, check_type: check.check_type, host: check.host, port: check.port,
+    interval_seconds: check.interval_seconds, timeout_seconds: check.timeout_seconds,
+    failures_before_alert: check.failures_before_alert,
+    device: check.device, site: check.site, notes: check.notes,
+    response_time_warning_ms: check.response_time_warning_ms,
+    response_time_critical_ms: check.response_time_critical_ms,
+  } : {
     name: '', check_type: 'https', host: '', interval_seconds: 60, timeout_seconds: 10,
     failures_before_alert: 2,
   })
   // Free-form per-type config (path, query, warn_days, helo, …).
-  const [cfg, setCfg] = useState<Record<string, unknown>>({ path: '/' })
+  const [cfg, setCfg] = useState<Record<string, unknown>>(check ? { ...(check.config || {}) } : { path: '/' })
+  const [devices, setDevices] = useState<Device[]>([])
+  const [sites, setSites] = useState<Site[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchDevices().then((r) => setDevices(r.results)).catch(() => {})
+    fetchSites().then(setSites).catch(() => {})
+  }, [])
 
   const t = form.check_type
   const setCfgVal = (k: string, v: unknown) => setCfg((c) => ({ ...c, [k]: v }))
 
   const changeType = (next: CheckType) => {
+    // check_type is immutable while editing (the select is disabled).
+    if (editing) return
     setForm({ ...form, check_type: next })
     // Reset to sensible per-type config defaults.
     if (next === 'http' || next === 'https') setCfg({ path: '/' })
@@ -422,14 +483,16 @@ function AddCheckModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     setBusy(true)
     try {
       const payload: ServiceCheckPayload = { ...form, config: cleanConfig(cfg) }
-      // TLS grades on cert days (config), not latency; others get per-type
-      // response-time thresholds so slow responses degrade/fail.
-      const rt = TYPE_RT_DEFAULTS[t]
-      if (rt) {
-        payload.response_time_warning_ms = rt.warn
-        payload.response_time_critical_ms = rt.crit
+      // On create, apply per-type response-time threshold defaults (TLS grades
+      // on cert days, not latency). On edit, keep the check's existing thresholds.
+      if (!editing) {
+        const rt = TYPE_RT_DEFAULTS[t]
+        if (rt) {
+          payload.response_time_warning_ms = rt.warn
+          payload.response_time_critical_ms = rt.crit
+        }
       }
-      await saveCheck(payload)
+      await saveCheck(payload, check?.id)
       onSaved()
     } catch {
       setErr('Could not save the check.')
@@ -444,14 +507,14 @@ function AddCheckModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
   return (
     <Modal
-      title="Add Service Check"
+      title={editing ? 'Edit Check' : 'Add Service Check'}
       size="lg"
       onClose={onClose}
       footer={
         <>
           <button onClick={onClose} className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
           <button onClick={submit} disabled={busy} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
-            {busy ? 'Saving…' : 'Save Check'}
+            {busy ? 'Saving…' : editing ? 'Save Changes' : 'Save Check'}
           </button>
         </>
       }
@@ -464,8 +527,9 @@ function AddCheckModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={label}>Type</label>
-            <select className={input} value={t} onChange={(e) => changeType(e.target.value as CheckType)}>
+            <label className={label}>Type {editing && <span className="text-gray-400">(fixed)</span>}</label>
+            <select className={clsx(input, editing && 'opacity-60 cursor-not-allowed')} value={t} disabled={editing}
+              onChange={(e) => changeType(e.target.value as CheckType)}>
               {CHECK_TYPES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           </div>
@@ -573,6 +637,30 @@ function AddCheckModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             <label className={label}>Fails→alert</label>
             <input type="number" className={input} value={form.failures_before_alert} onChange={(e) => setForm({ ...form, failures_before_alert: Number(e.target.value) })} />
           </div>
+        </div>
+
+        {/* Optional associations */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={label}>Device <span className="text-gray-400">(optional)</span></label>
+            <select className={input} value={form.device ?? ''}
+              onChange={(e) => setForm({ ...form, device: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">— none —</option>
+              {devices.map((d) => <option key={d.id} value={d.id}>{d.hostname}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={label}>Site <span className="text-gray-400">(optional)</span></label>
+            <select className={input} value={form.site ?? ''}
+              onChange={(e) => setForm({ ...form, site: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">— none —</option>
+              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className={label}>Notes <span className="text-gray-400">(optional)</span></label>
+          <textarea className={input} rows={2} value={form.notes ?? ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </div>
       </div>
     </Modal>
