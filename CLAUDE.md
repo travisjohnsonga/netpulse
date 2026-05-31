@@ -845,12 +845,14 @@ Full architecture in docs/ARCHITECTURE.md.
 - services/ingest-api-poller: Meraki/Mist/UniFi plugin system (36 tests) ✅
 - services/stream-processor: NATS consumer, anomaly detection (91 tests) ✅
 - services/frontend: React + TypeScript + Vite + Tailwind ✅
-- Dashboard: infrastructure health, empty states, live WebSocket ✅
+- services/api check-engine: agentless service checks (HTTP/HTTPS/TCP) ✅
+- reachability-monitor: TCP/22 device liveness + status transitions ✅
+- Dashboard: infrastructure health, empty states, live WebSocket, service-check widget ✅
 - Onboarding wizard: 4 steps, integrations selection ✅
-- Total tests: 566 passing ✅
+- HTTPS enforced: nginx redirects HTTP :3000 → HTTPS :3443 (self-signed bootstrap) ✅
+- Backend tests: 514 passing (services/api) ✅
 
 ## In Progress
-- Credential profile system (CredentialProfile + DeviceCredential models)
 - Settings page redesign with sub-navigation
 
 ## Technology Stack
@@ -880,15 +882,22 @@ Full architecture in docs/ARCHITECTURE.md.
 - Multi-tenant from day one
 
 ## Django Apps (services/api/apps/)
-- core: base models, health endpoints, shared utilities
-- devices: Device, Site, DeviceCredential models
-- telemetry: metrics, interface data
-- compliance: config templates, compliance rules, drift
+Model names below reflect what is actually defined in each app's models.py.
+- core: base TimestampedModel, health endpoints, system settings, shared utilities
+- devices: Device (+ unreachable_since), Site, DeviceGroup, TopologyLink, DiscoveryJob, DiscoveredDevice
+- credentials: CredentialProfile (multi-protocol; secrets in OpenBao)
+- telemetry: TelemetryConfig, MonitoredInterface
+- compliance: CompliancePolicy, CompliancePolicyRule, ComplianceResult
 - alerts: AlertRule, AlertEvent, AlertChannel
-- cve: CVEDefinition, CVEApplicability
-- lifecycle: HardwareEOL, SoftwareEOL, RefreshPlan
-- security: AuthEvent, SecurityReport
-- collectors: Collector, CollectorHeartbeat
+- cve: CVE, DeviceCVE, CVEFeedSettings
+- lifecycle: LifecycleMilestone
+- security: DeviceRiskScore
+- collectors: Collector
+- configbackup: ConfigBackupSettings, DeviceConfig
+- integrations: NetBox/DNA import endpoints (no persistent models)
+- logs: OpenSearch-backed log query (no DB model)
+- tls: SSL/TLS + CA certificate management
+- checks: ServiceCheck, CheckResult (agentless synthetic monitoring)
 
 ## Credential System (in progress)
 CredentialProfile model:
@@ -924,8 +933,12 @@ DeviceCredential (through model):
 /dashboard       → main dashboard
 /devices         → device inventory
 /devices/:id     → device detail
+/sites           → sites/locations
 /topology        → network topology map
+/configs/compare → config diff/compare
 /alerts          → alert list
+/logs            → fleet syslog viewer
+/checks          → service checks (agentless synthetic monitoring)
 /cve             → CVE exposure
 /lifecycle       → EOL management
 /settings/*      → settings sub-pages (see above)
@@ -935,18 +948,28 @@ DeviceCredential (through model):
 /api/health/infrastructure/     — service connectivity check
 /api/auth/token/                — JWT obtain
 /api/auth/token/refresh/        — JWT refresh
-/api/devices/                   — device CRUD
-/api/devices/topology/          — CDP/LLDP topology data
+/api/devices/                   — device CRUD (sortable: ?ordering=, filter: ?site=&status=)
+/api/devices/topology/          — LLDP topology nodes + edges
 /api/devices/test-connection/   — test device connectivity
-/api/devices/:id/credentials/   — device credential associations
+/api/devices/:id/metrics/       — InfluxDB snapshot + series + lldp_neighbors + environment
+/api/devices/:id/poll-now/      — trigger an immediate SNMP poll
+/api/devices/:id/interfaces/    — monitored interfaces (GET/POST replace selection)
+/api/devices/:id/interfaces/discover/ — SNMP/SSH interface + LLDP discovery
+/api/devices/:id/topology/discover/   — LLDP neighbour discovery → TopologyLink
 /api/credentials/               — credential profile CRUD
 /api/credentials/:id/test/      — test credential against IP
-/api/credentials/:id/devices/   — devices using credential
-/api/alerts/                    — alert CRUD
+/api/sites/                     — site CRUD (+ /:id/devices/)
+/api/alerts/                    — alert rules/events/channels
+/api/logs/                      — OpenSearch log query (filters incl. from/to on @timestamp)
+/api/checks/                    — service check CRUD
+/api/checks/:id/run-now/        — probe a check immediately
+/api/checks/:id/results/        — check result history (?period=1h|6h|24h|7d)
+/api/checks/summary/            — up/down/degraded/unknown counts
 /api/cve/                       — CVE data
 /api/lifecycle/                 — EOL data
 /ws/telemetry/                  — WebSocket live metrics
 /ws/alerts/                     — WebSocket live alerts
+/ws/devices/                    — WebSocket device reachability updates
 
 ## Key Management Commands
 python manage.py run_stream_processor
@@ -957,6 +980,9 @@ python manage.py run_cve_engine
 python manage.py run_lifecycle_engine
 python manage.py run_discovery
 python manage.py run_scheduler
+python manage.py run_check_engine          # service checks (HTTP/HTTPS/TCP)
+python manage.py run_reachability_monitor  # TCP/22 device liveness + status
+python manage.py reset_test_data           # dev: clear app data, keep auth users
 
 ## Docker Compose Services
 Infrastructure: postgres, influxdb, opensearch, valkey, nats, openbao
@@ -965,7 +991,26 @@ Frontend: frontend/nginx (port 3000)
 Ingest: ingest-grpc, ingest-snmp, ingest-syslog, ingest-flow,
         ingest-otlp, ingest-api-poller
 Engines: stream-processor, config-manager, alert-engine,
-         cve-engine, lifecycle-engine, security-engine, scheduler
+         cve-engine, lifecycle-engine, security-engine, scheduler,
+         check-engine (service checks), reachability-monitor (TCP/22 liveness)
+
+All engines build from ./services/api and share one image — use
+`./netpulse.sh rebuild-api` to rebuild + recreate them all (see Development Workflow).
+
+## Planned Features (NOT yet implemented)
+
+The following are designed but not built — no models, endpoints, or services
+exist for them yet. Do not document them as current.
+
+- BGP looking glass: passive BGP route collector (e.g. ExaBGP), read-only.
+  Planned models BGPSession/BGPPrefix, service bgp-monitor, endpoints /api/bgp/,
+  /api/bgp/sessions/; frontend /bgp.
+- Endpoint discovery: MAC address-table + ARP-table ingestion with OUI vendor
+  lookup and IP/MAC search. Planned models MACEntry/ARPEntry, endpoint
+  /api/endpoints/; frontend /endpoints.
+- Service checks beyond Stage 1: ICMP/DNS/TLS/SMTP/SSH handlers (the
+  ServiceCheck model already defines these check_types; only HTTP/HTTPS/TCP
+  handlers are implemented in the runner today).
 
 ## SNMP Trap Receiver
 ingest-snmp handles both polling AND trap reception:
@@ -1819,3 +1864,118 @@ for the same metrics is redundant and wastes device resources.
 
 ### Priority: implement after gNMI port fix is verified working
 ### Do NOT build until requested.
+
+## PINNED — Pre-Production Security Audit
+
+Before any production deployment, run a full security
+audit of the codebase. Do NOT skip this step.
+
+### Automated scanning:
+1. Python dependency vulnerabilities:
+   pip-audit --requirement services/api/requirements.txt
+   safety check -r services/api/requirements.txt
+
+2. Static analysis (SAST):
+   bandit -r services/api/ -f json -o bandit-report.json
+   semgrep --config=auto services/api/
+   semgrep --config=p/django services/api/
+
+3. Frontend dependencies:
+   cd services/frontend && npm audit --audit-level=moderate
+
+4. Docker image scanning:
+   docker scout cves netpulse-api
+   trivy image netpulse-api
+   trivy image netpulse-frontend
+
+5. Secrets scanning (verify none leaked):
+   truffleHog git file://. --only-verified
+   gitleaks detect --source . -v
+
+### Manual code review checklist:
+Claude should review each category:
+
+Authentication & Authorization:
+□ All API endpoints require authentication
+□ Role-based permissions enforced (not just is_authenticated)
+□ JWT tokens have appropriate expiry
+□ No authentication bypass possible
+□ Admin endpoints restricted to admin role
+□ Service-to-service auth uses tokens not passwords
+
+Input Validation:
+□ All user input validated and sanitized
+□ No SQL injection possible (ORM used correctly)
+□ No command injection (subprocess calls safe)
+□ No path traversal in file operations
+□ IP address inputs validated
+□ CIDR/prefix inputs validated
+
+Secrets Management:
+□ No hardcoded secrets anywhere in code
+□ No secrets in logs
+□ No secrets in error messages returned to client
+□ OpenBao used for all credentials
+□ .env not committed to git
+□ No secrets in Docker environment that get logged
+
+API Security:
+□ Rate limiting on auth endpoints
+□ Rate limiting on expensive operations
+□ No verbose error messages in production
+□ CORS configured correctly
+□ No CSRF vulnerabilities
+□ Request size limits configured
+
+Network Security:
+□ All internal service communication uses auth
+□ OpenBao requires token for all reads
+□ NATS requires credentials
+□ InfluxDB requires token
+□ OpenSearch requires credentials
+□ No services exposed unnecessarily
+
+Data Security:
+□ Sensitive data encrypted at rest (OpenBao)
+□ Passwords hashed (never plaintext)
+□ PII handled appropriately
+□ Audit log for all credential access
+□ No sensitive data in URL parameters
+
+SSH/Device Access:
+□ SSH credentials never logged
+□ SSH connections use key or password from OpenBao only
+□ No credential caching in plaintext
+□ SSH host key verification (or documented exception)
+
+Docker Security:
+□ Containers run as non-root user
+□ No privileged containers
+□ Minimal base images
+□ No unnecessary capabilities
+□ Read-only filesystems where possible
+□ No secrets in Dockerfile or docker-compose.yml
+
+Dependencies:
+□ All dependencies pinned to specific versions
+□ No known CVEs in dependencies
+□ License compliance (all Apache 2.0/MIT/BSD)
+□ No abandoned/unmaintained packages
+
+### Output required:
+After audit, produce:
+1. SECURITY-REPORT.md with findings
+2. CRITICAL issues (must fix before production)
+3. HIGH issues (should fix before production)
+4. MEDIUM issues (fix in first patch)
+5. LOW/INFO (track for future)
+6. Remediation steps for each finding
+
+### Do NOT deploy to production until:
+□ All CRITICAL findings resolved
+□ All HIGH findings resolved or accepted with justification
+□ Automated scans show no new critical CVEs
+□ Manual checklist completed and signed off
+
+Do NOT run this audit until explicitly requested.
+This is a pre-production gate, not a development task.
