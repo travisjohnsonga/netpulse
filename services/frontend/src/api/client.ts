@@ -1342,6 +1342,8 @@ export interface AlertTeam {
   name: string
   description: string
   color: string
+  slack_webhook_url: string
+  discord_webhook_url: string
   member_count: number
   created_at: string
   updated_at: string
@@ -1395,6 +1397,10 @@ export async function saveTeam(payload: Partial<AlertTeam> & { name: string }, i
   return data
 }
 export async function deleteTeam(id: number): Promise<void> { await api.delete(`/alerting/teams/${id}/`) }
+export async function testTeamDiscord(id: number): Promise<{ ok: boolean; error: string }> {
+  const { data } = await api.post(`/alerting/teams/${id}/test-discord/`)
+  return data
+}
 
 export async function fetchPolicies(): Promise<EscalationPolicy[]> {
   const { data } = await api.get<EscalationPolicy[] | Paginated<EscalationPolicy>>('/alerting/policies/')

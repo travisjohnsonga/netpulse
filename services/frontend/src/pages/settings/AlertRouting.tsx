@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import Modal from '../../components/Modal'
 import {
-  fetchTeams, saveTeam, deleteTeam, fetchPolicies, savePolicy,
+  fetchTeams, saveTeam, deleteTeam, testTeamDiscord, fetchPolicies, savePolicy,
   fetchRoutes, saveRoute, deleteRoute, testRoute,
   fetchMaintenanceWindows, saveMaintenanceWindow, deleteMaintenanceWindow, endMaintenanceNow, fetchDevices,
   type AlertTeam, type EscalationPolicy, type AlertRoute,
@@ -51,7 +51,14 @@ export default function AlertRouting() {
                 <span className="w-3 h-3 rounded-full" style={{ background: t.color }} />
                 <span className="font-medium text-gray-800 dark:text-gray-100">{t.name}</span>
                 <span className="text-gray-500 dark:text-gray-400">{t.member_count} member{t.member_count === 1 ? '' : 's'}</span>
-                <button onClick={() => deleteTeam(t.id).then(load)} className="ml-auto text-xs text-red-600 hover:text-red-800">Delete</button>
+                {t.discord_webhook_url && <span title="Discord webhook configured">💬</span>}
+                <span className="ml-auto flex gap-3">
+                  {t.discord_webhook_url && (
+                    <button onClick={() => testTeamDiscord(t.id).then((r) => alert(r.ok ? 'Discord test sent ✅' : `Failed: ${r.error}`))}
+                      className="text-xs text-indigo-600 hover:text-indigo-800">Test Discord</button>
+                  )}
+                  <button onClick={() => deleteTeam(t.id).then(load)} className="text-xs text-red-600 hover:text-red-800">Delete</button>
+                </span>
               </li>
             ))}
           </ul>
@@ -169,18 +176,29 @@ function Empty({ text }: { text: string }) {
 function TeamModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState('')
   const [color, setColor] = useState('#ef4444')
+  const [slack, setSlack] = useState('')
+  const [discord, setDiscord] = useState('')
   const [busy, setBusy] = useState(false)
   return (
     <Modal title="Add Team" onClose={onClose} footer={
       <>
         <button onClick={onClose} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm">Cancel</button>
-        <button disabled={busy || !name.trim()} onClick={() => { setBusy(true); saveTeam({ name, color }).then(onSaved).finally(() => setBusy(false)) }}
+        <button disabled={busy || !name.trim()}
+          onClick={() => { setBusy(true); saveTeam({ name, color, slack_webhook_url: slack, discord_webhook_url: discord }).then(onSaved).finally(() => setBusy(false)) }}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50">Save</button>
       </>
     }>
       <div className="space-y-4">
         <div><label className={label}>Name</label><input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Network Ops" /></div>
         <div><label className={label}>Colour</label><input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-9 w-16 rounded border border-gray-300 dark:border-gray-600" /></div>
+        <div className="border-t border-gray-100 dark:border-gray-700 pt-3">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Notification channels</p>
+          <div><label className={label}>Slack webhook URL <span className="text-gray-400">(optional)</span></label>
+            <input className={input} value={slack} onChange={(e) => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." /></div>
+          <div className="mt-3"><label className={label}>Discord webhook URL <span className="text-gray-400">(optional)</span></label>
+            <input className={input} value={discord} onChange={(e) => setDiscord(e.target.value)} placeholder="https://discord.com/api/webhooks/..." />
+            <p className="text-[11px] text-gray-400 mt-1">Discord: Server Settings → Integrations → Webhooks → New Webhook</p></div>
+        </div>
       </div>
     </Modal>
   )
