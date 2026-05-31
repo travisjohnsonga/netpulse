@@ -7,16 +7,31 @@ Writes time-series metrics to InfluxDB.
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 _SKIP_FIELDS = frozenset({"abs_start_time", "abs_end_time", "received_at", "exporter_ip"})
 
 
+def _parse_ts(raw) -> float:
+    """Best-effort sample time in epoch seconds from a payload timestamp."""
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return time.time()
+
+
 def handle_telemetry_metrics(
     subject: str,
     data: dict,
     influx,  # InfluxWriter | None
+    rate_calc=None,  # RateCalculator | None — derives bps/pps from counter deltas
 ) -> None:
     """Write SNMP/gNMI telemetry metrics to InfluxDB measurement 'telemetry'."""
     parts = subject.split(".")
@@ -45,6 +60,12 @@ def handle_telemetry_metrics(
         if mib_type == "TimeTicks":
             val = float(val) / 100.0
         fields[name] = val
+
+    # Derive interface throughput (bps/pps) from raw counter deltas. The raw
+    # counters are still written above; these are the human-facing rates.
+    if rate_calc is not None and nested:
+        ts = _parse_ts(data.get("timestamp"))
+        fields.update(rate_calc.compute(device_id, nested, ts))
 
     if not fields:
         logger.debug("no numeric fields in telemetry message from %s", device_id)

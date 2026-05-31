@@ -27,6 +27,7 @@ from stream_processor.anomaly.auth import AuthAnomalyDetector
 from stream_processor.handlers import flows as flow_handler
 from stream_processor.handlers import logs as log_handler
 from stream_processor.handlers import metrics as metric_handler
+from stream_processor.rate import RateCalculator
 from stream_processor.writers.influx import InfluxWriter
 from stream_processor.writers.opensearch import OpenSearchWriter
 
@@ -44,6 +45,7 @@ async def run(
 
     dedup     = AlertDeduplicator(cooldown_s=config.ALERT_COOLDOWN_S)
     auth_det  = AuthAnomalyDetector()
+    rate_calc = RateCalculator()
 
     nc = await nats.connect(nats_url, user=nats_user, password=nats_password)
     logger.info("NATS connected: %s", nats_url)
@@ -71,7 +73,7 @@ async def run(
             data = json.loads(msg.data)
         except json.JSONDecodeError:
             return
-        metric_handler.handle_telemetry_metrics(msg.subject, data, influx)
+        metric_handler.handle_telemetry_metrics(msg.subject, data, influx, rate_calc)
 
     # ── traps ─────────────────────────────────────────────────────────────────
 
