@@ -319,3 +319,54 @@ class TestMaintenanceWindows:
         assert any(w["id"] == wid for w in active)
         ended = auth_client.post(f"/api/alerting/maintenance/{wid}/end-now/")
         assert ended.status_code == 200 and ended.json()["is_currently_active"] is False
+
+
+class TestDiscord:
+    def test_discord_embed_format(self):
+        from apps.alerting import channels
+        p = channels.discord_embed("Service Down", "host:8000 refused", "high",
+                                   fields=[{"name": "Source", "value": "check_engine", "inline": True}])
+        e = p["embeds"][0]
+        assert e["title"].startswith("🟠 ") and e["color"] == 0xFF6600
+        assert e["fields"][0]["value"] == "check_engine"
+
+    def test_send_discord_posts(self, monkeypatch):
+        from apps.alerting import channels
+        calls = {}
+        class Resp: status_code = 204
+        import sys, types
+        m = types.ModuleType("requests"); m.post = lambda url, json=None, timeout=None: (calls.update(url=url, json=json) or Resp())
+        monkeypatch.setitem(sys.modules, "requests", m)
+        ok, err = channels.send_discord("https://discord/webhook", {"x": 1})
+        assert ok and calls["url"] == "https://discord/webhook"
+
+    def test_send_discord_no_url(self):
+        from apps.alerting import channels
+        assert channels.send_discord("", {})[0] is False
+
+    def test_test_discord_endpoint(self, auth_client, team, monkeypatch):
+        from apps.alerting import channels
+        monkeypatch.setattr(channels, "send_discord", lambda url, payload: (True, ""))
+        team.discord_webhook_url = "https://discord/webhook"; team.save()
+        resp = auth_client.post(f"/api/alerting/teams/{team.id}/test-discord/")
+        assert resp.status_code == 200 and resp.json()["ok"] is True
+
+    def test_test_discord_endpoint_no_webhook(self, auth_client, team):
+        resp = auth_client.post(f"/api/alerting/teams/{team.id}/test-discord/")
+        assert resp.status_code == 400 and resp.json()["ok"] is False
+
+    def test_process_alert_event_sends_discord(self, team, policy, monkeypatch):
+        from apps.alerting import channels
+        from apps.alerting.engine import process_alert_event
+        from apps.alerting.models import AlertNotification, EscalationStep, AlertRoute
+        from apps.alerts.models import AlertRule, AlertEvent
+        sent = {}
+        monkeypatch.setattr(channels, "send_discord", lambda url, payload: (sent.update(url=url) or (True, "")))
+        team.discord_webhook_url = "https://discord/hook"; team.save()
+        EscalationStep.objects.create(policy=policy, step_number=1, notify_team=team)
+        AlertRoute.objects.create(name="all", escalation_policy=policy, match_severity=["high"])
+        rule = AlertRule.objects.create(name="d", severity="high", condition={})
+        ev = AlertEvent.objects.create(rule=rule, state="firing", annotations={"severity": "high", "title": "Down"})
+        process_alert_event(ev)
+        assert sent.get("url") == "https://discord/hook"
+        assert AlertNotification.objects.filter(alert_event=ev, channel="discord", status="sent").count() == 1

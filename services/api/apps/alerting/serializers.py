@@ -23,7 +23,7 @@ class TeamSerializer(serializers.ModelSerializer):
     class Meta:
         model = Team
         fields = ("id", "name", "description", "color", "slack_webhook_url",
-                  "member_count", "created_at", "updated_at")
+                  "discord_webhook_url", "member_count", "created_at", "updated_at")
         read_only_fields = ("created_at", "updated_at")
 
 

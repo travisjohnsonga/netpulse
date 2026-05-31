@@ -36,6 +36,20 @@ class TeamViewSet(viewsets.ModelViewSet):
         ser.save(team=team)
         return Response(ser.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], url_path="test-discord")
+    def test_discord(self, request, pk=None):
+        """Send a test embed to the team's Discord webhook."""
+        from . import channels
+        team = self.get_object()
+        if not team.discord_webhook_url:
+            return Response({"ok": False, "error": "no Discord webhook configured"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        payload = channels.discord_embed(
+            "NetPulse Test Notification",
+            "Discord alerting is configured correctly.", "info")
+        ok, err = channels.send_discord(team.discord_webhook_url, payload)
+        return Response({"ok": ok, "error": err})
+
     @action(detail=True, methods=["delete"], url_path=r"members/(?P<user_id>[^/.]+)")
     def remove_member(self, request, pk=None, user_id=None):
         team = self.get_object()

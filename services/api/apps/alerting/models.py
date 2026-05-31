@@ -21,6 +21,8 @@ class Team(TimestampedModel):
     members = models.ManyToManyField(settings.AUTH_USER_MODEL, through="TeamMember", related_name="alert_teams")
     # Stage 2: per-team Slack incoming-webhook URL for notifications.
     slack_webhook_url = models.CharField(max_length=500, blank=True)
+    # Per-team Discord incoming-webhook URL.
+    discord_webhook_url = models.CharField(max_length=500, blank=True)
 
     def __str__(self):
         return self.name

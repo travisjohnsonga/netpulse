@@ -45,3 +45,37 @@ def format_slack_alert(name: str, target: str, error: str = "", when: str = "") 
     if when:
         lines.append(f"Since: {when}")
     return "\n".join(lines)
+
+
+_DISCORD_COLOR = {"critical": 0xFF0000, "high": 0xFF6600, "medium": 0xFFAA00, "low": 0x0099FF, "info": 0x00AA00}
+_DISCORD_EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "🟢"}
+
+
+def discord_embed(title: str, description: str = "", severity: str = "info", fields: list | None = None) -> dict:
+    """Build a Discord webhook payload with a single colour-coded embed."""
+    emoji = _DISCORD_EMOJI.get(severity, "⚪")
+    return {
+        "username": "NetPulse",
+        "embeds": [{
+            "title": f"{emoji} {title}"[:256],
+            "description": (description or "")[:2000],
+            "color": _DISCORD_COLOR.get(severity, 0x808080),
+            "fields": fields or [],
+            "footer": {"text": "NetPulse Network Intelligence"},
+        }],
+    }
+
+
+def send_discord(webhook_url: str, payload: dict) -> tuple[bool, str]:
+    """POST an embed payload to a Discord webhook (returns 204 on success)."""
+    if not webhook_url:
+        return False, "no webhook url"
+    try:
+        import requests
+        resp = requests.post(webhook_url, json=payload, timeout=10)
+        if resp.status_code not in (200, 204):
+            return False, f"discord returned {resp.status_code}"
+        return True, ""
+    except Exception as exc:
+        logger.warning("discord notify failed: %s", exc)
+        return False, str(exc)

@@ -134,4 +134,20 @@ def process_alert_event(alert_event) -> dict:
             sent_at=timezone.now() if ok else None, error="" if ok else (err or "send failed"),
         )
         notified += 1 if ok else 0
+
+    # Team Slack/Discord webhooks (in addition to per-user email).
+    team = step.notify_team
+    if team and team.discord_webhook_url:
+        payload = channels.discord_embed(title, body, severity or "info", fields=[
+            {"name": "Severity", "value": (severity or "info").upper(), "inline": True},
+            {"name": "Source", "value": source or "unknown", "inline": True},
+        ])
+        ok, err = channels.send_discord(team.discord_webhook_url, payload)
+        AlertNotification.objects.create(
+            alert_event=alert_event, escalation_step=step, team=team,
+            channel="discord", status=AlertNotification.Status.SENT if ok else AlertNotification.Status.FAILED,
+            sent_at=timezone.now() if ok else None, error="" if ok else (err or "send failed"),
+        )
+        notified += 1 if ok else 0
+
     return {"matched": True, "route": route.name, "notified": notified}
