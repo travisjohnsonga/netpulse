@@ -283,6 +283,15 @@ export interface DeviceMetrics {
     cpu_pct: MetricPoint[]
   }
   interfaces: InterfaceStat[]
+  lldp_neighbors?: LldpNeighbor[]
+}
+
+export interface LldpNeighbor {
+  local_port: string
+  neighbor_id: number
+  neighbor_hostname: string
+  remote_port: string
+  discovered_via: string
 }
 
 export interface InterfaceStat {

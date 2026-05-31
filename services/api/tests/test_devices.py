@@ -236,6 +236,27 @@ class TestDeviceModel:
         assert device.management_ip is None
 
 
+class TestDeviceLldpNeighbors:
+    """The metrics endpoint surfaces LLDP neighbours from TopologyLink rows in
+    EITHER direction, independent of per-interface lldp_* metadata."""
+
+    def test_neighbors_both_directions(self, auth_client, device, site):
+        from apps.devices.models import TopologyLink
+        peer_a = Device.objects.create(hostname="peer-a", ip_address="10.0.0.2", site=site)
+        peer_b = Device.objects.create(hostname="peer-b", ip_address="10.0.0.3", site=site)
+        # device is device_a on one link, device_b on the other.
+        TopologyLink.objects.create(device_a=device, port_a="Gi1", device_b=peer_a, port_b="Gi0/1")
+        TopologyLink.objects.create(device_a=peer_b, port_a="Gi2", device_b=device, port_b="Gi3")
+
+        resp = auth_client.get(f"/api/devices/{device.id}/metrics/")
+        assert resp.status_code == 200
+        neighbors = {n["neighbor_hostname"]: n for n in resp.json()["lldp_neighbors"]}
+        assert set(neighbors) == {"peer-a", "peer-b"}
+        # Local/remote ports are oriented from this device's perspective.
+        assert neighbors["peer-a"]["local_port"] == "Gi1" and neighbors["peer-a"]["remote_port"] == "Gi0/1"
+        assert neighbors["peer-b"]["local_port"] == "Gi3" and neighbors["peer-b"]["remote_port"] == "Gi2"
+
+
 # ── DiscoveryJob ──────────────────────────────────────────────────────────────
 
 class TestDiscoveryJobModel:

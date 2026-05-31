@@ -181,7 +181,36 @@ class DeviceViewSet(viewsets.ModelViewSet):
             request.query_params.get("metric", "all"),
             request.query_params.get("period", "1h"),
         )
+        # LLDP neighbours from discovered TopologyLink rows (either direction),
+        # independent of whether interface discovery populated the per-interface
+        # lldp_* fields — so a device with topology links but no per-interface
+        # LLDP metadata still shows its neighbours.
+        data["lldp_neighbors"] = self._lldp_neighbors(device)
         return Response(data)
+
+    @staticmethod
+    def _lldp_neighbors(device):
+        from django.db.models import Q
+
+        from .models import TopologyLink
+
+        out = []
+        links = (TopologyLink.objects
+                 .filter(Q(device_a=device) | Q(device_b=device))
+                 .select_related("device_a", "device_b"))
+        for link in links:
+            if link.device_a_id == device.id:
+                neighbor, local_port, remote_port = link.device_b, link.port_a, link.port_b
+            else:
+                neighbor, local_port, remote_port = link.device_a, link.port_b, link.port_a
+            out.append({
+                "local_port": local_port,
+                "neighbor_id": neighbor.id,
+                "neighbor_hostname": neighbor.hostname,
+                "remote_port": remote_port,
+                "discovered_via": link.discovered_via,
+            })
+        return out
 
     @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="poll-now")

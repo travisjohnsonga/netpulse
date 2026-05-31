@@ -675,7 +675,24 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
     return (ifaces ?? []).map((i) => ({ iface: i, stat: byName.get(i.if_name) ?? null }))
   }, [ifaces, metrics])
 
-  const lldp = useMemo(() => (ifaces || []).filter((i) => i.lldp_neighbor_hostname), [ifaces])
+  // LLDP neighbours: merge per-interface metadata (MonitoredInterface.lldp_*)
+  // with discovered TopologyLink neighbours (either direction, from the metrics
+  // endpoint), keyed by local port. This surfaces neighbours for devices that
+  // have topology links but no per-interface LLDP fields (e.g. router1).
+  const lldp = useMemo(() => {
+    const byPort = new Map<string, { local_port: string; neighbor: string; remote_port: string }>()
+    for (const i of ifaces || []) {
+      if (i.lldp_neighbor_hostname) {
+        byPort.set(i.if_name, { local_port: i.if_name, neighbor: i.lldp_neighbor_hostname, remote_port: i.lldp_neighbor_port || '' })
+      }
+    }
+    for (const n of metrics?.lldp_neighbors ?? []) {
+      if (!byPort.has(n.local_port)) {
+        byPort.set(n.local_port, { local_port: n.local_port, neighbor: n.neighbor_hostname, remote_port: n.remote_port || '' })
+      }
+    }
+    return [...byPort.values()]
+  }, [ifaces, metrics])
 
   const configure = () => onConfigure?.()
 
@@ -836,11 +853,11 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {lldp.map((i) => (
-                <tr key={i.id}>
-                  <td className="px-4 py-2 font-mono text-xs text-gray-800 dark:text-gray-200">{i.if_name}</td>
-                  <td className="px-4 py-2 text-blue-600 dark:text-blue-400">{i.lldp_neighbor_hostname}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-300">{i.lldp_neighbor_port || '—'}</td>
+              {lldp.map((n) => (
+                <tr key={n.local_port}>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-800 dark:text-gray-200">{n.local_port}</td>
+                  <td className="px-4 py-2 text-blue-600 dark:text-blue-400">{n.neighbor}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-300">{n.remote_port || '—'}</td>
                 </tr>
               ))}
             </tbody>
