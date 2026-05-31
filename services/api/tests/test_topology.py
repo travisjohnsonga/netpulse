@@ -51,6 +51,27 @@ class TestDiscoverLinks:
         topology.discover_links(a)
         assert TopologyLink.objects.filter(device_a=a).count() == 1
 
+    def test_canonical_link_orders_by_device_id(self, devices):
+        a, b = devices  # a.id < b.id
+        assert topology.canonical_link(b, "Gi5", a, "Gi4") == (a, "Gi4", b, "Gi5")
+        assert topology.canonical_link(a, "Gi4", b, "Gi5") == (a, "Gi4", b, "Gi5")
+
+    def test_bidirectional_discovery_dedupes_to_one_link(self, devices, monkeypatch):
+        # Both ends discover each other → one canonical row, not two.
+        a, b = devices
+
+        def ifaces(d):
+            if d.id == a.id:
+                return [{"if_name": "Gi4", "lldp_neighbor_hostname": "router2", "lldp_neighbor_port": "Gi5"}]
+            return [{"if_name": "Gi5", "lldp_neighbor_hostname": "router1", "lldp_neighbor_port": "Gi4"}]
+
+        monkeypatch.setattr(discovery, "discover_interfaces", ifaces)
+        topology.discover_links(a)
+        topology.discover_links(b)
+        assert TopologyLink.objects.count() == 1
+        link = TopologyLink.objects.get()
+        assert (link.device_a_id, link.port_a, link.device_b_id, link.port_b) == (a.id, "Gi4", b.id, "Gi5")
+
 
 class TestTopologyEndpoint:
     def test_discover_endpoint(self, auth_client, devices, monkeypatch):

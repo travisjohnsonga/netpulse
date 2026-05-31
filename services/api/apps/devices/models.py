@@ -238,8 +238,15 @@ class TopologyLink(TimestampedModel):
     last_seen = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimestampedModel.Meta):
-        # One link per local port (the near-end device + interface).
-        unique_together = ["device_a", "port_a"]
+        # Links are stored canonically (lower device id = device_a), so a single
+        # constraint on the full tuple dedupes both same-direction repeats AND
+        # the two directions of one physical link.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device_a", "port_a", "device_b", "port_b"],
+                name="unique_topology_link",
+            ),
+        ]
         indexes = [models.Index(fields=["device_a"]), models.Index(fields=["device_b"])]
 
     def __str__(self):

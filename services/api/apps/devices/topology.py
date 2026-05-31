@@ -14,6 +14,17 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def canonical_link(dev_a, port_a, dev_b, port_b):
+    """
+    Order a link so the lower device id is always device_a. Both directions of
+    one physical link then collapse to the same (device_a, port_a, device_b,
+    port_b) tuple, which the unique constraint deduplicates.
+    """
+    if dev_a.id > dev_b.id:
+        return dev_b, port_b, dev_a, port_a
+    return dev_a, port_a, dev_b, port_b
+
+
 def discover_links(device) -> list[dict]:
     """
     Discover this device's LLDP neighbors and persist matched links.
@@ -47,11 +58,12 @@ def discover_links(device) -> list[dict]:
                 Q(ip_address=mgmt_ip) | Q(management_ip=mgmt_ip)
             ).first()
         if match and match.id != device.id:
+            # Canonicalise so both ends of the link map to one row.
+            da, pa, db, pb = canonical_link(
+                device, iface["if_name"], match, iface.get("lldp_neighbor_port") or "")
             TopologyLink.objects.update_or_create(
-                device_a=device, port_a=iface["if_name"],
+                device_a=da, port_a=pa, device_b=db, port_b=pb,
                 defaults={
-                    "device_b": match,
-                    "port_b": iface.get("lldp_neighbor_port") or "",
                     "discovered_via": "lldp",
                     "link_speed_mbps": iface.get("if_speed_mbps"),
                     "last_seen": now,
