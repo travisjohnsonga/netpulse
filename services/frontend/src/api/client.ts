@@ -940,6 +940,8 @@ export interface GeneratedConfig {
   platform: string
   vendor: string
   collector_ip: string
+  snmpv3?: boolean
+  snmp_warning?: string
   sections: Record<string, { enabled: boolean; config: string | null }>
   full_config: string
 }

@@ -544,6 +544,15 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
             ℹ️ gNMI subscription interval is set on the device — change it here, then push.
           </p>
         )}
+        {(tab === 'snmp' || tab === 'all') && gen.snmp_warning && (
+          <div className="flex items-start gap-2 mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-800">
+            <span>⚠️</span>
+            <span>{gen.snmp_warning}</span>
+          </div>
+        )}
+        {(tab === 'snmp' || tab === 'all') && gen.snmpv3 && (
+          <p className="text-xs text-green-600 mb-2">🔒 SNMPv3 authPriv — keys are write-only; placeholders shown are filled from OpenBao on push.</p>
+        )}
         {currentConfig ? (
           <pre className="bg-gray-900 text-gray-100 text-xs font-mono rounded-md p-3 overflow-x-auto max-h-72 whitespace-pre-wrap">{currentConfig}</pre>
         ) : (
