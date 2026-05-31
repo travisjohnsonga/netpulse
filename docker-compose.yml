@@ -190,6 +190,10 @@ services:
       - openbao-data:/openbao/data
       # Community advisory YAML (Juniper/Arista/…) for load_community_advisories.
       - ./advisories:/app/advisories:ro
+    # Service-check "Run now" executes the probe in this process, so the api
+    # needs the same unprivileged-ICMP sysctl as check-engine for ICMP checks.
+    sysctls:
+      - net.ipv4.ping_group_range=0 2147483647
     networks:
       - netpulse-net
     depends_on:
@@ -430,7 +434,12 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
-    # ICMP service checks send raw echo packets (icmplib privileged mode).
+    # ICMP service checks. The container runs as non-root, so use unprivileged
+    # datagram ICMP: ping_group_range lets any gid open ICMP sockets. NET_RAW/
+    # NET_ADMIN are kept for the privileged-raw fallback (effective only if run
+    # as root).
+    sysctls:
+      - net.ipv4.ping_group_range=0 2147483647
     cap_add:
       - NET_RAW
       - NET_ADMIN

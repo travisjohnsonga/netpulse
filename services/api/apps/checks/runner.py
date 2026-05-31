@@ -204,7 +204,12 @@ async def check_http(check: dict) -> dict:
 
 
 async def check_icmp(check: dict) -> dict:
-    """ICMP echo via icmplib (privileged raw socket — needs NET_RAW/NET_ADMIN)."""
+    """
+    ICMP echo via icmplib. Uses unprivileged datagram ICMP (no raw socket) so it
+    works as the non-root container user — the check-engine service sets
+    net.ipv4.ping_group_range to permit this. Falls back to privileged raw
+    sockets if datagram ICMP is disallowed (e.g. running as root with NET_RAW).
+    """
     from icmplib import async_ping
 
     cfg = check.get("config") or {}
@@ -212,8 +217,12 @@ async def check_icmp(check: dict) -> dict:
     size = int(cfg.get("packet_size", 56))
     timeout = check.get("timeout_seconds", 10)
     try:
-        host = await async_ping(check["host"], count=count, interval=0.2,
-                                timeout=timeout, payload_size=size, privileged=True)
+        try:
+            host = await async_ping(check["host"], count=count, interval=0.2,
+                                    timeout=timeout, payload_size=size, privileged=False)
+        except Exception:
+            host = await async_ping(check["host"], count=count, interval=0.2,
+                                    timeout=timeout, payload_size=size, privileged=True)
     except Exception as exc:
         return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
 
