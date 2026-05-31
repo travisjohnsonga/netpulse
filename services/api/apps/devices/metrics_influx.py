@@ -162,7 +162,9 @@ from(bucket: "{bucket}")
             v = rec.values
             by_idx[idx] = {
                 "if_index": idx,
-                "if_name": names.get(str(idx), f"if{idx}"),
+                # gNMI tags if_index with the interface name itself (non-numeric);
+                # fall back to it directly rather than the "if<idx>" SNMP form.
+                "if_name": names.get(str(idx)) or (str(idx) if not str(idx).isdigit() else f"if{idx}"),
                 "in_bps": v.get("in_bps"), "out_bps": v.get("out_bps"),
                 "in_pps": v.get("in_pps"), "out_pps": v.get("out_pps"),
                 "in_errors_rate": v.get("in_errors_rate"), "out_errors_rate": v.get("out_errors_rate"),

@@ -366,6 +366,22 @@ class Command(BaseCommand):
         "ifOperStatus": "oper_status", "1_3_6_1_2_1_2_2_1_8": "oper_status",
     }
 
+    # gNMI/MDT interface counters arrive keyed "<InterfaceName>/<leaf>" (e.g.
+    # "GigabitEthernet0/0/0/in_octets"). OpenConfig/IOS-XE counters are all
+    # uint64, so a single 2**64 rollover ceiling is correct for every leaf.
+    _GNMI_COUNTERS = {
+        "in_octets": "in_octets", "out_octets": "out_octets",
+        "in_pkts": "in_pkts", "out_pkts": "out_pkts",
+        "in_unicast_pkts": "in_pkts", "out_unicast_pkts": "out_pkts",
+        "in_errors": "in_errors", "out_errors": "out_errors",
+        "in_discards": "in_discards", "out_discards": "out_discards",
+    }
+    _GNMI_GAUGES = {
+        # speed (IOS-XE reports Mbps as a number) feeds utilisation; oper-status
+        # is usually a string enum and is skipped as non-numeric upstream.
+        "speed": "high_speed",
+    }
+
     @staticmethod
     def _counter_delta(cur, prev, maxv):
         """Counter delta with rollover handling."""
@@ -379,11 +395,27 @@ class Command(BaseCommand):
         the raw counters in a telemetry message, and write them to the
         ``interface_stats`` measurement (tags device_id+if_index).
         """
-        # Parse "name_<ifindex>" fields into per-interface buckets.
+        # Two on-the-wire shapes feed this:
+        #   SNMP  → "<base>_<ifindex>"          e.g. "ifHCInOctets_2"
+        #   gNMI  → "<InterfaceName>/<leaf>"     e.g. "GigabitEthernet0/0/0/in_octets"
+        # Both collapse to one per-interface bucket keyed by a stable id (the
+        # ifIndex for SNMP, the interface name for gNMI) used as the if_index tag.
         per_iface: dict = {}
         maxv: dict = {}
         for key, val in fields.items():
             if not isinstance(val, (int, float)):
+                continue
+            if "/" in key:
+                # gNMI: split on the LAST slash — interface names contain slashes.
+                name, _, leaf = key.rpartition("/")
+                if not name:
+                    continue
+                if leaf in self._GNMI_COUNTERS:
+                    metric = self._GNMI_COUNTERS[leaf]
+                    per_iface.setdefault(name, {})[metric] = val
+                    maxv[metric] = 2 ** 64
+                elif leaf in self._GNMI_GAUGES:
+                    per_iface.setdefault(name, {})[self._GNMI_GAUGES[leaf]] = val
                 continue
             base, _, idx = key.rpartition("_")
             if not idx.isdigit():

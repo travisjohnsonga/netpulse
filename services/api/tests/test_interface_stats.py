@@ -61,3 +61,37 @@ class TestInterfaceStats:
         asyncio.run(cmd._interface_stats("3", f1, "2026-05-30T20:00:00+00:00"))
         asyncio.run(cmd._interface_stats("3", f2, "2026-05-30T20:00:10+00:00"))
         assert writes[-1][2]["in_bps"] == 800.0   # 1000 octets/10s*8
+
+
+class TestGnmiInterfaceStats:
+    """gNMI/MDT counters arrive as '<InterfaceName>/<leaf>', not '<base>_<ifindex>'."""
+
+    def test_gnmi_format_parsed_and_tagged_by_name(self):
+        cmd, writes = _cmd()
+        f1 = {"GigabitEthernet1/in_octets": 1000, "GigabitEthernet1/out_octets": 500,
+              "GigabitEthernet1/in_unicast_pkts": 100, "GigabitEthernet1/speed": 1000}
+        f2 = {"GigabitEthernet1/in_octets": 1000 + 1_250_000,
+              "GigabitEthernet1/out_octets": 500 + 125_000,
+              "GigabitEthernet1/in_unicast_pkts": 100 + 1980,
+              "GigabitEthernet1/speed": 1000}
+        asyncio.run(cmd._interface_stats("3", f1, "2026-05-30T20:00:00+00:00"))
+        asyncio.run(cmd._interface_stats("3", f2, "2026-05-30T20:00:10+00:00"))
+        m, tags, fields = writes[-1]
+        assert m == "interface_stats"
+        # if_index tag carries the interface NAME for gNMI devices.
+        assert tags == {"device_id": "3", "if_index": "GigabitEthernet1"}
+        assert fields["in_bps"] == 1_000_000.0
+        assert fields["out_bps"] == 100_000.0
+        assert fields["in_pps"] == 198.0
+        assert fields["in_util_pct"] == 0.1   # speed 1000 Mbps → 1Gbps
+
+    def test_gnmi_interface_name_with_slashes(self):
+        cmd, writes = _cmd()
+        # IOS-XR style name with embedded slashes — must split on the LAST slash.
+        f1 = {"GigabitEthernet0/0/0/in_octets": 0}
+        f2 = {"GigabitEthernet0/0/0/in_octets": 1000}
+        asyncio.run(cmd._interface_stats("9", f1, "2026-05-30T20:00:00+00:00"))
+        asyncio.run(cmd._interface_stats("9", f2, "2026-05-30T20:00:10+00:00"))
+        m, tags, fields = writes[-1]
+        assert tags == {"device_id": "9", "if_index": "GigabitEthernet0/0/0"}
+        assert fields["in_bps"] == 800.0
