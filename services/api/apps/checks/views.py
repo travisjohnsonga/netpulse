@@ -51,15 +51,26 @@ class ServiceCheckViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def results(self, request, pk=None):
-        """Recent CheckResults for this check within ?period=1h|6h|24h|7d."""
+        """
+        Result history for this check within ?period=1h|6h|24h|7d (default 24h),
+        with an uptime summary. Newest first; capped at 500 points.
+        """
         check = self.get_object()
         period = request.query_params.get("period", "24h")
         hours = _PERIODS.get(period, 24)
         since = timezone.now() - timezone.timedelta(hours=hours)
         qs = list(CheckResult.objects.filter(service_check=check, checked_at__gte=since).order_by("-checked_at")[:500])
+
+        counts = {"up": 0, "down": 0, "degraded": 0}
+        for r in qs:
+            counts[r.status] = counts.get(r.status, 0) + 1
+        total = len(qs)
+        uptime_pct = round(counts["up"] / total * 100, 1) if total else None
         return Response({
+            "check_id": check.id,
+            "check_name": check.name,
             "period": period,
-            "count": len(qs),
+            "summary": {"total": total, **counts, "uptime_pct": uptime_pct},
             "results": CheckResultSerializer(qs, many=True).data,
         })
 

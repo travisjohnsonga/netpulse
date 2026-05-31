@@ -301,9 +301,14 @@ class TestChecksApi:
     def test_results_history(self, auth_client):
         from django.utils import timezone
         c = ServiceCheck.objects.create(name="t", check_type="tcp", host="h")
-        CheckResult.objects.create(service_check=c, status="up", checked_at=timezone.now(), response_time_ms=10)
+        now = timezone.now()
+        CheckResult.objects.create(service_check=c, status="up", checked_at=now, response_time_ms=10)
+        CheckResult.objects.create(service_check=c, status="up", checked_at=now, response_time_ms=12)
+        CheckResult.objects.create(service_check=c, status="degraded", checked_at=now, response_time_ms=900)
         body = auth_client.get(f"/api/checks/{c.id}/results/?period=24h").json()
-        assert body["count"] == 1 and body["results"][0]["check"] == c.id
+        assert body["check_id"] == c.id and body["check_name"] == "t" and body["period"] == "24h"
+        assert body["summary"] == {"total": 3, "up": 2, "down": 0, "degraded": 1, "uptime_pct": 66.7}
+        assert len(body["results"]) == 3 and body["results"][0]["check"] == c.id
 
     def test_check_to_dict_shape(self):
         c = ServiceCheck.objects.create(name="t", check_type="http", host="h", port=8080,
