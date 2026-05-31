@@ -14,7 +14,11 @@ deployable on-prem via Docker Compose or cloud-hosted via Kubernetes.
 
 **Key Differentiator:** Most platforms poll devices on a schedule. NetPulse is built
 around streaming telemetry (gRPC/gNMI, InfluxDB line protocol, OTLP) with polling
-as a fallback for legacy devices only.
+as a fallback for legacy devices only. This is confirmed working against a real
+device (Cisco C8000V): SNMP polling and streaming telemetry run side by side, with
+the stream-processor reconciling both. **Cisco MDT (Model-Driven Telemetry)** is
+supported alongside standard gNMI, covering IOS-XE/XR devices that use Cisco's
+gRPC dialout rather than OpenConfig dialout.
 
 ---
 
@@ -224,11 +228,12 @@ All components are open source with permissive licenses. Zero licensing landmine
 | Frontend | React | MIT | |
 | Charting | Apache ECharts | Apache 2.0 | |
 | Config templates | Jinja2 | BSD | |
-| CLI parsing | TextFSM / TTP | Apache 2.0 / MIT | |
-| Stream processing | Faust | BSD | Python-native |
+| CLI parsing | TextFSM / ntc-templates | Apache 2.0 | show-command parsing |
+| Stream processing | asyncio + nats-py | Apache 2.0 | NATS consumers (Django mgmt commands) |
 | gRPC | grpcio | Apache 2.0 | |
 | SNMP | pysnmp | BSD | |
-| Device comms | Netmiko / NAPALM / ncclient | MIT / Apache 2.0 | |
+| Async HTTP | aiohttp | Apache 2.0 | service-check HTTP/HTTPS probes |
+| Device comms | Netmiko / ncclient | MIT / Apache 2.0 | |
 | Python version | 3.13 | | Latest stable, Django 6.0 supported |
 | Project license | Apache 2.0 | | Permissive + patent protection |
 
@@ -243,6 +248,7 @@ All components are open source with permissive licenses. Zero licensing landmine
 | `ingest-syslog` | Syslog receiver and normalizer | services/ingest-syslog |
 | `ingest-flow` | NetFlow/sFlow collector | services/ingest-flow |
 | `ingest-otlp` | OpenTelemetry collector | services/ingest-otlp |
+| `ingest-api-poller` | Cloud-API pollers (Meraki/Mist/UniFi) | services/ingest-api-poller |
 | `stream-processor` | Real-time anomaly detection and correlation | services/api |
 | `config-manager` | Config collection, compliance, diff engine | services/api |
 | `alert-engine` | Rule evaluation and notification dispatch | services/api |
@@ -253,7 +259,9 @@ All components are open source with permissive licenses. Zero licensing landmine
 | `websocket` | Django Channels live updates | services/api |
 | `frontend` | React SPA | services/frontend |
 | `scheduler` | Cron jobs and report generation | services/api |
-| `collector` | On-prem → cloud telemetry forwarder | services/collector |
+| `check-engine` | Agentless service-check runner (HTTP/HTTPS/TCP) | services/api |
+| `reachability-monitor` | TCP/22 device liveness + status transitions | services/api |
+| `collector` | On-prem → cloud telemetry forwarder (planned) | services/collector |
 
 ---
 
@@ -294,16 +302,20 @@ Each microservice has its own AppRole with minimal Vault policy:
 ## Data Architecture
 
 ### PostgreSQL (Primary Database)
-- Device inventory (attributes JSONB for vendor-specific data)
-- CVE definitions (affected_products, applicability_conditions as JSONB)
-- Lifecycle/EOL records, alert rules, auth events, audit trail
-- Config templates, credential metadata, users, tenants, budget data
+- Device inventory (Device incl. reachability state: is_reachable, unreachable_since)
+- Sites, device groups, TopologyLink (LLDP), discovery jobs/results
+- CredentialProfile metadata (secrets live in OpenBao, never here)
+- CVE (CVE, DeviceCVE), LifecycleMilestone, DeviceRiskScore
+- Alert rules/events/channels, config backup settings + DeviceConfig metadata
+- ServiceCheck + CheckResult (agentless monitoring)
 
 ### InfluxDB OSS (Time-Series)
-- Interface counters, CPU/memory/temperature
-- BGP session state changes
-- Per-link latency distributions
-- 95th percentile bandwidth samples (long retention for trending)
+- `telemetry` measurement — raw SNMP/gNMI fields per device (CPU/memory/uptime,
+  interface counters; gNMI keyed `<InterfaceName>/<leaf>`)
+- `interface_stats` measurement — derived per-interface bps/pps/util/error rates
+  (tagged by if_index for SNMP, interface name for gNMI)
+- `transit_latency` measurement — per-flow/link latency observations
+- Environment sensors (temp/fan/power) surfaced from `telemetry` when reported
 
 ### OpenSearch (Logs & Flows)
 - Normalized syslog documents
@@ -323,41 +335,125 @@ Each microservice has its own AppRole with minimal Vault policy:
 
 ## Development Roadmap
 
-### Phase 1 — Foundation (In Progress)
+### Phase 1 — Foundation ✅
 - [x] Architecture design
 - [x] Technology stack selection and license audit
 - [x] Development environment (WSL2, Docker, Claude Code)
 - [x] GitHub repository initialized
 - [x] Docker Compose scaffold — 22 services
 - [x] Infrastructure services running and healthy
-- [x] Django 6.0 backend — 9 apps, models, REST API
-- [ ] ingest-grpc — gRPC/gNMI receiver (in progress)
-- [ ] ingest-snmp, ingest-syslog, ingest-flow
-- [ ] stream-processor — NATS → InfluxDB/PostgreSQL
-- [ ] First end-to-end test with CML device
+- [x] Django backend — apps, models, REST API, JWT auth, RBAC
+- [x] ingest-grpc — gRPC/gNMI + Cisco MDT dial-out receiver
+- [x] ingest-snmp, ingest-syslog, ingest-flow, ingest-otlp, ingest-api-poller
+- [x] stream-processor — NATS → InfluxDB/OpenSearch/PostgreSQL
+- [x] First end-to-end test with a real device (Cisco C8000V)
 
 ### Phase 2 — Core Intelligence
-- [ ] Config compliance engine (Jinja2)
-- [ ] Bandwidth trending + forecasting
-- [ ] Basic alerting, Django API end-to-end
+- [x] Config compliance engine (Jinja2)
+- [x] Bandwidth trending (derived interface bps/pps/util)
+- [x] Basic alerting end-to-end (rules, events, channels, NATS)
+- [x] SNMP polling pipeline
+- [x] gNMI / Cisco MDT streaming
+- [ ] Forecasting / 95th-percentile capacity planning
 
 ### Phase 3 — Advanced Intelligence
-- [ ] CVE ingestion + applicability engine
-- [ ] Lifecycle/EOL management
-- [ ] Log anomaly detection + group trends
-- [ ] Auth security engine + reporting
+- [x] Log ingestion + OpenSearch query (basic anomaly groundwork)
+- [x] Auth security engine (basic — DeviceRiskScore)
+- [ ] 🔄 CVE ingestion + applicability (in progress)
+- [ ] 🔄 Lifecycle/EOL management (in progress)
+- [ ] Log group-trend / vendor-bug detection
 
 ### Phase 4 — Frontend & Flow
-- [ ] React scaffold + live dashboards
-- [ ] NetFlow/sFlow path latency correlation
-- [ ] Budget/security reports
-- [ ] Unified risk score
+- [x] React scaffold + live dashboards
+- [x] Live telemetry charts
+- [x] Interface traffic (bps/pps/errors)
+- [x] Topology map (LLDP)
+- [x] Agentless service checks (HTTP/HTTPS/TCP) + dashboard widget
+- [ ] NetFlow/sFlow path latency visualisation (D3)
+- [ ] Budget/security reports, unified risk score UI
 
 ### Phase 5 — Polish & Community
 - [ ] NetPulse Collector (on-prem agent)
 - [ ] Helm chart for Kubernetes
 - [ ] Documentation site
 - [ ] Public announcement
+
+---
+
+## Telemetry Pipeline
+
+Two protocols run simultaneously per device, reconciled by the stream-processor:
+
+- **SNMP polling** (fallback) — ingest-snmp polls device + interface OIDs on an
+  interval (default 5 min). Fields are written to the `telemetry` measurement
+  keyed `<oid_name>_<ifIndex>` (e.g. `ifHCInOctets_2`).
+- **Cisco MDT / gNMI streaming** (preferred) — ingest-grpc receives dial-out
+  telemetry on port **57400**. Cisco IOS-XE/XR use **Model-Driven Telemetry**
+  over a Cisco-specific gRPC dialout, not standard OpenConfig gNMI dialout:
+  - protos: `mdt_grpc_dialout.proto` + `cisco_telemetry.proto`
+  - flattened field format: `<InterfaceName>/<metric>` (e.g.
+    `GigabitEthernet1/in_octets`)
+
+The stream-processor derives per-interface bps/pps/util/error rates from counter
+deltas (`interface_stats` measurement) for both shapes — SNMP rows are tagged by
+ifIndex, gNMI rows by interface name. When a device is actively streaming gNMI,
+SNMP polling of the same metrics can be skipped (adaptive polling, planned).
+
+---
+
+## Service Checks (Agentless Synthetic Monitoring)
+
+NetPulse probes services externally — no agent on the target.
+
+- **Model**: `ServiceCheck` (type, host/port, interval, optional device + site
+  association, thresholds, state) and `CheckResult` (per-probe status/latency).
+- **Engine**: `check-engine` (`run_check_engine`) — an asyncio scheduler that
+  runs due checks concurrently, records results, advances each check's state
+  machine and raises NATS alerts on transitions (down → high, recovery → info,
+  degraded → medium). A down alert is suppressed when the associated device is
+  itself unreachable.
+- **Stage 1 handlers (implemented)**: HTTP/HTTPS (aiohttp) and TCP
+  (asyncio.open_connection). Latency thresholds classify up/degraded/down;
+  `failures_before_alert` suppresses flaps.
+- **API**: `/api/checks/` CRUD + `run-now/`, `results/`, `summary/`.
+
+The `ServiceCheck` model already defines ICMP/DNS/TLS/SMTP/SSH/FTP/LDAP types;
+their handlers are planned (see Planned Features).
+
+---
+
+## Known Platform Compatibility
+
+**Tested and working**
+- Cisco C8000V (IOS-XE 17.12.04) — virtual router
+  - SNMP v3: working
+  - Cisco MDT / gNMI streaming: working (port 57400)
+  - SSH: working
+  - Syslog: working
+  - NetFlow v9: configured
+  - Note: as a virtual platform it reports no physical fan/power/temperature
+    sensors, so environment tiles are correctly empty for it.
+
+**Configured but not yet validated against real hardware**
+- Juniper JunOS (JTI `set services analytics` telemetry config generation)
+- Arista EOS, Cisco NX-OS, Cisco IOS-XR
+- Palo Alto PAN-OS (via OTLP), Fortinet FortiOS (via SNMP)
+
+---
+
+## Planned Features (not yet implemented)
+
+Designed but with no models/endpoints/services yet — do not treat as current:
+
+- **BGP looking glass** — passive, read-only BGP route collector (e.g. ExaBGP);
+  session state + routing table + prefix-change alerting. Planned models
+  BGPSession/BGPPrefix, service `bgp-monitor`, endpoints `/api/bgp/`.
+- **Endpoint discovery** — MAC address-table + ARP-table ingestion (SSH/SNMP),
+  OUI vendor lookup, find-device-by-IP/MAC. Planned models MACEntry/ARPEntry,
+  endpoint `/api/endpoints/`.
+- **Service checks beyond Stage 1** — ICMP (icmplib), DNS (aiodns), TLS, SMTP
+  (aiosmtplib), SSH handlers.
+- **Adaptive polling** — skip SNMP for metrics a device already streams via gNMI.
 
 ---
 

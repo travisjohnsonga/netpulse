@@ -1676,9 +1676,9 @@ Flapping protection:
 UI: Bell icon toggle per interface in Telemetry Config
 Bulk enable/disable for selected interfaces
 
-## PINNED — First-Run Setup Script
+## PINNED — First-Run Setup Script ✅ IMPLEMENTED
 
-### scripts/setup.sh
+### scripts/setup.sh  (built — see the script for current behavior)
 Interactive bash script for first-time deployment.
 Run once after git clone, before docker compose up.
 
@@ -1770,9 +1770,9 @@ Example flow:
   Access at: http://192.168.98.134:3000
   API docs:  http://192.168.98.134:8000/api/docs/
 
-Do NOT build until requested.
+✅ IMPLEMENTED — scripts/setup.sh exists.
 
-## PINNED — Config Push Safety Flag
+## PINNED — Config Push Safety Flag ✅ IMPLEMENTED
 
 ### Environment variable: ALLOW_CONFIG_PUSH
 Controls whether NetPulse can push configuration changes
@@ -1824,9 +1824,10 @@ Audit trail regardless of setting:
   So admins can see what would have been pushed
   even in read-only mode.
 
-Do NOT build until requested.
+✅ IMPLEMENTED — ALLOW_CONFIG_PUSH is read in settings and enforced in the
+config-push/remediation endpoints; the frontend reads it from /api/settings/system/.
 
-## PINNED — gNMI/SNMP Adaptive Polling
+## PINNED — gNMI/SNMP Adaptive Polling (NOT yet built)
 
 When a device is actively pushing gNMI telemetry, SNMP polling
 for the same metrics is redundant and wastes device resources.
