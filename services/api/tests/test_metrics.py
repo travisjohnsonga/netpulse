@@ -59,6 +59,25 @@ class TestMetricsModule:
         assert FIELD_MAP["1_3_6_1_4_1_9_9_48_1_1_1_5_1"] == "memory_used_bytes"
         assert FIELD_MAP["1_3_6_1_4_1_9_9_109_1_1_1_1_8_1"] == "cpu_5min_pct"
 
+    def test_field_map_gnmi_memory_and_cpu(self):
+        # Cisco IOS-XE gNMI memory-statistics + cpu-utilization field names.
+        from apps.devices.metrics_influx import FIELD_MAP
+        assert FIELD_MAP["Processor/used_memory"] == "memory_used_bytes"
+        assert FIELD_MAP["Processor/free_memory"] == "memory_free_bytes"
+        assert FIELD_MAP["Processor/total_memory"] == "memory_total_bytes"
+        assert FIELD_MAP["five_seconds"] == "cpu_5sec_pct"
+        assert FIELD_MAP["one_minute"] == "cpu_1min_pct"
+        assert FIELD_MAP["five_minutes"] == "cpu_5min_pct"
+
+    def test_mem_used_pct_prefers_total(self):
+        from apps.devices.metrics_influx import _mem_used_pct
+        # gNMI Processor pool: used/total (router2 values).
+        assert _mem_used_pct(199360764, 1879754948, 2079115712) == 9.6
+        # No total → fall back to used/(used+free) (SNMP pool).
+        assert _mem_used_pct(200121296, 1878994416, None) == 9.6
+        # Nothing usable → None.
+        assert _mem_used_pct(None, None, None) is None
+
     def test_environment_empty_for_virtual_device(self):
         # A device that reports only interface counters (e.g. virtual C8000V)
         # has no fan/power/temperature sensors → empty environment.

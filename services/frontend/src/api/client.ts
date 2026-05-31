@@ -305,6 +305,7 @@ export interface DeviceMetrics {
     uptime_seconds: number | null
     memory_used_bytes: number | null
     memory_free_bytes: number | null
+    memory_total_bytes: number | null
     memory_used_pct: number | null
     cpu_pct: number | null
     poll_duration_ms: number | null

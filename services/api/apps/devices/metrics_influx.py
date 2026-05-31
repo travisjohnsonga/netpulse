@@ -26,11 +26,19 @@ FIELD_MAP = {
     # Universal CPU via HOST-RESOURCES hrProcessorLoad (resolved name or raw OID).
     "hrProcessorLoad_1": "cpu_pct",
     "1_3_6_1_2_1_25_3_3_1_2_1": "cpu_pct",
-    # Cisco-specific (kept for backward compatibility).
+    # Cisco SNMP memory pool (kept for backward compatibility).
     "1_3_6_1_4_1_9_9_48_1_1_1_5_1": "memory_used_bytes",
     "1_3_6_1_4_1_9_9_48_1_1_1_6_1": "memory_free_bytes",
     "1_3_6_1_4_1_9_9_109_1_1_1_1_3_1": "cpu_1min_pct",
     "1_3_6_1_4_1_9_9_109_1_1_1_1_8_1": "cpu_5min_pct",
+    # gNMI / Cisco IOS-XE memory-statistics subscription (Processor pool).
+    "Processor/used_memory": "memory_used_bytes",
+    "Processor/free_memory": "memory_free_bytes",
+    "Processor/total_memory": "memory_total_bytes",
+    # gNMI / Cisco IOS-XE cpu-utilization subscription (bare leaf names).
+    "five_seconds": "cpu_5sec_pct",
+    "one_minute": "cpu_1min_pct",
+    "five_minutes": "cpu_5min_pct",
     "poll_duration_ms": "poll_duration_ms",
 }
 
@@ -54,8 +62,8 @@ def _empty(device_id: str, period: str) -> dict:
         "period": period,
         "metrics": {
             "uptime_seconds": None, "memory_used_bytes": None,
-            "memory_free_bytes": None, "memory_used_pct": None,
-            "cpu_pct": None, "poll_duration_ms": None,
+            "memory_free_bytes": None, "memory_total_bytes": None,
+            "memory_used_pct": None, "cpu_pct": None, "poll_duration_ms": None,
         },
         "timeseries": {"uptime": [], "memory_used_pct": [], "cpu_pct": []},
         "interfaces": [],
@@ -105,6 +113,16 @@ def _pct_used(used, free):
     return round(used / total * 100, 1)
 
 
+def _mem_used_pct(used, free, total):
+    """
+    Memory utilisation %. Prefer an explicit total (gNMI reports total_memory);
+    otherwise derive it from used + free (SNMP pool has no total).
+    """
+    if total and total > 0 and used is not None:
+        return round(used / total * 100, 1)
+    return _pct_used(used, free)
+
+
 def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h") -> dict:
     if period not in VALID_PERIODS:
         period = "1h"
@@ -133,17 +151,18 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
     # ── snapshot ──────────────────────────────────────────────────────────────
     used = snapshot.get("memory_used_bytes")
     free = snapshot.get("memory_free_bytes")
-    # Prefer the universal hrProcessorLoad (cpu_pct); fall back to Cisco CPU.
+    total = snapshot.get("memory_total_bytes")
+    # Prefer universal hrProcessorLoad (SNMP); else gNMI CPU, most-recent first.
     cpu = snapshot.get("cpu_pct")
-    if cpu is None:
-        cpu = snapshot.get("cpu_5min_pct")
-    if cpu is None:
-        cpu = snapshot.get("cpu_1min_pct")
+    for key in ("cpu_5sec_pct", "cpu_1min_pct", "cpu_5min_pct"):
+        if cpu is None:
+            cpu = snapshot.get(key)
     result["metrics"] = {
         "uptime_seconds": snapshot.get("uptime_seconds"),
         "memory_used_bytes": used,
         "memory_free_bytes": free,
-        "memory_used_pct": _pct_used(used, free),
+        "memory_total_bytes": total,
+        "memory_used_pct": _mem_used_pct(used, free, total),
         "cpu_pct": cpu,
         "poll_duration_ms": snapshot.get("poll_duration_ms"),
     }
