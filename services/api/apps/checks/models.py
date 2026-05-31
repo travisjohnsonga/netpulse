@@ -75,6 +75,11 @@ class ServiceCheck(TimestampedModel):
     consecutive_failures = models.IntegerField(default=0)
     failures_before_alert = models.IntegerField(default=2)
 
+    # Which state-change alerts to raise (NATS) for this check.
+    alert_on_down = models.BooleanField(default=True)
+    alert_on_recovery = models.BooleanField(default=True)
+    alert_on_degraded = models.BooleanField(default=False)
+
     # Per-type configuration (method, expected_status, query, warn_days, …).
     config = models.JSONField(default=dict, blank=True)
 

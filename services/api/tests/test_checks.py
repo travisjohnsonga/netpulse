@@ -4,7 +4,7 @@ import pytest
 
 from apps.checks.models import CheckResult, ServiceCheck
 from apps.checks.runner import (
-    DEGRADED, DOWN, UP, check_ssh_banner, check_tcp, classify_status,
+    DEGRADED, DOWN, UP, alert_enabled, check_ssh_banner, check_tcp, classify_status,
     dns_status, icmp_status, next_state, run_check, tls_status,
 )
 from apps.checks.service import check_to_dict, persist_result
@@ -58,7 +58,29 @@ class TestNextState:
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
+class TestAlertEnabled:
+    def test_down_gated_by_alert_on_down(self):
+        assert alert_enabled("down", True, True, False) is True
+        assert alert_enabled("down", False, True, True) is False
+
+    def test_recovery_gated_by_alert_on_recovery(self):
+        assert alert_enabled("recovery", True, True, False) is True
+        assert alert_enabled("recovery", True, False, False) is False
+
+    def test_degraded_gated_by_alert_on_degraded(self):
+        # Default alert_on_degraded is False → no degraded alert.
+        assert alert_enabled("degraded", True, True, False) is False
+        assert alert_enabled("degraded", True, True, True) is True
+
+    def test_unknown_kind_never_alerts(self):
+        assert alert_enabled("whatever", True, True, True) is False
+
+
 class TestServiceCheckModel:
+    def test_alert_toggle_defaults(self):
+        c = ServiceCheck.objects.create(name="d", check_type="tcp", host="h")
+        assert c.alert_on_down is True and c.alert_on_recovery is True and c.alert_on_degraded is False
+
     def test_effective_port_default_from_type(self):
         c = ServiceCheck(name="web", check_type="https", host="x")
         assert c.effective_port == 443

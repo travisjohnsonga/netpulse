@@ -41,6 +41,17 @@ def classify_status(ok: bool, response_time_ms: float | None,
     return UP
 
 
+def alert_enabled(alert_kind: str, on_down: bool, on_recovery: bool, on_degraded: bool) -> bool:
+    """Whether a state-change alert should be published, given the check's toggles."""
+    if alert_kind == "down":
+        return on_down
+    if alert_kind == "recovery":
+        return on_recovery
+    if alert_kind == "degraded":
+        return on_degraded
+    return False
+
+
 def icmp_status(packet_loss_pct: float, is_alive: bool) -> str:
     """ICMP: up <10% loss, degraded 10-50%, down >50% or unreachable."""
     if not is_alive or packet_loss_pct > 50:

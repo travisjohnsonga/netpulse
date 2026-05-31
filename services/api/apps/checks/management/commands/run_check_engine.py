@@ -22,7 +22,7 @@ import signal
 from asgiref.sync import sync_to_async
 from django.core.management.base import BaseCommand
 
-from apps.checks.runner import run_check
+from apps.checks.runner import alert_enabled, run_check
 from apps.checks.service import check_to_dict, persist_result
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,9 @@ class Command(BaseCommand):
         return persist_result(check, result, timezone.now())
 
     async def _maybe_alert(self, check, result, alert: str):
+        # Respect the check's per-state alert toggles.
+        if not alert_enabled(alert, check.alert_on_down, check.alert_on_recovery, check.alert_on_degraded):
+            return
         # Suppress down alerts when the associated device is itself unreachable.
         if alert == "down" and check.device_id:
             if not await sync_to_async(self._device_reachable, thread_sensitive=True)(check.device_id):
