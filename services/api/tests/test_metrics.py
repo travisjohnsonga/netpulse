@@ -58,3 +58,23 @@ class TestMetricsModule:
         assert FIELD_MAP["sysUpTime_0"] == "uptime_seconds"
         assert FIELD_MAP["1_3_6_1_4_1_9_9_48_1_1_1_5_1"] == "memory_used_bytes"
         assert FIELD_MAP["1_3_6_1_4_1_9_9_109_1_1_1_1_8_1"] == "cpu_5min_pct"
+
+    def test_environment_empty_for_virtual_device(self):
+        # A device that reports only interface counters (e.g. virtual C8000V)
+        # has no fan/power/temperature sensors → empty environment.
+        from apps.devices.metrics_influx import _environment
+        snap = {"GigabitEthernet1/in_octets": 1000, "sysUpTime_0": 500.0,
+                "ciscoMemoryPoolUsed_1": 2000}
+        assert _environment(snap) == {}
+
+    def test_environment_extracts_sensors_when_present(self):
+        from apps.devices.metrics_influx import _environment
+        snap = {
+            "Sensor1/temperature": 38.0, "Sensor2/temperature": 41.5,
+            "PSU1/fan_speed": 4200, "PowerSupply1/power_in": 120,
+            "GigabitEthernet1/in_octets": 99,
+        }
+        env = _environment(snap)
+        assert env["temperature_c"] == 41.5 and env["temperature_sensors"] == 2
+        assert env["fan_sensors"] == 1
+        assert env["power_sensors"] == 1

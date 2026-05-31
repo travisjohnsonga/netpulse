@@ -746,6 +746,27 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
             subtitle="since last reboot" />
           <HealthCard label="Poll" value={health?.poll_duration_ms != null ? `${health.poll_duration_ms.toFixed(0)} ms` : null} />
         </div>
+        {/* Environment tiles — only rendered when the device reports physical
+            sensors. Virtual platforms (e.g. C8000V) report none, so nothing
+            shows here for them. */}
+        {(() => {
+          const env = metrics?.environment
+          if (!env || (env.temperature_c == null && !env.fan_sensors && !env.power_sensors)) return null
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+              {env.temperature_c != null && (
+                <HealthCard label="Temperature" value={`${env.temperature_c}°C`}
+                  subtitle={`${env.temperature_sensors ?? 1} sensor${(env.temperature_sensors ?? 1) === 1 ? '' : 's'}`} />
+              )}
+              {!!env.fan_sensors && (
+                <HealthCard label="Fans" value="✅ Normal" subtitle={`${env.fan_sensors} reporting`} />
+              )}
+              {!!env.power_sensors && (
+                <HealthCard label="Power" value="✅ Normal" subtitle={`${env.power_sensors} supplies`} />
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Section 2 — Interface Traffic */}

@@ -59,7 +59,41 @@ def _empty(device_id: str, period: str) -> dict:
         },
         "timeseries": {"uptime": [], "memory_used_pct": [], "cpu_pct": []},
         "interfaces": [],
+        "environment": {},
     }
+
+
+def _environment(snapshot: dict) -> dict:
+    """
+    Surface temperature / fan / power-supply sensors from the latest telemetry
+    snapshot, when the device reports any. Generic by design: it matches the
+    sensor token in the field name (works for SNMP entPhysical sensors and gNMI
+    environment paths alike) rather than hard-coding a vendor schema.
+
+    Returns {} when no environment data is present — virtual platforms (e.g.
+    Cisco C8000V) have no physical sensors and correctly report nothing, so the
+    UI shows no fan/power/temperature tiles for them.
+    """
+    temps, fans, powers = [], [], []
+    for key, val in snapshot.items():
+        if not isinstance(val, (int, float)):
+            continue
+        leaf = key.lower().rsplit("/", 1)[-1]
+        if "temp" in leaf:
+            temps.append(val)
+        elif "fan" in leaf:
+            fans.append(val)
+        elif "power" in leaf or "psu" in leaf:
+            powers.append(val)
+    env: dict = {}
+    if temps:
+        env["temperature_c"] = round(max(temps), 1)
+        env["temperature_sensors"] = len(temps)
+    if fans:
+        env["fan_sensors"] = len(fans)
+    if powers:
+        env["power_sensors"] = len(powers)
+    return env
 
 
 def _pct_used(used, free):
@@ -113,6 +147,7 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
         "cpu_pct": cpu,
         "poll_duration_ms": snapshot.get("poll_duration_ms"),
     }
+    result["environment"] = _environment(snapshot)
 
     # ── per-interface derived stats (bps/pps/util/errors) ─────────────────────
     if metric in ("all", "interfaces"):

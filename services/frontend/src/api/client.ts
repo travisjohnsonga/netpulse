@@ -316,6 +316,15 @@ export interface DeviceMetrics {
   }
   interfaces: InterfaceStat[]
   lldp_neighbors?: LldpNeighbor[]
+  environment?: DeviceEnvironment
+}
+
+// Physical-sensor summary; empty {} for devices that report none (e.g. virtual).
+export interface DeviceEnvironment {
+  temperature_c?: number
+  temperature_sensors?: number
+  fan_sensors?: number
+  power_sensors?: number
 }
 
 export interface LldpNeighbor {
