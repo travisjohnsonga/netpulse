@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
-  type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig,
+  fetchDeviceMetrics,
+  type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig, type DeviceMetrics,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
 import DeviceEditModal from '../../components/DeviceEditModal'
@@ -28,6 +29,7 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
   const [ifaceCount, setIfaceCount] = useState<number | null>(null)
   const [configs, setConfigs] = useState<RecentConfig[] | null>(null)
   const [credName, setCredName] = useState<string | null>(null)
+  const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
 
   useEffect(() => {
     fetchDeviceRiskScore(device.id).then(setRisk).catch(() => setRisk(null))
@@ -36,6 +38,7 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
       .catch(() => setAlerts([]))
       .finally(() => setAlertsLoaded(true))
     fetchMonitoredInterfaces(device.id).then((m) => setIfaceCount(m.length)).catch(() => setIfaceCount(null))
+    fetchDeviceMetrics(device.id).then(setMetrics).catch(() => setMetrics(null))
     fetchRecentConfigs(device.id, 3).then(setConfigs).catch(() => setConfigs([]))
     if (device.credential_profile) {
       fetchCredential(device.credential_profile).then((p) => setCredName(p.name)).catch(() => setCredName(null))
@@ -53,6 +56,13 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
   }
 
   const reachable = device.status === 'active'
+
+  const m = metrics?.metrics
+  const fmtUptime = (sec: number | null | undefined) => {
+    if (sec == null) return '—'
+    const s = Math.floor(sec), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), mm = Math.floor((s % 3600) / 60)
+    return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${mm}m` : `${mm}m`
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -137,9 +147,9 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
       <Card>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Quick Stats</h3>
         <div className="grid grid-cols-3 gap-3 text-center">
-          <Stat label="Uptime" value="—" />
-          <Stat label="CPU" value="—" />
-          <Stat label="Memory" value="—" />
+          <Stat label="Uptime" value={fmtUptime(m?.uptime_seconds)} />
+          <Stat label="CPU" value={m?.cpu_pct != null ? `${m.cpu_pct.toFixed(0)}%` : '—'} />
+          <Stat label="Memory" value={m?.memory_used_pct != null ? `${m.memory_used_pct.toFixed(0)}%` : '—'} />
         </div>
         <button onClick={() => onTab('telemetry')} className="block w-full text-center text-sm font-medium text-gray-700 dark:text-gray-300 mt-3 hover:text-blue-700">
           {ifaceCount ?? 0} interface{ifaceCount === 1 ? '' : 's'} monitored →
