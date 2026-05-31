@@ -35,12 +35,12 @@ urlpatterns = [
     path("api/security/",   include("apps.security.urls")),
     path("api/collectors/", include("apps.collectors.urls")),
     path("api/import/",      include("apps.integrations.urls")),
+    path("api/settings/",     include("apps.tls.urls")),
     path("api/settings/",     include("apps.configbackup.urls")),
     path("api/configbackup/",  include("apps.configbackup.urls")),
     path("api/logs/",         include("apps.logs.urls")),
     path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
     path("api/settings/system/",  SystemSettingsView.as_view(),  name="system-settings"),
-    path("api/settings/",      include("apps.tls.urls")),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),
