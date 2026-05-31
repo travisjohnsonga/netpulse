@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
-import { fetchAlerts, acknowledgeAlert, type Alert } from '../api/client'
+import { Fragment } from 'react'
+import { fetchAlerts, acknowledgeAlert, fetchAlertNotifications, type Alert, type AlertNotificationRecord } from '../api/client'
 
 type Severity = 'all' | 'critical' | 'high' | 'medium' | 'low'
 
@@ -43,6 +44,17 @@ export default function Alerts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<Severity>('all')
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [timeline, setTimeline] = useState<Record<number, AlertNotificationRecord[]>>({})
+
+  const toggleTimeline = (id: number) => {
+    setExpandedId((cur) => (cur === id ? null : id))
+    if (timeline[id] === undefined) {
+      fetchAlertNotifications(id)
+        .then((rows) => setTimeline((t) => ({ ...t, [id]: rows })))
+        .catch(() => setTimeline((t) => ({ ...t, [id]: [] })))
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -178,13 +190,16 @@ export default function Alerts() {
                   const sev = sevOf(alert)
                   const isDown = alert.is_interface_alert && alert.transition === 'down'
                   const isRecovery = alert.is_interface_alert && alert.transition === 'up'
+                  const open = expandedId === alert.id
                   return (
-                  <tr key={alert.id} className={clsx(
-                    'hover:bg-gray-50 dark:hover:bg-gray-700/50',
+                  <Fragment key={alert.id}>
+                  <tr onClick={() => toggleTimeline(alert.id)} className={clsx(
+                    'hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer',
                     isDown && 'border-l-2 border-l-red-500',
                     isRecovery && 'border-l-2 border-l-green-500',
                   )}>
                     <td className="px-5 py-3">
+                      <span className="text-gray-400 text-xs mr-1.5">{open ? '▼' : '▶'}</span>
                       <span
                         className={clsx(
                           'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
@@ -241,7 +256,7 @@ export default function Alerts() {
                     <td className="px-5 py-3">
                       {alert.state === 'firing' && (
                         <button
-                          onClick={() => handleAcknowledge(alert.id)}
+                          onClick={(e) => { e.stopPropagation(); handleAcknowledge(alert.id) }}
                           className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 font-medium"
                         >
                           Acknowledge
@@ -249,6 +264,33 @@ export default function Alerts() {
                       )}
                     </td>
                   </tr>
+                  {open && (
+                    <tr className="bg-gray-50/60 dark:bg-gray-900/40">
+                      <td colSpan={7} className="px-5 py-3">
+                        <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Notification timeline</p>
+                        <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                          <li><span className="text-gray-400">{new Date(alert.fired_at).toLocaleString()}</span> — Alert created ({sev})</li>
+                          {timeline[alert.id] === undefined && <li className="text-gray-400">Loading…</li>}
+                          {timeline[alert.id]?.length === 0 && <li className="text-gray-400">No notifications recorded for this alert.</li>}
+                          {timeline[alert.id]?.map((n) => (
+                            <li key={n.id}>
+                              <span className="text-gray-400">{new Date(n.sent_at || n.created_at).toLocaleString()}</span>
+                              {' — '}
+                              {n.channel} to {n.username || 'team'}{' '}
+                              <span className={clsx('font-medium',
+                                n.status === 'sent' ? 'text-green-600 dark:text-green-400'
+                                  : n.status === 'failed' ? 'text-red-600 dark:text-red-400'
+                                  : n.status === 'cancelled' ? 'text-gray-400' : 'text-yellow-600 dark:text-yellow-400')}>
+                                {n.status === 'sent' ? '✅' : n.status === 'failed' ? '❌' : ''} {n.status}
+                              </span>
+                              {n.error && <span className="text-red-500"> · {n.error}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                   )
                 })}
               </tbody>

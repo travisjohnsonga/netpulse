@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
@@ -62,6 +62,27 @@ export default function Checks() {
   const [editCheck, setEditCheck] = useState<ServiceCheck | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  // Filter bar (client-side; search debounced 300ms).
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim().toLowerCase()), 300)
+    return () => clearTimeout(t)
+  }, [searchInput])
+
+  const filtered = useMemo(() => checks.filter((c) => {
+    if (typeFilter !== 'all' && c.check_type !== typeFilter) return false
+    if (statusFilter !== 'all' && c.current_status !== statusFilter) return false
+    if (search) {
+      const hay = `${c.name} ${c.host} ${c.notes ?? ''}`.toLowerCase()
+      if (!hay.includes(search)) return false
+    }
+    return true
+  }), [checks, typeFilter, statusFilter, search])
+  const filtersActive = !!search || typeFilter !== 'all' || statusFilter !== 'all'
+  const clearFilters = () => { setSearchInput(''); setSearch(''); setTypeFilter('all'); setStatusFilter('all') }
   const [toast, setToast] = useState<string | null>(null)
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
@@ -121,6 +142,31 @@ export default function Checks() {
         </div>
       )}
 
+      {/* Filter bar */}
+      {checks.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <input
+            type="search" placeholder="🔍 Search checks…" value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="flex-1 min-w-[180px] px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100">
+            <option value="all">All Types</option>
+            {CHECK_TYPES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100">
+            <option value="all">All Status</option>
+            {(['up', 'down', 'degraded', 'unknown'] as const).map((s) => <option key={s} value={s} className="capitalize">{s}</option>)}
+          </select>
+          <span className="text-sm text-gray-500 dark:text-gray-400 px-1">{filtered.length} check{filtered.length === 1 ? '' : 's'}</span>
+          {filtersActive && (
+            <button onClick={clearFilters} className="text-sm text-blue-600 hover:text-blue-800 font-medium">Clear filters</button>
+          )}
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {loading ? (
@@ -149,7 +195,10 @@ export default function Checks() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {checks.map((c) => {
+                {filtered.length === 0 && (
+                  <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400 dark:text-gray-500">No checks match the current filters.</td></tr>
+                )}
+                {filtered.map((c) => {
                   const open = expandedId === c.id
                   return (
                   <Fragment key={c.id}>

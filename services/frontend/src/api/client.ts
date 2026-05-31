@@ -1408,3 +1408,28 @@ export async function testRoute(sample: { severity?: string; source?: string; ch
   const { data } = await api.post('/alerting/routes/test/', sample)
   return data
 }
+
+// ── Alert notification timeline + acknowledge (apps/alerting Stage 2) ─────────
+export interface AlertNotificationRecord {
+  id: number
+  alert_event: number
+  channel: string
+  status: string
+  sent_at: string | null
+  username: string | null
+  error: string
+  created_at: string
+}
+
+export async function fetchAlertNotifications(eventId: number): Promise<AlertNotificationRecord[]> {
+  const { data } = await api.get<AlertNotificationRecord[] | Paginated<AlertNotificationRecord>>(
+    '/alerting/notifications/', { params: { alert_event: eventId, ordering: 'created_at' } })
+  return unwrap(data)
+}
+
+export async function acknowledgeAlertEvent(eventId: number, note?: string, snoozeMinutes?: number): Promise<void> {
+  await api.post(`/alerts/events/${eventId}/acknowledge/`, { note, snooze_minutes: snoozeMinutes })
+}
+export async function snoozeAlertEvent(eventId: number, minutes: number): Promise<void> {
+  await api.post(`/alerts/events/${eventId}/snooze/`, { minutes })
+}
