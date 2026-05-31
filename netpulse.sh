@@ -3,6 +3,11 @@
 
 cd "$(dirname "$0")"
 
+# All services built from ./services/api (they share one image). rebuild-api
+# rebuilds that image once and recreates each with --no-deps so infrastructure
+# (postgres, nats, …) is left untouched.
+API_SERVICES="api websocket config-manager scheduler alert-engine cve-engine lifecycle-engine security-engine stream-processor check-engine reachability-monitor"
+
 case "$1" in
   start)
     echo "Starting NetPulse..."
@@ -28,6 +33,21 @@ case "$1" in
     sleep 10
     docker compose ps
     ;;
+  rebuild-api)
+    # Rebuild the shared api image and recreate every api-based service.
+    echo "Rebuilding api image and restarting all api-based services..."
+    docker compose build api
+    docker compose up -d --no-deps $API_SERVICES
+    sleep 10
+    docker compose ps $API_SERVICES
+    ;;
+  rebuild-frontend)
+    echo "Rebuilding frontend image and restarting frontend..."
+    docker compose build frontend
+    docker compose up -d --no-deps frontend
+    sleep 10
+    docker compose ps frontend
+    ;;
   status)
     docker compose ps
     echo ""
@@ -41,12 +61,15 @@ case "$1" in
     docker compose logs -f ${2:-api}
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|status|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|status|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
     echo "  restart            Stop and start all services"
-    echo "  rebuild [service]  Rebuild image(s) and restart"
+    echo "  rebuild [service]  Rebuild image(s) and restart everything"
+    echo "  rebuild-api        Rebuild the api image and recreate all api-based"
+    echo "                     services (--no-deps; infra left running)"
+    echo "  rebuild-frontend   Rebuild and recreate the frontend (--no-deps)"
     echo "  status             Show service status and health"
     echo "  logs [service]     Follow logs (default: api)"
     exit 1
@@ -58,18 +81,4 @@ token() {
       -H 'Content-Type: application/json' \
       -d '{"username":"admin","password":"netmagic"}' | \
       python3 -m json.tool | grep '"access"' | cut -d'"' -f4
-}
-
-# Rebuild and restart all api-based services
-rebuild-api() {
-    echo "Rebuilding api image and restarting all api-based services..."
-    docker compose build api
-    docker compose up -d \
-        api websocket config-manager scheduler \
-        alert-engine cve-engine lifecycle-engine \
-        security-engine stream-processor check-engine
-    echo "Done. Waiting for health..."
-    sleep 15
-    docker compose ps | grep -E "api|engine|processor|manager|scheduler|websocket" | \
-        grep -v "ingest" | awk '{print $1, $NF}'
 }

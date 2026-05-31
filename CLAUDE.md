@@ -67,6 +67,36 @@ docker compose exec openbao bao operator init     # save keys + root token secur
 docker compose exec openbao bao operator unseal   # run 3× with different unseal keys
 ```
 
+## Development Workflow
+
+The application code is baked into the image (`COPY . .` — no source bind mount),
+so **backend changes require an image rebuild before they run in the container.**
+Editing a file on the host does not update the running service.
+
+All services built from `./services/api` share one image. After a backend change,
+rebuild that image once and recreate every api-based service:
+
+```bash
+# Rebuild the api image + recreate all api-based services (infra left running)
+./netpulse.sh rebuild-api
+
+# Rebuild + recreate just the frontend
+./netpulse.sh rebuild-frontend
+```
+
+`rebuild-api` recreates these services with `--no-deps` (so postgres, nats, etc.
+are not touched): `api websocket config-manager scheduler alert-engine cve-engine
+lifecycle-engine security-engine stream-processor check-engine reachability-monitor`.
+
+Migrations run automatically on api startup (entrypoint `migrate --noinput`).
+
+Tests run inside the api container against in-memory SQLite (no external DB):
+
+```bash
+docker compose exec api python -m pytest -q            # full suite
+docker compose exec api python -m pytest tests/test_checks.py -q
+```
+
 ## Environment Setup
 
 Copy `.env.example` to `.env` and fill in all `change-me` values before running any service.
