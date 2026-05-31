@@ -845,15 +845,19 @@ Full architecture in docs/ARCHITECTURE.md.
 - services/ingest-api-poller: Meraki/Mist/UniFi plugin system (36 tests) ✅
 - services/stream-processor: NATS consumer, anomaly detection (91 tests) ✅
 - services/frontend: React + TypeScript + Vite + Tailwind ✅
-- services/api check-engine: agentless service checks (HTTP/HTTPS/TCP) ✅
+- services/api check-engine: agentless service checks — http/https/tcp/icmp/dns/tls/smtp/ssh_banner ✅
 - reachability-monitor: TCP/22 device liveness + status transitions ✅
-- Dashboard: infrastructure health, empty states, live WebSocket, service-check widget ✅
+- apps/alerting: teams, escalation policies, alert-route matching + email (Stage 1) ✅
+- Platforms: ios_xe/ios verified on real C8000V; ios_xr/nxos/junos/eos/fortios/panos config-generated ✅
+- gNMI memory/CPU field mapping for Cisco IOS-XE subscriptions ✅
+- Dashboard: infrastructure health, empty states, live WebSocket, service-check + cert-expiry widgets ✅
 - Onboarding wizard: 4 steps, integrations selection ✅
 - HTTPS enforced: nginx redirects HTTP :3000 → HTTPS :3443 (self-signed bootstrap) ✅
-- Backend tests: 514 passing (services/api) ✅
+- Backend tests: 554 passing (services/api) ✅
 
 ## In Progress
 - Settings page redesign with sub-navigation
+- Alert routing Stage 2 (on-call schedules, Slack, acknowledgement)
 
 ## Technology Stack
 - Backend: Python 3.13, Django 6.0, DRF, Django Channels
@@ -897,7 +901,33 @@ Model names below reflect what is actually defined in each app's models.py.
 - integrations: NetBox/DNA import endpoints (no persistent models)
 - logs: OpenSearch-backed log query (no DB model)
 - tls: SSL/TLS + CA certificate management
-- checks: ServiceCheck, CheckResult (agentless synthetic monitoring)
+- checks: ServiceCheck, CheckResult (agentless synthetic monitoring; types
+  http/https/tcp/icmp/dns/tls/smtp/ssh_banner; engine = run_check_engine)
+- alerting: Team, TeamMember, ContactMethod, EscalationPolicy, EscalationStep,
+  AlertRoute, AlertNotification (Stage 1: route matching + email; on-call +
+  acknowledgement are Stage 2)
+
+## Service Check Types & Libraries (apps/checks/runner.py)
+- http/https → aiohttp; tcp → asyncio.open_connection; icmp → icmplib
+  (needs NET_RAW; check-engine sets cap_add + ping_group_range); dns → aiodns;
+  tls → stdlib ssl (days_remaining/cert_cn/issuer); smtp → aiosmtplib (connect
+  + EHLO); ssh_banner → asyncio TCP banner read.
+
+## gNMI field mappings (Cisco IOS-XE, confirmed)
+- Interface counters arrive as `<InterfaceName>/<leaf>` (e.g.
+  GigabitEthernet1/in_octets) → interface_stats (tagged if_index + if_name).
+- memory-statistics: Processor/used_memory → memory_used_bytes,
+  Processor/free_memory → memory_free_bytes, Processor/total_memory →
+  memory_total_bytes.
+- cpu-utilization: five_seconds → cpu_5sec_pct, one_minute → cpu_1min_pct,
+  five_minutes → cpu_5min_pct.
+
+## Platform Support
+ios_xe, ios (verified on a real Cisco C8000V), ios_xr, nxos, junos, eos,
+fortios, panos. FortiOS has no gNMI — uses SNMP (Fortinet enterprise OIDs
+fgSysCpuUsage 1.3.6.1.4.1.12356.101.4.1.3.0 / fgSysMemUsage .4.1.4.0 /
+fgSysMemCapacity .4.1.5.0) + Syslog + NetFlow; SSH-banner auto-detection covers
+FortiOS/PAN-OS that Netmiko SSHDetect misses.
 
 ## Credential System (in progress)
 CredentialProfile model:
@@ -938,7 +968,8 @@ DeviceCredential (through model):
 /configs/compare → config diff/compare
 /alerts          → alert list
 /logs            → fleet syslog viewer
-/checks          → service checks (agentless synthetic monitoring)
+/checks          → service checks (agentless synthetic monitoring) + history panels
+/settings/alert-routing → teams, escalation policies, alert routes (Stage 1)
 /cve             → CVE exposure
 /lifecycle       → EOL management
 /settings/*      → settings sub-pages (see above)
@@ -963,8 +994,12 @@ DeviceCredential (through model):
 /api/logs/                      — OpenSearch log query (filters incl. from/to on @timestamp)
 /api/checks/                    — service check CRUD
 /api/checks/:id/run-now/        — probe a check immediately
-/api/checks/:id/results/        — check result history (?period=1h|6h|24h|7d)
+/api/checks/:id/results/        — check result history + uptime summary (?period=1h|6h|24h|7d)
 /api/checks/summary/            — up/down/degraded/unknown counts
+/api/alerting/teams/            — teams (+ :id/members/ add/remove)
+/api/alerting/policies/         — escalation policies (+ :id/steps/)
+/api/alerting/routes/           — alert routes (+ /test/ to match a sample alert)
+/api/alerting/notifications/    — notification delivery history (read-only)
 /api/cve/                       — CVE data
 /api/lifecycle/                 — EOL data
 /ws/telemetry/                  — WebSocket live metrics
@@ -994,8 +1029,10 @@ Engines: stream-processor, config-manager, alert-engine,
          cve-engine, lifecycle-engine, security-engine, scheduler,
          check-engine (service checks), reachability-monitor (TCP/22 liveness)
 
-All engines build from ./services/api and share one image — use
-`./netpulse.sh rebuild-api` to rebuild + recreate them all (see Development Workflow).
+All engines build from ./services/api, but each gets its OWN image
+(netpulse-<service>) — they do NOT share one image. `./netpulse.sh rebuild-api`
+rebuilds every api-service image and recreates them with --no-deps (see
+Development Workflow).
 
 ## Planned Features (NOT yet implemented)
 
@@ -1008,9 +1045,12 @@ exist for them yet. Do not document them as current.
 - Endpoint discovery: MAC address-table + ARP-table ingestion with OUI vendor
   lookup and IP/MAC search. Planned models MACEntry/ARPEntry, endpoint
   /api/endpoints/; frontend /endpoints.
-- Service checks beyond Stage 1: ICMP/DNS/TLS/SMTP/SSH handlers (the
-  ServiceCheck model already defines these check_types; only HTTP/HTTPS/TCP
-  handlers are implemented in the runner today).
+- Alert routing Stage 2+: on-call schedules (OnCallSchedule/OnCallShift),
+  acknowledgement/snooze (AlertAcknowledgement), Slack/PagerDuty/Webhook/SMS
+  channels, and the visual escalation builder + on-call calendar UI. Stage 1
+  (teams, policies, route matching, email) is built.
+- SMS alerts (Twilio), NetPulse Collector agent, Helm chart, NetBox import,
+  CVE applicability engine, lifecycle/EOL UI, bandwidth 95th-percentile trending.
 
 ## SNMP Trap Receiver
 ingest-snmp handles both polling AND trap reception:

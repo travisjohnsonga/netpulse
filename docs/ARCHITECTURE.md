@@ -233,6 +233,9 @@ All components are open source with permissive licenses. Zero licensing landmine
 | gRPC | grpcio | Apache 2.0 | |
 | SNMP | pysnmp | BSD | |
 | Async HTTP | aiohttp | Apache 2.0 | service-check HTTP/HTTPS probes |
+| Async DNS | aiodns | MIT | service-check DNS probes |
+| Async SMTP | aiosmtplib | MIT | service-check SMTP probes |
+| ICMP | icmplib | Apache 2.0 | service-check ping (loss/RTT/jitter) |
 | Device comms | Netmiko / ncclient | MIT / Apache 2.0 | |
 | Python version | 3.13 | | Latest stable, Django 6.0 supported |
 | Project license | Apache 2.0 | | Permissive + patent protection |
@@ -361,6 +364,7 @@ Each microservice has its own AppRole with minimal Vault policy:
 - [x] Auth security engine (basic — DeviceRiskScore)
 - [ ] 🔄 CVE ingestion + applicability (in progress)
 - [ ] 🔄 Lifecycle/EOL management (in progress)
+- [ ] 🔄 Alert routing — teams/policies/route-matching + email (Stage 1 done)
 - [ ] Log group-trend / vendor-bug detection
 
 ### Phase 4 — Frontend & Flow
@@ -368,7 +372,7 @@ Each microservice has its own AppRole with minimal Vault policy:
 - [x] Live telemetry charts
 - [x] Interface traffic (bps/pps/errors)
 - [x] Topology map (LLDP)
-- [x] Agentless service checks (HTTP/HTTPS/TCP) + dashboard widget
+- [x] Agentless service checks (7 handlers) + history panels + dashboard widget
 - [ ] NetFlow/sFlow path latency visualisation (D3)
 - [ ] Budget/security reports, unified risk score UI
 
@@ -412,13 +416,35 @@ NetPulse probes services externally — no agent on the target.
   machine and raises NATS alerts on transitions (down → high, recovery → info,
   degraded → medium). A down alert is suppressed when the associated device is
   itself unreachable.
-- **Stage 1 handlers (implemented)**: HTTP/HTTPS (aiohttp) and TCP
-  (asyncio.open_connection). Latency thresholds classify up/degraded/down;
+- **Handlers (implemented)**: HTTP/HTTPS (aiohttp), TCP (asyncio), ICMP
+  (icmplib — packet loss/RTT/jitter), DNS (aiodns), TLS (stdlib ssl — cert
+  days_remaining/CN/issuer), SMTP (aiosmtplib — connect+EHLO), SSH-banner
+  (asyncio TCP). Latency thresholds classify up/degraded/down for latency
+  types; ICMP/DNS/TLS own their status (loss / answer match / cert expiry).
   `failures_before_alert` suppresses flaps.
-- **API**: `/api/checks/` CRUD + `run-now/`, `results/`, `summary/`.
+- **API**: `/api/checks/` CRUD + `run-now/`, `results/` (history + uptime
+  summary), `summary/`. UI: `/checks` with per-check expanding history panels
+  (response-time chart, status timeline) + a cert-expiry dashboard widget.
 
-The `ServiceCheck` model already defines ICMP/DNS/TLS/SMTP/SSH/FTP/LDAP types;
-their handlers are planned (see Planned Features).
+FTP/LDAP check_types are defined on the model but have no handler yet.
+
+---
+
+## Alert Routing & Escalation (Stage 1)
+
+`apps/alerting/` routes alerts to teams via escalation policies.
+
+- **Models**: Team/TeamMember, ContactMethod, EscalationPolicy/EscalationStep,
+  AlertRoute (severity/source/check-type/site match conditions, AND logic,
+  priority-ordered), AlertNotification.
+- **Matching**: first active route (ascending priority) whose conditions all
+  match; an empty condition list means "match all".
+- **Notifications**: email via the Django mail backend (Stage 1). The engine
+  fires the policy's first step to the team's email-opted-in members.
+- **API**: `/api/alerting/` — teams (+members), policies (+steps), routes
+  (+`test/`), notifications. UI: Settings → Alert Routing.
+- **Later stages**: on-call schedules, acknowledgement/snooze,
+  Slack/PagerDuty/Webhook/SMS, visual escalation builder + on-call calendar.
 
 ---
 
@@ -451,8 +477,8 @@ Designed but with no models/endpoints/services yet — do not treat as current:
 - **Endpoint discovery** — MAC address-table + ARP-table ingestion (SSH/SNMP),
   OUI vendor lookup, find-device-by-IP/MAC. Planned models MACEntry/ARPEntry,
   endpoint `/api/endpoints/`.
-- **Service checks beyond Stage 1** — ICMP (icmplib), DNS (aiodns), TLS, SMTP
-  (aiosmtplib), SSH handlers.
+- **Alert routing beyond Stage 1** — on-call schedules, acknowledgement/snooze,
+  Slack/PagerDuty/Webhook/SMS channels, escalation/on-call UI.
 - **Adaptive polling** — skip SNMP for metrics a device already streams via gNMI.
 
 ---
