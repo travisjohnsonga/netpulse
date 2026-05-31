@@ -224,8 +224,12 @@ class PushConfigView(APIView):
                 port=profile.ssh_port or 22, fast_cli=False,
             )
         except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("telemetry push connect failed for %s: %s", device.hostname, exc)
             self._audit(device, request, requested, False, "", [f"connection failed: {exc}"])
             return Response({"success": False, "pushed_sections": [], "output": "",
+                             "error": f"SSH connection failed: {exc}",
+                             "suggestion": "Check the device's SSH credentials, reachability and that SSH is enabled.",
                              "errors": [f"connection failed: {exc}"]},
                             status=status.HTTP_502_BAD_GATEWAY)
 
@@ -235,12 +239,19 @@ class PushConfigView(APIView):
                 if not section or not section.get("config"):
                     errors.append(f"{sec}: no config available for this platform")
                     continue
+                # Comment lines stripped + sanitised to ASCII; terminate on the
+                # device prompt (Netmiko default) rather than a config comment.
                 lines = config_gen.section_lines(section["config"])
+                if not lines:
+                    errors.append(f"{sec}: no pushable commands after stripping comments")
+                    continue
                 try:
-                    out = conn.send_config_set(lines)
+                    out = conn.send_config_set(lines, read_timeout=30)
                     outputs.append(f"=== {sec} ===\n{out}")
                     pushed.append(sec)
                 except Exception as exc:
+                    import logging
+                    logging.getLogger(__name__).warning("push %s on %s failed: %s", sec, device.hostname, exc)
                     errors.append(f"{sec}: {exc}")
         finally:
             try:

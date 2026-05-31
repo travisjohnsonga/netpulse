@@ -45,7 +45,7 @@ def _header(device, collector_ip: str, interfaces: list) -> str:
     return (
         f"! NetPulse gNMI Telemetry Configuration\n"
         f"! Generated for {device.hostname or device.ip_address} "
-        f"({device.platform or 'unknown'}) — {n} monitored interface"
+        f"({device.platform or 'unknown'}) - {n} monitored interface"
         f"{'' if n == 1 else 's'}\n"
         f"! Collector: {collector_ip}:{_RECEIVER_PORT}"
     )
@@ -99,7 +99,7 @@ def _ietf_generator(device_table, iface_xpath):
                 sub += 1
         else:
             blocks.append(
-                "! No monitored interfaces — discover interfaces first to generate\n"
+                "! No monitored interfaces - discover interfaces first to generate\n"
                 "! targeted subscriptions. Falling back to ALL interfaces:"
             )
             # Whole-tree fallback: strip the per-interface predicate entirely.
@@ -148,7 +148,7 @@ def generate_junos_gnmi(device, collector_ip, interfaces, cfg=None):
             safe = iface.if_name.replace("/", "_").replace(".", "_")
             lines.append(sensor(f"Interface-{safe}", f"/interfaces/interface[name='{iface.if_name}']/"))
     else:
-        lines.append("# No monitored interfaces — falling back to all interfaces")
+        lines.append("# No monitored interfaces - falling back to all interfaces")
         lines.append(sensor("Interfaces-All", "/interfaces/"))
     return "\n".join(lines)
 
@@ -174,7 +174,7 @@ def generate_eos_gnmi(device, collector_ip, interfaces, cfg=None):
         for iface in interfaces:
             lines.append(f"!     /interfaces/interface[name='{iface.if_name}']/state/counters")
     else:
-        lines.append("! No monitored interfaces — falling back to /interfaces/interface/state/counters")
+        lines.append("! No monitored interfaces - falling back to /interfaces/interface/state/counters")
     return "\n".join(lines)
 
 
@@ -182,7 +182,7 @@ def generate_panos_otlp(device, collector_ip, interfaces, cfg=None):
     """Palo Alto PAN-OS streams via OpenTelemetry (OTLP), not gNMI."""
     return "\n".join([
         _header(device, collector_ip, interfaces),
-        "! PAN-OS streams telemetry via OpenTelemetry (OTLP) — not gNMI.",
+        "! PAN-OS streams telemetry via OpenTelemetry (OTLP) - not gNMI.",
         "! Point it at the NetPulse OTLP receiver (ingest-otlp, port 4317).",
         "set deviceconfig system telemetry application performance",
         "set deviceconfig system telemetry application enable yes",
@@ -193,7 +193,7 @@ def generate_panos_otlp(device, collector_ip, interfaces, cfg=None):
 
 
 def generate_fortios_snmp(device, collector_ip, interfaces, cfg=None):
-    """Fortinet FortiOS has no gNMI — fall back to SNMP polling config."""
+    """Fortinet FortiOS has no gNMI - fall back to SNMP polling config."""
     return "\n".join([
         _header(device, collector_ip, interfaces),
         "! FortiOS does not support gNMI. Use SNMP polling and Syslog for telemetry.",
@@ -215,7 +215,7 @@ def generate_generic_gnmi(device, collector_ip, interfaces, cfg=None):
     """Best-effort OpenConfig paths for unknown platforms."""
     lines = [
         _header(device, collector_ip, interfaces),
-        "! Generic OpenConfig paths (best-effort — may not work on all platforms).",
+        "! Generic OpenConfig paths (best-effort - may not work on all platforms).",
         "!   /system/state",
         "!   /components/component/state",
     ]

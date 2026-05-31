@@ -233,8 +233,9 @@ class TestConfigPush:
         captured = {}
 
         class FakeConn:
-            def send_config_set(self, lines):
+            def send_config_set(self, lines, **kwargs):
                 captured.setdefault("lines", []).extend(lines)
+                captured["read_timeout"] = kwargs.get("read_timeout")
                 return "applied " + " / ".join(lines[:1])
             def disconnect(self):
                 captured["disconnected"] = True
@@ -353,3 +354,35 @@ class TestEffectiveIntervals:
         }, format="json")
         eff = auth_client.get(f"/api/devices/{device.id}/telemetry-config/").json()["effective_intervals"]
         assert eff["device_metrics"] == 300  # global, since override is off
+
+
+class TestConfigSanitize:
+    def test_sanitize_replaces_unicode(self):
+        from apps.telemetry.config_gen import sanitize_config_for_push
+        assert sanitize_config_for_push("a\u2014b") == "a-b"      # em dash
+        assert sanitize_config_for_push("a\u2013b") == "a-b"      # en dash
+        assert sanitize_config_for_push("\u2018x\u2019") == "'x'"  # single quotes
+        assert sanitize_config_for_push("\u201cy\u201d") == '\"y\"'  # double quotes
+        assert sanitize_config_for_push("a\u2026b") == "a...b"   # ellipsis
+        assert sanitize_config_for_push("a\u00a0b") == "a b"      # nbsp
+        assert sanitize_config_for_push("a\u2500b") == "a-b"      # box drawing
+        assert sanitize_config_for_push("a\u2014b").isascii()
+
+    def test_sanitize_replaces_residual_nonascii_with_question(self):
+        from apps.telemetry.config_gen import sanitize_config_for_push
+        s = sanitize_config_for_push("snmp 中 server")  # CJK char → ?
+        assert s.isascii() and "?" in s
+
+    def test_section_lines_strips_comments_and_sanitizes(self):
+        from apps.telemetry.config_gen import section_lines
+        cfg = "! a comment — noise\nsnmp-server community netpulse\n\n!another\nlogging host 1.2.3.4"
+        lines = section_lines(cfg)
+        assert lines == ["snmp-server community netpulse", "logging host 1.2.3.4"]
+        assert all(l.isascii() for l in lines)
+
+    def test_generated_gnmi_is_ascii(self, auth_client, device, settings):
+        # The IOS-XE gNMI header used an em dash; generated config must be ASCII.
+        settings.COLLECTOR_IP = "10.0.0.9"
+        secs = auth_client.get(f"/api/devices/{device.id}/telemetry-config/generate/").json()["sections"]
+        assert secs["gnmi"]["config"].isascii()
+        assert "monitored interface" in secs["gnmi"]["config"]

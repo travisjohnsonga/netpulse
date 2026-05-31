@@ -119,7 +119,7 @@ def generate(device) -> dict:
 
     # gNMI / push-telemetry: generated in Python (per-platform, targeted to the
     # device's monitored interfaces) rather than from a single Jinja template, so
-    # every platform gets device-level + per-interface subscriptions — and
+    # every platform gets device-level + per-interface subscriptions - and
     # non-gNMI platforms (PAN-OS→OTLP, FortiOS→SNMP) get their native push config.
     from . import gnmi_subscriptions
 
@@ -127,8 +127,15 @@ def generate(device) -> dict:
     push_cfg = gnmi_subscriptions.generate_push_config(device, ctx["collector_ip"], interfaces, cfg)
     sections["gnmi"] = {"enabled": bool(enabled_default.get("gnmi")), "config": push_cfg}
 
+    # Sanitise every section + the full config to ASCII so the Copy button
+    # yields paste-safe text (non-ASCII like em dashes cause "% Invalid input"
+    # on Cisco IOS/IOS-XE).
+    for sec in SECTIONS:
+        if sections[sec]["config"]:
+            sections[sec]["config"] = sanitize_config_for_push(sections[sec]["config"])
+
     full = "\n!\n".join(
-        f"! ── {sec.upper()} ──\n{sections[sec]['config']}"
+        f"! -- {sec.upper()} --\n{sections[sec]['config']}"
         for sec in SECTIONS if sections[sec]["config"]
     )
 
@@ -137,10 +144,43 @@ def generate(device) -> dict:
         "vendor": device.vendor or "",
         "collector_ip": ctx["collector_ip"],
         "sections": sections,
-        "full_config": full,
+        "full_config": sanitize_config_for_push(full),
     }
 
 
+# Common unicode → ASCII substitutions; the final encode() catches anything else.
+_UNICODE_TO_ASCII = {
+    "—": "-", "–": "-",      # em / en dash
+    "‘": "'", "’": "'",      # single quotes
+    "“": '"', "”": '"',      # double quotes
+    "…": "...",                    # ellipsis
+    " ": " ",                      # non-breaking space
+    "─": "-",                      # box-drawing horizontal
+}
+
+
+def sanitize_config_for_push(config: str) -> str:
+    """
+    Replace non-ASCII characters with ASCII equivalents so the config is safe to
+    paste or push to a device. Any remaining non-ASCII is replaced with '?'.
+    """
+    if not config:
+        return config
+    for uni, asc in _UNICODE_TO_ASCII.items():
+        config = config.replace(uni, asc)
+    return config.encode("ascii", errors="replace").decode("ascii")
+
+
 def section_lines(config: str) -> list[str]:
-    """Split a rendered section into non-empty config lines for send_config_set."""
-    return [ln for ln in (config or "").splitlines() if ln.strip()]
+    """
+    Config lines ready for Netmiko send_config_set: comment lines (starting with
+    '!') are dropped — they aren't config and can trip up some platforms — and
+    every line is sanitised to ASCII.
+    """
+    out = []
+    for ln in (config or "").splitlines():
+        s = ln.strip()
+        if not s or s.startswith("!"):
+            continue
+        out.append(sanitize_config_for_push(ln))
+    return out
