@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.logs",
     "apps.tls",
     "apps.checks",
+    "apps.alerting",
 ]
 
 MIDDLEWARE = [
@@ -150,6 +151,22 @@ OPENSEARCH_USE_SSL = os.environ.get("OPENSEARCH_USE_SSL", "false").lower() == "t
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
 NATS_USER = os.environ.get("NATS_USER", "")
 NATS_PASSWORD = os.environ.get("NATS_PASSWORD", "")
+
+# ── Email (alert notifications) ───────────────────────────────────────────────
+
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() in ("1", "true", "yes")
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "NetPulse Alerts <netpulse@localhost>")
+DEFAULT_FROM_EMAIL = EMAIL_FROM
+# Default to the SMTP backend; tests use the in-memory backend (pytest-django).
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST
+    else "django.core.mail.backends.console.EmailBackend",
+)
 
 # ── OpenBao ───────────────────────────────────────────────────────────────────
 

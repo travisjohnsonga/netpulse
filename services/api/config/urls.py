@@ -40,6 +40,7 @@ urlpatterns = [
     path("api/configbackup/",  include("apps.configbackup.urls")),
     path("api/logs/",         include("apps.logs.urls")),
     path("api/checks/",       include("apps.checks.urls")),
+    path("api/alerting/",     include("apps.alerting.urls")),
     path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
     path("api/settings/system/",  SystemSettingsView.as_view(),  name="system-settings"),
 
