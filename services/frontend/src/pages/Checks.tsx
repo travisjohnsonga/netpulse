@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
+import ReactECharts from 'echarts-for-react'
+import type { EChartsOption } from 'echarts'
 import EmptyState from '../components/EmptyState'
 import Modal from '../components/Modal'
 import {
-  fetchChecks, fetchCheckSummary, saveCheck, deleteCheck, runCheckNow,
+  fetchChecks, fetchCheckSummary, saveCheck, deleteCheck, runCheckNow, fetchCheckResults,
   type ServiceCheck, type CheckStatus, type CheckType, type CheckSummary,
-  type ServiceCheckPayload,
+  type ServiceCheckPayload, type CheckResultsResponse,
 } from '../api/client'
 
 const STATUS_BADGE: Record<CheckStatus, string> = {
@@ -57,6 +59,7 @@ export default function Checks() {
   const [error, setError] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -138,11 +141,20 @@ export default function Checks() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {checks.map((c) => (
-                  <tr key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                {checks.map((c) => {
+                  const open = expandedId === c.id
+                  return (
+                  <Fragment key={c.id}>
+                  <tr
+                    onClick={() => setExpandedId(open ? null : c.id)}
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                  >
                     <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">
-                      {c.name}
-                      {!c.is_enabled && <span className="ml-2 text-xs text-gray-400">(paused)</span>}
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="text-gray-400 text-xs w-3 inline-block">{open ? '▼' : '▶'}</span>
+                        {c.name}
+                        {!c.is_enabled && <span className="ml-2 text-xs text-gray-400">(paused)</span>}
+                      </span>
                     </td>
                     <td className="px-5 py-3 uppercase text-xs text-gray-500">{c.check_type}</td>
                     <td className="px-5 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
@@ -170,18 +182,26 @@ export default function Checks() {
                     </td>
                     <td className="px-5 py-3 text-right whitespace-nowrap">
                       <button
-                        onClick={() => handleRunNow(c.id)}
+                        onClick={(e) => { e.stopPropagation(); handleRunNow(c.id) }}
                         disabled={busyId === c.id}
                         className="text-blue-600 hover:text-blue-800 disabled:opacity-40 text-xs font-medium mr-3"
                       >Run now</button>
                       <button
-                        onClick={() => handleDelete(c.id)}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(c.id) }}
                         disabled={busyId === c.id}
                         className="text-red-600 hover:text-red-800 disabled:opacity-40 text-xs font-medium"
                       >Delete</button>
                     </td>
                   </tr>
-                ))}
+                  {open && (
+                    <tr className="bg-gray-50/60 dark:bg-gray-900/40">
+                      <td colSpan={7} className="px-5 py-4">
+                        <CheckHistoryPanel check={c} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                )})}
               </tbody>
             </table>
           </div>
@@ -190,6 +210,183 @@ export default function Checks() {
 
       {showAdd && (
         <AddCheckModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />
+      )}
+    </div>
+  )
+}
+
+// ── Expanding history panel ──────────────────────────────────────────────────
+
+const HISTORY_PERIODS = ['1h', '6h', '24h', '7d'] as const
+const TIMELINE_COLOR: Record<CheckStatus, string> = {
+  up: 'bg-green-500', degraded: 'bg-yellow-500', down: 'bg-red-500', unknown: 'bg-gray-300 dark:bg-gray-600',
+}
+
+function uptimeClass(pct: number | null): string {
+  if (pct == null) return 'text-gray-500'
+  if (pct >= 99) return 'text-green-600 dark:text-green-400'
+  if (pct >= 95) return 'text-yellow-600 dark:text-yellow-400'
+  return 'text-red-600 dark:text-red-400'
+}
+
+// Short, type-aware summary of a probe's details for the history table.
+function formatResultDetails(type: CheckType, d: Record<string, unknown> | undefined): string {
+  if (!d) return '—'
+  const g = (k: string) => d[k]
+  switch (type) {
+    case 'http': case 'https': {
+      const parts: string[] = []
+      if (g('status_code') != null) parts.push(String(g('status_code')))
+      if (g('body_match') != null) parts.push(g('body_match') ? 'body ✓' : 'body ✗')
+      if (g('redirect_count')) parts.push(`${g('redirect_count')} redir`)
+      return parts.join(' · ') || '—'
+    }
+    case 'icmp': return `${g('packet_loss_pct') ?? '?'}% loss · ${g('avg_rtt_ms') ?? '?'}ms · jitter ${g('jitter_ms') ?? '?'}ms`
+    case 'dns': { const a = g('answers') as unknown[] | undefined; return a && a.length ? a.join(', ') : 'resolved' }
+    case 'tls': return `${g('days_remaining') ?? '?'}d · ${g('cert_cn') ?? ''} (${g('issuer') ?? '?'})`
+    case 'smtp': return `${g('starttls_supported') ? 'STARTTLS' : 'no STARTTLS'}${g('banner') ? ' · ' + String(g('banner')).slice(0, 40) : ''}`
+    case 'ssh': case 'ssh_banner': return g('banner') ? String(g('banner')) : '—'
+    case 'tcp': return g('matched') != null ? (g('matched') ? 'match ✓' : 'match ✗') : 'connected'
+    default: return '—'
+  }
+}
+
+function CheckHistoryPanel({ check }: { check: ServiceCheck }) {
+  const [period, setPeriod] = useState('24h')
+  const [cache, setCache] = useState<Record<string, CheckResultsResponse>>({})
+  const [loading, setLoading] = useState(false)
+  const [shown, setShown] = useState(10)
+  const data = cache[period]
+
+  // Lazy-load on open / period change; cache per period.
+  useEffect(() => {
+    if (cache[period]) return
+    let cancelled = false
+    setLoading(true)
+    fetchCheckResults(check.id, period)
+      .then((r) => { if (!cancelled) setCache((c) => ({ ...c, [period]: r })) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [check.id, period, cache])
+  useEffect(() => { setShown(10) }, [period])
+
+  const results = data?.results ?? []
+  const chrono = [...results].reverse()  // oldest → newest (left → right)
+  const summary = data?.summary
+
+  const rtOption: EChartsOption = {
+    grid: { left: 44, right: 12, top: 10, bottom: 22 },
+    tooltip: { trigger: 'axis', formatter: (p: any) => { const x = Array.isArray(p) ? p[0] : p; return `${x.axisValue}<br/>${x.value == null ? '—' : x.value + ' ms'}` } },
+    xAxis: { type: 'category', data: chrono.map((r) => new Date(r.checked_at).toLocaleTimeString()), axisLabel: { fontSize: 9, showMaxLabel: true } },
+    yAxis: { type: 'value', name: 'ms', nameTextStyle: { fontSize: 9 }, axisLabel: { fontSize: 9 } },
+    series: [{
+      type: 'line', smooth: true, showSymbol: false,
+      data: chrono.map((r) => r.response_time_ms),
+      lineStyle: { color: '#3b82f6', width: 1.5 }, areaStyle: { color: '#3b82f6', opacity: 0.1 },
+      markLine: {
+        silent: true, symbol: 'none',
+        data: [
+          ...(check.response_time_warning_ms ? [{ yAxis: check.response_time_warning_ms, lineStyle: { color: '#eab308', type: 'dashed' as const } }] : []),
+          ...(check.response_time_critical_ms ? [{ yAxis: check.response_time_critical_ms, lineStyle: { color: '#ef4444', type: 'dashed' as const } }] : []),
+        ],
+      },
+    }],
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Period tabs + uptime */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex gap-1">
+          {HISTORY_PERIODS.map((p) => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={clsx('px-2.5 py-1 text-xs rounded-md border',
+                period === p ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
+                  : 'border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800')}>
+              {p}
+            </button>
+          ))}
+        </div>
+        {summary && (
+          <span className="text-sm">
+            <span className={clsx('font-semibold', uptimeClass(summary.uptime_pct))}>
+              {summary.uptime_pct == null ? '—' : `${summary.uptime_pct}%`}
+            </span>
+            <span className="text-gray-500 dark:text-gray-400"> uptime (last {period}) · {summary.total} checks</span>
+          </span>
+        )}
+      </div>
+
+      {loading && !data ? (
+        <div className="space-y-2 animate-pulse">
+          <div className="h-24 bg-gray-200 dark:bg-gray-700 rounded" />
+          <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded" />
+          <div className="h-20 bg-gray-200 dark:bg-gray-700 rounded" />
+        </div>
+      ) : results.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500 py-6 text-center">No results recorded in this period yet.</p>
+      ) : (
+        <>
+          {/* Response time chart */}
+          <div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Response time</p>
+            <ReactECharts option={rtOption} style={{ height: 120 }} opts={{ renderer: 'svg' }} notMerge />
+          </div>
+
+          {/* Status timeline */}
+          <div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Status timeline (oldest → newest)</p>
+            <div className="flex gap-px h-5 rounded overflow-hidden">
+              {chrono.map((r) => (
+                <div key={r.id} className={clsx('flex-1 min-w-[2px]', TIMELINE_COLOR[r.status])}
+                  title={`${r.status} · ${fmtMs(r.response_time_ms)} · ${new Date(r.checked_at).toLocaleString()}${r.error ? ' · ' + r.error : ''}`} />
+              ))}
+            </div>
+            <div className="flex gap-3 mt-1 text-[10px] text-gray-400">
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-green-500 mr-1" />up</span>
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-yellow-500 mr-1" />degraded</span>
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-red-500 mr-1" />down</span>
+            </div>
+          </div>
+
+          {/* Recent results table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+                  <th className="px-3 py-1.5 font-medium">Time</th>
+                  <th className="px-3 py-1.5 font-medium">Status</th>
+                  <th className="px-3 py-1.5 font-medium">ms</th>
+                  <th className="px-3 py-1.5 font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {results.slice(0, shown).map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-3 py-1.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{new Date(r.checked_at).toLocaleTimeString()}</td>
+                    <td className="px-3 py-1.5">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={clsx('w-1.5 h-1.5 rounded-full', STATUS_DOT[r.status])} />
+                        <span className="capitalize">{r.status}</span>
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-600 dark:text-gray-300">{fmtMs(r.response_time_ms)}</td>
+                    <td className="px-3 py-1.5 text-gray-500 dark:text-gray-400 max-w-xs truncate" title={r.error || formatResultDetails(check.check_type, r.details)}>
+                      {r.error ? <span className="text-red-600 dark:text-red-400">{r.error}</span> : formatResultDetails(check.check_type, r.details)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex items-center justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
+              <span>Showing {Math.min(shown, results.length)} of {results.length} results</span>
+              {shown < results.length && (
+                <button onClick={() => setShown((n) => n + 20)} className="text-blue-600 hover:text-blue-800 font-medium">Load more</button>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )

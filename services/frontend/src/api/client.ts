@@ -1310,7 +1310,15 @@ export async function runCheckNow(id: number): Promise<CheckResult & { current_s
   return data
 }
 
-export async function fetchCheckResults(id: number, period = '24h'): Promise<{ count: number; results: CheckResult[] }> {
-  const { data } = await api.get(`/checks/${id}/results/`, { params: { period } })
+export interface CheckResultsResponse {
+  check_id: number
+  check_name: string
+  period: string
+  summary: { total: number; up: number; down: number; degraded: number; uptime_pct: number | null }
+  results: CheckResult[]
+}
+
+export async function fetchCheckResults(id: number, period = '24h'): Promise<CheckResultsResponse> {
+  const { data } = await api.get<CheckResultsResponse>(`/checks/${id}/results/`, { params: { period } })
   return data
 }
