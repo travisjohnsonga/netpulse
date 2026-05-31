@@ -105,6 +105,14 @@ def process_alert_event(alert_event) -> dict:
     source = labels.get("source")
     check_type = labels.get("check_type")
     site_id = labels.get("site_id")
+    device_id = labels.get("device_id")
+
+    # Suppress notifications during a maintenance window.
+    from .maintenance import is_in_maintenance
+    if is_in_maintenance(device_id=device_id, severity=severity, check_type=check_type):
+        alert_event.labels = {**labels, "suppressed": True, "suppressed_reason": "maintenance_window"}
+        alert_event.save(update_fields=["labels", "updated_at"])
+        return {"matched": False, "route": None, "notified": 0, "suppressed": True}
 
     route = find_matching_route(severity, source, check_type, site_id)
     if route is None:

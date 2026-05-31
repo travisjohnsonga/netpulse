@@ -104,6 +104,12 @@ class Command(BaseCommand):
                          source="check_engine", check_id=check.id)
 
     @staticmethod
+    def _suppressed(check, alert) -> bool:
+        from apps.alerting.maintenance import is_in_maintenance
+        sev = {"down": "high", "recovery": "info", "degraded": "medium"}.get(alert)
+        return is_in_maintenance(device_id=check.device_id, severity=sev, check_type=check.check_type)
+
+    @staticmethod
     def _persist(check, result) -> str | None:
         from django.utils import timezone
         return persist_result(check, result, timezone.now())
@@ -111,6 +117,9 @@ class Command(BaseCommand):
     async def _maybe_alert(self, check, result, alert: str):
         # Respect the check's per-state alert toggles.
         if not alert_enabled(alert, check.alert_on_down, check.alert_on_recovery, check.alert_on_degraded):
+            return
+        # Suppress during a maintenance window covering this check's device.
+        if await sync_to_async(self._suppressed, thread_sensitive=True)(check, alert):
             return
         # Suppress down alerts when the associated device is itself unreachable.
         if alert == "down" and check.device_id:

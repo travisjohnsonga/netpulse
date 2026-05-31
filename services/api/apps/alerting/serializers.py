@@ -2,7 +2,8 @@ from rest_framework import serializers
 
 from .models import (
     AlertAcknowledgement, AlertNotification, AlertRoute, ContactMethod,
-    EscalationPolicy, EscalationStep, OnCallSchedule, OnCallShift, Team, TeamMember,
+    EscalationPolicy, EscalationStep, MaintenanceWindow, OnCallSchedule,
+    OnCallShift, Team, TeamMember,
 )
 
 
@@ -97,3 +98,20 @@ class AlertNotificationSerializer(serializers.ModelSerializer):
         fields = ("id", "alert_event", "escalation_step", "user", "username",
                   "team", "channel", "status", "sent_at", "error", "created_at")
         read_only_fields = fields
+
+
+class MaintenanceWindowSerializer(serializers.ModelSerializer):
+    is_currently_active = serializers.BooleanField(read_only=True)
+    device_names = serializers.SerializerMethodField()
+    site_names = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MaintenanceWindow
+        fields = "__all__"
+        read_only_fields = ("created_by", "created_at", "updated_at")
+
+    def get_device_names(self, obj):
+        return list(obj.devices.values_list("hostname", flat=True))
+
+    def get_site_names(self, obj):
+        return list(obj.sites.values_list("name", flat=True))

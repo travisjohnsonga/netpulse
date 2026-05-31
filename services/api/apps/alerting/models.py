@@ -191,3 +191,48 @@ class AlertNotification(TimestampedModel):
 
     def __str__(self):
         return f"notify {self.alert_event_id} via {self.channel} ({self.status})"
+
+
+class MaintenanceWindow(TimestampedModel):
+    """
+    A scheduled window during which alerts for the in-scope devices/sites are
+    suppressed. Empty scope (no devices, no sites) suppresses ALL alerts.
+    """
+    class Recurrence(models.TextChoices):
+        NONE = "none", "One-time"
+        DAILY = "daily", "Daily"
+        WEEKLY = "weekly", "Weekly"
+        MONTHLY = "monthly", "Monthly"
+
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    timezone = models.CharField(max_length=64, default="UTC")
+
+    recurrence = models.CharField(max_length=8, choices=Recurrence.choices, default=Recurrence.NONE)
+    recurrence_end = models.DateTimeField(null=True, blank=True)
+    recurrence_days = models.JSONField(default=list, blank=True)  # ["MON","WED","FRI"]
+
+    # Scope — empty devices AND sites = suppress everything.
+    devices = models.ManyToManyField("devices.Device", blank=True, related_name="maintenance_windows")
+    sites = models.ManyToManyField("devices.Site", blank=True, related_name="maintenance_windows")
+    check_types = models.JSONField(default=list, blank=True)
+    severity_filter = models.JSONField(default=list, blank=True)  # empty = all severities
+
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="maintenance_windows")
+
+    class Meta(TimestampedModel.Meta):
+        ordering = ["start_time"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def is_currently_active(self) -> bool:
+        from django.utils import timezone
+        now = timezone.now()
+        return self.is_active and self.start_time <= now <= self.end_time

@@ -234,3 +234,88 @@ class TestOnCallApi:
         oncall = auth_client.get("/api/alerting/on-call/").json()
         row = next(r for r in oncall if r["team"] == team.id)
         assert row["username"] == "s1"
+
+
+class TestMaintenanceWindows:
+    def _window(self, **kw):
+        from django.utils import timezone
+        from datetime import timedelta
+        from apps.alerting.models import MaintenanceWindow
+        now = timezone.now()
+        defaults = dict(name="w", start_time=now - timedelta(hours=1), end_time=now + timedelta(hours=1))
+        defaults.update(kw)
+        return MaintenanceWindow.objects.create(**defaults)
+
+    def test_global_window_suppresses_all(self):
+        from apps.alerting.maintenance import is_in_maintenance
+        self._window(name="global")
+        assert is_in_maintenance(device_id=None, severity="high") is True
+        assert is_in_maintenance(device_id=12345, severity="critical") is True
+
+    def test_device_scoped_window(self):
+        from apps.alerting.maintenance import is_in_maintenance
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="m1", ip_address="10.5.0.1")
+        other = Device.objects.create(hostname="m2", ip_address="10.5.0.2")
+        w = self._window(name="dev"); w.devices.add(d)
+        assert is_in_maintenance(device_id=d.id) is True
+        assert is_in_maintenance(device_id=other.id) is False
+
+    def test_site_scoped_window(self):
+        from apps.alerting.maintenance import is_in_maintenance
+        from apps.devices.models import Device, Site
+        s = Site.objects.create(name="DC-M")
+        d = Device.objects.create(hostname="m3", ip_address="10.5.0.3", site=s)
+        w = self._window(name="site"); w.sites.add(s)
+        assert is_in_maintenance(device_id=d.id) is True
+
+    def test_severity_filter(self):
+        from apps.alerting.maintenance import is_in_maintenance
+        self._window(name="crit-only", severity_filter=["critical"])
+        assert is_in_maintenance(severity="critical") is True
+        assert is_in_maintenance(severity="low") is False
+
+    def test_inactive_or_expired_window_not_applied(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from apps.alerting.maintenance import is_in_maintenance
+        self._window(name="off", is_active=False)
+        self._window(name="past", start_time=timezone.now() - timedelta(days=2),
+                     end_time=timezone.now() - timedelta(days=1))
+        assert is_in_maintenance(severity="high") is False
+
+    def test_is_currently_active_property(self):
+        assert self._window().is_currently_active is True
+        from django.utils import timezone
+        from datetime import timedelta
+        future = self._window(name="future", start_time=timezone.now() + timedelta(hours=1),
+                              end_time=timezone.now() + timedelta(hours=2))
+        assert future.is_currently_active is False
+
+    def test_process_alert_event_suppressed_during_maintenance(self):
+        from apps.alerting.engine import process_alert_event
+        from apps.alerts.models import AlertRule, AlertEvent
+        self._window(name="global")  # suppress everything
+        rule = AlertRule.objects.create(name="x", severity="high", condition={})
+        ev = AlertEvent.objects.create(rule=rule, state="firing", annotations={"severity": "high"})
+        result = process_alert_event(ev)
+        assert result.get("suppressed") is True and result["notified"] == 0
+        ev.refresh_from_db()
+        assert ev.labels.get("suppressed") is True and ev.labels.get("suppressed_reason") == "maintenance_window"
+
+    def test_api_crud_active_and_end_now(self, auth_client):
+        from django.utils import timezone
+        from datetime import timedelta
+        now = timezone.now()
+        resp = auth_client.post("/api/alerting/maintenance/", {
+            "name": "Router1 upgrade",
+            "start_time": (now - timedelta(minutes=10)).isoformat(),
+            "end_time": (now + timedelta(hours=2)).isoformat(),
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        wid = resp.json()["id"]
+        assert resp.json()["is_currently_active"] is True
+        active = auth_client.get("/api/alerting/maintenance/active/").json()
+        assert any(w["id"] == wid for w in active)
+        ended = auth_client.post(f"/api/alerting/maintenance/{wid}/end-now/")
+        assert ended.status_code == 200 and ended.json()["is_currently_active"] is False

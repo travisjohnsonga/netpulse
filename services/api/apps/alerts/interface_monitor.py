@@ -89,6 +89,11 @@ def process_interface_status(iface, new_status: str, now=None) -> "object | None
 
     if cur == "down" and not iface.alert_on_down:
         return None
+    # Suppress the alert during a maintenance window covering this device.
+    if cur == "down":
+        from apps.alerting.maintenance import is_in_maintenance
+        if is_in_maintenance(device_id=iface.device_id, severity=iface.alert_severity):
+            return None
     if cur == "up" and not iface.alert_on_up:
         return None
     if prev == "unknown":

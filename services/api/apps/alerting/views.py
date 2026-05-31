@@ -7,12 +7,12 @@ from rest_framework.viewsets import GenericViewSet
 from . import engine
 from .models import (
     AlertNotification, AlertRoute, ContactMethod, EscalationPolicy,
-    EscalationStep, OnCallSchedule, OnCallShift, Team, TeamMember,
+    EscalationStep, MaintenanceWindow, OnCallSchedule, OnCallShift, Team, TeamMember,
 )
 from .serializers import (
     AlertNotificationSerializer, AlertRouteSerializer, ContactMethodSerializer,
-    EscalationPolicySerializer, EscalationStepSerializer, OnCallScheduleSerializer,
-    OnCallShiftSerializer, TeamMemberSerializer, TeamSerializer,
+    EscalationPolicySerializer, EscalationStepSerializer, MaintenanceWindowSerializer,
+    OnCallScheduleSerializer, OnCallShiftSerializer, TeamMemberSerializer, TeamSerializer,
 )
 
 
@@ -149,3 +149,32 @@ class OnCallShiftViewSet(viewsets.ModelViewSet):
     queryset = OnCallShift.objects.select_related("user", "schedule").all()
     serializer_class = OnCallShiftSerializer
     filterset_fields = ["schedule", "user"]
+
+
+class MaintenanceWindowViewSet(viewsets.ModelViewSet):
+    """Scheduled maintenance windows that suppress alerts while active."""
+
+    queryset = MaintenanceWindow.objects.prefetch_related("devices", "sites").all()
+    serializer_class = MaintenanceWindowSerializer
+    filterset_fields = ["is_active", "recurrence"]
+    search_fields = ["name"]
+    ordering = ["start_time"]
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+    @action(detail=False, methods=["get"])
+    def active(self, request):
+        """Currently-active maintenance windows (for the dashboard widget)."""
+        from .maintenance import active_windows
+        return Response(self.get_serializer(active_windows(), many=True).data)
+
+    @action(detail=True, methods=["post"], url_path="end-now")
+    def end_now(self, request, pk=None):
+        """End a window immediately (set end_time = now)."""
+        from django.utils import timezone
+        w = self.get_object()
+        w.end_time = timezone.now()
+        w.save(update_fields=["end_time", "updated_at"])
+        return Response(self.get_serializer(w).data)

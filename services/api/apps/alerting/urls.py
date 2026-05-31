@@ -4,8 +4,8 @@ from django.urls import path
 
 from .views import (
     AlertNotificationViewSet, AlertRouteViewSet, ContactMethodViewSet,
-    EscalationPolicyViewSet, EscalationStepViewSet, OnCallScheduleViewSet,
-    OnCallShiftViewSet, TeamViewSet,
+    EscalationPolicyViewSet, EscalationStepViewSet, MaintenanceWindowViewSet,
+    OnCallScheduleViewSet, OnCallShiftViewSet, TeamViewSet,
 )
 
 router = DefaultRouter()
@@ -17,6 +17,7 @@ router.register("contact-methods", ContactMethodViewSet)
 router.register("notifications", AlertNotificationViewSet)
 router.register("schedules", OnCallScheduleViewSet)
 router.register("shifts", OnCallShiftViewSet)
+router.register("maintenance", MaintenanceWindowViewSet)
 
 # /api/alerting/on-call/ → who is on-call now (alias of schedules/current/).
 urlpatterns = [

@@ -120,7 +120,10 @@ class Command(BaseCommand):
                     updates["status"] = Device.Status.UNREACHABLE
                     # Stamp the start of the outage for downtime reporting.
                     updates["unreachable_since"] = now
-                    transitions.append(("high", d["hostname"], d["id"], f"Device {d['hostname']} unreachable"))
+                    # Suppress the alert during a maintenance window (still flip status).
+                    from apps.alerting.maintenance import is_in_maintenance
+                    if not is_in_maintenance(device_id=d["id"], severity="high"):
+                        transitions.append(("high", d["hostname"], d["id"], f"Device {d['hostname']} unreachable"))
                 Device.objects.filter(pk=d["id"]).update(**updates)
         return transitions
 
