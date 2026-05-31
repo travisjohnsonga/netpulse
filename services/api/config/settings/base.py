@@ -173,6 +173,14 @@ if os.path.exists(_CA_BUNDLE):
 # generating device telemetry config). Configured under Settings → General.
 COLLECTOR_IP = os.environ.get("COLLECTOR_IP", "")
 
+# Path to the web-UI TLS certificate, read by /api/health/ to report
+# ssl_cert_days_remaining. Defaults to the shared ssl-certs volume the tls app
+# writes and nginx serves; override with SSL_CERT_PATH if mounted elsewhere.
+SSL_CERT_PATH = os.environ.get(
+    "SSL_CERT_PATH",
+    os.path.join(os.environ.get("SSL_CERT_DIR", "/etc/ssl/netpulse"), "netpulse.crt"),
+)
+
 # ── Config push safety ────────────────────────────────────────────────────────
 # Master switch for pushing configuration to network devices. Default false
 # (read-only / monitoring only); device-push endpoints return 403 unless this

@@ -206,12 +206,12 @@ services:
       openbao:
         condition: service_healthy
     healthcheck:
-      # Requires GET /api/health/ → 200. Implement this endpoint early.
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/api/health/ >/dev/null 2>&1"]
+      # GET /api/health/ → 200. Uses Python (curl/wget aren't in the slim image).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/api/health/'); sys.exit(0 if r.status==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 90s
 
   websocket:
     build: ./services/api

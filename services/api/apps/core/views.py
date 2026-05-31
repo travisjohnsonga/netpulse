@@ -1,3 +1,4 @@
+import datetime
 import os
 import socket
 import urllib.request
@@ -18,6 +19,37 @@ from .serializers import (
     MeSerializer,
     UserPreferencesSerializer,
 )
+
+
+def _ssl_cert_days_remaining():
+    """Whole days until the web-UI TLS cert expires, or None if unavailable.
+
+    Reads the cert at settings.SSL_CERT_PATH. Returns None when the cert is
+    missing or unreadable (e.g. before one has been generated) so the dashboard
+    simply omits the expiry warning rather than erroring. Negative values mean
+    the cert has already expired.
+    """
+    from django.conf import settings as dj_settings
+
+    cert_path = getattr(dj_settings, "SSL_CERT_PATH", "") or ""
+    if not cert_path or not os.path.isfile(cert_path):
+        return None
+    try:
+        from cryptography import x509
+
+        with open(cert_path, "rb") as fh:
+            cert = x509.load_pem_x509_certificate(fh.read())
+        # cryptography ≥42 deprecates naive not_valid_after in favour of the
+        # tz-aware *_utc; support both so we work across pinned versions.
+        try:
+            expiry = cert.not_valid_after_utc
+            now = datetime.datetime.now(datetime.timezone.utc)
+        except AttributeError:  # pragma: no cover - older cryptography
+            expiry = cert.not_valid_after
+            now = datetime.datetime.utcnow()
+        return (expiry - now).days
+    except Exception:  # noqa: BLE001 — health must never raise on a bad cert
+        return None
 
 
 @extend_schema(
@@ -51,7 +83,7 @@ def health(request):
             "status": status,
             "db": db_ok,
             "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
-            "ssl_cert_days_remaining": None,
+            "ssl_cert_days_remaining": _ssl_cert_days_remaining(),
         },
         status=200 if db_ok else 503,
     )
