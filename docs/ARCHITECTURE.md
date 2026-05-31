@@ -300,6 +300,24 @@ Each microservice has its own AppRole with minimal Vault policy:
 - `config-manager` can only read `secret/data/devices/+/ssh`
 - No service gets list access to all credentials at once
 
+### Hardening (implemented)
+- **SNMPv3 authPriv enforced by default** — config generation produces SNMPv3
+  (auth + privacy) when the credential profile is v3; SNMPv2c falls back with a
+  plaintext-security warning surfaced in the UI. Auth/priv keys are write-only
+  (placeholders in generated config, real keys fetched from OpenBao on push).
+- **Auth endpoint rate limiting** — JWT obtain/refresh endpoints are throttled
+  (DRF ScopedRateThrottle, `AUTH_THROTTLE_RATE`, default 10/min) to blunt
+  brute-force login attempts (security finding H1).
+- **ASCII sanitization before config push** — `sanitize_config_for_push()`
+  maps non-ASCII (em dash, smart quotes, box-drawing) to ASCII and strips
+  comment lines, preventing "% Invalid input" / config-injection surprises on
+  IOS/IOS-XE when pasting or pushing.
+- **Config push disabled by default** — `ALLOW_CONFIG_PUSH=false`; the platform
+  is read-only until a network team explicitly enables pushes.
+- **Dependabot** — automated weekly dependency updates (pip/npm/docker/actions),
+  grouped (Django/React/Tailwind).
+- **OT/ICS subnet exclusion** — discovery never probes excluded subnets.
+
 ---
 
 ## Data Architecture
@@ -362,9 +380,17 @@ Each microservice has its own AppRole with minimal Vault policy:
 ### Phase 3 — Advanced Intelligence
 - [x] Log ingestion + OpenSearch query (basic anomaly groundwork)
 - [x] Auth security engine (basic — DeviceRiskScore)
+- [x] Alert routing — teams/policies/route-matching + email/Slack/Discord
+- [x] Alert auto-resolution (state-driven, label-matched recovery + 90-day purge)
+- [x] Maintenance windows (alert suppression, one-off + recurring)
+- [x] Topology dedup (canonical link ordering + 4-field UniqueConstraint)
+- [x] FortiOS interface discovery (platform-aware parser)
+- [x] SNMPv3 authPriv config generation (per-platform)
+- [x] Auth rate limiting (H1 — JWT endpoint throttling)
 - [ ] 🔄 CVE ingestion + applicability (in progress)
 - [ ] 🔄 Lifecycle/EOL management (in progress)
-- [ ] 🔄 Alert routing — teams/policies/route-matching + email (Stage 1 done)
+- [ ] Default/system alert rules + Rules page (in progress)
+- [ ] Discovery page wiring — DiscoveryJob API + OT/ICS exclusions (in progress)
 - [ ] Log group-trend / vendor-bug detection
 
 ### Phase 4 — Frontend & Flow
@@ -439,12 +465,26 @@ FTP/LDAP check_types are defined on the model but have no handler yet.
   priority-ordered), AlertNotification.
 - **Matching**: first active route (ascending priority) whose conditions all
   match; an empty condition list means "match all".
-- **Notifications**: email via the Django mail backend (Stage 1). The engine
-  fires the policy's first step to the team's email-opted-in members.
-- **API**: `/api/alerting/` — teams (+members), policies (+steps), routes
-  (+`test/`), notifications. UI: Settings → Alert Routing.
-- **Later stages**: on-call schedules, acknowledgement/snooze,
-  Slack/PagerDuty/Webhook/SMS, visual escalation builder + on-call calendar.
+- **Notifications**: email (Django mail backend) plus per-team **Slack** and
+  **Discord** webhooks. The engine fires the policy's first step to the team's
+  email-opted-in members (preferring the current on-call user) and posts a
+  colour-coded embed to the team's Discord/Slack webhook. Each delivery is
+  recorded as an AlertNotification (channel = email/slack/discord).
+- **Maintenance windows**: `MaintenanceWindow` (one-off + daily/weekly/monthly
+  recurrence, device/site scope, severity/check-type filters) suppresses both
+  the publishing monitor and the routing engine while active.
+- **Auto-resolution**: alerts carry a `state` (firing/resolved) with
+  `resolved_by`/`resolution_note`. Reachability/check/interface recovery
+  auto-resolves matching firing events by label (`labels__source`,
+  `labels__device_id`); a 90-day purge runs from the scheduler. The list API
+  defaults to active-only (`?resolved=false|true|all`).
+- **On-call**: OnCallSchedule/Shift with current-on-call resolution;
+  acknowledgement/snooze on AlertEvent.
+- **API**: `/api/alerting/` — teams (+members, +`test-discord/`), policies
+  (+steps), routes (+`test/`), maintenance windows (+`active/`, +`end-now/`),
+  on-call schedules, notifications. UI: Settings → Alert Routing.
+- **Later stages**: PagerDuty/Webhook/SMS, visual escalation builder + on-call
+  calendar.
 
 ---
 
@@ -463,7 +503,24 @@ FTP/LDAP check_types are defined on the model but have no handler yet.
 **Configured but not yet validated against real hardware**
 - Juniper JunOS (JTI `set services analytics` telemetry config generation)
 - Arista EOS, Cisco NX-OS, Cisco IOS-XR
-- Palo Alto PAN-OS (via OTLP), Fortinet FortiOS (via SNMP)
+- Palo Alto PAN-OS (via OTLP)
+- Fortinet FortiOS:
+  - SSH: working
+  - Interface discovery: working (platform-aware — `get system interface`
+    with a custom parser, not Cisco `show interfaces`; LLDP via `get system
+    lldp neighbors-detail` best-effort)
+  - SNMPv3: config generated (authPriv per FortiOS syntax)
+  - SNMPv2c: config generated (with plaintext warning)
+  - Syslog: working
+  - gNMI: not supported (documented — FortiOS has no gNMI dial-out)
+  - NetFlow: configured
+
+### SNMP Security
+NetPulse generates SNMPv3 authPriv configurations by default. SNMPv2c community
+strings are transmitted in plaintext and should not be used in production
+environments; the UI shows a warning when an SNMPv2c credential is configured.
+Per-platform CLI token differences are handled by the generator (IOS-XE
+"aes 128", NX-OS "aes-128", Junos "privacy-aes128", EOS/FortiOS "aes").
 
 ---
 
