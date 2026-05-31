@@ -430,6 +430,10 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    # ICMP service checks send raw echo packets (icmplib privileged mode).
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     networks:
       - netpulse-net
     depends_on:

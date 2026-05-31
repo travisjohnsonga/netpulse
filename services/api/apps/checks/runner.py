@@ -41,6 +41,33 @@ def classify_status(ok: bool, response_time_ms: float | None,
     return UP
 
 
+def icmp_status(packet_loss_pct: float, is_alive: bool) -> str:
+    """ICMP: up <10% loss, degraded 10-50%, down >50% or unreachable."""
+    if not is_alive or packet_loss_pct > 50:
+        return DOWN
+    if packet_loss_pct >= 10:
+        return DEGRADED
+    return UP
+
+
+def tls_status(days_remaining: int, warn_days: int, crit_days: int, valid: bool = True) -> str:
+    """TLS: down if expired/invalid, degraded within warn window, else up."""
+    if not valid or days_remaining <= 0:
+        return DOWN
+    if days_remaining <= warn_days or days_remaining <= crit_days:
+        return DEGRADED
+    return UP
+
+
+def dns_status(resolved: bool, answer_matches) -> str:
+    """DNS: down if unresolved, degraded if resolved but answer mismatches, else up."""
+    if not resolved:
+        return DOWN
+    if answer_matches is False:
+        return DEGRADED
+    return UP
+
+
 def next_state(prev_status: str, consecutive_failures: int, result_status: str,
                failures_before_alert: int) -> tuple[str, int, str | None]:
     """
@@ -176,12 +203,247 @@ async def check_http(check: dict) -> dict:
         return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
 
 
-# check_type → async handler. Later stages add icmp/dns/tls/smtp/ssh/…
+async def check_icmp(check: dict) -> dict:
+    """ICMP echo via icmplib (privileged raw socket — needs NET_RAW/NET_ADMIN)."""
+    from icmplib import async_ping
+
+    cfg = check.get("config") or {}
+    count = int(cfg.get("count", 4))
+    size = int(cfg.get("packet_size", 56))
+    timeout = check.get("timeout_seconds", 10)
+    try:
+        host = await async_ping(check["host"], count=count, interval=0.2,
+                                timeout=timeout, payload_size=size, privileged=True)
+    except Exception as exc:
+        return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
+
+    loss = round(host.packet_loss * 100, 1)  # icmplib reports a 0..1 fraction
+    details = {
+        "packet_loss_pct": loss,
+        "avg_rtt_ms": round(host.avg_rtt, 2),
+        "min_rtt_ms": round(host.min_rtt, 2),
+        "max_rtt_ms": round(host.max_rtt, 2),
+        "jitter_ms": round(host.jitter, 2),
+    }
+    status = icmp_status(loss, host.is_alive)
+    error = "" if status == UP else (f"packet loss {loss:.0f}%" if host.is_alive else "host unreachable")
+    rt = round(host.avg_rtt, 2) if host.is_alive else None
+    return {"status": status, "response_time_ms": rt, "error": error, "details": details}
+
+
+def _dns_answers(records, rtype: str) -> list:
+    out = []
+    for r in (records or []):
+        for attr in ("host", "cname", "text", "nsname", "name"):
+            v = getattr(r, attr, None)
+            if v:
+                out.append(v if isinstance(v, str) else str(v))
+                break
+        else:
+            out.append(str(r))
+    return out
+
+
+async def check_dns(check: dict) -> dict:
+    """Resolve a record via aiodns; optionally assert the answer."""
+    import aiodns
+
+    cfg = check.get("config") or {}
+    query = cfg.get("query") or check["host"]
+    rtype = (cfg.get("record_type") or "A").upper()
+    expected = cfg.get("expected_answer")
+    nameserver = cfg.get("nameserver")
+    timeout = check.get("timeout_seconds", 10)
+
+    loop = asyncio.get_event_loop()
+    resolver = aiodns.DNSResolver(loop=loop, timeout=timeout)
+    if nameserver:
+        resolver.nameservers = [nameserver]
+
+    start = time.monotonic()
+    try:
+        records = await resolver.query(query, rtype)
+    except Exception as exc:
+        return {"status": DOWN, "response_time_ms": None,
+                "error": f"DNS {rtype} {query}: {exc}", "details": {}}
+    rt = round((time.monotonic() - start) * 1000, 2)
+
+    answers = _dns_answers(records, rtype)
+    details = {"answers": answers, "resolve_time_ms": rt, "record_type": rtype}
+    answer_matches = None
+    if expected:
+        answer_matches = expected in answers
+        details["answer_matches"] = answer_matches
+    status = dns_status(resolved=True, answer_matches=answer_matches)
+    error = "" if status == UP else f"answer {answers} != expected {expected}"
+    return {"status": status, "response_time_ms": rt, "error": error, "details": details}
+
+
+def _cert_field(rdn_seq, key: str):
+    """Pull a value (e.g. commonName / organizationName) from a getpeercert RDN sequence."""
+    for rdn in (rdn_seq or ()):
+        for k, v in rdn:
+            if k == key:
+                return v
+    return None
+
+
+async def check_tls(check: dict) -> dict:
+    """
+    Open a TLS connection (stdlib ssl) and inspect the server certificate.
+
+    Verifies the chain against system trust (hostname check disabled so a valid
+    cert presented to the wrong name still yields days_remaining); an untrusted
+    or self-signed cert fails verification and is reported down.
+    """
+    import ssl
+    from datetime import datetime, timezone
+
+    cfg = check.get("config") or {}
+    warn_days = int(cfg.get("warn_days", 30))
+    crit_days = int(cfg.get("critical_days", 7))
+    host = check["host"]
+    port = check["effective_port"] or 443
+    timeout = check.get("timeout_seconds", 10)
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False  # we want cert details even on a name mismatch
+
+    start = time.monotonic()
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=ctx, server_hostname=host), timeout=timeout)
+        rt = round((time.monotonic() - start) * 1000, 2)
+        cert = writer.get_extra_info("ssl_object").getpeercert()
+    except ssl.SSLCertVerificationError as exc:
+        return {"status": DOWN, "response_time_ms": None,
+                "error": f"certificate invalid: {exc.verify_message or exc}",
+                "details": {"valid": False, "chain_valid": False}}
+    except asyncio.TimeoutError:
+        return {"status": DOWN, "response_time_ms": None, "error": f"timeout after {timeout}s", "details": {}}
+    except Exception as exc:
+        return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, ConnectionError, ssl.SSLError):
+                pass
+
+    not_after = cert.get("notAfter")
+    try:
+        expires = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+        days = (expires - datetime.now(timezone.utc)).days
+    except (TypeError, ValueError):
+        return {"status": DOWN, "response_time_ms": rt,
+                "error": "could not parse certificate expiry", "details": {"valid": False}}
+
+    details = {
+        "days_remaining": days,
+        "cert_cn": _cert_field(cert.get("subject"), "commonName"),
+        "issuer": _cert_field(cert.get("issuer"), "organizationName") or _cert_field(cert.get("issuer"), "commonName"),
+        "valid": days > 0,
+        "chain_valid": True,
+        "not_after": not_after,
+        "connect_time_ms": rt,
+    }
+    status = tls_status(days, warn_days, crit_days, valid=True)
+    error = "" if status == UP else ("certificate expired" if days <= 0 else f"{days} days remaining")
+    return {"status": status, "response_time_ms": rt, "error": error, "details": details}
+
+
+async def check_smtp(check: dict) -> dict:
+    """Connect + EHLO (no auth, no send) via aiosmtplib."""
+    import aiosmtplib
+
+    cfg = check.get("config") or {}
+    helo = cfg.get("helo", "netpulse.local")
+    use_starttls = bool(cfg.get("starttls", False))
+    host = check["host"]
+    port = check["effective_port"] or 25
+    timeout = check.get("timeout_seconds", 10)
+
+    start = time.monotonic()
+    client = aiosmtplib.SMTP(hostname=host, port=port, timeout=timeout, start_tls=False)
+    try:
+        banner_resp = await client.connect()
+        await client.ehlo(helo)
+        starttls_supported = client.supports_extension("starttls")
+        if use_starttls and starttls_supported:
+            await client.starttls()
+        try:
+            await client.quit()
+        except Exception:
+            pass
+    except Exception as exc:
+        return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
+
+    rt = round((time.monotonic() - start) * 1000, 2)
+    details = {
+        "connect_time_ms": rt,
+        "banner": getattr(banner_resp, "message", "") or "",
+        "starttls_supported": bool(starttls_supported),
+    }
+    return {"status": UP, "response_time_ms": rt, "error": "", "details": details}
+
+
+async def check_ssh_banner(check: dict) -> dict:
+    """
+    TCP-connect and read the SSH identification banner. Never logs in — purely
+    agentless and non-invasive. Optionally asserts an expected banner substring.
+    """
+    cfg = check.get("config") or {}
+    expected = cfg.get("expected_banner")
+    host = check["host"]
+    port = check["effective_port"] or 22
+    timeout = check.get("timeout_seconds", 10)
+
+    start = time.monotonic()
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+        line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+        banner = line.decode(errors="replace").strip()
+    except asyncio.TimeoutError:
+        return {"status": DOWN, "response_time_ms": None, "error": f"timeout after {timeout}s", "details": {}}
+    except (OSError, ConnectionError) as exc:
+        return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, ConnectionError):
+                pass
+
+    rt = round((time.monotonic() - start) * 1000, 2)
+    details = {"connect_time_ms": rt, "banner": banner}
+    if not banner:
+        return {"status": DOWN, "response_time_ms": rt, "error": "no banner received", "details": details}
+    if expected and expected not in banner:
+        return {"status": DEGRADED, "response_time_ms": rt,
+                "error": f"banner {banner!r} does not contain {expected!r}", "details": details}
+    return {"status": UP, "response_time_ms": rt, "error": "", "details": details}
+
+
+# check_type → async handler.
 HANDLERS = {
     "http": check_http,
     "https": check_http,
     "tcp": check_tcp,
+    "icmp": check_icmp,
+    "dns": check_dns,
+    "tls": check_tls,
+    "smtp": check_smtp,
+    "ssh": check_ssh_banner,
+    "ssh_banner": check_ssh_banner,
 }
+
+# Check types whose status is domain-specific (packet loss, cert expiry, answer
+# match) and must NOT be re-graded by the latency thresholds in run_check.
+_DOMAIN_STATUS_TYPES = {"icmp", "dns", "tls"}
 
 
 async def run_check(check: dict) -> dict:
@@ -201,12 +463,15 @@ async def run_check(check: dict) -> dict:
     except Exception as exc:
         return {"status": DOWN, "response_time_ms": None, "error": str(exc), "details": {}}
 
-    # Re-classify a successful probe against latency thresholds (down beats
-    # degraded beats up); a handler-reported DOWN stays down.
-    result["status"] = classify_status(
-        ok=result["status"] != DOWN,
-        response_time_ms=result.get("response_time_ms"),
-        warn_ms=check.get("response_time_warning_ms"),
-        crit_ms=check.get("response_time_critical_ms"),
-    )
+    # Latency reclassification applies only to an "up" result from a latency-
+    # sensitive check: it may downgrade up → degraded/down, but never overrides a
+    # handler's degraded/down, and is skipped for domain-status types (icmp/dns/
+    # tls own their status via packet loss / answer match / cert expiry).
+    if result["status"] == UP and check["check_type"] not in _DOMAIN_STATUS_TYPES:
+        result["status"] = classify_status(
+            ok=True,
+            response_time_ms=result.get("response_time_ms"),
+            warn_ms=check.get("response_time_warning_ms"),
+            crit_ms=check.get("response_time_critical_ms"),
+        )
     return result

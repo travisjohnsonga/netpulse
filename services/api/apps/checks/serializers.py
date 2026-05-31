@@ -8,6 +8,7 @@ class ServiceCheckSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source="site.name", read_only=True, default=None)
     effective_port = serializers.IntegerField(read_only=True)
     last_response_ms = serializers.SerializerMethodField()
+    last_details = serializers.SerializerMethodField()
 
     class Meta:
         model = ServiceCheck
@@ -17,9 +18,20 @@ class ServiceCheckSerializer(serializers.ModelSerializer):
             "consecutive_failures", "created_at", "updated_at",
         )
 
+    def _latest(self, obj):
+        # Fetch the most recent result once per object and cache it.
+        if not hasattr(obj, "_latest_result"):
+            obj._latest_result = obj.results.order_by("-checked_at").first()
+        return obj._latest_result
+
     def get_last_response_ms(self, obj):
-        latest = obj.results.order_by("-checked_at").values_list("response_time_ms", flat=True).first()
-        return latest
+        latest = self._latest(obj)
+        return latest.response_time_ms if latest else None
+
+    def get_last_details(self, obj):
+        # Per-probe measurements (e.g. TLS days_remaining, ICMP packet_loss_pct).
+        latest = self._latest(obj)
+        return latest.details if latest else {}
 
 
 class CheckResultSerializer(serializers.ModelSerializer):

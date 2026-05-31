@@ -4,7 +4,8 @@ import pytest
 
 from apps.checks.models import CheckResult, ServiceCheck
 from apps.checks.runner import (
-    DEGRADED, DOWN, UP, check_tcp, classify_status, next_state, run_check,
+    DEGRADED, DOWN, UP, check_ssh_banner, check_tcp, classify_status,
+    dns_status, icmp_status, next_state, run_check, tls_status,
 )
 from apps.checks.service import check_to_dict, persist_result
 
@@ -119,9 +120,128 @@ class TestTcpHandler:
 
 class TestRunCheckDispatch:
     def test_unsupported_type_is_down(self):
-        r = asyncio.run(run_check({"check_type": "icmp", "host": "x", "effective_port": None,
+        # ldap has no handler yet (planned) → unsupported.
+        r = asyncio.run(run_check({"check_type": "ldap", "host": "x", "effective_port": None,
                                    "config": {}, "timeout_seconds": 1}))
         assert r["status"] == DOWN and "unsupported" in r["error"]
+
+
+# ── Stage 2: domain status helpers ──────────────────────────────────────────
+
+class TestIcmpStatus:
+    def test_up_low_loss(self):
+        assert icmp_status(0.0, True) == UP
+        assert icmp_status(5.0, True) == UP
+
+    def test_degraded_mid_loss(self):
+        assert icmp_status(10.0, True) == DEGRADED
+        assert icmp_status(50.0, True) == DEGRADED
+
+    def test_down_high_loss_or_dead(self):
+        assert icmp_status(75.0, True) == DOWN
+        assert icmp_status(0.0, False) == DOWN
+
+
+class TestTlsStatus:
+    def test_up_far_from_expiry(self):
+        assert tls_status(90, 30, 7) == UP
+
+    def test_degraded_within_warn(self):
+        assert tls_status(20, 30, 7) == DEGRADED
+        assert tls_status(3, 30, 7) == DEGRADED
+
+    def test_down_expired_or_invalid(self):
+        assert tls_status(0, 30, 7) == DOWN
+        assert tls_status(-5, 30, 7) == DOWN
+        assert tls_status(90, 30, 7, valid=False) == DOWN
+
+
+class TestDnsStatus:
+    def test_up_resolved_no_expectation(self):
+        assert dns_status(True, None) == UP
+
+    def test_up_resolved_matches(self):
+        assert dns_status(True, True) == UP
+
+    def test_degraded_resolved_mismatch(self):
+        assert dns_status(True, False) == DEGRADED
+
+    def test_down_unresolved(self):
+        assert dns_status(False, None) == DOWN
+
+
+def _run_ssh_against_local(server_banner=b"SSH-2.0-OpenSSH_8.9\r\n", expected=None):
+    async def scenario():
+        async def handle(reader, writer):
+            writer.write(server_banner)
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            await server.start_serving()
+            cfg = {"expected_banner": expected} if expected else {}
+            return await check_ssh_banner({"check_type": "ssh_banner", "host": "127.0.0.1",
+                                           "effective_port": port, "timeout_seconds": 3, "config": cfg})
+    return asyncio.run(scenario())
+
+
+class TestSshBanner:
+    def test_banner_up(self):
+        r = _run_ssh_against_local()
+        assert r["status"] == UP and r["details"]["banner"].startswith("SSH-2.0")
+
+    def test_expected_banner_match(self):
+        r = _run_ssh_against_local(expected="OpenSSH")
+        assert r["status"] == UP
+
+    def test_expected_banner_mismatch_degraded(self):
+        r = _run_ssh_against_local(expected="Dropbear")
+        assert r["status"] == DEGRADED
+
+    def test_refused_is_down(self):
+        r = asyncio.run(check_ssh_banner({"check_type": "ssh_banner", "host": "127.0.0.1",
+                                          "effective_port": 1, "timeout_seconds": 2, "config": {}}))
+        assert r["status"] == DOWN
+
+
+class TestRunCheckPreservesDomainStatus:
+    def test_latency_does_not_override_tls_degraded(self):
+        # A handler-reported DEGRADED (e.g. TLS near expiry) must survive run_check
+        # even though TLS connect time is tiny and no latency thresholds apply.
+        import apps.checks.runner as runner
+
+        async def fake_tls(check):
+            return {"status": DEGRADED, "response_time_ms": 5.0, "error": "20 days remaining",
+                    "details": {"days_remaining": 20}}
+
+        orig = runner.HANDLERS["tls"]
+        runner.HANDLERS["tls"] = fake_tls
+        try:
+            r = asyncio.run(run_check({"check_type": "tls", "host": "x", "effective_port": 443,
+                                       "config": {}, "timeout_seconds": 5,
+                                       "response_time_warning_ms": None, "response_time_critical_ms": None}))
+        finally:
+            runner.HANDLERS["tls"] = orig
+        assert r["status"] == DEGRADED  # not upgraded to up
+
+    def test_latency_downgrades_up_for_latency_type(self):
+        # An "up" SSH probe slower than the critical threshold → down.
+        import apps.checks.runner as runner
+
+        async def fake_ssh(check):
+            return {"status": UP, "response_time_ms": 3000.0, "error": "", "details": {}}
+
+        orig = runner.HANDLERS["ssh_banner"]
+        runner.HANDLERS["ssh_banner"] = fake_ssh
+        try:
+            r = asyncio.run(run_check({"check_type": "ssh_banner", "host": "x", "effective_port": 22,
+                                       "config": {}, "timeout_seconds": 5,
+                                       "response_time_warning_ms": 500, "response_time_critical_ms": 2000}))
+        finally:
+            runner.HANDLERS["ssh_banner"] = orig
+        assert r["status"] == DOWN
 
 
 # ── persist_result state machine (DB) ───────────────────────────────────────

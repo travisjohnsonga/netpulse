@@ -26,6 +26,7 @@ class ServiceCheck(TimestampedModel):
         SMTP = "smtp", "SMTP"
         FTP = "ftp", "FTP"
         SSH = "ssh", "SSH"
+        SSH_BANNER = "ssh_banner", "SSH banner"
         LDAP = "ldap", "LDAP"
         CUSTOM = "custom", "Custom"
 
@@ -37,8 +38,8 @@ class ServiceCheck(TimestampedModel):
 
     # Default port per check type (None → required in config / not port-based).
     DEFAULT_PORTS = {
-        "http": 80, "https": 443, "ssh": 22, "smtp": 25,
-        "dns": 53, "ftp": 21, "ldap": 389,
+        "http": 80, "https": 443, "ssh": 22, "ssh_banner": 22, "smtp": 25,
+        "dns": 53, "ftp": 21, "ldap": 389, "tls": 443,
     }
 
     name = models.CharField(max_length=255)
