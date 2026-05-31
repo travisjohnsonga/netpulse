@@ -108,6 +108,29 @@ def _classify_error(exc: Exception, best_guess=None) -> dict:
     return {"detected": False, "error": code, "best_guess": best_guess}
 
 
+# SSH-banner substrings → (netmiko device_type, vendor, platform) for vendors
+# Netmiko SSHDetect doesn't reliably fingerprint. Checked case-insensitively.
+_BANNER_PLATFORM_HINTS = [
+    ("fortios", "fortinet", "fortios"),
+    ("fortigate", "fortinet", "fortios"),
+    ("fortinet", "fortinet", "fortios"),
+    ("palo alto", "paloalto", "panos"),
+    ("pan-os", "paloalto", "panos"),
+]
+
+
+def _banner_platform(ip: str, port: int) -> dict | None:
+    """Infer platform from the SSH banner when SSHDetect can't (FortiOS/PAN-OS)."""
+    from . import fingerprint
+    banner = fingerprint._ssh_banner(ip, 3.0).lower() if port == 22 else ""
+    if not banner:
+        return None
+    for needle, vendor, platform in _BANNER_PLATFORM_HINTS:
+        if needle in banner:
+            return {"device_type": vendor, "vendor": vendor, "platform": platform}
+    return None
+
+
 def detect_platform(ip: str, ssh_username: str, ssh_password: str, ssh_port: int = 22) -> dict:
     """
     Auto-detect a device's platform. Returns a result dict — never raises.
@@ -122,6 +145,16 @@ def detect_platform(ip: str, ssh_username: str, ssh_password: str, ssh_port: int
         return _classify_error(exc)
 
     if not best:
+        # SSHDetect frequently can't fingerprint FortiOS / PAN-OS. Fall back to
+        # the SSH banner, which carries vendor strings ("FortiGate", "Palo Alto").
+        guess = _banner_platform(ip, ssh_port or 22)
+        if guess:
+            return {
+                "detected": True, "device_type": guess["device_type"],
+                "vendor": guess["vendor"], "platform": guess["platform"],
+                "os_version": None, "hostname": None, "model": None, "serial": None,
+                "confidence": "low", "all_matches": list((matches or {}).keys()),
+            }
         return {"detected": False, "error": "unknown", "best_guess": None,
                 "all_matches": list((matches or {}).keys())}
 

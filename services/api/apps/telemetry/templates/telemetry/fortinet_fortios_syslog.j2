@@ -1,0 +1,7 @@
+config log syslogd setting
+    set status enable
+    set server "{{ collector_ip }}"
+    set port 514
+    set facility local7
+    set format default
+end

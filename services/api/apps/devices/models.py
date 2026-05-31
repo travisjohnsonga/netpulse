@@ -87,6 +87,8 @@ class Device(TimestampedModel):
         NXOS = "nxos", "Cisco NX-OS"
         EOS = "eos", "Arista EOS"
         JUNOS = "junos", "Juniper JunOS"
+        FORTIOS = "fortios", "Fortinet FortiOS"
+        PANOS = "panos", "Palo Alto PAN-OS"
         SONIC = "sonic", "SONiC"
         OTHER = "other", "Other"
 

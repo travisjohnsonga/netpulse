@@ -226,7 +226,8 @@ class TestDeviceModel:
 
     def test_platform_choices(self):
         for value, _ in Device.Platform.choices:
-            assert value in ("ios", "ios_xe", "ios_xr", "nxos", "eos", "junos", "sonic", "other")
+            assert value in ("ios", "ios_xe", "ios_xr", "nxos", "eos", "junos",
+                             "fortios", "panos", "sonic", "other")
 
     def test_site_nullable(self):
         d = Device.objects.create(hostname="no-site", ip_address="172.16.0.1")
@@ -438,12 +439,25 @@ class TestDetectPlatformEndpoint:
         assert resp.json() == {"detected": False, "error": "auth_failed"} or resp.json()["error"] == "auth_failed"
 
     def test_unknown_platform(self, auth_client, ssh_profile, monkeypatch):
-        from apps.devices import detect
+        from apps.devices import detect, fingerprint
         monkeypatch.setattr(detect, "_ssh_detect", lambda *a, **k: (None, {}))
+        monkeypatch.setattr(fingerprint, "_ssh_banner", lambda *a, **k: "")  # no banner hint
         resp = auth_client.post("/api/devices/detect-platform/",
                                 {"ip": "10.0.0.1", "credential_profile_id": ssh_profile.id}, format="json")
         assert resp.json()["detected"] is False
         assert resp.json()["error"] == "unknown"
+
+    def test_fortios_banner_fallback(self, auth_client, ssh_profile, monkeypatch):
+        # SSHDetect can't fingerprint FortiOS → fall back to the SSH banner.
+        from apps.devices import detect, fingerprint
+        monkeypatch.setattr(detect, "_ssh_detect", lambda *a, **k: (None, {}))
+        monkeypatch.setattr(fingerprint, "_ssh_banner", lambda *a, **k: "SSH-2.0-FortiGate-100F")
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.1", "credential_profile_id": ssh_profile.id}, format="json")
+        body = resp.json()
+        assert body["detected"] is True
+        assert body["vendor"] == "fortinet" and body["platform"] == "fortios"
+        assert body["confidence"] == "low"
 
 
 class TestDetectParsing:

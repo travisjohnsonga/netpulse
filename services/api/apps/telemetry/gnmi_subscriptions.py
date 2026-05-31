@@ -196,7 +196,7 @@ def generate_fortios_snmp(device, collector_ip, interfaces, cfg=None):
     """Fortinet FortiOS has no gNMI — fall back to SNMP polling config."""
     return "\n".join([
         _header(device, collector_ip, interfaces),
-        "! FortiOS has no gNMI dial-out — NetPulse polls it via SNMP instead.",
+        "! FortiOS does not support gNMI. Use SNMP polling and Syslog for telemetry.",
         "config system snmp community",
         "    edit 1",
         '        set name "netpulse"',

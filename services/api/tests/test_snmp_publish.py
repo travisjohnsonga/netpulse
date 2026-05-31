@@ -53,6 +53,15 @@ class TestBuildDevicePayload:
         assert "1.3.6.1.2.1.1.3.0" in p["poll_oids"]
         assert "1.3.6.1.2.1.31.1.1.1.6.1" in p["poll_oids"]
 
+    def test_fortios_device_oids(self):
+        # FortiOS gets the Fortinet enterprise CPU/memory OIDs.
+        from apps.devices.snmp_publish import _device_oids
+        oids = _device_oids("fortios")
+        assert "1.3.6.1.4.1.12356.101.4.1.3.0" in oids   # fgSysCpuUsage
+        assert "1.3.6.1.4.1.12356.101.4.1.4.0" in oids   # fgSysMemUsage
+        assert "1.3.6.1.4.1.12356.101.4.1.5.0" in oids   # fgSysMemCapacity
+        assert "1.3.6.1.2.1.1.3.0" in oids               # sysUpTime
+
     def test_inactive_device_not_published(self, snmp_v3_device):
         from apps.devices.snmp_publish import build_device_payload
         snmp_v3_device.status = "inactive"; snmp_v3_device.save()

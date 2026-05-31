@@ -191,6 +191,26 @@ class TestConfigGenerate:
         assert "logging hostnameprefix xr1" in syslog
         assert "logging 10.0.0.30" in syslog
 
+    def test_generate_fortios_sections(self, auth_client, ssh_profile, settings):
+        settings.COLLECTOR_IP = "10.0.0.40"
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="fgt1", ip_address="10.0.0.41", management_ip="10.0.0.41",
+                                  vendor="Fortinet", platform="fortios", status="active",
+                                  credential_profile=ssh_profile)
+        secs = auth_client.get(f"/api/devices/{d.id}/telemetry-config/generate/").json()["sections"]
+        # SNMP: FortiOS community config referencing the collector.
+        assert "config system snmp community" in secs["snmp"]["config"]
+        assert "10.0.0.40/32" in secs["snmp"]["config"]
+        # Syslog: FortiOS syslogd setting.
+        assert "config log syslogd setting" in secs["syslog"]["config"]
+        assert 'set server "10.0.0.40"' in secs["syslog"]["config"]
+        # NetFlow: collector + source mgmt IP.
+        assert "config system netflow" in secs["netflow"]["config"]
+        assert "set collector-ip 10.0.0.40" in secs["netflow"]["config"]
+        assert "set source-ip 10.0.0.41" in secs["netflow"]["config"]
+        # gNMI: not supported — message instead of a subscription.
+        assert "does not support gNMI" in secs["gnmi"]["config"]
+
     def test_generate_juniper_jti_telemetry(self, auth_client, ssh_profile, settings):
         # Juniper streams via JTI (Junos Telemetry Interface) "set services
         # analytics …", not OpenConfig gNMI — the multi-vendor generator emits it.

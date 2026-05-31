@@ -28,12 +28,16 @@ UPSERT_SUBJECT = "netpulse.devices.upsert"
 REMOVE_SUBJECT = "netpulse.devices.remove"
 
 # Device-level OIDs, chosen per platform. Platform values are the DB strings
-# (ios_xe, ios, nxos, ios_xr, eos, junos), not netmiko device types.
+# (ios_xe, ios, nxos, ios_xr, eos, junos, fortios, panos), not netmiko types.
 SYSUPTIME = "1.3.6.1.2.1.1.3.0"
 HRPROCLOAD = "1.3.6.1.2.1.25.3.3.1.2.1"      # hrProcessorLoad — universal CPU %
 CISCO_MEM_USED = "1.3.6.1.4.1.9.9.48.1.1.1.5.1"
 CISCO_MEM_FREE = "1.3.6.1.4.1.9.9.48.1.1.1.6.1"
 CISCO_CPU_5MIN = "1.3.6.1.4.1.9.9.109.1.1.1.1.8.1"
+# Fortinet FortiGate enterprise OIDs (FORTINET-FORTIGATE-MIB).
+FG_CPU_USAGE = "1.3.6.1.4.1.12356.101.4.1.3.0"    # fgSysCpuUsage (%)
+FG_MEM_USAGE = "1.3.6.1.4.1.12356.101.4.1.4.0"    # fgSysMemUsage (%)
+FG_MEM_CAPACITY = "1.3.6.1.4.1.12356.101.4.1.5.0"  # fgSysMemCapacity (KB)
 
 PLATFORM_DEVICE_OIDS = {
     "ios_xe": [SYSUPTIME, HRPROCLOAD, CISCO_MEM_USED, CISCO_MEM_FREE],
@@ -44,6 +48,9 @@ PLATFORM_DEVICE_OIDS = {
                "1.3.6.1.4.1.30065.3.12.1.1.1.1.4.1"],   # Arista memory
     "junos":  [SYSUPTIME, HRPROCLOAD,
                "1.3.6.1.4.1.2636.3.1.13.1.8.9.1.0.0"],   # Juniper CPU
+    "fortios": [SYSUPTIME, HRPROCLOAD,
+                FG_CPU_USAGE, FG_MEM_USAGE, FG_MEM_CAPACITY],  # FortiGate
+    "panos":   [SYSUPTIME, HRPROCLOAD],                   # Palo Alto: hostMIB CPU
     "_default": [SYSUPTIME, HRPROCLOAD],                  # universal fallback
 }
 

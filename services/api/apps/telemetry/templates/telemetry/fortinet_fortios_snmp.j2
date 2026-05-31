@@ -1,0 +1,14 @@
+config system snmp community
+    edit 1
+        set name "{{ community }}"
+        set status enable
+        config hosts
+            edit 1
+                set ip {{ collector_ip }}/32
+            next
+        end
+    next
+end
+config system snmp sysinfo
+    set status enable
+end

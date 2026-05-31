@@ -26,6 +26,7 @@ _PLATFORM_FAMILY = {
     "ios": "cisco_xe", "ios_xe": "cisco_xe", "ios_xr": "cisco_xr",
     "nxos": "cisco_xe", "asa": "cisco_xe",
     "junos": "juniper_junos", "eos": "arista_eos",
+    "fortios": "fortinet_fortios",
 }
 
 # Some platforms share most templates with cisco_xe but need their own syslog
@@ -40,6 +41,7 @@ _FAMILY_SECTIONS = {
     "cisco_xr": ["snmp", "syslog", "gnmi", "netflow"],  # fall back to cisco_xe templates
     "juniper_junos": ["snmp", "syslog"],
     "arista_eos": ["snmp", "syslog"],
+    "fortinet_fortios": ["snmp", "syslog", "netflow"],  # no gNMI on FortiOS
 }
 
 SECTIONS = ["snmp", "syslog", "gnmi", "netflow"]
@@ -62,6 +64,7 @@ def _context(device, cfg: TelemetryConfig) -> dict:
         # Device's assigned collector → site default → global default →
         # settings.COLLECTOR_IP.
         "collector_ip": effective_collector_ip(device),
+        "device_mgmt_ip": device.management_ip or device.ip_address or "",
         "management_interface": "Loopback0",
         "platform": (device.platform or "").lower(),
         "hostname": device.hostname or "",
