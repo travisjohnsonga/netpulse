@@ -1227,7 +1227,7 @@ export async function fetchDeviceAlerts(deviceId: number, hostname: string): Pro
 // ── Service checks (agentless synthetic monitoring) ──────────────────────────
 export type CheckType =
   | 'http' | 'https' | 'tcp' | 'udp' | 'icmp' | 'dns' | 'tls'
-  | 'smtp' | 'ftp' | 'ssh' | 'ldap' | 'custom'
+  | 'smtp' | 'ftp' | 'ssh' | 'ssh_banner' | 'ldap' | 'custom'
 export type CheckStatus = 'up' | 'down' | 'degraded' | 'unknown'
 
 export interface ServiceCheck {
@@ -1254,6 +1254,7 @@ export interface ServiceCheck {
   response_time_warning_ms: number | null
   response_time_critical_ms: number | null
   last_response_ms: number | null
+  last_details: Record<string, unknown>
   tags: string[]
   notes: string
   created_at: string

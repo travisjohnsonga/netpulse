@@ -8,6 +8,7 @@ import {
   fetchDevices,
   fetchAlerts,
   fetchCheckSummary,
+  fetchChecks,
   checkHealth,
   checkInfraHealth,
   reachabilityOf,
@@ -15,6 +16,7 @@ import {
   type Alert,
   type InfraHealth,
   type CheckSummary,
+  type ServiceCheck,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import clsx from 'clsx'
@@ -145,11 +147,20 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState<string | null>(null)
   const [checkSummary, setCheckSummary] = useState<CheckSummary | null>(null)
+  const [tlsChecks, setTlsChecks] = useState<ServiceCheck[]>([])
   const { connected } = useWebSocket('/ws/telemetry/')
 
   useEffect(() => {
     fetchCheckSummary().then(setCheckSummary).catch(() => {})
+    fetchChecks({ check_type: 'tls' }).then(setTlsChecks).catch(() => {})
   }, [])
+
+  // TLS checks within their warn window (days_remaining set + below threshold),
+  // soonest first.
+  const expiringCerts = tlsChecks
+    .map((c) => ({ c, days: typeof c.last_details?.days_remaining === 'number' ? (c.last_details.days_remaining as number) : null }))
+    .filter((x) => x.days != null && x.days <= 30)
+    .sort((a, b) => (a.days as number) - (b.days as number))
 
   useEffect(() => {
     let cancelled = false
@@ -299,6 +310,28 @@ export default function Dashboard() {
           action={{ label: 'View checks', href: '/checks' }}
         />
       </div>
+
+      {/* Certificates expiring soon (from TLS service checks) */}
+      {expiringCerts.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900 dark:text-gray-100">Certificates Expiring Soon</h2>
+            <a href="/checks" className="text-sm text-blue-600 hover:text-blue-800">View checks</a>
+          </div>
+          <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+            {expiringCerts.map(({ c, days }) => (
+              <li key={c.id} className="flex items-center gap-2 px-5 py-2.5 text-sm">
+                <span>{(days as number) <= 7 ? '🔴' : '⚠️'}</span>
+                <span className="font-mono text-gray-700 dark:text-gray-300">{c.host}</span>
+                <span className={clsx('ml-auto font-semibold',
+                  (days as number) <= 7 ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400')}>
+                  {days} day{days === 1 ? '' : 's'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Empty state when no devices */}
       {safeDevices.length === 0 && !apiError && (
