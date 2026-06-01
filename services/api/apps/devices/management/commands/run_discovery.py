@@ -168,6 +168,7 @@ class DiscoveryRunner:
         self._seen: set[str] = set()
         self._queue: list[str] = []
         self._found    = 0
+        self._cancelled = False
         self._loop     = asyncio.get_event_loop()
 
         self._allowed: list[ipaddress.IPv4Network] = [
@@ -180,6 +181,11 @@ class DiscoveryRunner:
         ]
 
     async def run(self) -> None:
+        # Honour a cancel requested before the engine started (e.g. cancelled
+        # while still pending, before this worker thread picked it up).
+        if await self._check_cancel():
+            await self._finish_cancelled()
+            return
         await self._set_status(DiscoveryJob.Status.RUNNING)
         await self._set_progress(message="Initializing scan...", current=0, ips=0)
         try:
@@ -192,12 +198,28 @@ class DiscoveryRunner:
                 if seed_ip:
                     self._queue.append(seed_ip)
                     await self._topology_walk()
-            await self._set_status(DiscoveryJob.Status.COMPLETED)
-            await self._set_progress(message=f"Complete: {self._found} devices found")
+            if self._cancelled:
+                await self._finish_cancelled()
+            else:
+                await self._set_status(DiscoveryJob.Status.COMPLETED)
+                await self._set_progress(message=f"Complete: {self._found} devices found")
         except Exception as exc:
             logger.error("discovery job %d failed: %s", self._job.id, exc)
             await self._set_status(DiscoveryJob.Status.FAILED, str(exc))
             await self._set_progress(message=f"Failed: {exc}")
+
+    async def _check_cancel(self) -> bool:
+        """Re-read the cancel_requested flag from the DB (set by the API)."""
+        def _db():
+            return (DiscoveryJob.objects
+                    .filter(pk=self._job.pk)
+                    .values_list("cancel_requested", flat=True).first())
+        return bool(await self._loop.run_in_executor(None, _db))
+
+    async def _finish_cancelled(self) -> None:
+        self._cancelled = True
+        await self._set_status(DiscoveryJob.Status.CANCELLED)
+        await self._set_progress(message="Cancelled by user")
 
     # ── active scan ───────────────────────────────────────────────────────────
 
@@ -226,6 +248,10 @@ class DiscoveryRunner:
                     return
                 ip = str(host)
                 scanned += 1
+                # Cooperative cancellation — check the DB flag every 10 IPs.
+                if scanned % 10 == 0 and await self._check_cancel():
+                    self._cancelled = True
+                    return
                 if not self._is_allowed(ip):
                     await self._maybe_progress(scanned, total, f"Skipping {ip} (out of scope)")
                     continue
@@ -244,6 +270,9 @@ class DiscoveryRunner:
             next_layer: list[str] = []
             for ip in self._queue:
                 if self._found >= self._job.max_devices:
+                    return
+                if self._cancelled or await self._check_cancel():
+                    self._cancelled = True
                     return
                 if ip in self._seen:
                     continue
@@ -450,7 +479,8 @@ class DiscoveryRunner:
             updates: dict = {"status": status}
             if status == DiscoveryJob.Status.RUNNING:
                 updates["started_at"] = dj_tz.now()
-            elif status in (DiscoveryJob.Status.COMPLETED, DiscoveryJob.Status.FAILED):
+            elif status in (DiscoveryJob.Status.COMPLETED, DiscoveryJob.Status.FAILED,
+                            DiscoveryJob.Status.CANCELLED):
                 updates["completed_at"] = dj_tz.now()
             if error:
                 updates["error_message"] = error

@@ -172,6 +172,9 @@ class DiscoveryJob(TimestampedModel):
     progress_total    = models.PositiveIntegerField(default=0)
     progress_message  = models.CharField(max_length=255, blank=True, default="")
     ips_scanned       = models.PositiveIntegerField(default=0)
+    # Cooperative cancellation: the cancel action sets this; the running engine
+    # polls it and stops, setting status=cancelled.
+    cancel_requested  = models.BooleanField(default=False)
     # Credentials used to probe discovered devices (SNMP community / SNMPv3 for
     # scanning, SSH for LLDP). Secrets live in OpenBao via the profile's
     # vault_path — never on the job. Assigned to devices on approval.

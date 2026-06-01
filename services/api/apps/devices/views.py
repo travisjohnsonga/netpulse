@@ -365,11 +365,8 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
         return super().update(request, *args, **kwargs)
 
-    @extend_schema(summary="Re-run a discovery job", request=None, responses=None)
-    @action(detail=True, methods=["post"])
-    def run(self, request, pk=None):
-        """Reset progress and execute the job again (scan/topology only)."""
-        job = self.get_object()
+    def _reset_and_start(self, job):
+        """Reset a job to a fresh pending state and (re)trigger execution."""
         if job.status == DiscoveryJob.Status.RUNNING:
             return Response({"error": "Job is already running."},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -380,9 +377,45 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
         job.progress_current = job.progress_total = job.ips_scanned = job.devices_found = 0
         job.progress_message = ""
         job.error_message = ""
+        job.cancel_requested = False
         job.started_at = job.completed_at = None
         job.save()
         self._start_discovery(job)
+        return Response(DiscoveryJobSerializer(job).data)
+
+    @extend_schema(summary="Run a discovery job", request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk=None):
+        """Reset progress and execute the job (scan/topology only)."""
+        return self._reset_and_start(self.get_object())
+
+    @extend_schema(summary="Restart a finished/cancelled discovery job", request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def restart(self, request, pk=None):
+        """Reset a completed/failed/cancelled job and run it again."""
+        return self._reset_and_start(self.get_object())
+
+    @extend_schema(summary="Cancel a pending or running discovery job", request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """
+        Cancel a job. Pending jobs are cancelled immediately; running jobs get a
+        cancel flag the engine polls and then stops (status → cancelled).
+        """
+        from django.utils import timezone
+
+        job = self.get_object()
+        if job.status not in (DiscoveryJob.Status.PENDING, DiscoveryJob.Status.RUNNING):
+            return Response({"error": "Only pending or running jobs can be cancelled."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        job.cancel_requested = True
+        if job.status == DiscoveryJob.Status.PENDING:
+            # Not started yet — cancel right away. (The flag also guards against a
+            # worker thread that is just now picking the job up.)
+            job.status = DiscoveryJob.Status.CANCELLED
+            job.progress_message = "Cancelled by user"
+            job.completed_at = timezone.now()
+        job.save()
         return Response(DiscoveryJobSerializer(job).data)
 
     @staticmethod

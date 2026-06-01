@@ -345,3 +345,95 @@ class TestDiscoveryJobRun:
         job = DiscoveryJob.objects.create(name="p", method="passive")
         resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/run/")
         assert resp.status_code == 400
+
+    def test_restart_resets_and_repends(self, auth_client):
+        job = DiscoveryJob.objects.create(
+            name="c", method="scan", subnets=["10.1.0.0/24"], status="cancelled",
+            progress_current=5, ips_scanned=5, cancel_requested=True,
+            progress_message="Cancelled by user")
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/restart/")
+        assert resp.status_code == 200, resp.content
+        job.refresh_from_db()
+        assert job.status == "pending"
+        assert job.cancel_requested is False
+        assert job.progress_current == 0 and job.ips_scanned == 0
+
+
+class TestDiscoveryJobCancel:
+    def test_cancel_pending_is_immediate(self, auth_client, job):
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/cancel/")
+        assert resp.status_code == 200, resp.content
+        job.refresh_from_db()
+        assert job.status == "cancelled"
+        assert job.cancel_requested is True
+        assert job.progress_message == "Cancelled by user"
+
+    def test_cancel_running_sets_flag_only(self, auth_client):
+        job = DiscoveryJob.objects.create(name="r", method="scan", status="running")
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/cancel/")
+        assert resp.status_code == 200
+        job.refresh_from_db()
+        # Engine flips it to cancelled when it notices; the API just sets the flag.
+        assert job.status == "running"
+        assert job.cancel_requested is True
+
+    def test_cancel_completed_is_rejected(self, auth_client):
+        job = DiscoveryJob.objects.create(name="d", method="scan", status="completed")
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/cancel/")
+        assert resp.status_code == 400
+
+
+class TestRunnerCancellation:
+    """
+    Unit-test the runner's cancel control flow with its DB/network methods
+    stubbed. (The real run_in_executor DB reads can't see a test-transaction
+    job from a worker thread, and a real scan would hit the network — so we
+    stub them and assert the control flow instead.)
+    """
+
+    def _run_with_stubs(self, job, *, cancel_returns):
+        import asyncio
+        from apps.devices.management.commands.run_discovery import DiscoveryRunner
+
+        record = {"scanned": False, "statuses": [], "messages": []}
+
+        async def _go():
+            runner = DiscoveryRunner(job=job, community="public", rate_pps=10)
+            calls = {"n": 0}
+
+            async def fake_check_cancel():
+                calls["n"] += 1
+                return cancel_returns(calls["n"])
+
+            async def fake_active_scan():
+                record["scanned"] = True
+
+            async def fake_set_status(s, error=""):
+                record["statuses"].append(s)
+
+            async def fake_set_progress(**kw):
+                if kw.get("message"):
+                    record["messages"].append(kw["message"])
+
+            runner._check_cancel = fake_check_cancel
+            runner._active_scan = fake_active_scan
+            runner._set_status = fake_set_status
+            runner._set_progress = fake_set_progress
+            await runner.run()
+        asyncio.run(_go())
+        return record
+
+    def test_run_honours_precancel(self, db):
+        # cancel_requested before start → never scans, ends cancelled.
+        job = DiscoveryJob.objects.create(name="x", method="scan", subnets=["10.1.0.0/24"])
+        rec = self._run_with_stubs(job, cancel_returns=lambda n: True)
+        assert rec["scanned"] is False
+        assert rec["statuses"] == ["cancelled"]
+        assert "Cancelled by user" in rec["messages"]
+
+    def test_run_completes_when_not_cancelled(self, db):
+        # Not cancelled → scans and completes.
+        job = DiscoveryJob.objects.create(name="y", method="scan", subnets=["10.1.0.0/24"])
+        rec = self._run_with_stubs(job, cancel_returns=lambda n: False)
+        assert rec["scanned"] is True
+        assert rec["statuses"] == ["running", "completed"]
