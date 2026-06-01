@@ -41,12 +41,15 @@ export default function Discovery() {
   const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
   const [approving, setApproving] = useState<DiscoveredDevice | null>(null)
 
-  const load = useCallback(() => {
-    setLoading(true)
+  // silent=true refreshes data without flipping the loading spinner, so a
+  // background refresh (e.g. a running job finishing) doesn't blank the list
+  // and remount the expandable job rows (which would collapse them).
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true)
     Promise.all([fetchDiscoveryJobs(), fetchDiscoveredDevices('pending')])
       .then(([j, p]) => { setJobs(j); setPending(p); setError(null) })
       .catch(() => setError('Failed to load discovery data.'))
-      .finally(() => setLoading(false))
+      .finally(() => { if (!silent) setLoading(false) })
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -101,7 +104,7 @@ export default function Discovery() {
                     onDelete={() => removeJob(j.id)}
                     onApprove={(d) => setApproving(d)}
                     onReject={reject}
-                    onChanged={load} />
+                    onChanged={() => load(true)} />
                 ))}
               </div>
             )}
@@ -205,20 +208,34 @@ function JobRow({ job, busy, onDelete, onApprove, onReject, onChanged }: {
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    const tick = async () => {
+
+    // Load a snapshot for display only — never touches the parent, so opening
+    // an already-finished job can't trigger a reload that remounts (and thus
+    // collapses) this row.
+    const snapshot = async () => {
       try {
         const [p, d] = await Promise.all([fetchDiscoveryProgress(job.id), fetchJobDiscovered(job.id)])
-        if (cancelled) return
-        setProg(p); setDevices(d)
-        // Refresh parent counts/badge once when the job finishes.
-        if (p.status !== 'running' && !notified.current) { notified.current = true; onChanged() }
-      } catch { /* transient — keep last snapshot */ }
+        if (!cancelled) { setProg(p); setDevices(d) }
+        return p
+      } catch { return undefined }
     }
-    tick()
+
     if (job.status === 'running') {
+      // Poll while running; tell the parent ONCE when it finishes (silent
+      // refresh) so the status badge / pending count update.
+      const tick = async () => {
+        const p = await snapshot()
+        if (!cancelled && p && p.status !== 'running' && !notified.current) {
+          notified.current = true
+          onChanged()
+        }
+      }
+      tick()
       const t = setInterval(tick, 2000)
       return () => { cancelled = true; clearInterval(t) }
     }
+
+    snapshot()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, job.id, job.status])
