@@ -4,21 +4,28 @@ import socket
 import urllib.request
 import urllib.error
 
+from django.contrib.auth import get_user_model
 from django.db import connection
+from django.db.models import Q
 from django.db.utils import OperationalError
 from drf_spectacular.utils import extend_schema, inline_serializer
-from rest_framework import generics, serializers
+from rest_framework import generics, serializers, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import UserPreferences
+from .models import Role, UserPreferences
+from .permissions import AdminOnly
 from .serializers import (
+    AdminUserSerializer,
     ChangePasswordSerializer,
     MeSerializer,
     UserPreferencesSerializer,
 )
+
+User = get_user_model()
 
 
 def _ssl_cert_days_remaining():
@@ -193,6 +200,62 @@ class SystemSettingsView(APIView):
                 "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
             }
         )
+
+
+def _active_admin_q():
+    """Users who count as active administrators (admin role or superuser)."""
+    return Q(is_active=True) & (Q(role=Role.ADMIN) | Q(is_superuser=True))
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only user management (Settings → Users).
+
+    Full CRUD over user accounts. Two safety guards prevent locking yourself or
+    the whole org out of administration:
+      - you cannot delete your own account, and
+      - you cannot delete, demote or deactivate the last active administrator.
+    """
+
+    queryset = User.objects.all().order_by("username")
+    serializer_class = AdminUserSerializer
+    permission_classes = [AdminOnly]
+    filterset_fields = ["role", "is_active"]
+    search_fields = ["username", "email", "first_name", "last_name"]
+
+    @staticmethod
+    def _is_last_admin(user) -> bool:
+        """True if `user` is an active admin and the only one left."""
+        if not (user.is_active and (user.role == Role.ADMIN or user.is_superuser)):
+            return False
+        return not User.objects.filter(_active_admin_q()).exclude(pk=user.pk).exists()
+
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+        if user.pk == request.user.pk:
+            return Response(
+                {"error": "You cannot delete your own account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if self._is_last_admin(user):
+            return Response(
+                {"error": "Cannot delete the last administrator."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        """Block changes that would remove the last administrator."""
+        user = serializer.instance
+        if self._is_last_admin(user):
+            new_role = serializer.validated_data.get("role", user.role)
+            new_active = serializer.validated_data.get("is_active", user.is_active)
+            demoted = new_role != Role.ADMIN and not user.is_superuser
+            if not new_active or demoted:
+                raise ValidationError(
+                    {"error": "Cannot demote or deactivate the last administrator."}
+                )
+        serializer.save()
 
 
 class ChangePasswordView(APIView):

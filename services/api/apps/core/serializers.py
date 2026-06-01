@@ -1,9 +1,23 @@
 """Core serializers — custom JWT token payload, user profile & preferences."""
-from django.contrib.auth import password_validation
+from django.contrib.auth import get_user_model, password_validation
+from django.contrib.auth.models import Group
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import UserPreferences
+from .models import Role, UserPreferences
+
+User = get_user_model()
+
+# Role value (lowercase) → Django auth Group name (seeded by create_roles).
+ROLE_GROUP = {Role.ADMIN: "Admin", Role.ENGINEER: "Engineer", Role.VIEWER: "Viewer", Role.API: "API"}
+
+
+def sync_role_group(user):
+    """Make the user's auth Group membership match their role (Django-admin parity)."""
+    user.groups.remove(*Group.objects.filter(name__in=ROLE_GROUP.values()))
+    group = Group.objects.filter(name=ROLE_GROUP.get(user.role)).first()
+    if group:
+        user.groups.add(group)
 
 
 class NetPulseTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -40,6 +54,46 @@ class MeSerializer(serializers.Serializer):
             if field in validated_data:
                 setattr(instance, field, validated_data[field])
         instance.save()
+        return instance
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """Admin-facing user management (Settings → Users). Password is write-only."""
+
+    password = serializers.CharField(write_only=True, required=False, allow_blank=False)
+
+    class Meta:
+        model = User
+        fields = (
+            "id", "username", "email", "first_name", "last_name", "role",
+            "is_active", "is_superuser", "last_login", "date_joined", "password",
+        )
+        read_only_fields = ("id", "is_superuser", "last_login", "date_joined")
+
+    def validate_password(self, value):
+        password_validation.validate_password(value)
+        return value
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        if not password:
+            raise serializers.ValidationError({"password": "Password is required for a new user."})
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
+        sync_role_group(user)
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        role_changed = "role" in validated_data and validated_data["role"] != instance.role
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        if role_changed:
+            sync_role_group(instance)
         return instance
 
 
