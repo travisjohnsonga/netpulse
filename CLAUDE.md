@@ -870,7 +870,7 @@ Full architecture in docs/ARCHITECTURE.md.
 - Discovery page wiring: /api/devices/discovery/{jobs,discovered}/ — job CRUD +
   discovered-device approve (creates active Device)/reject; live Settings →
   Discovery page with subnet scope + OT/ICS exclusions and pending-approval queue ✅
-- Backend tests: 648 passing (services/api) ✅
+- Backend tests: 649 passing (services/api) ✅
 
 ## In Progress
 - (queue clear — see Planned Features for what's next)
@@ -944,6 +944,22 @@ fortios, panos. FortiOS has no gNMI — uses SNMP (Fortinet enterprise OIDs
 fgSysCpuUsage 1.3.6.1.4.1.12356.101.4.1.3.0 / fgSysMemUsage .4.1.4.0 /
 fgSysMemCapacity .4.1.5.0) + Syslog + NetFlow; SSH-banner auto-detection covers
 FortiOS/PAN-OS that Netmiko SSHDetect misses.
+
+### FortiOS notes
+- Config collection uses `show full-configuration` (FortiOS has no
+  `show running-config`); the `#config-version` / `#conf_file_ver` / `#buildno`
+  / `#global_vdom` header lines are stripped before change-detection hashing
+  (they drift per session and `#config-version` embeds the running user).
+- Expected/benign: every NetPulse config-collection SSH session makes the
+  Netmiko fortinet driver disable paging, which FortiOS logs as a
+  `cfgpath=system.console` config event. The syslog normalizer tags these
+  `fortios_benign=true` (severity floored to info) — they are NOT real config
+  changes. FortiOS devices will show frequent SSH sessions from the collector;
+  this is normal.
+- SNMP needs a valid FortiOS license. On unlicensed/eval VMs the SNMP daemon
+  can't read `vm.lic` and FortiOS emits `Secure Module Access Violation`
+  (`secappdomain=SNMPD`); the normalizer tags these `fortios_license_warning`
+  with an explanatory note.
 
 ## Credential System (in progress)
 CredentialProfile model:
