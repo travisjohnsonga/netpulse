@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
@@ -6,9 +6,9 @@ import { SectionHeader } from '../Settings'
 import {
   fetchDiscoveryJobs, createDiscoveryJob, deleteDiscoveryJob,
   fetchDiscoveredDevices, approveDiscoveredDevice, rejectDiscoveredDevice,
-  fetchCredentials,
+  fetchCredentials, fetchDiscoveryProgress, fetchJobDiscovered,
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
-  type CredentialProfileListItem,
+  type CredentialProfileListItem, type DiscoveryProgress,
 } from '../../api/client'
 
 const inputCls =
@@ -97,17 +97,11 @@ export default function Discovery() {
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-gray-700">
                 {jobs.map((j) => (
-                  <div key={j.id} className={clsx('flex items-center gap-4 px-5 py-3', busyId === j.id && 'opacity-50')}>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-800 dark:text-gray-100">{j.name}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {METHOD_LABEL[j.method]} · {j.devices_found} found
-                        {j.pending_count > 0 && <span className="text-amber-600 dark:text-amber-400"> · {j.pending_count} pending approval</span>}
-                      </p>
-                    </div>
-                    <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full capitalize', STATUS_BADGE[j.status])}>{j.status}</span>
-                    <button onClick={() => removeJob(j.id)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Delete</button>
-                  </div>
+                  <JobRow key={j.id} job={j} busy={busyId === j.id}
+                    onDelete={() => removeJob(j.id)}
+                    onApprove={(d) => setApproving(d)}
+                    onReject={reject}
+                    onChanged={load} />
                 ))}
               </div>
             )}
@@ -172,6 +166,189 @@ export default function Discovery() {
           onClose={() => setApproving(null)}
           onConfirm={(cid) => confirmApprove(approving, cid)}
         />
+      )}
+    </div>
+  )
+}
+
+function protocolsOf(d: DiscoveredDevice): string[] {
+  const set = new Set<string>()
+  for (const m of d.detection_methods || []) set.add(m.toUpperCase())
+  for (const [k, v] of Object.entries(d.responds_to || {})) if (v) set.add(k.toUpperCase())
+  return [...set]
+}
+
+function fmtSecs(s: number): string {
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
+const STATUS_ICON: Record<string, string> = {
+  running: '🔄', completed: '✅', failed: '❌', pending: '⏳', cancelled: '⏹',
+}
+
+/** Expandable discovery-job row with live progress (polls while running). */
+function JobRow({ job, busy, onDelete, onApprove, onReject, onChanged }: {
+  job: DiscoveryJob
+  busy: boolean
+  onDelete: () => void
+  onApprove: (d: DiscoveredDevice) => void
+  onReject: (d: DiscoveredDevice) => void
+  onChanged: () => void
+}) {
+  const [open, setOpen] = useState(job.status === 'running')
+  const [prog, setProg] = useState<DiscoveryProgress | null>(null)
+  const [devices, setDevices] = useState<DiscoveredDevice[]>([])
+  const [approvingAll, setApprovingAll] = useState(false)
+  const notified = useRef(false)
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const [p, d] = await Promise.all([fetchDiscoveryProgress(job.id), fetchJobDiscovered(job.id)])
+        if (cancelled) return
+        setProg(p); setDevices(d)
+        // Refresh parent counts/badge once when the job finishes.
+        if (p.status !== 'running' && !notified.current) { notified.current = true; onChanged() }
+      } catch { /* transient — keep last snapshot */ }
+    }
+    tick()
+    if (job.status === 'running') {
+      const t = setInterval(tick, 2000)
+      return () => { cancelled = true; clearInterval(t) }
+    }
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, job.id, job.status])
+
+  const status = prog?.status ?? job.status
+  const pct = prog?.progress_pct ?? job.progress_pct
+  const message = prog?.progress_message ?? job.progress_message
+  const scanned = prog?.ips_scanned ?? job.ips_scanned
+  const total = prog?.progress_total ?? job.progress_total
+  const found = prog?.devices_found ?? job.devices_found
+  const elapsed = prog?.elapsed_seconds ?? 0
+  const err = prog?.error_message ?? job.error_message
+  const eta = status === 'running' && pct > 0 && pct < 100 ? Math.round(elapsed * (100 - pct) / pct) : null
+  const isRunning = status === 'running'
+  const isFailed = status === 'failed'
+
+  const approveAll = async () => {
+    setApprovingAll(true)
+    for (const d of devices.filter((x) => x.status === 'pending')) {
+      try { await approveDiscoveredDevice(d.id) } catch { /* surfaced via reload */ }
+    }
+    setApprovingAll(false)
+    notified.current = false
+    onChanged()
+    fetchJobDiscovered(job.id).then(setDevices).catch(() => {})
+  }
+
+  const pendingCount = devices.filter((d) => d.status === 'pending').length
+
+  return (
+    <div className={clsx(busy && 'opacity-50')}>
+      <div className="flex items-center gap-3 px-5 py-3">
+        <button onClick={() => setOpen((o) => !o)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 w-4 shrink-0" title={open ? 'Collapse' : 'Expand'}>
+          {open ? '▼' : '▶'}
+        </button>
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setOpen((o) => !o)}>
+          <p className="font-medium text-gray-800 dark:text-gray-100">{job.name}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {METHOD_LABEL[job.method]} · {found} found
+            {job.pending_count > 0 && <span className="text-amber-600 dark:text-amber-400"> · {job.pending_count} pending approval</span>}
+          </p>
+        </div>
+        {isRunning && elapsed > 0 && <span className="text-xs text-gray-400 dark:text-gray-500">{fmtSecs(elapsed)}</span>}
+        <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full capitalize', STATUS_BADGE[status])}>{STATUS_ICON[status]} {status}</span>
+        <button onClick={onDelete} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Delete</button>
+      </div>
+
+      {open && (
+        <div className="px-5 pb-4 pt-1 bg-gray-50 dark:bg-gray-900/40 border-t border-gray-100 dark:border-gray-700">
+          {/* Progress bar */}
+          <div className="mt-2 mb-2">
+            <div className="h-3 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+              <div className={clsx('h-full rounded-full transition-all', isFailed ? 'bg-red-500' : isRunning ? 'bg-green-500 animate-pulse' : 'bg-green-500')}
+                style={{ width: `${pct}%` }} />
+            </div>
+            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <span>{message || (isRunning ? 'Starting…' : '')}</span>
+              <span>{pct}%</span>
+            </div>
+          </div>
+
+          {/* Stats line */}
+          <p className="text-xs text-gray-600 dark:text-gray-300">
+            {isFailed ? (
+              <>Scanned {scanned}{total ? `/${total}` : ''} IPs before failure</>
+            ) : isRunning ? (
+              <>⏱ Elapsed: {fmtSecs(elapsed)}{eta != null && <> · ETA: ~{fmtSecs(eta)}</>}</>
+            ) : (
+              <>Scanned: {scanned || total} IPs · Found: {found} devices{elapsed > 0 && <> · Time: {fmtSecs(elapsed)}</>}</>
+            )}
+          </p>
+
+          {isFailed && err && (
+            <div className="mt-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-md px-3 py-2 text-xs text-red-700 dark:text-red-400">
+              ❌ {err}
+            </div>
+          )}
+
+          {/* Discovered devices */}
+          {devices.length > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  {isRunning ? `Devices found so far: ${found}` : 'Discovered devices'}
+                </p>
+                {!isRunning && pendingCount > 0 && (
+                  <button onClick={approveAll} disabled={approvingAll}
+                    className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-md">
+                    {approvingAll ? 'Approving…' : `Approve All (${pendingCount})`}
+                  </button>
+                )}
+              </div>
+              <div className="overflow-x-auto rounded-md border border-gray-200 dark:border-gray-700">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-left">
+                      <th className="px-3 py-1.5 font-medium">IP</th>
+                      <th className="px-3 py-1.5 font-medium">Hostname</th>
+                      <th className="px-3 py-1.5 font-medium">Platform</th>
+                      <th className="px-3 py-1.5 font-medium">Protocols</th>
+                      <th className="px-3 py-1.5 font-medium text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {devices.map((d) => (
+                      <tr key={d.id} className="text-gray-700 dark:text-gray-300">
+                        <td className="px-3 py-1.5 font-mono">{d.source_ip}</td>
+                        <td className="px-3 py-1.5">{d.discovered_hostname || '—'}</td>
+                        <td className="px-3 py-1.5">{d.discovered_platform || 'unknown'}</td>
+                        <td className="px-3 py-1.5">
+                          <span className="inline-flex gap-1">
+                            {protocolsOf(d).map((p) => <span key={p} className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">{p}</span>)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right">
+                          {d.status === 'pending' ? (
+                            <span className="inline-flex gap-1.5 justify-end">
+                              <button onClick={() => onApprove(d)} className="px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded">Approve</button>
+                              <button onClick={() => onReject(d)} className="px-2 py-0.5 border border-gray-300 dark:border-gray-600 rounded dark:text-gray-300">Reject</button>
+                            </span>
+                          ) : <span className="capitalize text-gray-400">{d.status}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

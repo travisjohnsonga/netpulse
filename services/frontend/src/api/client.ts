@@ -953,7 +953,25 @@ export interface DiscoveryJob {
   seed_device_hostname: string | null
   credential_profile: number | null
   credential_profile_name: string | null
+  progress_current: number
+  progress_total: number
+  progress_message: string
+  progress_pct: number
+  ips_scanned: number
+  error_message: string
   created_at: string
+}
+
+export interface DiscoveryProgress {
+  status: DiscoveryStatus
+  progress_pct: number
+  progress_current: number
+  progress_total: number
+  progress_message: string
+  ips_scanned: number
+  devices_found: number
+  elapsed_seconds: number
+  error_message: string
 }
 
 export interface NewDiscoveryJob {
@@ -990,6 +1008,16 @@ export async function createDiscoveryJob(payload: NewDiscoveryJob): Promise<Disc
 
 export async function deleteDiscoveryJob(id: number): Promise<void> {
   await api.delete(`/devices/discovery/jobs/${id}/`)
+}
+
+export async function fetchDiscoveryProgress(id: number): Promise<DiscoveryProgress> {
+  const { data } = await api.get<DiscoveryProgress>(`/devices/discovery/jobs/${id}/progress/`)
+  return data
+}
+
+export async function fetchJobDiscovered(jobId: number): Promise<DiscoveredDevice[]> {
+  const { data } = await api.get<DiscoveredDevice[]>(`/devices/discovery/jobs/${jobId}/discovered/`)
+  return unwrap(data)
 }
 
 export async function fetchDiscoveredDevices(status = 'pending'): Promise<DiscoveredDevice[]> {
