@@ -34,6 +34,7 @@ _EXTRA_FIELDS: dict[str, str] = {
     "action": "fortios_action", "service": "fortios_service",
     "srcip": "fortios_srcip", "dstip": "fortios_dstip",
     "user": "fortios_user", "policyid": "fortios_policyid",
+    "cfgpath": "fortios_cfgpath", "secappdomain": "fortios_secappdomain",
 }
 
 
@@ -111,6 +112,44 @@ def fortios_extras(f: dict[str, str]) -> dict[str, str]:
     return {dest: f[src] for src, dest in _EXTRA_FIELDS.items() if f.get(src)}
 
 
+# Severity floor (RFC 5424) for benign management-session noise: never escalate
+# below "information" so it can't trip an anomaly/alert on these records.
+_INFO_SEVERITY = 6
+
+
+def classify_fortios_event(f: dict[str, str]) -> dict[str, str] | None:
+    """
+    Tag well-known FortiOS noise so the UI can explain it and it never alerts:
+
+      - console/terminal config events (``cfgpath=system.console``) — emitted
+        every time NetPulse's config collector opens an SSH session to disable
+        paging; not a substantive config change.
+      - SNMP "Secure Module Access Violation" (``secappdomain=SNMPD``) — a
+        FortiOS VM/eval license limitation, not an attack.
+
+    Returns a dict of ``extras`` to merge plus an optional ``note``/``benign``
+    flag, or None when the record is ordinary.
+    """
+    cfgpath = (f.get("cfgpath") or "").lower()
+    logdesc = (f.get("logdesc") or "").lower()
+    msg = (f.get("msg") or "").lower()
+
+    if cfgpath.startswith("system.console"):
+        return {
+            "benign": "true",
+            "reason": "netpulse_console_paging",
+            "note": "console paging set by a management session — not a substantive config change",
+        }
+
+    if "secure module access violation" in (logdesc or msg) \
+            and (f.get("secappdomain") or "").upper() == "SNMPD":
+        return {
+            "license_warning": "snmp_unlicensed",
+            "note": "SNMP requires a valid FortiOS license — these violations indicate an unlicensed/eval VM",
+        }
+    return None
+
+
 def normalize(result: dict[str, Any], severities: dict[int, str]) -> None:
     """
     Mutate a parsed syslog `result` in place to normalise a FortiOS record.
@@ -131,4 +170,18 @@ def normalize(result: dict[str, Any], severities: dict[int, str]) -> None:
     result["vendor"] = "fortinet"
     extras = result.get("extras") or {}
     extras.update(fortios_extras(fields))
+
+    # Tag known FortiOS noise (NetPulse session console-paging events, SNMP
+    # license violations) so the UI can explain it and it never trips an alert.
+    tag = classify_fortios_event(fields)
+    if tag:
+        note = tag.pop("note", "")
+        if note:
+            result["message"] = f"{result['message']} ({note})"
+        if tag.get("benign"):
+            # Floor the severity so benign management noise can't escalate.
+            result["severity"] = max(result.get("severity", _INFO_SEVERITY), _INFO_SEVERITY)
+            result["severity_name"] = severities.get(result["severity"], str(result["severity"]))
+        extras.update({f"fortios_{k}": v for k, v in tag.items()})
+
     result["extras"] = extras

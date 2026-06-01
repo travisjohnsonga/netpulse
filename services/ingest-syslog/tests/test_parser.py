@@ -418,6 +418,38 @@ class TestFortiOS:
         assert m["message"] == "%LINK-3-UPDOWN: Interface Gi1 changed state to down"
         assert "vendor" not in m
 
+    def test_console_paging_event_marked_benign(self):
+        # NetPulse's config collector toggles console paging each SSH session;
+        # FortiOS logs it under cfgpath=system.console. It must be tagged benign
+        # (and severity floored to info) so it never reads as a real config change.
+        body = ('devname="fw1" devid="FGT001" type="event" subtype="system" '
+                'level="warning" logdesc="Attribute configured" '
+                'cfgpath="system.console" user="netpulse" ui="ssh(192.168.98.134)"')
+        m = self._fortios(body)
+        assert m["extras"]["fortios_benign"] == "true"
+        assert m["extras"]["fortios_reason"] == "netpulse_console_paging"
+        assert m["extras"]["fortios_cfgpath"] == "system.console"
+        assert "not a substantive config change" in m["message"]
+        assert m["severity"] == 6  # warning(4) floored to information(6)
+
+    def test_snmp_secure_module_violation_flagged(self):
+        body = ('devname="fw1" devid="FGT001" type="event" subtype="system" '
+                'level="error" logdesc="Secure Module Access Violation" '
+                'secappdomain="SNMPD" msg="cannot read vm.lic"')
+        m = self._fortios(body)
+        assert m["extras"]["fortios_license_warning"] == "snmp_unlicensed"
+        assert m["extras"]["fortios_secappdomain"] == "SNMPD"
+        assert "valid FortiOS license" in m["message"]
+        assert m["severity"] == 3  # error preserved — not floored
+
+    def test_ordinary_config_event_not_tagged(self):
+        body = ('devname="fw1" devid="FGT001" type="event" subtype="system" '
+                'level="notice" logdesc="DHCP lease" cfgpath="system.dhcp"')
+        m = self._fortios(body)
+        assert "fortios_benign" not in m["extras"]
+        assert "fortios_license_warning" not in m["extras"]
+        assert m["message"] == "DHCP lease"
+
     def test_detection_predicate(self):
         from ingest import fortios
         assert fortios.is_fortios_log('devname="x" type="traffic" level="notice"') is True
