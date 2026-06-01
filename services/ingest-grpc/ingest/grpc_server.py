@@ -18,6 +18,7 @@ import mdt_grpc_dialout_pb2_grpc  # noqa: E402 — Cisco MDT dial-out
 
 from .config import cfg
 from .device_registry import DeviceRegistry
+from .gnmi_heartbeat import GNMIHeartbeat
 from .mdt_servicer import CiscoMDTServicer
 from .publisher import NATSPublisher
 from .servicer import GNMIDialOutServicer
@@ -52,6 +53,9 @@ async def serve() -> None:
     registry = DeviceRegistry()
     await registry.start(publisher.nc)
 
+    # gNMI liveness heartbeat → Valkey (drives ingest-snmp adaptive polling).
+    heartbeat = GNMIHeartbeat(url=cfg.valkey_url, ttl=cfg.gnmi_heartbeat_ttl)
+
     server = grpc.aio.server(interceptors=[_MethodLogInterceptor()])
     # OpenConfig gNMI dial-out (standard).
     gnmi_pb2_grpc.add_gNMIDialOutServicer_to_server(
@@ -59,7 +63,7 @@ async def serve() -> None:
     )
     # Cisco IOS-XE/XR Model-Driven Telemetry dial-out (encode-kvgpb over grpc-tcp).
     mdt_grpc_dialout_pb2_grpc.add_gRPCMdtDialoutServicer_to_server(
-        CiscoMDTServicer(publisher, registry), server
+        CiscoMDTServicer(publisher, registry, heartbeat), server
     )
 
     listen_addr = f"{cfg.grpc_host}:{cfg.grpc_port}"
@@ -80,6 +84,7 @@ async def serve() -> None:
 
     logger.info("shutdown signal received — draining...")
     await server.stop(grace=10)
+    await heartbeat.close()
     await publisher.drain()
     logger.info("ingest-grpc stopped")
 

@@ -870,7 +870,13 @@ Full architecture in docs/ARCHITECTURE.md.
 - Discovery page wiring: /api/devices/discovery/{jobs,discovered}/ — job CRUD +
   discovered-device approve (creates active Device)/reject; live Settings →
   Discovery page with subnet scope + OT/ICS exclusions and pending-approval queue ✅
-- Backend tests: 649 passing (services/api) ✅
+- Collection-method display: /api/devices/{id}/collection-status/ +
+  device-header badges / Telemetry-tab bar (📡 gNMI / 📊 SNMP / ⚠️ none) ✅
+- gNMI/SNMP adaptive polling: ingest-grpc stamps a Valkey gNMI heartbeat
+  (gnmi:last_seen:{id}, TTL 180s); ingest-snmp suppresses the device poll while
+  gNMI is active and auto-resumes when it stalls; collection-status reports
+  snmp.suppressed ✅
+- Backend tests: 661 passing (services/api); ingest-snmp 48; ingest-grpc 32 ✅
 
 ## In Progress
 - (queue clear — see Planned Features for what's next)
@@ -1927,10 +1933,33 @@ Audit trail regardless of setting:
 ✅ IMPLEMENTED — ALLOW_CONFIG_PUSH is read in settings and enforced in the
 config-push/remediation endpoints; the frontend reads it from /api/settings/system/.
 
-## PINNED — gNMI/SNMP Adaptive Polling (NOT yet built)
+## PINNED — gNMI/SNMP Adaptive Polling ✅ IMPLEMENTED
 
 When a device is actively pushing gNMI telemetry, SNMP polling
 for the same metrics is redundant and wastes device resources.
+
+### As built (differs slightly from the original sketch below)
+- ingest-grpc (mdt_servicer) stamps `gnmi:last_seen:{device_id}` in Valkey on
+  every gNMI/MDT message — keyed by the registry-resolved NUMERIC device_id
+  only (hostname/IP fallbacks are skipped so the key matches what ingest-snmp
+  looks up). TTL 180s (3× the 30s interval). GNMIHeartbeat is best-effort —
+  Valkey errors never interrupt ingest.
+- ingest-snmp (poller) skips the ENTIRE device poll while gNMI is active
+  (heartbeat < GNMI_ACTIVE_THRESHOLD=120s); the simplest-approach "SNMP is
+  purely a fallback". Logs only on transition: "Skipping SNMP device metrics
+  for device {id} - gNMI active" / "gNMI stream timeout for device {id} -
+  resuming SNMP fallback polling". GNMIActivity degrades to "poll normally"
+  (logged) if Valkey is unavailable. Disable via ADAPTIVE_POLLING=false.
+- API /devices/{id}/collection-status/ returns snmp.suppressed +
+  suppressed_reason="gNMI active" (active=false) while gNMI is streaming;
+  last_poll_seconds_ago is still reported.
+- UI: header shows 📡 gNMI only (tooltip notes "SNMP polling suppressed"); the
+  Telemetry-tab bar shows a "SNMP polling suppressed" line and a transient
+  "gNMI stream lost — falling back to SNMP polling" notice on failover.
+- Valkey URL is built from VALKEY_HOST/PORT/PASSWORD (password URL-encoded) or
+  an explicit VALKEY_URL.
+
+### Original design sketch (superseded by the above)
 
 ### Logic:
 1. Track last gNMI message received per device in Valkey:
@@ -1964,7 +1993,7 @@ for the same metrics is redundant and wastes device resources.
    Update automatically based on what's actually received.
 
 ### Priority: implement after gNMI port fix is verified working
-### Do NOT build until requested.
+### ✅ Built — verified live: router1/router2 stream gNMI → SNMP suppressed.
 
 ## PINNED — Pre-Production Security Audit
 

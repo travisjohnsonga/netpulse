@@ -276,6 +276,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
 
   ingest-snmp:
     build: ./services/ingest-snmp
@@ -290,6 +292,8 @@ services:
       - netpulse-net
     depends_on:
       nats:
+        condition: service_healthy
+      valkey:
         condition: service_healthy
 
   ingest-syslog:

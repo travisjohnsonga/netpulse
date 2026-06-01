@@ -43,6 +43,7 @@ class SNMPPoller:
         publisher: NATSPublisher,
         poll_timeout: float = 5.0,
         poll_retries: int = 1,
+        gnmi_activity=None,
     ) -> None:
         self._creds = credentials
         self._pub = publisher
@@ -51,6 +52,11 @@ class SNMPPoller:
         self._tasks: dict[str, list[asyncio.Task]] = {}
         # One shared SNMP engine for all polls (pysnmp is not thread-safe but is coro-safe)
         self._engine = None
+        # Optional GNMIActivity — when a device is actively streaming gNMI we
+        # suppress its (redundant) SNMP poll. None disables adaptive polling.
+        self._gnmi = gnmi_activity
+        # device_id → currently-suppressed? (so we only log on transitions).
+        self._suppressed: dict[str, bool] = {}
 
     def _get_engine(self):
         if self._engine is None:
@@ -90,6 +96,19 @@ class SNMPPoller:
     def _stop_device(self, device_id: str) -> None:
         for task in self._tasks.pop(device_id, []):
             task.cancel()
+        self._suppressed.pop(device_id, None)
+
+    def _note_suppression(self, device_id: str, suppressed: bool) -> None:
+        """Log only when a device crosses the gNMI-active / SNMP-fallback line."""
+        prev = self._suppressed.get(device_id)
+        if prev == suppressed:
+            return
+        self._suppressed[device_id] = suppressed
+        if suppressed:
+            logger.info("Skipping SNMP device metrics for device %s - gNMI active", device_id)
+        elif prev is True:
+            # We were suppressing; the heartbeat went stale (TTL expired) → resume.
+            logger.info("gNMI stream timeout for device %s - resuming SNMP fallback polling", device_id)
 
     # ── Poll loop ─────────────────────────────────────────────────────────────
 
@@ -107,6 +126,13 @@ class SNMPPoller:
     async def _poll(self, device: Device, profile: PollProfile) -> None:
         if not profile.oids:
             return
+
+        # Adaptive polling: skip the poll entirely while gNMI is streaming for
+        # this device (gNMI provides the metrics; SNMP is purely a fallback).
+        if self._gnmi is not None and await self._gnmi.is_active(device.device_id):
+            self._note_suppression(device.device_id, True)
+            return
+        self._note_suppression(device.device_id, False)
 
         try:
             creds = await self._creds.get(device.cred_path) if device.cred_path else {}

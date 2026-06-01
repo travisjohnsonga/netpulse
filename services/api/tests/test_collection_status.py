@@ -24,8 +24,8 @@ class TestCollectionStatusEndpoint:
             "device_id": str(device.id),
             "gnmi": {"active": True, "last_seen_seconds_ago": 15,
                      "metrics_per_push": 294, "interval_seconds": 30},
-            "snmp": {"active": False, "last_poll_seconds_ago": None,
-                     "interval_seconds": 300, "version": None},
+            "snmp": {"active": False, "suppressed": True, "suppressed_reason": "gNMI active",
+                     "last_poll_seconds_ago": 299, "interval_seconds": 300, "version": None},
             "primary": "gnmi", "any_active": True,
         }
         monkeypatch.setattr(cs, "build_collection_status", lambda dev: sample)
@@ -84,16 +84,32 @@ class TestBuildCollectionStatus:
         assert out["primary"] == "snmp"
         assert out["any_active"] is True
 
-    def test_gnmi_preferred_over_snmp(self, device, monkeypatch):
+    def test_gnmi_active_suppresses_snmp(self, device, monkeypatch):
+        # Adaptive polling: when gNMI is streaming, SNMP is suppressed even
+        # though it polled recently (right before suppression kicked in).
         from apps.devices import collection_status as cs
         now = timezone.now()
         self._patch_activity(monkeypatch,
                              gnmi_last_seen=now - timedelta(seconds=10),
                              gnmi_field_count=100,
-                             snmp_last_seen=now - timedelta(seconds=60))
+                             snmp_last_seen=now - timedelta(seconds=299))
         out = cs.build_collection_status(device, now=now)
         assert out["primary"] == "gnmi"
-        assert out["gnmi"]["active"] and out["snmp"]["active"]
+        assert out["gnmi"]["active"] is True
+        assert out["snmp"]["active"] is False
+        assert out["snmp"]["suppressed"] is True
+        assert out["snmp"]["suppressed_reason"] == "gNMI active"
+        # Last poll age still reported while suppressed.
+        assert out["snmp"]["last_poll_seconds_ago"] == 299
+
+    def test_snmp_not_suppressed_when_no_gnmi(self, device, monkeypatch):
+        from apps.devices import collection_status as cs
+        now = timezone.now()
+        self._patch_activity(monkeypatch, snmp_last_seen=now - timedelta(seconds=30))
+        out = cs.build_collection_status(device, now=now)
+        assert out["snmp"]["active"] is True
+        assert out["snmp"]["suppressed"] is False
+        assert "suppressed_reason" not in out["snmp"]
 
     def test_no_telemetry(self, device, monkeypatch):
         from apps.devices import collection_status as cs

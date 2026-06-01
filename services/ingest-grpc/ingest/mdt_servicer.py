@@ -39,9 +39,12 @@ def _iso(msg_timestamp_ms: int) -> str:
 class CiscoMDTServicer:
     """Async implementation of gRPCMdtDialout.MdtDialout (bidirectional stream)."""
 
-    def __init__(self, publisher: NATSPublisher, registry: DeviceRegistry) -> None:
+    def __init__(self, publisher: NATSPublisher, registry: DeviceRegistry, heartbeat=None) -> None:
         self._publisher = publisher
         self._registry = registry
+        # Optional GNMIHeartbeat — stamps gnmi:last_seen:{device_id} in Valkey so
+        # ingest-snmp can suppress redundant SNMP polling for streaming devices.
+        self._heartbeat = heartbeat
 
     async def MdtDialout(self, request_iterator, context):
         peer = context.peer()
@@ -63,10 +66,8 @@ class CiscoMDTServicer:
                     continue
 
                 parsed = parse_telemetry(telem)
-                device_id = (
-                    self._registry.resolve(ip=src_ip, hostname=parsed["node_id"])
-                    or parsed["node_id"] or src_ip
-                )
+                resolved = self._registry.resolve(ip=src_ip, hostname=parsed["node_id"])
+                device_id = resolved or parsed["node_id"] or src_ip
                 metrics = flatten_metrics(parsed)
                 payload = {
                     "device_id": str(device_id),
@@ -79,6 +80,13 @@ class CiscoMDTServicer:
                     "rows": parsed["rows"],
                 }
                 await self._publisher.publish_metrics(str(device_id), payload)
+                # Only stamp the gNMI heartbeat when we resolved a real NetPulse
+                # device_id from the registry — ingest-snmp and the API look the
+                # key up by numeric device_id, so a hostname/IP fallback key
+                # would never match. Until the registry syncs, SNMP just keeps
+                # polling (the safe fallback).
+                if self._heartbeat is not None and resolved is not None:
+                    await self._heartbeat.mark_active(str(resolved))
                 n_published += 1
                 logger.debug(
                     "MDT msg from %s (dev=%s) path=%s rows=%d metrics=%d",

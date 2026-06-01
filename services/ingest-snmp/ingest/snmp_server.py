@@ -16,6 +16,7 @@ import signal
 
 from .config import cfg
 from .credentials import CredentialManager
+from .gnmi_state import GNMIActivity
 from .models import Device
 from .poller import SNMPPoller
 from .publisher import NATSPublisher
@@ -47,12 +48,21 @@ async def serve() -> None:
         cache_ttl=cfg.cred_cache_ttl,
     )
 
+    # ── Adaptive polling (gNMI heartbeat in Valkey) ───────────────────────────
+    gnmi_activity = (
+        GNMIActivity(url=cfg.valkey_url, threshold_seconds=cfg.gnmi_active_threshold)
+        if cfg.adaptive_polling else None
+    )
+    if gnmi_activity is None:
+        logger.info("adaptive polling disabled — SNMP polls all devices")
+
     # ── Poller ────────────────────────────────────────────────────────────────
     poller = SNMPPoller(
         credentials=creds,
         publisher=publisher,
         poll_timeout=cfg.poll_timeout,
         poll_retries=cfg.poll_retries,
+        gnmi_activity=gnmi_activity,
     )
 
     for raw in cfg.load_devices():
@@ -113,6 +123,8 @@ async def serve() -> None:
     logger.info("shutdown signal received")
     poller.stop_all()
     trap_transport.close()
+    if gnmi_activity is not None:
+        await gnmi_activity.close()
     await publisher.drain()
     logger.info("ingest-snmp stopped")
 

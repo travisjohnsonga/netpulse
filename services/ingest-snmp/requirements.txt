@@ -7,3 +7,6 @@ nats-py~=2.7
 
 # Secrets (OpenBao / HashiCorp Vault compatible)
 hvac~=2.1
+
+# Valkey — read gNMI liveness heartbeat for adaptive polling
+redis~=5.0

@@ -1,6 +1,24 @@
 import json
 import os
 from dataclasses import dataclass, field
+from urllib.parse import quote
+
+
+def _valkey_url() -> str:
+    """
+    Build a Valkey/Redis URL. Prefer an explicit VALKEY_URL; otherwise assemble
+    one from VALKEY_HOST/PORT/PASSWORD (the .env convention) so the password
+    (Valkey runs with --requirepass) is included. The password is URL-encoded so
+    special characters (@ : / etc.) don't corrupt host/port parsing.
+    """
+    url = os.environ.get("VALKEY_URL")
+    if url:
+        return url
+    host = os.environ.get("VALKEY_HOST", "valkey")
+    port = os.environ.get("VALKEY_PORT", "6379")
+    password = os.environ.get("VALKEY_PASSWORD", "")
+    auth = f":{quote(password, safe='')}@" if password else ""
+    return f"redis://{auth}{host}:{port}/0"
 
 
 @dataclass
@@ -40,6 +58,20 @@ class Config:
     cred_cache_ttl: int = field(default_factory=lambda: int(os.environ.get("CRED_CACHE_TTL", "300")))
 
     log_level: str = field(default_factory=lambda: os.environ.get("LOG_LEVEL", "INFO").upper())
+
+    # ── Adaptive polling (gNMI/SNMP) ──────────────────────────────────────────
+    # When a device is actively streaming gNMI (heartbeat in Valkey), suppress
+    # redundant SNMP polling. Disable with ADAPTIVE_POLLING=false to always poll.
+    adaptive_polling: bool = field(
+        default_factory=lambda: os.environ.get("ADAPTIVE_POLLING", "true").lower() != "false"
+    )
+    valkey_url: str = field(default_factory=_valkey_url)
+    # A heartbeat newer than this many seconds counts as "gNMI active". Kept
+    # below the 180s heartbeat TTL so SNMP resumes ~1 missed interval after a
+    # stream stalls, before the key actually expires.
+    gnmi_active_threshold: int = field(
+        default_factory=lambda: int(os.environ.get("GNMI_ACTIVE_THRESHOLD", "120"))
+    )
 
     def load_devices(self) -> list[dict]:
         try:

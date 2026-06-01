@@ -158,9 +158,27 @@ def build_collection_status(device, now=None) -> dict:
     gnmi_active = gnmi_ago is not None and gnmi_ago <= GNMI_STALE_SECONDS
 
     snmp_ago = _seconds_ago(now, activity.get("snmp_last_seen"))
-    snmp_active = snmp_ago is not None and snmp_ago <= SNMP_STALE_SECONDS
+    snmp_recent = snmp_ago is not None and snmp_ago <= SNMP_STALE_SECONDS
+
+    # Adaptive polling: while gNMI is streaming, ingest-snmp suppresses SNMP
+    # polling for this device, so SNMP is not "active" even if it polled
+    # recently (right before suppression kicked in). Mirror that here.
+    snmp_suppressed = gnmi_active
+    snmp_active = snmp_recent and not snmp_suppressed
 
     primary = "gnmi" if gnmi_active else ("snmp" if snmp_active else None)
+
+    snmp_block = {
+        "active": snmp_active,
+        "suppressed": snmp_suppressed,
+        # Report the last poll age regardless of active/suppressed (so the UI
+        # can show "last poll 299s ago" even while suppressed).
+        "last_poll_seconds_ago": snmp_ago,
+        "interval_seconds": _snmp_interval(device),
+        "version": _snmp_version(device),
+    }
+    if snmp_suppressed:
+        snmp_block["suppressed_reason"] = "gNMI active"
 
     return {
         "device_id": str(device.id),
@@ -170,12 +188,7 @@ def build_collection_status(device, now=None) -> dict:
             "metrics_per_push": activity.get("gnmi_field_count") if gnmi_active else None,
             "interval_seconds": _gnmi_interval(device),
         },
-        "snmp": {
-            "active": snmp_active,
-            "last_poll_seconds_ago": snmp_ago if snmp_active else None,
-            "interval_seconds": _snmp_interval(device),
-            "version": _snmp_version(device),
-        },
+        "snmp": snmp_block,
         "primary": primary,
         "any_active": gnmi_active or snmp_active,
     }
