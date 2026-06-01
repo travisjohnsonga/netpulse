@@ -860,14 +860,16 @@ Full architecture in docs/ARCHITECTURE.md.
   emit (is_system, protected from deletion); disabling a rule now suppresses its
   alerts (stream-processor + interface_monitor honor is_active) ✅
 - Auth rate limiting: JWT token/refresh endpoints throttled (H1 security fix) ✅
+- Admin user management: AdminOnly /api/users/ CRUD (role↔Group sync) + live
+  Settings → Users page; delete guards (no self-delete, no deleting/demoting/
+  deactivating the last admin) ✅
 - Dashboard: infrastructure health, empty states, live WebSocket, service-check + cert-expiry widgets ✅
 - Onboarding wizard: 4 steps, integrations selection ✅
 - HTTPS enforced: nginx redirects HTTP :3000 → HTTPS :3443 (self-signed bootstrap) ✅
 - Dependabot: weekly pip/npm/docker/actions updates, grouped (Django/React/Tailwind) ✅
-- Backend tests: 614 passing (services/api) ✅
+- Backend tests: 631 passing (services/api) ✅
 
 ## In Progress
-- User delete with safety guards (no self/last-admin delete)
 - Discovery page wiring (DiscoveryJob API + OT/ICS subnet management)
 
 ## Technology Stack
@@ -990,6 +992,8 @@ DeviceCredential (through model):
 /api/health/infrastructure/     — service connectivity check
 /api/auth/token/                — JWT obtain
 /api/auth/token/refresh/        — JWT refresh
+/api/users/                     — admin user management CRUD (AdminOnly; delete/demote guards)
+/api/users/me/                  — current user profile + preferences
 /api/devices/                   — device CRUD (sortable: ?ordering=, filter: ?site=&status=)
 /api/devices/topology/          — LLDP topology nodes + edges
 /api/devices/test-connection/   — test device connectivity
