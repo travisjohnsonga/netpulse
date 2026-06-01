@@ -44,6 +44,24 @@ class TestHelpers:
         assert collector.config_command("ios_xe") == "show running-config"
         assert collector.config_command("junos") == "show configuration | display set"
         assert collector.config_command("eos") == "show running-config"
+        # FortiOS has no "show running-config".
+        assert collector.config_command("fortios") == "show full-configuration"
+
+    def test_normalize_strips_fortios_header(self):
+        # FortiOS "show full-configuration" header drifts (version/conf-file-ver,
+        # and #config-version embeds the username) without a real config change.
+        a = (
+            "#config-version=FGVM64-7.4.1-FW-build2463-230830:opmode=0:vdom=0:user=netpulse\n"
+            "#conf_file_ver=100\n#buildno=2463\n#global_vdom=1\n"
+            "config system global\n    set hostname \"fw1\"\nend\n"
+        )
+        b = (
+            "#config-version=FGVM64-7.4.1-FW-build2463-230830:opmode=0:vdom=0:user=admin\n"
+            "#conf_file_ver=215\n#buildno=2463\n#global_vdom=1\n"
+            "config system global\n    set hostname \"fw1\"\nend\n"
+        )
+        # Different header (user + conf_file_ver) but identical substantive config.
+        assert collector.normalize_config(a) == collector.normalize_config(b)
 
     def test_device_host_prefers_management_ip(self, device):
         device.management_ip = "192.168.98.100"

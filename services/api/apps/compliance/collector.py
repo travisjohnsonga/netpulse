@@ -51,6 +51,9 @@ _VENDOR_FALLBACK = {
 # Running-config command per platform family.
 _CONFIG_COMMANDS = {
     "junos": "show configuration | display set",
+    # FortiOS has no "show running-config"; the complete config is collected with
+    # "show full-configuration" (stable, full dump — good for diff/backup).
+    "fortios": "show full-configuration",
     # everything else (cisco families, arista, generic) uses show running-config
 }
 
@@ -91,6 +94,15 @@ _DYNAMIC_LINE_PATTERNS = [
     re.compile(r"^\s*##\s*Last (commit|changed):.*", re.IGNORECASE),
     # Arista EOS / generic "! Generated on ..." / "! Saved at ...".
     re.compile(r"^\s*!\s*(Generated|Saved)\b.*", re.IGNORECASE),
+    # FortiOS "show full-configuration" header metadata — these drift between
+    # collections (build/version banner and the incrementing conf-file version)
+    # without representing a real config change, and `#config-version=...` even
+    # embeds the username of whoever ran the command. Strip so NetPulse's own
+    # collection sessions don't register as a config change.
+    re.compile(r"^\s*#config-version=.*", re.IGNORECASE),
+    re.compile(r"^\s*#conf_file_ver=.*", re.IGNORECASE),
+    re.compile(r"^\s*#buildno=.*", re.IGNORECASE),
+    re.compile(r"^\s*#global_vdom=.*", re.IGNORECASE),
 ]
 # Generic timestamp comment lines, e.g. "! 2024-06-14 12:00:00" or
 # "! Mon Jun 14 12:00:00 2024".
