@@ -1,6 +1,8 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Layout from './components/Layout'
+import SetupRequired, { OpenBaoDegradedBanner } from './pages/SetupRequired'
+import { fetchSetupStatus, type SetupStatus } from './api/client'
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/Devices'
 import Profile from './pages/Profile'
@@ -105,6 +107,53 @@ function AppRoutes() {
   )
 }
 
+/**
+ * Gates the whole app on first-run setup. Checks /api/setup/status/ (no auth)
+ * before rendering anything else:
+ *   - setup_complete === false → show the SetupRequired welcome page only.
+ *   - setup_complete === true but OpenBao unreachable → render the app with a
+ *     persistent degraded banner (don't lock admins out of a working system).
+ *   - backend unreachable → fail open (let the app/login surface the error).
+ */
+function SetupGate({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<SetupStatus | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  const check = useCallback(() => {
+    return fetchSetupStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null))   // backend down → fail open
+      .finally(() => setLoaded(true))
+  }, [])
+
+  useEffect(() => { check() }, [check])
+
+  if (!loaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (status && !status.setup_complete) {
+    // On completion, re-check; flips into the app (lands on /login).
+    return <SetupRequired status={status} onComplete={() => { setLoaded(false); check() }} />
+  }
+
+  const degraded = !!status && status.setup_complete && !status.openbao_healthy
+  return (
+    <>
+      {degraded && <OpenBaoDegradedBanner />}
+      {children}
+    </>
+  )
+}
+
 export default function App() {
-  return <AppRoutes />
+  return (
+    <SetupGate>
+      <AppRoutes />
+    </SetupGate>
+  )
 }

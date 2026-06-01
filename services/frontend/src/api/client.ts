@@ -300,6 +300,19 @@ export async function checkHealth(): Promise<HealthStatus> {
   return data
 }
 
+export interface SetupStatus {
+  setup_complete: boolean
+  openbao_healthy: boolean
+  database_healthy: boolean
+  version: string
+}
+
+// No auth required — used to gate the app before login.
+export async function fetchSetupStatus(): Promise<SetupStatus> {
+  const { data } = await api.get<SetupStatus>('/setup/status/')
+  return data
+}
+
 export interface MetricPoint { time: string; value: number }
 export interface DeviceMetrics {
   device_id: string
