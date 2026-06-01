@@ -206,6 +206,11 @@ SSL_CERT_PATH = os.environ.get(
 # GET /api/settings/system/ so the UI can disable "Push to Device".
 ALLOW_CONFIG_PUSH = os.environ.get("ALLOW_CONFIG_PUSH", "false").lower() == "true"
 
+# First-run setup gate. setup.sh sets SETUP_COMPLETE=true in .env when done;
+# factory-reset.sh resets it to false. The frontend gates the whole app on
+# GET /api/setup/status/ and shows the /setup welcome page until this is true.
+SETUP_COMPLETE = os.environ.get("SETUP_COMPLETE", "false").lower() == "true"
+
 # Publish device SNMP config to NATS (netpulse.devices.upsert) on save so the
 # ingest-snmp poller learns about devices. Disabled in tests (no NATS).
 SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "true"

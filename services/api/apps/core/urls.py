@@ -9,6 +9,7 @@ from .views import (
     UserViewSet,
     health,
     infrastructure_health,
+    setup_status,
 )
 
 router = SimpleRouter()
@@ -17,6 +18,7 @@ router.register("users", UserViewSet)
 urlpatterns = [
     path("health/", health, name="health"),
     path("health/infrastructure/", infrastructure_health, name="health-infrastructure"),
+    path("setup/status/", setup_status, name="setup-status"),
     # Current user profile & preferences. These MUST precede the router so
     # /users/me/ resolves here and not to the UserViewSet detail route (pk="me").
     path("users/me/",                 MeView.as_view(),             name="users-me"),

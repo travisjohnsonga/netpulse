@@ -89,11 +89,81 @@ def health(request):
         {
             "status": status,
             "db": db_ok,
+            "setup_complete": bool(getattr(dj_settings, "SETUP_COMPLETE", False)),
+            "openbao": "healthy" if _openbao_healthy() else "unavailable",
             "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
             "ssl_cert_days_remaining": _ssl_cert_days_remaining(),
         },
         status=200 if db_ok else 503,
     )
+
+
+def _openbao_healthy() -> bool:
+    """True when OpenBao answers /v1/sys/health as initialized + unsealed (200)."""
+    from django.conf import settings as dj_settings
+
+    addr = getattr(dj_settings, "OPENBAO_ADDR", "") or os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
+    try:
+        with urllib.request.urlopen(f"{addr.rstrip('/')}/v1/sys/health", timeout=2.0) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as exc:
+        # 429 = unsealed standby (still usable); anything else (501 uninit,
+        # 503 sealed) is not healthy.
+        return exc.code == 429
+    except Exception:
+        return False
+
+
+def _netpulse_version() -> str:
+    """Best-effort version string (git describe), else env, else 'unknown'."""
+    env_ver = os.environ.get("NETPULSE_VERSION", "")
+    if env_ver:
+        return env_ver
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+@extend_schema(
+    summary="First-run setup status (no auth)",
+    description="Whether initial setup is complete and core dependencies are healthy. "
+                "Used by the frontend before login to gate the app on the /setup page.",
+    responses=inline_serializer(
+        "SetupStatus",
+        {
+            "setup_complete": serializers.BooleanField(),
+            "openbao_healthy": serializers.BooleanField(),
+            "database_healthy": serializers.BooleanField(),
+            "version": serializers.CharField(),
+        },
+    ),
+)
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def setup_status(request):
+    from django.conf import settings as dj_settings
+
+    try:
+        connection.ensure_connection()
+        db_ok = True
+    except OperationalError:
+        db_ok = False
+
+    return Response({
+        "setup_complete": bool(getattr(dj_settings, "SETUP_COMPLETE", False)),
+        "openbao_healthy": _openbao_healthy(),
+        "database_healthy": db_ok,
+        "version": _netpulse_version(),
+    })
 
 
 def _tcp_ok(host: str, port: int, timeout: float = 2.0) -> bool:

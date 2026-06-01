@@ -23,6 +23,40 @@ class TestHealth:
         resp = api_client.get("/api/health/")
         assert resp.status_code != 401
 
+    def test_health_includes_setup_complete(self, api_client, monkeypatch):
+        from apps.core import views
+        monkeypatch.setattr(views, "_openbao_healthy", lambda: True)
+        data = api_client.get("/api/health/").json()
+        assert "setup_complete" in data
+        assert data["openbao"] == "healthy"
+
+
+class TestSetupStatus:
+    def test_no_auth_required(self, api_client, monkeypatch):
+        from apps.core import views
+        monkeypatch.setattr(views, "_openbao_healthy", lambda: True)
+        resp = api_client.get("/api/setup/status/")
+        assert resp.status_code == 200
+
+    def test_body_shape(self, api_client, monkeypatch, settings):
+        from apps.core import views
+        monkeypatch.setattr(views, "_openbao_healthy", lambda: True)
+        monkeypatch.setattr(views, "_netpulse_version", lambda: "v1.2.3")
+        settings.SETUP_COMPLETE = True
+        data = api_client.get("/api/setup/status/").json()
+        assert data["setup_complete"] is True
+        assert data["openbao_healthy"] is True
+        assert data["database_healthy"] is True
+        assert data["version"] == "v1.2.3"
+
+    def test_reflects_setup_incomplete(self, api_client, monkeypatch, settings):
+        from apps.core import views
+        monkeypatch.setattr(views, "_openbao_healthy", lambda: False)
+        settings.SETUP_COMPLETE = False
+        data = api_client.get("/api/setup/status/").json()
+        assert data["setup_complete"] is False
+        assert data["openbao_healthy"] is False
+
 
 class TestChatOpsSlack:
     def _slack_headers(self, body: str, secret: str = "") -> dict:
