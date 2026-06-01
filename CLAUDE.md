@@ -1157,7 +1157,9 @@ API      — service account for integrations
 
 ## Security Posture (implemented)
 - ✅ H1 auth rate limiting — JWT token/refresh endpoints throttled (DRF
-  ScopedRateThrottle, AUTH_THROTTLE_RATE, default 10/min) — blocks brute force
+  ScopedRateThrottle, AUTH_THROTTLE_RATE, default 10/min) — blocks brute force.
+  Keyed per client IP: NUM_PROXIES=1 + nginx X-Forwarded-For so it works behind
+  the frontend proxy (not collapsed onto the shared nginx IP).
 - ✅ HTTPS enforced — nginx redirects HTTP :3000 → HTTPS :3443
 - ✅ OpenBao persistent secrets — credentials never in PostgreSQL/logs/API
 - ✅ ALLOW_CONFIG_PUSH=false by default (read-only monitoring)

@@ -307,7 +307,9 @@ Each microservice has its own AppRole with minimal Vault policy:
   (placeholders in generated config, real keys fetched from OpenBao on push).
 - **Auth endpoint rate limiting** — JWT obtain/refresh endpoints are throttled
   (DRF ScopedRateThrottle, `AUTH_THROTTLE_RATE`, default 10/min) to blunt
-  brute-force login attempts (security finding H1).
+  brute-force login attempts (security finding H1). Keyed per client IP:
+  `NUM_PROXIES=1` + nginx `X-Forwarded-For` so it is enforced per client behind
+  the frontend proxy rather than collapsing onto the shared nginx container IP.
 - **ASCII sanitization before config push** — `sanitize_config_for_push()`
   maps non-ASCII (em dash, smart quotes, box-drawing) to ASCII and strips
   comment lines, preventing "% Invalid input" / config-injection surprises on
