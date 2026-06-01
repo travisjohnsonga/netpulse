@@ -7,13 +7,15 @@ from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
 
 from . import detect, fingerprint
-from .models import Device, DeviceGroup, Site
+from .models import Device, DeviceGroup, DiscoveredDevice, DiscoveryJob, Site
 from .serializers import (
     DetectPlatformRequestSerializer,
     DetectPlatformResponseSerializer,
     DeviceGroupSerializer,
     DeviceListSerializer,
     DeviceSerializer,
+    DiscoveredDeviceSerializer,
+    DiscoveryJobSerializer,
     SiteSerializer,
     TestConnectionRequestSerializer,
     TestConnectionResponseSerializer,
@@ -311,3 +313,105 @@ class DeviceViewSet(viewsets.ModelViewSet):
             for ln in links
         ]
         return Response({"nodes": nodes, "edges": edges})
+
+
+# ── Discovery ─────────────────────────────────────────────────────────────────
+
+_PLATFORM_VALUES = {p.value for p in Device.Platform}
+
+
+class DiscoveryJobViewSet(viewsets.ModelViewSet):
+    """
+    Manage device discovery jobs (passive / topology / active scan / import).
+
+    Creating a job stores it in PENDING; the discovery engine (`run_discovery`)
+    executes it and records DiscoveredDevice rows. Discovered devices always land
+    in PENDING and require explicit approval — they are never auto-activated.
+    Safety: `allowed_subnets` bound probing, `excluded_subnets` must list any
+    OT/ICS ranges, `rate_limit_pps` defaults to 10.
+    """
+
+    queryset = DiscoveryJob.objects.select_related("seed_device").order_by("-created_at")
+    serializer_class = DiscoveryJobSerializer
+    filterset_fields = ["method", "status"]
+    search_fields = ["name"]
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+    @action(detail=True, methods=["get"])
+    def discovered(self, request, pk=None):
+        """List devices discovered by this job (filter with ?status=pending)."""
+        job = self.get_object()
+        qs = job.discovered_devices.all().order_by("-confidence_score", "source_ip")
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(DiscoveredDeviceSerializer(qs, many=True).data)
+
+
+class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Inspect discovered devices and approve/reject them.
+
+    Approval creates an ACTIVE Device from the fingerprint (never automatic).
+    Rejection marks the candidate rejected. Filter by `status` or `job`.
+    """
+
+    queryset = DiscoveredDevice.objects.select_related("job", "approved_device").all()
+    serializer_class = DiscoveredDeviceSerializer
+    filterset_fields = ["status", "job"]
+    ordering_fields = ["confidence_score", "created_at"]
+    ordering = ["-confidence_score"]
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """Create an ACTIVE Device from this discovered device (idempotent-safe)."""
+        from django.utils import timezone
+
+        dd = self.get_object()
+        if dd.status == DiscoveredDevice.Status.APPROVED:
+            return Response(
+                {"error": "This device was already approved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if Device.objects.filter(ip_address=dd.source_ip).exists():
+            return Response(
+                {"error": f"A device with IP {dd.source_ip} already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        hostname = dd.discovered_hostname or f"device-{dd.source_ip}"
+        if Device.objects.filter(hostname=hostname).exists():
+            hostname = f"{hostname}-{dd.source_ip}"
+        platform = dd.discovered_platform if dd.discovered_platform in _PLATFORM_VALUES \
+            else Device.Platform.OTHER
+
+        device = Device.objects.create(
+            hostname=hostname,
+            ip_address=dd.source_ip,
+            management_ip=dd.source_ip,
+            vendor=dd.discovered_vendor or "",
+            model=dd.discovered_model or "",
+            platform=platform,
+            os_version=dd.discovered_os or "",
+            status=Device.Status.ACTIVE,
+        )
+        dd.status = DiscoveredDevice.Status.APPROVED
+        dd.approved_device = device
+        dd.approved_by = request.user if request.user.is_authenticated else None
+        dd.approved_at = timezone.now()
+        dd.save(update_fields=["status", "approved_device", "approved_by", "approved_at", "updated_at"])
+        return Response(
+            {"device": DeviceSerializer(device).data,
+             "discovered": DiscoveredDeviceSerializer(dd).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        """Mark this discovered device rejected (no Device is created)."""
+        dd = self.get_object()
+        dd.status = DiscoveredDevice.Status.REJECTED
+        dd.save(update_fields=["status", "updated_at"])
+        return Response(DiscoveredDeviceSerializer(dd).data)

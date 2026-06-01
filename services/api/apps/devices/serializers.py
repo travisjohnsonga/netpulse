@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Device, DeviceGroup, Site
+from .models import Device, DeviceGroup, DiscoveredDevice, DiscoveryJob, Site
 
 
 class SiteSerializer(serializers.ModelSerializer):
@@ -98,3 +98,39 @@ class TestConnectionResponseSerializer(serializers.Serializer):
     os_version = serializers.CharField(allow_null=True)
     model = serializers.CharField(allow_null=True)
     detail = serializers.CharField()
+
+
+# ── Discovery ─────────────────────────────────────────────────────────────────
+
+class DiscoveredDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiscoveredDevice
+        fields = "__all__"
+        read_only_fields = (
+            "job", "source_ip", "detection_methods", "responds_to",
+            "confidence_score", "discovered_hostname", "discovered_vendor",
+            "discovered_platform", "discovered_model", "discovered_os",
+            "raw_fingerprint", "status", "approved_device", "approved_by",
+            "approved_at", "created_at", "updated_at",
+        )
+
+
+class DiscoveryJobSerializer(serializers.ModelSerializer):
+    seed_device_hostname = serializers.CharField(
+        source="seed_device.hostname", read_only=True, default=None)
+    pending_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DiscoveryJob
+        fields = "__all__"
+        read_only_fields = (
+            "status", "devices_found", "started_at", "completed_at",
+            "error_message", "created_by", "created_at", "updated_at",
+        )
+
+    def get_pending_count(self, obj):
+        # Avoids N+1 when the viewset annotates; falls back to a count otherwise.
+        cached = getattr(obj, "pending_count_annotated", None)
+        if cached is not None:
+            return cached
+        return obj.discovered_devices.filter(status=DiscoveredDevice.Status.PENDING).count()
