@@ -14,7 +14,8 @@ class AlertRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = AlertRule
         fields = "__all__"
-        read_only_fields = ("created_at", "updated_at")
+        # is_system is set only by the seed command, never via the API.
+        read_only_fields = ("created_at", "updated_at", "is_system")
 
 
 class AlertEventSerializer(serializers.ModelSerializer):

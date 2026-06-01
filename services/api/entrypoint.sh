@@ -28,6 +28,10 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] ensuring superuser..."
     python manage.py ensure_superuser
 
+    # Seed the default (system) alert rules so they appear on a fresh install.
+    echo "[entrypoint] seeding default alert rules..."
+    python manage.py seed_alert_rules || echo "[entrypoint] alert-rule seed had issues (continuing)"
+
     # Seed the ingest-snmp poller with the current device inventory (api only).
     # Best-effort: a NATS hiccup must not block startup.
     echo "[entrypoint] publishing device configs to NATS..."

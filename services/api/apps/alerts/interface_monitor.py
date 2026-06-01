@@ -99,6 +99,12 @@ def process_interface_status(iface, new_status: str, now=None) -> "object | None
     if prev == "unknown":
         return None  # first observation establishes a baseline, no alert
 
+    # A disabled system rule suppresses interface alerts (UI toggle on
+    # Settings → Alerting). State transition + auto-resolve above still apply.
+    rule = _system_rule()
+    if not rule.is_active:
+        return None
+
     device = iface.device
     ts = now.strftime("%H:%M:%S UTC")
     if cur == "down":
@@ -112,7 +118,7 @@ def process_interface_status(iface, new_status: str, now=None) -> "object | None
         message = f"{iface.if_name} on {device.hostname} is back up{recovered}"
 
     event = AlertEvent.objects.create(
-        rule=_system_rule(),
+        rule=rule,
         state=AlertEvent.State.FIRING,
         labels={
             "source": SOURCE,

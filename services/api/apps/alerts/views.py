@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, UpdateModelMixin
 from rest_framework.response import Response
@@ -33,8 +33,18 @@ class AlertRuleViewSet(viewsets.ModelViewSet):
 
     queryset = AlertRule.objects.prefetch_related("channels").all()
     serializer_class = AlertRuleSerializer
-    filterset_fields = ["severity", "is_active"]
+    filterset_fields = ["severity", "is_active", "is_system"]
     search_fields = ["name"]
+
+    def destroy(self, request, *args, **kwargs):
+        """System rules are protected — disable (is_active=False) them instead."""
+        rule = self.get_object()
+        if rule.is_system:
+            return Response(
+                {"error": "System rules cannot be deleted. Disable the rule instead."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):

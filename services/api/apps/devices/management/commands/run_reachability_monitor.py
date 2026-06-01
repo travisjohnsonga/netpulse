@@ -162,7 +162,8 @@ class Command(BaseCommand):
             return
         try:
             payload = {
-                "source": "reachability_monitor", "device_id": device_id,
+                "source": "reachability_monitor", "rule_name": "device-unreachable",
+                "device_id": device_id,
                 "hostname": hostname, "severity": severity,
                 "title": message, "message": message,
             }

@@ -158,6 +158,7 @@ class Command(BaseCommand):
         try:
             payload = {
                 "source": "check_engine",
+                "rule_name": "service-check-failed",
                 "check_id": check.id,
                 "check_name": check.name,
                 "device_id": check.device_id,

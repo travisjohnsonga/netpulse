@@ -826,6 +826,13 @@ class Command(BaseCommand):
         if created:
             logger.debug("stream-processor: created AlertRule %r", rule_name)
 
+        # A disabled rule suppresses its alerts (UI toggle on Settings →
+        # Alerting). Newly auto-created rules default to active, so this only
+        # skips rules an operator has explicitly turned off.
+        if not rule.is_active:
+            logger.info("stream-processor: rule %r disabled, suppressing alert", rule_name)
+            return
+
         # Always create a new AlertEvent
         event = AlertEvent.objects.create(
             rule=rule,

@@ -35,6 +35,10 @@ class AlertRule(TimestampedModel):
     channels = models.ManyToManyField(AlertChannel, blank=True, related_name="rules")
     is_active = models.BooleanField(default=True)
     cooldown_minutes = models.PositiveIntegerField(default=60)
+    # Seeded default rule (see seed_alert_rules). Protected from deletion;
+    # disable it by toggling is_active instead. When is_active is False the
+    # alert engines skip creating events for this rule.
+    is_system = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
