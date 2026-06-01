@@ -30,6 +30,8 @@ const CHECK_TYPES: { id: CheckType; label: string }[] = [
   { id: 'tls', label: 'TLS certificate' },
   { id: 'smtp', label: 'SMTP' },
   { id: 'ssh_banner', label: 'SSH banner' },
+  { id: 'radius', label: 'RADIUS' },
+  { id: 'tacacs', label: 'TACACS+' },
 ]
 
 // Per-type default response-time thresholds (ms). TLS uses cert-day thresholds
@@ -39,6 +41,8 @@ const TYPE_RT_DEFAULTS: Partial<Record<CheckType, { warn: number; crit: number }
   dns: { warn: 500, crit: 2000 },
   smtp: { warn: 2000, crit: 5000 },
   ssh_banner: { warn: 500, crit: 2000 },
+  radius: { warn: 500, crit: 2000 },
+  tacacs: { warn: 500, crit: 2000 },
 }
 
 function fmtMs(ms: number | null): string {
@@ -213,7 +217,14 @@ export default function Checks() {
                         {!c.is_enabled && <span className="ml-2 text-xs text-gray-400">(paused)</span>}
                       </span>
                     </td>
-                    <td className="px-5 py-3 uppercase text-xs text-gray-500">{c.check_type}</td>
+                    <td className="px-5 py-3">
+                      <span className={clsx('uppercase text-xs font-medium px-2 py-0.5 rounded',
+                        c.check_type === 'radius' || c.check_type === 'tacacs'
+                          ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                          : 'text-gray-500')}>
+                        {c.check_type}
+                      </span>
+                    </td>
                     <td className="px-5 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
                       {c.host}{c.effective_port ? `:${c.effective_port}` : ''}
                     </td>
@@ -323,7 +334,14 @@ function formatResultDetails(type: CheckType, d: Record<string, unknown> | undef
     case 'tls': return `${g('days_remaining') ?? '?'}d · ${g('cert_cn') ?? ''} (${g('issuer') ?? '?'})`
     case 'smtp': return `${g('starttls_supported') ? 'STARTTLS' : 'no STARTTLS'}${g('banner') ? ' · ' + String(g('banner')).slice(0, 40) : ''}`
     case 'ssh': case 'ssh_banner': return g('banner') ? String(g('banner')) : '—'
-    case 'tcp': return g('matched') != null ? (g('matched') ? 'match ✓' : 'match ✗') : 'connected'
+    case 'tcp': case 'tacacs': return g('matched') != null ? (g('matched') ? 'match ✓' : 'match ✗') : 'connected'
+    case 'radius': {
+      const resp = g('radius_response')
+      if (resp === 'Access-Accept') return 'Access-Accept (authenticated)'
+      if (resp === 'Access-Reject') return 'Access-Reject (server healthy)'
+      if (resp === 'Access-Challenge') return 'Access-Challenge (MFA active)'
+      return resp ? String(resp) : '—'
+    }
     default: return '—'
   }
 }
@@ -526,6 +544,7 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
     else if (next === 'tls') setCfg({ warn_days: 30, critical_days: 7 })
     else if (next === 'icmp') setCfg({ count: 4, packet_size: 56 })
     else if (next === 'smtp') setCfg({ helo: 'netpulse.local', starttls: false })
+    else if (next === 'radius') setCfg({ port: 1812, username: 'netpulse-test', nas_identifier: 'netpulse' })
     else setCfg({})
   }
 
@@ -674,6 +693,30 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
             <label className={label}>Expected banner contains <span className="text-gray-400">(optional)</span></label>
             <input className={input} value={String(cfg.expected_banner ?? '')} onChange={(e) => setCfgVal('expected_banner', e.target.value)} placeholder="OpenSSH" />
           </div>
+        )}
+        {t === 'radius' && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={label}>RADIUS port <span className="text-gray-400">(UDP)</span></label>
+                <input type="number" className={input} value={num(cfg.port ?? 1812)} onChange={(e) => setCfgVal('port', Number(e.target.value))} placeholder="1812" /></div>
+              <div><label className={label}>Shared secret</label>
+                <input type="password" className={input} value={String(cfg.secret ?? '')} onChange={(e) => setCfgVal('secret', e.target.value)} placeholder="••••••••" /></div>
+              <div><label className={label}>Test username</label>
+                <input className={input} value={String(cfg.username ?? 'netpulse-test')} onChange={(e) => setCfgVal('username', e.target.value)} placeholder="netpulse-test" /></div>
+              <div><label className={label}>Test password <span className="text-gray-400">(optional)</span></label>
+                <input type="password" className={input} value={String(cfg.password ?? '')} onChange={(e) => setCfgVal('password', e.target.value)} placeholder="••••••••" /></div>
+              <div className="col-span-2"><label className={label}>NAS identifier</label>
+                <input className={input} value={String(cfg.nas_identifier ?? 'netpulse')} onChange={(e) => setCfgVal('nas_identifier', e.target.value)} placeholder="netpulse" /></div>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2">
+              ℹ️ The RADIUS check sends an Access-Request with test credentials. Both Accept and Reject responses confirm the server is healthy — only a timeout indicates a problem. The shared secret is stored in the check config (PostgreSQL).
+            </p>
+          </div>
+        )}
+        {t === 'tacacs' && (
+          <p className="text-xs text-gray-500 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2">
+            ℹ️ TACACS+ check is a TCP connectivity probe to port 49 (default). A successful connection confirms the AAA server is reachable.
+          </p>
         )}
 
         <div className="grid grid-cols-3 gap-3">
