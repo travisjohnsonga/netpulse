@@ -28,6 +28,8 @@ class ServiceCheck(TimestampedModel):
         SSH = "ssh", "SSH"
         SSH_BANNER = "ssh_banner", "SSH banner"
         LDAP = "ldap", "LDAP"
+        RADIUS = "radius", "RADIUS"
+        TACACS = "tacacs", "TACACS+"
         CUSTOM = "custom", "Custom"
 
     class Status(models.TextChoices):
@@ -40,6 +42,8 @@ class ServiceCheck(TimestampedModel):
     DEFAULT_PORTS = {
         "http": 80, "https": 443, "ssh": 22, "ssh_banner": 22, "smtp": 25,
         "dns": 53, "ftp": 21, "ldap": 389, "tls": 443,
+        "radius": 1812,   # UDP auth (1813 = accounting)
+        "tacacs": 49,     # TCP
     }
 
     name = models.CharField(max_length=255)

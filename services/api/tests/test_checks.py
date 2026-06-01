@@ -118,11 +118,66 @@ def _run_tcp_against_local(send=None, expect=None, server_reply=b"PONG\r\n"):
     return asyncio.run(scenario())
 
 
+class TestRadiusHandler:
+    def _check(self):
+        return {"check_type": "radius", "host": "10.0.0.1", "effective_port": 1812,
+                "timeout_seconds": 3, "config": {"secret": "testing123"}}
+
+    def _run(self, monkeypatch, fake):
+        from apps.checks import runner
+        monkeypatch.setattr(runner, "_radius_probe_sync", fake)
+        return asyncio.run(runner.check_radius(self._check()))
+
+    def test_radius_accept_is_up(self, monkeypatch):
+        from pyrad import packet
+        r = self._run(monkeypatch, lambda *a: (packet.AccessAccept, 12.3))
+        assert r["status"] == UP
+        assert r["details"]["radius_response"] == "Access-Accept"
+        assert r["details"]["authenticated"] is True
+
+    def test_radius_reject_is_up(self, monkeypatch):
+        # Reject means the server is alive and answering — UP, not DOWN.
+        from pyrad import packet
+        r = self._run(monkeypatch, lambda *a: (packet.AccessReject, 8.0))
+        assert r["status"] == UP
+        assert r["details"]["radius_response"] == "Access-Reject"
+
+    def test_radius_challenge_is_up(self, monkeypatch):
+        from pyrad import packet
+        r = self._run(monkeypatch, lambda *a: (packet.AccessChallenge, 9.0))
+        assert r["status"] == UP
+        assert r["details"]["radius_response"] == "Access-Challenge"
+
+    def test_radius_timeout_is_down(self, monkeypatch):
+        from pyrad.client import Timeout
+
+        def _boom(*a):
+            raise Timeout()
+        r = self._run(monkeypatch, _boom)
+        assert r["status"] == DOWN
+        assert "timeout" in r["error"].lower()
+
+    def test_radius_refused_is_down(self, monkeypatch):
+        def _boom(*a):
+            raise OSError("Connection refused")
+        r = self._run(monkeypatch, _boom)
+        assert r["status"] == DOWN
+        assert "refused" in r["error"].lower()
+
+    def test_radius_unknown_code_is_degraded(self, monkeypatch):
+        r = self._run(monkeypatch, lambda *a: (255, 5.0))
+        assert r["status"] == DEGRADED
+
+
 class TestTcpHandler:
     def test_tcp_connect_up(self):
         r = _run_tcp_against_local()
         assert r["status"] == UP and r["response_time_ms"] is not None
         assert "connect_time_ms" in r["details"]
+
+    def test_tacacs_routes_to_tcp(self):
+        from apps.checks.runner import HANDLERS, check_tcp
+        assert HANDLERS["tacacs"] is check_tcp
 
     def test_tcp_expect_match(self):
         r = _run_tcp_against_local(send="PING\r\n", expect="PONG")

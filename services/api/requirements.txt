@@ -34,6 +34,7 @@ aiohttp~=3.10
 icmplib~=3.0     # ICMP ping (raw socket — needs NET_RAW/NET_ADMIN)
 aiodns~=3.2      # async DNS resolution
 aiosmtplib~=3.0  # async SMTP connect/EHLO
+pyrad>=2.4       # RADIUS Access-Request health check
 
 # Secrets
 hvac~=2.1

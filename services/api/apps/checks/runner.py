@@ -15,6 +15,7 @@ in ``HANDLERS`` without touching the engine.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 UP = "up"
@@ -448,6 +449,81 @@ async def check_ssh_banner(check: dict) -> dict:
     return {"status": UP, "response_time_ms": rt, "error": "", "details": details}
 
 
+_RADIUS_DICT = os.path.join(os.path.dirname(__file__), "radius_dictionary")
+
+
+def _radius_probe_sync(host, port, secret, username, password, nas_id, timeout):
+    """
+    Blocking RADIUS Access-Request → (radius_code, elapsed_ms). Runs in a thread
+    (pyrad is synchronous). Raises pyrad.client.Timeout on no response.
+    """
+    from pyrad import packet
+    from pyrad.client import Client
+    from pyrad.dictionary import Dictionary
+
+    client = Client(server=host, secret=secret.encode(), dict=Dictionary(_RADIUS_DICT))
+    client.retries = 1
+    client.timeout = timeout
+    client.authport = port
+
+    req = client.CreateAuthPacket(
+        code=packet.AccessRequest, User_Name=username, NAS_Identifier=nas_id, NAS_Port=0,
+    )
+    req["User-Password"] = req.PwCrypt(password)
+
+    start = time.monotonic()
+    reply = client.SendPacket(req)
+    elapsed = round((time.monotonic() - start) * 1000, 2)
+    return reply.code, elapsed
+
+
+async def check_radius(check: dict) -> dict:
+    """
+    Probe a RADIUS auth server with an Access-Request. ANY response means the
+    server is UP and answering — Access-Accept (test user authenticated),
+    Access-Reject (responding; reject expected for the test user) and
+    Access-Challenge (MFA/OTP) are all UP. Only a timeout/no-response is DOWN.
+    """
+    from pyrad import packet
+    from pyrad.client import Timeout
+
+    cfg = check.get("config") or {}
+    host = check["host"]
+    port = cfg.get("port") or check["effective_port"] or 1812
+    secret = cfg.get("secret", "")
+    username = cfg.get("username", "netpulse-test")
+    password = cfg.get("password", "test")
+    nas_id = cfg.get("nas_identifier", "netpulse")
+    timeout = check.get("timeout_seconds", 10)
+
+    try:
+        code, elapsed = await asyncio.get_event_loop().run_in_executor(
+            None, _radius_probe_sync, host, port, secret, username, password, nas_id, timeout,
+        )
+    except Timeout:
+        return {"status": DOWN, "response_time_ms": None,
+                "error": f"RADIUS timeout after {timeout}s",
+                "details": {"host": host, "port": port}}
+    except Exception as exc:
+        return {"status": DOWN, "response_time_ms": None,
+                "error": str(exc), "details": {"host": host, "port": port}}
+
+    base = {"response_time_ms": elapsed, "error": ""}
+    if code == packet.AccessAccept:
+        return {**base, "status": UP,
+                "details": {"radius_response": "Access-Accept", "authenticated": True}}
+    if code == packet.AccessReject:
+        return {**base, "status": UP,
+                "details": {"radius_response": "Access-Reject",
+                            "note": "Server responded (reject expected for test user)"}}
+    if code == packet.AccessChallenge:
+        return {**base, "status": UP,
+                "details": {"radius_response": "Access-Challenge",
+                            "note": "Server challenged (MFA/OTP required)"}}
+    return {"status": DEGRADED, "response_time_ms": elapsed, "error": "",
+            "details": {"radius_response": f"Unknown code: {code}"}}
+
+
 # check_type → async handler.
 HANDLERS = {
     "http": check_http,
@@ -459,6 +535,10 @@ HANDLERS = {
     "smtp": check_smtp,
     "ssh": check_ssh_banner,
     "ssh_banner": check_ssh_banner,
+    "radius": check_radius,
+    # TACACS+ basic reachability — a TCP connect to port 49 (default). A full
+    # protocol probe isn't needed for liveness; any successful connect = UP.
+    "tacacs": check_tcp,
 }
 
 # Check types whose status is domain-specific (packet loss, cert expiry, answer
