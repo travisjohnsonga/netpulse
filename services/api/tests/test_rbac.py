@@ -102,6 +102,27 @@ class TestJWTEndpoints:
         finally:
             cache.clear()
 
+    def test_throttle_is_per_client_ip_behind_proxy(self, api_client, monkeypatch):
+        # NUM_PROXIES=1: behind nginx, DRF must key the throttle on the real
+        # client IP from X-Forwarded-For — NOT the shared proxy/REMOTE_ADDR.
+        # Two distinct client IPs therefore get independent throttle buckets.
+        from django.core.cache import cache
+        from rest_framework.throttling import SimpleRateThrottle
+        cache.clear()
+        monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", {"auth": "2/min"})
+        try:
+            for _ in range(4):  # exhaust client A's limit
+                api_client.post("/api/auth/token/", {"username": "x", "password": "y"},
+                                HTTP_X_FORWARDED_FOR="9.9.9.9")
+            blocked = api_client.post("/api/auth/token/", {"username": "x", "password": "y"},
+                                      HTTP_X_FORWARDED_FOR="9.9.9.9").status_code
+            other = api_client.post("/api/auth/token/", {"username": "x", "password": "y"},
+                                    HTTP_X_FORWARDED_FOR="8.8.8.8").status_code
+            assert blocked == 429, f"client A should be throttled, got {blocked}"
+            assert other != 429, f"client B must be independent, got {other}"
+        finally:
+            cache.clear()
+
     def test_token_contains_role_claim(self, user, api_client):
         import base64, json
         resp = api_client.post(

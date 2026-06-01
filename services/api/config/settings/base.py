@@ -250,6 +250,13 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "auth": os.environ.get("AUTH_THROTTLE_RATE", "10/min"),
     },
+    # The API runs behind the frontend nginx (proxy_pass to api:8000). Without
+    # this, DRF keys throttles on REMOTE_ADDR — which is the nginx container IP
+    # for every client, collapsing the per-IP auth throttle into one shared
+    # global bucket. NUM_PROXIES tells DRF to read the real client IP from the
+    # X-Forwarded-For header (nginx must set it; see frontend nginx.conf). Set
+    # NUM_PROXIES to the number of trusted proxies in front of the API.
+    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES", "1")),
 }
 
 SPECTACULAR_SETTINGS = {
