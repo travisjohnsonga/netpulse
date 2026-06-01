@@ -11,6 +11,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    # Network discovery tooling (run_discovery): nmap ping sweep + service
+    # scan, ping/ip/nc for connectivity checks.
+    nmap \
+    iputils-ping \
+    iproute2 \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

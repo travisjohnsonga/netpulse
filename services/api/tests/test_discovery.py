@@ -383,6 +383,37 @@ class TestDiscoveryJobCancel:
         assert resp.status_code == 400
 
 
+class TestNmapParser:
+    def test_parses_up_ipv4_hosts(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_hosts
+        xml = b"""<?xml version="1.0"?><nmaprun>
+          <host><status state="up"/><address addr="192.168.98.100" addrtype="ipv4"/></host>
+          <host><status state="down"/><address addr="192.168.98.101" addrtype="ipv4"/></host>
+          <host><status state="up"/><address addr="192.168.98.152" addrtype="ipv4"/>
+                <address addr="AA:BB:CC:DD:EE:FF" addrtype="mac"/></host>
+        </nmaprun>"""
+        assert parse_nmap_hosts(xml) == ["192.168.98.100", "192.168.98.152"]
+
+    def test_bad_xml_returns_empty(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_hosts
+        assert parse_nmap_hosts(b"not xml") == []
+        assert parse_nmap_hosts(b"") == []
+
+
+class TestPlatformDetection:
+    def test_platform_from_banner(self):
+        from apps.devices.management.commands.run_discovery import _platform_from_banner
+        assert _platform_from_banner("SSH-2.0-Cisco-1.25") == "ios_xe"
+        assert _platform_from_banner("SSH-2.0-FortiSSH_1.0") == "fortios"
+        assert _platform_from_banner("SSH-2.0-OpenSSH_8.9") == ""
+
+    def test_platform_from_descr(self):
+        from apps.devices.management.commands.run_discovery import _platform_from_descr
+        assert _platform_from_descr("Cisco IOS XE Software, Version 17.9") == "ios_xe"
+        assert _platform_from_descr("Cisco NX-OS(tm)") == "nxos"
+        assert _platform_from_descr("FortiGate-60F FortiOS v7.2") == "fortios"
+
+
 class TestRunnerCancellation:
     """
     Unit-test the runner's cancel control flow with its DB/network methods

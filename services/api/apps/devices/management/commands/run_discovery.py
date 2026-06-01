@@ -61,6 +61,82 @@ def _vendor_from_descr(descr: str) -> str:
     return ""
 
 
+# SSH identification banner → vendor (best-effort hint; full platform ID happens
+# at device-add time via Netmiko SSHDetect / show version).
+_BANNER_VENDORS = [
+    ("cisco", "cisco"), ("arista", "arista"), ("juniper", "juniper"),
+    ("fortinet", "fortinet"), ("forti", "fortinet"), ("paloalto", "paloalto"),
+    ("mikrotik", "mikrotik"), ("huawei", "huawei"), ("vyos", "vyos"),
+]
+
+
+def _vendor_from_banner(banner: str) -> str:
+    low = banner.lower()
+    for needle, vendor in _BANNER_VENDORS:
+        if needle in low:
+            return vendor
+    return ""
+
+
+def _platform_from_descr(descr: str) -> str:
+    """Best-effort NetPulse platform string from an SNMP sysDescr."""
+    low = descr.lower()
+    if "nx-os" in low or "nexus" in low:
+        return "nxos"
+    if "ios xr" in low or "ios-xr" in low:
+        return "ios_xr"
+    if "ios-xe" in low or "ios xe" in low:
+        return "ios_xe"
+    if "cisco ios" in low or "ios software" in low:
+        return "ios"
+    if "fortios" in low or "fortigate" in low:
+        return "fortios"
+    if "pan-os" in low or "palo alto" in low:
+        return "panos"
+    if "junos" in low or "juniper" in low:
+        return "junos"
+    if "arista" in low or " eos" in low:
+        return "eos"
+    return ""
+
+
+def _platform_from_banner(banner: str) -> str:
+    """
+    Best-effort platform from an SSH identification banner, e.g.
+    "SSH-2.0-Cisco-1.25" → ios_xe, "SSH-2.0-FortiSSH..." → fortios.
+    """
+    low = banner.lower()
+    if "fortissh" in low or "forti" in low:
+        return "fortios"
+    if "cisco" in low:
+        return "ios_xe"   # routers usually IOS-XE; refined at device-add time
+    if "arista" in low:
+        return "eos"
+    return ""
+
+
+# Common management ports probed for liveness when SNMP is silent.
+_PROBE_PORTS = [22, 443, 80, 830, 8443, 23]
+
+
+def parse_nmap_hosts(xml_data: bytes) -> list[str]:
+    """Extract live IPv4 host addresses from `nmap -oX -` output."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_data)
+    except ET.ParseError:
+        return []
+    hosts: list[str] = []
+    for host in root.findall("host"):
+        status = host.find("status")
+        if status is None or status.get("state") != "up":
+            continue
+        for addr in host.findall("address"):
+            if addr.get("addrtype") == "ipv4":
+                hosts.append(addr.get("addr"))
+    return hosts
+
+
 class Command(BaseCommand):
     help = "Run device discovery (scan, topology walk, or resume existing job)"
 
@@ -93,31 +169,56 @@ class Command(BaseCommand):
         )
 
         job = await self._get_or_create_job(options)
-        # Prefer the job's credential profile's SNMP community (from OpenBao);
-        # fall back to the --community flag (default "public").
-        community = await asyncio.get_event_loop().run_in_executor(
-            None, self._job_community, job, options["community"]
+        # Load the SNMP/SSH probe credentials from the job's credential profile
+        # (secrets from OpenBao); falls back to the --community flag.
+        probe = await asyncio.get_event_loop().run_in_executor(
+            None, self._job_probe_config, job, options["community"]
         )
         runner = DiscoveryRunner(
             job=job,
-            community=community,
+            probe_config=probe,
             rate_pps=job.rate_limit_pps,
         )
         await runner.run()
 
     @staticmethod
-    def _job_community(job: DiscoveryJob, default: str) -> str:
-        """SNMPv2c community for the job from its credential profile (OpenBao)."""
-        profile = job.credential_profile
-        if not (profile and profile.snmpv2c_enabled and profile.vault_path):
-            return default
+    def _job_probe_config(job: DiscoveryJob, default_community: str) -> dict:
+        """
+        Resolve SNMP + SSH probe credentials for the job from its credential
+        profile (secrets in OpenBao). Returns:
+          {snmp_version: 2|3, community, v3: {...}|None, ssh: {...}|None}
+        """
+        cfg: dict = {"snmp_version": 2, "community": default_community, "v3": None, "ssh": None}
+        profile = getattr(job, "credential_profile", None)
+        if not profile:
+            return cfg
         try:
             from apps.credentials import vault
-            secrets = vault.read_secret(profile.vault_path) or {}
-            return secrets.get("snmpv2c_community") or default
+            secrets = vault.read_secret(profile.vault_path) if profile.vault_path else {}
         except Exception as exc:  # OpenBao down / path missing — fall back safely.
-            logger.warning("could not read SNMP community for job %d: %s", job.id, exc)
-            return default
+            logger.warning("could not read credentials for job %d: %s", job.id, exc)
+            secrets = {}
+
+        if profile.snmpv3_enabled:
+            cfg["snmp_version"] = 3
+            cfg["v3"] = {
+                "username": profile.snmpv3_username or secrets.get("snmpv3_username", ""),
+                "auth_key": secrets.get("snmpv3_auth_key", ""),
+                "priv_key": secrets.get("snmpv3_priv_key", ""),
+                "auth_protocol": (profile.snmpv3_auth_protocol or "SHA").upper(),
+                "priv_protocol": (profile.snmpv3_priv_protocol or "AES").upper(),
+                "security_level": profile.snmpv3_security_level or "authPriv",
+            }
+        elif profile.snmpv2c_enabled:
+            cfg["community"] = secrets.get("snmpv2c_community") or default_community
+
+        if profile.ssh_enabled:
+            cfg["ssh"] = {
+                "username": profile.ssh_username or "",
+                "password": secrets.get("ssh_password", ""),
+                "port": profile.ssh_port or 22,
+            }
+        return cfg
 
     async def _get_or_create_job(self, options: dict) -> DiscoveryJob:
         if options["job"]:
@@ -161,9 +262,12 @@ class Command(BaseCommand):
 class DiscoveryRunner:
     """Executes a DiscoveryJob — scan or topology walk."""
 
-    def __init__(self, job: DiscoveryJob, community: str = "public", rate_pps: int = 10) -> None:
+    def __init__(self, job: DiscoveryJob, community: str = "public", rate_pps: int = 10,
+                 probe_config: dict | None = None) -> None:
         self._job       = job
-        self._community = community
+        self._probe_cfg = probe_config or {"snmp_version": 2, "community": community,
+                                           "v3": None, "ssh": None}
+        self._community = self._probe_cfg.get("community", community)
         self._delay     = 1.0 / max(rate_pps, 1)
         self._seen: set[str] = set()
         self._queue: list[str] = []
@@ -231,35 +335,77 @@ class DiscoveryRunner:
         return net.num_addresses - 2
 
     async def _active_scan(self) -> None:
-        nets = [ipaddress.ip_network(s, strict=False) for s in self._job.subnets]
-        total = sum(self._host_count(n) for n in nets) or 1
-        await self._set_progress(message="Calculating scan scope...", total=total, current=0, ips=0)
+        # Phase 1 — host discovery. Prefer a fast nmap ping sweep; fall back to
+        # iterating the whole range when nmap is unavailable.
+        candidates: list[str] = []
+        used_nmap = True
+        for subnet_str in self._job.subnets:
+            await self._set_progress(message=f"Running ping sweep on {subnet_str}...")
+            live = await self._nmap_live_hosts(subnet_str)
+            if live is None:
+                used_nmap = False
+                net = ipaddress.ip_network(subnet_str, strict=False)
+                candidates += [str(h) for h in net.hosts()]
+            else:
+                logger.info("nmap: %d live host(s) in %s", len(live), subnet_str)
+                candidates += [ip for ip in live if ip not in candidates]
 
+        candidates = [ip for ip in candidates if self._is_allowed(ip)]
+        total = len(candidates) or 1
+        await self._set_progress(
+            total=total, current=0, ips=0,
+            message=(f"Found {len(candidates)} live host(s), identifying..."
+                     if used_nmap else f"Scanning {total} addresses..."))
+
+        # Phase 2 — identify each candidate (SNMP / SSH / TCP).
         scanned = 0
-        for net in nets:
-            await self._set_progress(
-                message=f"Resolving subnet {net} → {self._host_count(net)} hosts...")
-            for host in net.hosts():
-                if self._found >= self._job.max_devices:
-                    logger.warning("max_devices %d reached", self._job.max_devices)
-                    await self._set_progress(
-                        current=scanned, ips=scanned,
-                        message=f"Stopped at max_devices ({self._job.max_devices})")
-                    return
-                ip = str(host)
-                scanned += 1
-                # Cooperative cancellation — check the DB flag every 10 IPs.
-                if scanned % 10 == 0 and await self._check_cancel():
-                    self._cancelled = True
-                    return
-                if not self._is_allowed(ip):
-                    await self._maybe_progress(scanned, total, f"Skipping {ip} (out of scope)")
-                    continue
-                await self._maybe_progress(scanned, total, f"Scanning {ip}... ({scanned}/{total})")
-                await self._probe(ip, depth=0)
-                await asyncio.sleep(self._delay)
+        for ip in candidates:
+            if self._found >= self._job.max_devices:
+                logger.warning("max_devices %d reached", self._job.max_devices)
+                await self._set_progress(
+                    current=scanned, ips=scanned,
+                    message=f"Stopped at max_devices ({self._job.max_devices})")
+                return
+            scanned += 1
+            if scanned % 10 == 0 and await self._check_cancel():
+                self._cancelled = True
+                return
+            # Save progress every host for short (nmap) lists, else every 10.
+            if total <= 64 or scanned % 10 == 0:
+                await self._set_progress(
+                    current=scanned, ips=scanned,
+                    message=f"Identifying {ip}... ({scanned}/{total})")
+            await self._probe(ip, depth=0)
+            await asyncio.sleep(self._delay)
         await self._set_progress(
             current=scanned, total=total, ips=scanned, message="Processing results...")
+
+    async def _nmap_live_hosts(self, subnet: str) -> list[str] | None:
+        """
+        Fast host discovery via `nmap -sn` (TCP-SYN ping to common mgmt ports so
+        SSH-only devices are found even unprivileged). Returns the list of live
+        IPs, or None when nmap is unavailable/failed so the caller falls back to
+        a full range sweep.
+        """
+        cmd = [
+            "nmap", "-sn", "-n", "-T4", "--min-rate", "100",
+            "-PS22,80,443,830,8443", "-oX", "-", subnet,
+        ]
+        for excl in (self._job.excluded_subnets or []):
+            cmd += ["--exclude", excl]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        except FileNotFoundError:
+            logger.info("nmap not installed — falling back to full range sweep")
+            return None
+        except Exception as exc:
+            logger.warning("nmap host discovery failed (%s) — falling back", exc)
+            return None
+        if proc.returncode != 0:
+            return None
+        return parse_nmap_hosts(stdout)
 
     # ── topology walk ─────────────────────────────────────────────────────────
 
@@ -296,141 +442,240 @@ class DiscoveryRunner:
     # ── probing ───────────────────────────────────────────────────────────────
 
     async def _probe(self, ip: str, depth: int) -> bool:
-        """Probe a single IP. Returns True if device responded."""
+        """
+        Multi-method probe of a single IP. Detection priority:
+          1. ICMP ping            (presence)
+          2. SNMP sysDescr        (platform id — v2c or v3 from the profile)
+          3. TCP management ports (presence when SNMP/ICMP silent)
+          4. SSH banner           (vendor hint)
+        A device is "discovered" if ANY method responds.
+        """
         self._seen.add(ip)
-        result = await self._snmp_fingerprint(ip)
 
-        if not result:
+        # Run liveness/identity checks concurrently to keep per-IP time low.
+        ping_ok, snmp, open_ports = await asyncio.gather(
+            self._icmp_ping(ip),
+            self._snmp_probe(ip),
+            self._tcp_scan(ip, _PROBE_PORTS),
+        )
+        ssh_banner = await self._ssh_banner(ip) if 22 in open_ports else ""
+
+        logger.debug(
+            "Probing %s: ping=%s snmp=%s ports=%s ssh=%s",
+            ip, ping_ok, bool(snmp), open_ports, bool(ssh_banner),
+        )
+
+        if not (ping_ok or snmp or open_ports):
             return False
 
-        sys_descr, sys_name = result
-        confidence = 60 if sys_descr else 10
-        vendor = _vendor_from_descr(sys_descr)
+        methods: list[str] = []
+        responds_to: dict = {}
+        vendor = hostname = descr = platform = os_version = model = ""
+        confidence = 0
+
+        if ping_ok:
+            methods.append("icmp"); responds_to["icmp"] = True
+            confidence = max(confidence, 10)
+        if snmp:
+            descr, hostname = snmp
+            vendor = _vendor_from_descr(descr) or vendor
+            platform = _platform_from_descr(descr) or platform
+            methods.append("snmp"); responds_to["snmp"] = True
+            confidence = max(confidence, 60)
+        if open_ports:
+            responds_to["tcp"] = True
+            methods += [f"tcp/{p}" for p in open_ports]
+            confidence = max(confidence, 20)
+            if 443 in open_ports or 80 in open_ports or 8443 in open_ports:
+                responds_to["http"] = True
+        if ssh_banner:
+            methods.append("ssh"); responds_to["ssh"] = True
+            vendor = vendor or _vendor_from_banner(ssh_banner)
+            platform = platform or _platform_from_banner(ssh_banner)
+            if vendor:
+                confidence = max(confidence, 40)
+            else:
+                confidence = max(confidence, 30)
+
+        # Deepest identification: SSH login + show-version, only when SNMP didn't
+        # already identify the platform, port 22 is open, and the job carries SSH
+        # creds. Best-effort and time-boxed (Netmiko is slow).
+        if 22 in open_ports and not (snmp and platform) and self._probe_cfg.get("ssh"):
+            det = await self._ssh_identify(ip)
+            if det:
+                vendor = det.get("vendor") or vendor
+                platform = det.get("platform") or platform
+                os_version = det.get("os_version") or os_version
+                model = det.get("model") or model
+                hostname = det.get("hostname") or hostname
+                if "ssh_login" not in methods:
+                    methods.append("ssh_login")
+                confidence = max(confidence, 80)
 
         await self._save_discovered(ip, {
-            "detection_methods": ["snmp"],
-            "responds_to": {"snmp": True},
+            "detection_methods": methods,
+            "responds_to": responds_to,
             "confidence_score": confidence,
-            "discovered_hostname": sys_name,
+            "discovered_hostname": hostname,
             "discovered_vendor": vendor,
-            "raw_fingerprint": sys_descr[:500],
+            "discovered_platform": platform,
+            "discovered_os": os_version,
+            "discovered_model": model,
+            "raw_fingerprint": (descr or ssh_banner)[:500],
         })
         self._found += 1
         await self._update_count(self._found)
-        logger.info("found: %s  score=%d  vendor=%s  name=%s", ip, confidence, vendor, sys_name)
+        logger.info(
+            "found: %s  score=%d  vendor=%s  platform=%s  methods=%s  name=%s",
+            ip, confidence, vendor or "?", platform or "?", ",".join(methods), hostname or "?",
+        )
         return True
 
-    # ── SNMP helpers (pure asyncio, no pysnmp dependency) ────────────────────
+    # ── probe methods ─────────────────────────────────────────────────────────
 
-    async def _snmp_fingerprint(self, ip: str) -> tuple[str, str] | None:
-        """
-        Very lightweight SNMP v2c GET for sysDescr+sysName.
-        Returns (sysDescr, sysName) or None on failure.
-
-        Uses a minimal hand-crafted SNMP v2c GET packet to avoid
-        adding pysnmp as a dependency here. This is intentionally
-        simple — a full poller uses the ingest-snmp service.
-        """
+    async def _icmp_ping(self, ip: str) -> bool:
+        """Best-effort ICMP ping (unprivileged). False on any error/timeout."""
         try:
-            return await asyncio.wait_for(
-                self._loop.run_in_executor(None, self._snmp_get_sync, ip),
-                timeout=3.0,
-            )
-        except (asyncio.TimeoutError, Exception):
-            return None
+            from icmplib import async_ping
+            host = await async_ping(ip, count=1, timeout=1, privileged=False)
+            return bool(host.is_alive)
+        except Exception:  # no NET_RAW / unsupported / unreachable
+            return False
 
-    def _snmp_get_sync(self, ip: str) -> tuple[str, str] | None:
-        """Blocking SNMP v2c GET — runs in executor."""
-        import struct
-
-        def _encode_oid(oid_str: str) -> bytes:
-            parts = [int(x) for x in oid_str.split(".")]
-            # First two components encoded as 40*first + second
-            encoded = bytes([40 * parts[0] + parts[1]])
-            for val in parts[2:]:
-                if val == 0:
-                    encoded += b"\x00"
-                    continue
-                chunks = []
-                while val:
-                    chunks.append(val & 0x7F)
-                    val >>= 7
-                chunks.reverse()
-                for i, c in enumerate(chunks):
-                    encoded += bytes([c | (0x80 if i < len(chunks) - 1 else 0)])
-            return encoded
-
-        def _tlv(tag: int, data: bytes) -> bytes:
-            length = len(data)
-            if length < 128:
-                return bytes([tag, length]) + data
-            elif length < 256:
-                return bytes([tag, 0x81, length]) + data
-            else:
-                return bytes([tag, 0x82, length >> 8, length & 0xFF]) + data
-
-        def _get_pdu(oid_str: str) -> bytes:
-            oid_enc = _encode_oid(oid_str)
-            oid_tlv = _tlv(0x06, oid_enc)           # OID
-            varbind  = _tlv(0x30, oid_tlv + b"\x05\x00")  # VarBind (OID, null)
-            varbinds = _tlv(0x30, varbind)           # VarBindList
-            # GetRequest-PDU: request-id=1, error=0, error-index=0
-            pdu = _tlv(0xA0, b"\x02\x01\x01\x02\x01\x00\x02\x01\x00" + varbinds)
-            community = self._community.encode()
-            msg = _tlv(0x30,
-                        b"\x02\x01\x01" +          # version = 1 (v2c)
-                        _tlv(0x04, community) +
-                        pdu)
-            return msg
-
-        def _parse_string(data: bytes, pos: int) -> str:
-            if pos >= len(data):
-                return ""
-            tag = data[pos]
-            pos += 1
-            length = data[pos]
-            pos += 1
-            if length & 0x80:
-                n = length & 0x7F
-                length = int.from_bytes(data[pos:pos+n], "big")
-                pos += n
-            raw = data[pos:pos+length]
-            if tag == 0x04:   # OCTET STRING
+    async def _tcp_scan(self, ip: str, ports: list[int]) -> list[int]:
+        """Return the subset of ports that accept a TCP connection (concurrently)."""
+        async def _one(port: int) -> int | None:
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port), timeout=1.5)
+                writer.close()
                 try:
-                    return raw.decode("utf-8", errors="replace")
-                except Exception:
-                    return raw.hex()
-            return ""
-
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(2.0)
-            # Send two GET requests: sysDescr.0 and sysName.0
-            results: dict[str, str] = {}
-            for oid, key in [
-                ("1.3.6.1.2.1.1.1.0", "descr"),
-                ("1.3.6.1.2.1.1.5.0", "name"),
-            ]:
-                pkt = _get_pdu(oid)
-                sock.sendto(pkt, (ip, 161))
-                try:
-                    resp, _ = sock.recvfrom(4096)
-                    # Walk to end of response and extract last OCTET STRING
-                    # Simplified: find last 0x04 tag in response
-                    for i in range(len(resp) - 1, 0, -1):
-                        if resp[i - 1] == 0x04:
-                            val = _parse_string(resp, i - 1)
-                            if val:
-                                results[key] = val
-                                break
-                except socket.timeout:
+                    await writer.wait_closed()
+                except (OSError, ConnectionError):
                     pass
-            sock.close()
-            if "descr" in results or "name" in results:
-                return results.get("descr", ""), results.get("name", "")
+                return port
+            except (asyncio.TimeoutError, OSError, ConnectionError):
+                return None
+        results = await asyncio.gather(*(_one(p) for p in ports))
+        return [p for p in results if p is not None]
+
+    async def _ssh_banner(self, ip: str) -> str:
+        """Read the SSH identification banner from port 22 (no login)."""
+        writer = None
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, 22), timeout=1.5)
+            line = await asyncio.wait_for(reader.readline(), timeout=1.5)
+            return line.decode(errors="replace").strip()
+        except (asyncio.TimeoutError, OSError, ConnectionError):
+            return ""
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (OSError, ConnectionError):
+                    pass
+
+    async def _ssh_identify(self, ip: str) -> dict | None:
+        """
+        Best-effort SSH login + show-version via Netmiko (apps.devices.detect),
+        using the job's SSH credentials. Time-boxed; returns the detect result
+        dict or None. Runs in an executor (Netmiko is blocking/slow).
+        """
+        ssh = self._probe_cfg.get("ssh") or {}
+        if not ssh.get("username"):
             return None
+
+        def _detect():
+            from apps.devices import detect
+            return detect.detect_platform(
+                ip, ssh["username"], ssh.get("password", ""), ssh.get("port", 22))
+        try:
+            det = await asyncio.wait_for(
+                self._loop.run_in_executor(None, _detect), timeout=20)
         except Exception:
             return None
+        return det if det and det.get("detected") else None
+
+    async def _snmp_probe(self, ip: str) -> tuple[str, str] | None:
+        """
+        SNMP GET sysDescr+sysName via pysnmp using the job's credentials.
+        Tries the profile auth first (SNMPv3 or its v2c community), then falls
+        back to the v2c "public" community. Returns (sysDescr, sysName) or None.
+        """
+        try:
+            from pysnmp.hlapi.v3arch.asyncio import (
+                CommunityData, ContextData, ObjectIdentity, ObjectType,
+                SnmpEngine, UdpTransportTarget, UsmUserData, get_cmd,
+            )
+        except Exception:
+            return None
+
+        # Auth candidates in priority order (dedupe a redundant public fallback).
+        candidates = [self._snmp_auth(UsmUserData, CommunityData)]
+        if self._community != "public":
+            candidates.append(CommunityData("public", mpModel=1))
+
+        for auth_data in candidates:
+            if auth_data is None:
+                continue
+            try:
+                target = await UdpTransportTarget.create((ip, 161), timeout=1.5, retries=0)
+                err_ind, err_stat, _err_idx, var_binds = await get_cmd(
+                    SnmpEngine(), auth_data, target, ContextData(),
+                    ObjectType(ObjectIdentity(_OID_SYS_DESCR)),
+                    ObjectType(ObjectIdentity(_OID_SYS_NAME)),
+                )
+                if err_ind or err_stat:
+                    continue
+                vals = [str(vb[1]) for vb in var_binds]
+                descr = vals[0] if len(vals) > 0 else ""
+                name = vals[1] if len(vals) > 1 else ""
+                if descr or name:
+                    return descr, name
+            except Exception:
+                continue
+        return None
+
+    def _snmp_auth(self, UsmUserData, CommunityData):
+        """Build the pysnmp auth object from the resolved probe credentials."""
+        if self._probe_cfg.get("snmp_version") == 3 and self._probe_cfg.get("v3"):
+            v3 = self._probe_cfg["v3"]
+            if not v3.get("username"):
+                return None
+            try:
+                from pysnmp.hlapi.v3arch.asyncio import (
+                    usmAesCfb128Protocol, usmAesCfb192Protocol, usmAesCfb256Protocol,
+                    usmDESPrivProtocol, usmHMAC128SHA224AuthProtocol,
+                    usmHMAC192SHA256AuthProtocol, usmHMAC256SHA384AuthProtocol,
+                    usmHMAC384SHA512AuthProtocol, usmHMACMD5AuthProtocol,
+                    usmHMACSHAAuthProtocol,
+                )
+            except Exception:
+                return None
+            auth_map = {
+                "MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol,
+                "SHA224": usmHMAC128SHA224AuthProtocol, "SHA256": usmHMAC192SHA256AuthProtocol,
+                "SHA384": usmHMAC256SHA384AuthProtocol, "SHA512": usmHMAC384SHA512AuthProtocol,
+            }
+            priv_map = {
+                "DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol,
+                "AES128": usmAesCfb128Protocol, "AES192": usmAesCfb192Protocol,
+                "AES256": usmAesCfb256Protocol,
+            }
+            auth_p = auth_map.get(v3["auth_protocol"], usmHMACSHAAuthProtocol)
+            priv_p = priv_map.get(v3["priv_protocol"], usmAesCfb128Protocol)
+            level = v3.get("security_level", "authPriv")
+            if level == "noAuthNoPriv":
+                return UsmUserData(v3["username"])
+            if level == "authNoPriv" or not v3.get("priv_key"):
+                return UsmUserData(v3["username"], v3.get("auth_key") or None, authProtocol=auth_p)
+            return UsmUserData(v3["username"], v3["auth_key"], v3["priv_key"],
+                               authProtocol=auth_p, privProtocol=priv_p)
+        # SNMPv2c (mpModel=1).
+        return CommunityData(self._community, mpModel=1)
+
 
     async def _snmp_next_hops(self, ip: str) -> list[str]:
         """Extract next-hop IPs from the IP route table via SNMP walk (simplified)."""
@@ -468,6 +713,9 @@ class DiscoveryRunner:
                     "confidence_score":  data.get("confidence_score", 0),
                     "discovered_hostname": data.get("discovered_hostname", ""),
                     "discovered_vendor":   data.get("discovered_vendor", ""),
+                    "discovered_platform": data.get("discovered_platform", ""),
+                    "discovered_os":       data.get("discovered_os", ""),
+                    "discovered_model":    data.get("discovered_model", ""),
                     "raw_fingerprint":     data.get("raw_fingerprint", ""),
                     "status": DiscoveredDevice.Status.PENDING,
                 },

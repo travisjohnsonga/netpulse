@@ -194,6 +194,12 @@ services:
     # needs the same unprivileged-ICMP sysctl as check-engine for ICMP checks.
     sysctls:
       - net.ipv4.ping_group_range=0 2147483647
+    # Device discovery (run_discovery) runs nmap/ping in the api process; raw
+    # sockets let nmap do faster SYN/ICMP scanning (it degrades to unprivileged
+    # TCP-connect scanning without them).
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     networks:
       - netpulse-net
     depends_on:
