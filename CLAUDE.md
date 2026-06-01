@@ -2780,3 +2780,237 @@ Show: "📡 gNMI active — SNMP device metrics suppressed"
 This tells engineers the system is working as designed.
 
 ### Do NOT build until requested.
+
+## PINNED — gNMI Platform Profiles
+
+### Extension of: gNMI Capability Discovery pin above
+
+### Problem:
+When you have 50 Cisco Catalyst 9300s, you don't want
+to run capability discovery on every single one.
+They all support the same YANG models.
+Define once, apply to all devices of that platform.
+
+### gNMI Platform Profile:
+A reusable subscription template per vendor/platform.
+Run capability discovery once → save as profile →
+apply to all matching devices automatically.
+
+Model: GNMIProfile
+  name: CharField (e.g. "Cisco Catalyst 9300")
+  description: TextField
+  vendor: CharField (cisco/juniper/arista/etc)
+  platform: CharField (ios_xe/eos/junos/etc)
+  platform_version: CharField (null=all, "17.x"=specific)
+  is_default: BooleanField
+    ← auto-apply to new devices of this platform
+  created_from_device: FK(Device, null=True)
+    ← which device was used for capability discovery
+  discovered_at: DateTimeField(null=True)
+  created_by: FK(User)
+  
+  # Capabilities discovered
+  gnmi_version: CharField
+  supported_encodings: ArrayField
+  supported_models: JSONField
+    ← full list from CapabilityResponse
+  
+  # Subscription configuration
+  subscriptions: JSONField
+  ← [
+      {
+        "category": "cpu",
+        "yang_model": "Cisco-IOS-XE-process-cpu-oper",
+        "path": "/process-cpu-ios-xe-oper:cpu-usage/cpu-utilization",
+        "interval_seconds": 30,
+        "enabled": true,
+        "encoding": "encode-kvgpb"
+      },
+      {
+        "category": "memory",
+        "yang_model": "Cisco-IOS-XE-memory-oper", 
+        "path": "/memory-ios-xe-oper:memory-statistics/memory-statistic",
+        "interval_seconds": 30,
+        "enabled": true
+      },
+      {
+        "category": "environment",
+        "yang_model": "Cisco-IOS-XE-environment-oper",
+        "path": "/environment-ios-xe-oper:environment-sensors/environment-sensor",
+        "interval_seconds": 60,
+        "enabled": true
+      },
+      {
+        "category": "bgp",
+        "yang_model": "Cisco-IOS-XE-bgp-oper",
+        "path": "/bgp-ios-xe-oper:bgp-state-data/neighbors/neighbor",
+        "interval_seconds": 100,
+        "enabled": false  ← off by default, enable if BGP device
+      },
+      {
+        "category": "interfaces",
+        "yang_model": "Cisco-IOS-XE-interfaces-oper",
+        "path": "/interfaces-ios-xe-oper:interfaces/interface[name='{if_name}']",
+        "interval_seconds": 30,
+        "enabled": true,
+        "per_interface": true  ← generates one sub per monitored interface
+      }
+    ]
+
+### Built-in Default Profiles:
+Ship NetPulse with pre-built profiles for common platforms.
+Engineers can use immediately without capability discovery.
+
+seed_gnmi_profiles management command:
+
+1. Cisco IOS-XE (Default)
+   Based on C8000V/CSR1000v/Catalyst 8000
+   Tested and verified in lab ✅
+   Subscriptions: CPU, Memory, Environment, BGP, Interfaces
+   
+2. Cisco IOS-XE Catalyst (Switches)
+   Adds: POE, Stack, VLANs
+   Removes: BGP (not typical on access switches)
+
+3. Cisco IOS-XR
+   NCS, ASR 9000 series
+   Uses IOS-XR specific YANG models
+   
+4. Cisco NX-OS
+   Nexus switches
+   Uses NX-OS specific paths
+
+5. Juniper JunOS (OpenConfig)
+   Uses OpenConfig models where possible
+   Native Juniper models as fallback
+
+6. Arista EOS
+   OpenConfig based
+   TerminAttr agent required
+   Port: 6030 (default for Arista)
+
+7. Generic OpenConfig
+   Vendor-neutral fallback
+   Works on any OpenConfig-compliant device
+   May not have full coverage
+
+### Profile Workflow:
+
+Option A - Use built-in profile:
+  Settings → gNMI Profiles → Select platform
+  → Apply to device(s)
+  → Generate config
+  Done.
+
+Option B - Discover from device:
+  Device → Telemetry → [Discover Capabilities]
+  → Review discovered models
+  → Enable/disable/set intervals
+  → [Save as Profile]
+  → Name: "My Catalyst 9300 Profile"
+  → Platform: ios_xe
+  → [Save]
+  Now appears in profile list for reuse.
+
+Option C - Clone and customize:
+  Take built-in profile → Clone → Modify
+  e.g. "Cisco IOS-XE - BGP Enabled"
+  = default profile + BGP subscription enabled
+
+### Applying profiles to devices:
+
+1. Individual device:
+   Device → Settings → Telemetry Configuration
+   [Select gNMI Profile ▼]
+   Shows: platform-matching profiles first
+   Apply → regenerates gNMI subscription config
+
+2. Bulk apply:
+   Settings → gNMI Profiles → {Profile}
+   → [Apply to Devices]
+   Multi-select devices (filtered by platform)
+   → Apply profile to all selected
+   → Regenerate configs for all
+
+3. Auto-apply on device add:
+   If profile has is_default=True for platform:
+   When new device added with matching platform
+   → Auto-assign default profile
+   → Show in wizard Step 4 telemetry config
+
+4. Profile inheritance:
+   Device can override individual subscriptions
+   Base: platform profile
+   Override: device-specific intervals/paths
+   
+   Display: "Using Cisco IOS-XE profile
+             + 2 device-specific overrides"
+
+### Profile comparison:
+Show diff between two profiles:
+  ┌──────────────────────┬─────────────┬──────────────┐
+  │ Subscription         │ Profile A   │ Profile B    │
+  ├──────────────────────┼─────────────┼──────────────┤
+  │ CPU                  │ 30s ✅      │ 30s ✅       │
+  │ Memory               │ 30s ✅      │ 60s ⚠️ diff  │
+  │ Environment          │ 60s ✅      │ ❌ disabled  │
+  │ BGP                  │ ❌ disabled │ 100s ✅      │
+  │ Interfaces           │ 30s ✅      │ 30s ✅       │
+  │ POE                  │ ❌ disabled │ ❌ disabled  │
+  └──────────────────────┴─────────────┴──────────────┘
+
+### API Endpoints:
+GET  /api/gnmi/profiles/
+POST /api/gnmi/profiles/
+GET  /api/gnmi/profiles/{id}/
+PUT  /api/gnmi/profiles/{id}/
+DELETE /api/gnmi/profiles/{id}/
+POST /api/gnmi/profiles/{id}/clone/
+POST /api/gnmi/profiles/{id}/apply/
+  Body: {device_ids: [1, 2, 3]}
+GET  /api/gnmi/profiles/defaults/
+  Returns default profile per platform
+
+POST /api/devices/{id}/gnmi/apply-profile/
+  Body: {profile_id: 1}
+
+### Settings UI:
+Settings → Telemetry → gNMI Profiles
+
+Profile list:
+┌─────────────────────────────────────────────────────┐
+│ gNMI Profiles              [+ New Profile]          │
+├─────────────────────────────────────────────────────┤
+│ 🔒 Cisco IOS-XE (Default)     ios_xe  6 subs  ✅   │
+│    Applied to: 2 devices                            │
+│    [Clone] [Apply to Devices]                       │
+├─────────────────────────────────────────────────────┤
+│ 🔒 Cisco IOS-XE Catalyst      ios_xe  8 subs       │
+│    Applied to: 0 devices                            │
+│    [Clone] [Apply to Devices]                       │
+├─────────────────────────────────────────────────────┤
+│ 🔒 Arista EOS                 eos     5 subs        │
+│    [Clone] [Apply to Devices]                       │
+├─────────────────────────────────────────────────────┤
+│ ✏️  My BGP Router Profile      ios_xe  7 subs       │
+│    Created from router1 · May 31 2026               │
+│    Applied to: 0 devices                            │
+│    [Edit] [Clone] [Apply to Devices] [Delete]       │
+└─────────────────────────────────────────────────────┘
+
+### Versioning:
+Track profile versions when subscriptions change:
+  profile.version: IntegerField (auto-increment)
+  profile.changelog: JSONField
+    [{version: 2, changed: "Added POE", date: ...}]
+  
+  Devices track which profile version they use:
+  DeviceTelemetryConfig.profile_version: IntegerField
+  
+  Show warning when device uses outdated profile:
+  "⚠️ Profile updated — device uses v1, current is v2
+   [Update to latest]"
+
+### Do NOT build until requested.
+### Priority: High - essential for fleet management
+### Depends on: gNMI Capability Discovery pin above
