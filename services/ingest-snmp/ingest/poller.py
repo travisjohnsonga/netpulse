@@ -128,6 +128,7 @@ class SNMPPoller:
             "hostname": device.hostname,
             "ip": device.ip,
             "profile": profile.name,
+            "protocol": "snmp",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "poll_duration_ms": duration_ms,
             "metrics": metrics,

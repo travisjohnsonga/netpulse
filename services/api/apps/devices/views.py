@@ -214,6 +214,22 @@ class DeviceViewSet(viewsets.ModelViewSet):
             })
         return out
 
+    @extend_schema(
+        summary="How telemetry is currently being collected (gNMI streaming / SNMP polling)",
+        responses=None,
+    )
+    @action(detail=True, methods=["get"], url_path="collection-status")
+    def collection_status(self, request, pk=None):
+        """
+        Report whether gNMI streaming and/or SNMP polling are active for this
+        device, based on recent InfluxDB telemetry writes, plus the configured
+        intervals and SNMP version. Drives the collection-method badges on the
+        device header and Telemetry tab.
+        """
+        from . import collection_status as cs
+        device = self.get_object()
+        return Response(cs.build_collection_status(device))
+
     @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="poll-now")
     def poll_now(self, request, pk=None):
