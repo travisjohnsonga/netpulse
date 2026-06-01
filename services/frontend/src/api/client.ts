@@ -1009,6 +1009,9 @@ export interface DiscoveredDevice {
   discovered_vendor: string
   discovered_platform: string
   status: 'pending' | 'approved' | 'rejected'
+  already_exists: boolean
+  existing_device_id: number | null
+  existing_device_hostname: string | null
 }
 
 export async function fetchDiscoveryJobs(): Promise<DiscoveryJob[]> {
@@ -1061,9 +1064,20 @@ export async function fetchDiscoveredDevices(status = 'pending'): Promise<Discov
   return unwrap(data)
 }
 
-export async function approveDiscoveredDevice(id: number, credentialProfileId?: number | null): Promise<void> {
-  await api.post(`/devices/discovery/discovered/${id}/approve/`,
-    credentialProfileId != null ? { credential_profile: credentialProfileId } : {})
+export interface ApproveResult {
+  device: { id: number; hostname: string }
+  already_exists?: boolean
+}
+
+export async function approveDiscoveredDevice(
+  id: number,
+  opts: { credentialProfileId?: number | null; platform?: string } = {},
+): Promise<ApproveResult> {
+  const body: Record<string, unknown> = {}
+  if (opts.credentialProfileId != null) body.credential_profile = opts.credentialProfileId
+  if (opts.platform) body.platform = opts.platform
+  const { data } = await api.post<ApproveResult>(`/devices/discovery/discovered/${id}/approve/`, body)
+  return data
 }
 
 export async function rejectDiscoveredDevice(id: number): Promise<void> {

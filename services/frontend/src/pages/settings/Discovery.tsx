@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
@@ -30,6 +31,23 @@ const METHOD_LABEL: Record<DiscoveryMethod, string> = {
 function apiError(err: unknown, fallback: string): string {
   const e = err as { response?: { data?: { error?: string; detail?: string } } }
   return e?.response?.data?.error || e?.response?.data?.detail || fallback
+}
+
+// Device platforms offered when approving an unidentified device.
+const PLATFORMS = [
+  'ios', 'ios_xe', 'ios_xr', 'nxos', 'asa', 'eos', 'junos',
+  'fortios', 'panos', 'vyos', 'linux', 'other',
+]
+
+// Link badge shown instead of Approve/Reject when a discovered device already
+// matches an inventory device.
+function InventoryBadge({ deviceId }: { deviceId: number }) {
+  return (
+    <Link to={`/devices/${deviceId}`}
+      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-medium">
+      Already in inventory →
+    </Link>
+  )
 }
 
 export default function Discovery() {
@@ -96,14 +114,16 @@ export default function Discovery() {
     catch (e) { setError(apiError(e, 'Failed to reject device.')); setBusyId(null) }
   }
 
-  const confirmApprove = async (d: DiscoveredDevice, credentialProfileId: number | null) => {
+  const confirmApprove = async (d: DiscoveredDevice, credentialProfileId: number | null, platform: string) => {
     setBusyId(d.id); setError(null)
     try {
-      await approveDiscoveredDevice(d.id, credentialProfileId)
-      setApproving(null); load()
+      const res = await approveDiscoveredDevice(d.id, { credentialProfileId, platform })
+      setApproving(null)
+      flash(res.already_exists ? `Already in inventory — ${res.device.hostname}` : `Added ${res.device.hostname}`)
+      load(true)
     } catch (e) {
-      setError(apiError(e, 'Failed to approve device.')); setBusyId(null)
-    }
+      setError(apiError(e, 'Failed to approve device.'))
+    } finally { setBusyId(null) }
   }
 
   return (
@@ -178,8 +198,14 @@ export default function Discovery() {
                         </td>
                         <td className="px-5 py-3">
                           <div className="flex items-center justify-end gap-2">
-                            <button disabled={busyId === d.id} onClick={() => setApproving(d)} className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50">Approve</button>
-                            <button disabled={busyId === d.id} onClick={() => reject(d)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">Reject</button>
+                            {d.already_exists && d.existing_device_id != null ? (
+                              <InventoryBadge deviceId={d.existing_device_id} />
+                            ) : (
+                              <>
+                                <button disabled={busyId === d.id} onClick={() => setApproving(d)} className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50">Approve</button>
+                                <button disabled={busyId === d.id} onClick={() => reject(d)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">Reject</button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -207,7 +233,7 @@ export default function Discovery() {
           defaultProfileId={jobs.find((j) => j.id === approving.job)?.credential_profile ?? null}
           busy={busyId === approving.id}
           onClose={() => setApproving(null)}
-          onConfirm={(cid) => confirmApprove(approving, cid)}
+          onConfirm={(cid, platform) => confirmApprove(approving, cid, platform)}
         />
       )}
     </div>
@@ -297,7 +323,8 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
 
   const approveAll = async () => {
     setApprovingAll(true)
-    for (const d of devices.filter((x) => x.status === 'pending')) {
+    // Skip devices already in inventory (and those needing a platform choice).
+    for (const d of devices.filter((x) => x.status === 'pending' && !x.already_exists && x.discovered_platform)) {
       try { await approveDiscoveredDevice(d.id) } catch { /* surfaced via reload */ }
     }
     setApprovingAll(false)
@@ -306,7 +333,8 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
     fetchJobDiscovered(job.id).then(setDevices).catch(() => {})
   }
 
-  const pendingCount = devices.filter((d) => d.status === 'pending').length
+  const pendingCount = devices.filter(
+    (d) => d.status === 'pending' && !d.already_exists && d.discovered_platform).length
 
   return (
     <div className={clsx(busy && 'opacity-50')}>
@@ -419,7 +447,9 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
                           </span>
                         </td>
                         <td className="px-3 py-1.5 text-right">
-                          {d.status === 'pending' ? (
+                          {d.already_exists && d.existing_device_id != null ? (
+                            <InventoryBadge deviceId={d.existing_device_id} />
+                          ) : d.status === 'pending' ? (
                             <span className="inline-flex gap-1.5 justify-end">
                               <button onClick={() => onApprove(d)} className="px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded">Approve</button>
                               <button onClick={() => onReject(d)} className="px-2 py-0.5 border border-gray-300 dark:border-gray-600 rounded dark:text-gray-300">Reject</button>
@@ -445,9 +475,12 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
   defaultProfileId: number | null
   busy: boolean
   onClose: () => void
-  onConfirm: (credentialProfileId: number | null) => void
+  onConfirm: (credentialProfileId: number | null, platform: string) => void
 }) {
   const [credId, setCredId] = useState<number | null>(defaultProfileId)
+  // Discovery couldn't identify the platform → require the operator to pick one.
+  const platformUnknown = !device.discovered_platform
+  const [platform, setPlatform] = useState(device.discovered_platform || '')
 
   return (
     <Modal
@@ -456,7 +489,8 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
-          <button onClick={() => onConfirm(credId)} disabled={busy} className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{busy ? 'Approving…' : 'Approve & Add'}</button>
+          <button onClick={() => onConfirm(credId, platform)} disabled={busy || (platformUnknown && !platform)}
+            className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{busy ? 'Approving…' : 'Approve & Add'}</button>
         </>
       }
     >
@@ -464,6 +498,18 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
         <p className="text-sm text-gray-600 dark:text-gray-300">
           Adding <span className="font-mono">{device.source_ip}</span> to inventory as an active device.
         </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Platform {platformUnknown && <span className="text-red-500">*</span>}
+          </label>
+          <select className={inputCls} value={platform} onChange={(e) => setPlatform(e.target.value)}>
+            <option value="">— Select platform —</option>
+            {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          {platformUnknown && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Discovery couldn't identify the platform — please select one.</p>
+          )}
+        </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Which credentials does this device use?</label>
           <select className={inputCls} value={credId ?? ''} onChange={(e) => setCredId(e.target.value ? Number(e.target.value) : null)}>
