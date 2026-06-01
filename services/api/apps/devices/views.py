@@ -366,6 +366,32 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
             qs = qs.filter(status=status_filter)
         return Response(DiscoveredDeviceSerializer(qs, many=True).data)
 
+    @extend_schema(summary="Live progress for a discovery job (poll while running)", responses=None)
+    @action(detail=True, methods=["get"])
+    def progress(self, request, pk=None):
+        """Lightweight progress snapshot for polling during a running job."""
+        from django.utils import timezone
+
+        job = self.get_object()
+        pct = round(min(job.progress_current / job.progress_total * 100, 100)) \
+            if job.progress_total > 0 else 0
+        if job.started_at:
+            end = job.completed_at or timezone.now()
+            elapsed = int((end - job.started_at).total_seconds())
+        else:
+            elapsed = 0
+        return Response({
+            "status": job.status,
+            "progress_pct": pct,
+            "progress_current": job.progress_current,
+            "progress_total": job.progress_total,
+            "progress_message": job.progress_message,
+            "ips_scanned": job.ips_scanned,
+            "devices_found": job.devices_found,
+            "elapsed_seconds": elapsed,
+            "error_message": job.error_message,
+        })
+
 
 class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
     """

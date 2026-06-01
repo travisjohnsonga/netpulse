@@ -121,6 +121,7 @@ class DiscoveryJobSerializer(serializers.ModelSerializer):
     credential_profile_name = serializers.CharField(
         source="credential_profile.name", read_only=True, default=None)
     pending_count = serializers.SerializerMethodField()
+    progress_pct = serializers.SerializerMethodField()
 
     class Meta:
         model = DiscoveryJob
@@ -128,7 +129,13 @@ class DiscoveryJobSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "status", "devices_found", "started_at", "completed_at",
             "error_message", "created_by", "created_at", "updated_at",
+            "progress_current", "progress_total", "progress_message", "ips_scanned",
         )
+
+    def get_progress_pct(self, obj):
+        if obj.progress_total > 0:
+            return round(min(obj.progress_current / obj.progress_total * 100, 100))
+        return 0
 
     def get_pending_count(self, obj):
         # Avoids N+1 when the viewset annotates; falls back to a count otherwise.

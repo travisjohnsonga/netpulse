@@ -174,3 +174,54 @@ class TestDiscoveryCredentials:
             {"credential_profile": 99999}, format="json")
         assert resp.status_code == 400
         assert not Device.objects.filter(ip_address="10.1.0.22").exists()
+
+
+class TestDiscoveryProgress:
+    def test_serializer_includes_progress_pct(self, auth_client, job):
+        job.progress_current, job.progress_total = 45, 100
+        job.progress_message = "Scanning 10.1.0.45... (45/100)"
+        job.ips_scanned = 45
+        job.save()
+        resp = auth_client.get("/api/devices/discovery/jobs/")
+        row = next(r for r in resp.json()["results"] if r["id"] == job.id)
+        assert row["progress_pct"] == 45
+        assert row["progress_current"] == 45
+        assert row["progress_total"] == 100
+        assert row["progress_message"].startswith("Scanning")
+
+    def test_progress_pct_zero_when_no_total(self, auth_client, job):
+        resp = auth_client.get("/api/devices/discovery/jobs/")
+        row = next(r for r in resp.json()["results"] if r["id"] == job.id)
+        assert row["progress_pct"] == 0
+
+    def test_progress_pct_capped_at_100(self, auth_client, job):
+        job.progress_current, job.progress_total = 120, 100
+        job.save()
+        resp = auth_client.get("/api/devices/discovery/jobs/")
+        row = next(r for r in resp.json()["results"] if r["id"] == job.id)
+        assert row["progress_pct"] == 100
+
+    def test_progress_endpoint(self, auth_client, job):
+        from django.utils import timezone
+        job.status = "running"
+        job.started_at = timezone.now()
+        job.progress_current, job.progress_total = 30, 100
+        job.ips_scanned, job.devices_found = 30, 2
+        job.progress_message = "Scanning 10.1.0.30... (30/100)"
+        job.save()
+        resp = auth_client.get(f"/api/devices/discovery/jobs/{job.id}/progress/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "running"
+        assert body["progress_pct"] == 30
+        assert body["ips_scanned"] == 30
+        assert body["devices_found"] == 2
+        assert body["elapsed_seconds"] >= 0
+        assert body["progress_message"].startswith("Scanning")
+
+    def test_progress_fields_read_only_on_create(self, auth_client):
+        resp = auth_client.post("/api/devices/discovery/jobs/", {
+            "name": "x", "method": "scan", "progress_current": 99, "progress_total": 100,
+        }, format="json")
+        assert resp.status_code == 201
+        assert DiscoveryJob.objects.get(pk=resp.json()["id"]).progress_current == 0

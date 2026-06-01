@@ -179,6 +179,7 @@ class DiscoveryRunner:
 
     async def run(self) -> None:
         await self._set_status(DiscoveryJob.Status.RUNNING)
+        await self._set_progress(message="Initializing scan...", current=0, ips=0)
         try:
             if self._job.method == DiscoveryJob.Method.SCAN:
                 await self._active_scan()
@@ -190,29 +191,53 @@ class DiscoveryRunner:
                     self._queue.append(seed_ip)
                     await self._topology_walk()
             await self._set_status(DiscoveryJob.Status.COMPLETED)
+            await self._set_progress(message=f"Complete: {self._found} devices found")
         except Exception as exc:
             logger.error("discovery job %d failed: %s", self._job.id, exc)
             await self._set_status(DiscoveryJob.Status.FAILED, str(exc))
+            await self._set_progress(message=f"Failed: {exc}")
 
     # ── active scan ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _host_count(net: ipaddress.IPv4Network | ipaddress.IPv6Network) -> int:
+        """Usable host count without materialising the generator."""
+        if net.prefixlen >= net.max_prefixlen - 1:  # /31, /32 (and v6 equivalents)
+            return net.num_addresses
+        return net.num_addresses - 2
+
     async def _active_scan(self) -> None:
-        for subnet_str in self._job.subnets:
-            net = ipaddress.ip_network(subnet_str, strict=False)
+        nets = [ipaddress.ip_network(s, strict=False) for s in self._job.subnets]
+        total = sum(self._host_count(n) for n in nets) or 1
+        await self._set_progress(message="Calculating scan scope...", total=total, current=0, ips=0)
+
+        scanned = 0
+        for net in nets:
+            await self._set_progress(
+                message=f"Resolving subnet {net} → {self._host_count(net)} hosts...")
             for host in net.hosts():
                 if self._found >= self._job.max_devices:
                     logger.warning("max_devices %d reached", self._job.max_devices)
+                    await self._set_progress(
+                        current=scanned, ips=scanned,
+                        message=f"Stopped at max_devices ({self._job.max_devices})")
                     return
                 ip = str(host)
+                scanned += 1
                 if not self._is_allowed(ip):
+                    await self._maybe_progress(scanned, total, f"Skipping {ip} (out of scope)")
                     continue
+                await self._maybe_progress(scanned, total, f"Scanning {ip}... ({scanned}/{total})")
                 await self._probe(ip, depth=0)
                 await asyncio.sleep(self._delay)
+        await self._set_progress(
+            current=scanned, total=total, ips=scanned, message="Processing results...")
 
     # ── topology walk ─────────────────────────────────────────────────────────
 
     async def _topology_walk(self) -> None:
         depth = 0
+        scanned = 0
         while self._queue and depth <= self._job.max_depth:
             next_layer: list[str] = []
             for ip in self._queue:
@@ -222,6 +247,12 @@ class DiscoveryRunner:
                     continue
                 if not self._is_allowed(ip):
                     continue
+                scanned += 1
+                # Topology walk has no fixed total; report progress against the
+                # current frontier so the bar still advances.
+                await self._set_progress(
+                    current=scanned, total=scanned + len(self._queue),
+                    ips=scanned, message=f"Walking {ip} (depth {depth})...")
                 result = await self._probe(ip, depth=depth)
                 await asyncio.sleep(self._delay)
                 if result:
@@ -428,3 +459,23 @@ class DiscoveryRunner:
         def _db():
             DiscoveryJob.objects.filter(pk=self._job.pk).update(devices_found=count)
         await self._loop.run_in_executor(None, _db)
+
+    async def _set_progress(self, *, current=None, total=None, message=None, ips=None) -> None:
+        def _db():
+            updates: dict = {}
+            if current is not None:
+                updates["progress_current"] = current
+            if total is not None:
+                updates["progress_total"] = total
+            if message is not None:
+                updates["progress_message"] = message[:255]
+            if ips is not None:
+                updates["ips_scanned"] = ips
+            if updates:
+                DiscoveryJob.objects.filter(pk=self._job.pk).update(**updates)
+        await self._loop.run_in_executor(None, _db)
+
+    async def _maybe_progress(self, scanned: int, total: int, message: str) -> None:
+        """Persist progress every 10 IPs (and the message) to avoid DB spam."""
+        if scanned % 10 == 0:
+            await self._set_progress(current=scanned, ips=scanned, message=message)

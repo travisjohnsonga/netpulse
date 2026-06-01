@@ -167,6 +167,11 @@ class DiscoveryJob(TimestampedModel):
     max_devices       = models.PositiveIntegerField(default=1000)
     rate_limit_pps    = models.PositiveIntegerField(default=10)
     devices_found     = models.PositiveIntegerField(default=0)
+    # Live progress (updated by the discovery engine during a run).
+    progress_current  = models.PositiveIntegerField(default=0)
+    progress_total    = models.PositiveIntegerField(default=0)
+    progress_message  = models.CharField(max_length=255, blank=True, default="")
+    ips_scanned       = models.PositiveIntegerField(default=0)
     # Credentials used to probe discovered devices (SNMP community / SNMPv3 for
     # scanning, SSH for LLDP). Secrets live in OpenBao via the profile's
     # vault_path — never on the job. Assigned to devices on approval.
