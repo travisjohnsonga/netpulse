@@ -97,24 +97,36 @@ class TestDiscoveredDeviceApproval:
         assert discovered.approved_device_id == device.id
         assert discovered.approved_by is not None
 
-    def test_approve_twice_is_blocked(self, auth_client, discovered):
+    def test_approve_twice_resolves_to_existing(self, auth_client, discovered):
+        # Second approve finds the device created by the first → already_exists,
+        # not an error.
         auth_client.post(f"/api/devices/discovery/discovered/{discovered.pk}/approve/")
         resp = auth_client.post(f"/api/devices/discovery/discovered/{discovered.pk}/approve/")
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json()["already_exists"] is True
+        assert Device.objects.filter(ip_address="10.1.0.5").count() == 1
 
-    def test_approve_existing_ip_is_blocked(self, auth_client, discovered):
-        Device.objects.create(hostname="existing", ip_address="10.1.0.5")
+    def test_approve_existing_ip_resolves_gracefully(self, auth_client, discovered):
+        existing = Device.objects.create(hostname="existing", ip_address="10.1.0.5")
         resp = auth_client.post(f"/api/devices/discovery/discovered/{discovered.pk}/approve/")
-        assert resp.status_code == 400
-        assert "already exists" in resp.json()["error"]
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["already_exists"] is True
+        assert body["device"]["id"] == existing.id
+        # No duplicate created, candidate linked to the existing device.
+        assert Device.objects.filter(ip_address="10.1.0.5").count() == 1
+        discovered.refresh_from_db()
+        assert discovered.status == "approved"
+        assert discovered.approved_device_id == existing.id
 
-    def test_approve_hostname_collision_is_suffixed(self, auth_client, job):
-        Device.objects.create(hostname="rtr-5", ip_address="10.9.9.9")
+    def test_approve_existing_hostname_resolves_gracefully(self, auth_client, job):
+        existing = Device.objects.create(hostname="rtr-5", ip_address="10.9.9.9")
         dd = DiscoveredDevice.objects.create(
             job=job, source_ip="10.1.0.7", discovered_hostname="rtr-5")
         resp = auth_client.post(f"/api/devices/discovery/discovered/{dd.pk}/approve/")
-        assert resp.status_code == 201
-        assert Device.objects.filter(hostname="rtr-5-10.1.0.7").exists()
+        assert resp.status_code == 200
+        assert resp.json()["device"]["id"] == existing.id
+        assert not Device.objects.filter(ip_address="10.1.0.7").exists()
 
     def test_approve_unknown_platform_falls_back_to_other(self, auth_client, job):
         dd = DiscoveredDevice.objects.create(
@@ -123,12 +135,52 @@ class TestDiscoveredDeviceApproval:
         assert resp.status_code == 201
         assert Device.objects.get(ip_address="10.1.0.8").platform == "other"
 
+    def test_approve_platform_override(self, auth_client, job):
+        # Unknown-platform device: caller supplies the platform on approve.
+        dd = DiscoveredDevice.objects.create(job=job, source_ip="10.1.0.9")
+        resp = auth_client.post(
+            f"/api/devices/discovery/discovered/{dd.pk}/approve/",
+            {"platform": "nxos"}, format="json")
+        assert resp.status_code == 201
+        assert Device.objects.get(ip_address="10.1.0.9").platform == "nxos"
+
     def test_reject_marks_rejected_without_device(self, auth_client, discovered):
         resp = auth_client.post(f"/api/devices/discovery/discovered/{discovered.pk}/reject/")
         assert resp.status_code == 200
         discovered.refresh_from_db()
         assert discovered.status == "rejected"
         assert not Device.objects.filter(ip_address="10.1.0.5").exists()
+
+
+class TestDiscoveredAlreadyExists:
+    def test_no_match_flags_false(self, auth_client, discovered):
+        resp = auth_client.get("/api/devices/discovery/discovered/?status=pending")
+        row = next(r for r in unwrap(resp.json()) if r["id"] == discovered.id)
+        assert row["already_exists"] is False
+        assert row["existing_device_id"] is None
+        assert row["existing_device_hostname"] is None
+
+    def test_ip_match_flags_existing(self, auth_client, discovered):
+        dev = Device.objects.create(hostname="router1", ip_address="10.1.0.5",
+                                    management_ip="10.1.0.5")
+        resp = auth_client.get("/api/devices/discovery/discovered/")
+        row = next(r for r in unwrap(resp.json()) if r["id"] == discovered.id)
+        assert row["already_exists"] is True
+        assert row["existing_device_id"] == dev.id
+        assert row["existing_device_hostname"] == "router1"
+
+    def test_hostname_match_flags_existing(self, auth_client, job):
+        dev = Device.objects.create(hostname="core-1", ip_address="10.9.9.9")
+        dd = DiscoveredDevice.objects.create(
+            job=job, source_ip="10.1.0.30", discovered_hostname="Core-1")
+        resp = auth_client.get("/api/devices/discovery/discovered/")
+        row = next(r for r in unwrap(resp.json()) if r["id"] == dd.id)
+        assert row["already_exists"] is True
+        assert row["existing_device_id"] == dev.id
+
+
+def unwrap(data):
+    return data["results"] if isinstance(data, dict) and "results" in data else data
 
 
 class TestDiscoveryCredentials:
@@ -441,8 +493,13 @@ class TestPlatformDetection:
 
     def test_platform_from_descr(self):
         from apps.devices.management.commands.run_discovery import _platform_from_descr
+        # IOS-XE / IOS XE / IOSXE all → ios_xe, and must win over plain IOS.
         assert _platform_from_descr("Cisco IOS XE Software, Version 17.9") == "ios_xe"
+        assert _platform_from_descr("Cisco IOS-XE Software [Cupertino]") == "ios_xe"
+        assert _platform_from_descr("...C8000V... IOSXE ...17.09.04a") == "ios_xe"
+        assert _platform_from_descr("Cisco IOS Software, Version 15.7") == "ios"
         assert _platform_from_descr("Cisco NX-OS(tm)") == "nxos"
+        assert _platform_from_descr("Cisco IOS XR Software") == "ios_xr"
         assert _platform_from_descr("FortiGate-60F FortiOS v7.2") == "fortios"
 
 

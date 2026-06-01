@@ -521,22 +521,36 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         """Create an ACTIVE Device from this discovered device (idempotent-safe)."""
         from django.utils import timezone
 
+        from .serializers import existing_device_for
+
         dd = self.get_object()
-        if dd.status == DiscoveredDevice.Status.APPROVED:
+
+        # Already in inventory (already approved, or an existing device matches
+        # this IP/hostname): resolve gracefully instead of erroring — link the
+        # candidate to the existing device and return it for the UI to navigate.
+        existing = existing_device_for(dd)
+        if existing:
+            if dd.status != DiscoveredDevice.Status.APPROVED:
+                dd.status = DiscoveredDevice.Status.APPROVED
+                dd.approved_device = existing
+                dd.approved_by = request.user if request.user.is_authenticated else None
+                dd.approved_at = timezone.now()
+                dd.save(update_fields=["status", "approved_device", "approved_by",
+                                       "approved_at", "updated_at"])
             return Response(
-                {"error": "This device was already approved."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"device": DeviceSerializer(existing).data,
+                 "discovered": DiscoveredDeviceSerializer(dd).data,
+                 "already_exists": True},
+                status=status.HTTP_200_OK,
             )
-        if Device.objects.filter(ip_address=dd.source_ip).exists():
-            return Response(
-                {"error": f"A device with IP {dd.source_ip} already exists."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+
         hostname = dd.discovered_hostname or f"device-{dd.source_ip}"
         if Device.objects.filter(hostname=hostname).exists():
             hostname = f"{hostname}-{dd.source_ip}"
-        platform = dd.discovered_platform if dd.discovered_platform in _PLATFORM_VALUES \
-            else Device.Platform.OTHER
+        # Platform: an explicit override from the request (used when discovery
+        # couldn't identify it), else the discovered platform, else "other".
+        platform = request.data.get("platform") or dd.discovered_platform
+        platform = platform if platform in _PLATFORM_VALUES else Device.Platform.OTHER
 
         # Credentials to attach to the new device: explicit choice in the request,
         # else the job's credential profile (the creds used to discover it).

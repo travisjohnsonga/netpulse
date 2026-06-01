@@ -102,7 +102,27 @@ class TestConnectionResponseSerializer(serializers.Serializer):
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
 
+def existing_device_for(dd: DiscoveredDevice):
+    """
+    The inventory Device this discovered device corresponds to, if any:
+    its approved_device, else a match on management/IP address or hostname.
+    Returns the Device or None.
+    """
+    from django.db.models import Q
+
+    if dd.approved_device_id:
+        return dd.approved_device
+    q = Q(management_ip=dd.source_ip) | Q(ip_address=dd.source_ip)
+    if dd.discovered_hostname:
+        q |= Q(hostname__iexact=dd.discovered_hostname)
+    return Device.objects.filter(q).first()
+
+
 class DiscoveredDeviceSerializer(serializers.ModelSerializer):
+    already_exists = serializers.SerializerMethodField()
+    existing_device_id = serializers.SerializerMethodField()
+    existing_device_hostname = serializers.SerializerMethodField()
+
     class Meta:
         model = DiscoveredDevice
         fields = "__all__"
@@ -113,6 +133,23 @@ class DiscoveredDeviceSerializer(serializers.ModelSerializer):
             "raw_fingerprint", "status", "approved_device", "approved_by",
             "approved_at", "created_at", "updated_at",
         )
+
+    def _existing(self, obj):
+        # Cache on the instance so the three fields share one query.
+        if not hasattr(obj, "_existing_device_cache"):
+            obj._existing_device_cache = existing_device_for(obj)
+        return obj._existing_device_cache
+
+    def get_already_exists(self, obj) -> bool:
+        return self._existing(obj) is not None
+
+    def get_existing_device_id(self, obj):
+        dev = self._existing(obj)
+        return dev.id if dev else None
+
+    def get_existing_device_hostname(self, obj):
+        dev = self._existing(obj)
+        return dev.hostname if dev else None
 
 
 class DiscoveryJobSerializer(serializers.ModelSerializer):

@@ -101,15 +101,20 @@ def _vendor_from_banner(banner: str) -> str:
 
 
 def _platform_from_descr(descr: str) -> str:
-    """Best-effort NetPulse platform string from an SNMP sysDescr."""
+    """
+    Best-effort NetPulse platform string from an SNMP sysDescr. IOS-XE / IOS-XR
+    must be matched before plain IOS (their sysDescr also contains "IOS"), and
+    we accept the hyphen, space and no-separator spellings ("IOS-XE", "IOS XE",
+    "IOSXE").
+    """
     low = descr.lower()
     if "nx-os" in low or "nexus" in low:
         return "nxos"
-    if "ios xr" in low or "ios-xr" in low:
+    if "ios xr" in low or "ios-xr" in low or "iosxr" in low:
         return "ios_xr"
-    if "ios-xe" in low or "ios xe" in low:
+    if "ios xe" in low or "ios-xe" in low or "iosxe" in low:
         return "ios_xe"
-    if "cisco ios" in low or "ios software" in low:
+    if "cisco ios" in low or "ios software" in low or "ios (tm)" in low:
         return "ios"
     if "fortios" in low or "fortigate" in low:
         return "fortios"
