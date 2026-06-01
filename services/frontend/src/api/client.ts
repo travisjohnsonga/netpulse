@@ -951,6 +951,8 @@ export interface DiscoveryJob {
   devices_found: number
   pending_count: number
   seed_device_hostname: string | null
+  credential_profile: number | null
+  credential_profile_name: string | null
   created_at: string
 }
 
@@ -960,6 +962,7 @@ export interface NewDiscoveryJob {
   subnets?: string[]
   allowed_subnets?: string[]
   excluded_subnets?: string[]
+  credential_profile?: number | null
 }
 
 export interface DiscoveredDevice {
@@ -995,8 +998,9 @@ export async function fetchDiscoveredDevices(status = 'pending'): Promise<Discov
   return unwrap(data)
 }
 
-export async function approveDiscoveredDevice(id: number): Promise<void> {
-  await api.post(`/devices/discovery/discovered/${id}/approve/`)
+export async function approveDiscoveredDevice(id: number, credentialProfileId?: number | null): Promise<void> {
+  await api.post(`/devices/discovery/discovered/${id}/approve/`,
+    credentialProfileId != null ? { credential_profile: credentialProfileId } : {})
 }
 
 export async function rejectDiscoveredDevice(id: number): Promise<void> {

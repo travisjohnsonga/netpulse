@@ -6,7 +6,9 @@ import { SectionHeader } from '../Settings'
 import {
   fetchDiscoveryJobs, createDiscoveryJob, deleteDiscoveryJob,
   fetchDiscoveredDevices, approveDiscoveredDevice, rejectDiscoveredDevice,
+  fetchCredentials,
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
+  type CredentialProfileListItem,
 } from '../../api/client'
 
 const inputCls =
@@ -36,6 +38,8 @@ export default function Discovery() {
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
+  const [approving, setApproving] = useState<DiscoveredDevice | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -46,6 +50,7 @@ export default function Discovery() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { fetchCredentials().then(setProfiles).catch(() => {}) }, [])
 
   const removeJob = async (id: number) => {
     setBusyId(id)
@@ -53,14 +58,19 @@ export default function Discovery() {
     catch (e) { setError(apiError(e, 'Failed to delete job.')); setBusyId(null) }
   }
 
-  const decide = async (d: DiscoveredDevice, action: 'approve' | 'reject') => {
+  const reject = async (d: DiscoveredDevice) => {
+    setBusyId(d.id); setError(null)
+    try { await rejectDiscoveredDevice(d.id); load() }
+    catch (e) { setError(apiError(e, 'Failed to reject device.')); setBusyId(null) }
+  }
+
+  const confirmApprove = async (d: DiscoveredDevice, credentialProfileId: number | null) => {
     setBusyId(d.id); setError(null)
     try {
-      if (action === 'approve') await approveDiscoveredDevice(d.id)
-      else await rejectDiscoveredDevice(d.id)
-      load()
+      await approveDiscoveredDevice(d.id, credentialProfileId)
+      setApproving(null); load()
     } catch (e) {
-      setError(apiError(e, `Failed to ${action} device.`)); setBusyId(null)
+      setError(apiError(e, 'Failed to approve device.')); setBusyId(null)
     }
   }
 
@@ -138,8 +148,8 @@ export default function Discovery() {
                         </td>
                         <td className="px-5 py-3">
                           <div className="flex items-center justify-end gap-2">
-                            <button disabled={busyId === d.id} onClick={() => decide(d, 'approve')} className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50">Approve</button>
-                            <button disabled={busyId === d.id} onClick={() => decide(d, 'reject')} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">Reject</button>
+                            <button disabled={busyId === d.id} onClick={() => setApproving(d)} className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50">Approve</button>
+                            <button disabled={busyId === d.id} onClick={() => reject(d)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">Reject</button>
                           </div>
                         </td>
                       </tr>
@@ -152,21 +162,74 @@ export default function Discovery() {
         </>
       )}
 
-      {adding && <NewJobModal onClose={() => setAdding(false)} onCreated={() => { setAdding(false); load() }} />}
+      {adding && <NewJobModal profiles={profiles} onClose={() => setAdding(false)} onCreated={() => { setAdding(false); load() }} />}
+      {approving && (
+        <ApproveModal
+          device={approving}
+          profiles={profiles}
+          defaultProfileId={jobs.find((j) => j.id === approving.job)?.credential_profile ?? null}
+          busy={busyId === approving.id}
+          onClose={() => setApproving(null)}
+          onConfirm={(cid) => confirmApprove(approving, cid)}
+        />
+      )}
     </div>
   )
 }
 
-function NewJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onConfirm }: {
+  device: DiscoveredDevice
+  profiles: CredentialProfileListItem[]
+  defaultProfileId: number | null
+  busy: boolean
+  onClose: () => void
+  onConfirm: (credentialProfileId: number | null) => void
+}) {
+  const [credId, setCredId] = useState<number | null>(defaultProfileId)
+
+  return (
+    <Modal
+      title={`Approve ${device.discovered_hostname || device.source_ip}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={() => onConfirm(credId)} disabled={busy} className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{busy ? 'Approving…' : 'Approve & Add'}</button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          Adding <span className="font-mono">{device.source_ip}</span> to inventory as an active device.
+        </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Which credentials does this device use?</label>
+          <select className={inputCls} value={credId ?? ''} onChange={(e) => setCredId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">— No profile (set later) —</option>
+            {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.enabled_protocols.join(', ') || 'none'})</option>)}
+          </select>
+          <a href="/settings/credentials" target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-600 hover:text-blue-800 mt-1">+ Create new credentials (opens Settings → Credentials)</a>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function NewJobModal({ profiles, onClose, onCreated }: { profiles: CredentialProfileListItem[]; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('')
   const [method, setMethod] = useState<DiscoveryMethod>('scan')
   const [subnets, setSubnets] = useState('')
   const [allowed, setAllowed] = useState('10.0.0.0/8')
   const [excluded, setExcluded] = useState('')
+  const [credId, setCredId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const parse = (s: string) => s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
+
+  // Credentials are needed to actually connect: SNMP (community/v3) for scan
+  // fingerprinting, SSH for LLDP/topology walks.
+  const needsCreds = method === 'scan' || method === 'topology'
 
   const submit = async () => {
     if (!name.trim()) { setErr('Name is required.'); return }
@@ -177,6 +240,7 @@ function NewJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         subnets: parse(subnets),
         allowed_subnets: parse(allowed),
         excluded_subnets: parse(excluded),
+        credential_profile: needsCreds ? credId : null,
       })
       onCreated()
     } catch (e) {
@@ -212,6 +276,19 @@ function NewJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subnets to scan</label>
             <textarea className={`${inputCls} font-mono text-xs h-16`} value={subnets} onChange={(e) => setSubnets(e.target.value)} placeholder="10.1.0.0/24&#10;10.2.0.0/24" />
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">One CIDR per line.</p>
+          </div>
+        )}
+        {needsCreds && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Credentials to use for discovered devices</label>
+            <select className={inputCls} value={credId ?? ''} onChange={(e) => setCredId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">— No profile (limited discovery) —</option>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.enabled_protocols.join(', ') || 'none'})</option>)}
+            </select>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              SNMP community/SNMPv3 is used to fingerprint scanned IPs; SSH is used for LLDP/topology. Without a profile, discovery falls back to the <code>public</code> community only. Secrets stay in OpenBao and are assigned to devices on approval.
+            </p>
+            <a href="/settings/credentials" target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-600 hover:text-blue-800 mt-1">+ Create a credential profile (opens Settings → Credentials)</a>
           </div>
         )}
         <div>

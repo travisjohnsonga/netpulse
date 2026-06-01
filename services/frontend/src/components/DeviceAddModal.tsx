@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchSites, createSite, fetchCredentials, createDevice, detectPlatform, testCredential,
-  fetchCredential, checkHealth, fetchSystemSettings, pushTelemetryConfig, fetchCollectors,
+  fetchCredential, createCredential, checkHealth, fetchSystemSettings, pushTelemetryConfig, fetchCollectors,
   type Site, type Collector, type CredentialProfileListItem, type CredentialProfile, type DeviceDetail,
   type DetectPlatformResult, type CredentialTestResult,
 } from '../api/client'
@@ -152,6 +152,15 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
   const [credentialId, setCredentialId] = useState<number | null>(null)
   const [credTest, setCredTest] = useState<CredentialTestResult | 'running' | null>(null)
+  // Use an existing profile, or create a new one inline (saved to OpenBao).
+  const [credMode, setCredMode] = useState<'existing' | 'new'>('existing')
+  const [np, setNp] = useState({
+    name: '', ssh_username: '', ssh_password: '',
+    snmp: 'v2c' as 'none' | 'v2c' | 'v3',
+    community: '', v3_user: '', v3_auth_key: '', v3_priv_key: '',
+  })
+  const [creatingProfile, setCreatingProfile] = useState(false)
+  const [credErr, setCredErr] = useState<string | null>(null)
 
   // Step 3 — Platform
   const [platform, setPlatform] = useState('other')
@@ -201,7 +210,8 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
 
   const reset = () => {
     setStep(0); setHostname(''); setIp(''); setMgmtIp(''); setSiteId(''); setRole(''); setTags([]); setTagInput(''); setCollectorId(null)
-    setCredentialId(null); setCredTest(null)
+    setCredentialId(null); setCredTest(null); setCredMode('existing'); setCredErr(null)
+    setNp({ name: '', ssh_username: '', ssh_password: '', snmp: 'v2c', community: '', v3_user: '', v3_auth_key: '', v3_priv_key: '' })
     setPlatform('other'); setVendor(''); setOsVersion(''); setModel(''); setSerial(''); setDetect(null); setManualOpen(false)
     setFeatures(new Set(['snmp', 'syslog'])); setCreated(null); setError(null)
     setCredProfile(null); setPushAfter(false); setPushResult(null)
@@ -248,6 +258,40 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
     setCredTest('running')
     try { setCredTest(await testCredential(credentialId, ip.trim())) }
     catch { setCredTest({ ip, overall: 'failure', results: [] }) }
+  }
+
+  // Create a credential profile inline (secrets → OpenBao), then select it.
+  const createProfile = async () => {
+    if (!np.name.trim()) { setCredErr('Profile name is required.'); return }
+    setCreatingProfile(true); setCredErr(null)
+    const payload: Record<string, unknown> = { name: np.name.trim() }
+    if (np.ssh_username.trim()) {
+      payload.ssh_enabled = true
+      payload.ssh_username = np.ssh_username.trim()
+      payload.ssh_auth_method = 'password'
+      payload.ssh_password = np.ssh_password
+    }
+    if (np.snmp === 'v2c') {
+      payload.snmpv2c_enabled = true
+      payload.snmpv2c_community = np.community
+    } else if (np.snmp === 'v3') {
+      payload.snmpv3_enabled = true
+      payload.snmpv3_username = np.v3_user.trim()
+      payload.snmpv3_security_level = 'authPriv'
+      payload.snmpv3_auth_protocol = 'SHA'
+      payload.snmpv3_priv_protocol = 'AES'
+      payload.snmpv3_auth_key = np.v3_auth_key
+      payload.snmpv3_priv_key = np.v3_priv_key
+    }
+    try {
+      const created = await createCredential(payload as { name: string })
+      await loadProfiles()
+      setCredentialId(created.id)
+      setCredMode('existing'); setCredTest(null); setDetect(null)
+    } catch (e) {
+      const detail = (e as { response?: { data?: unknown } })?.response?.data
+      setCredErr(typeof detail === 'object' ? JSON.stringify(detail) : 'Failed to create profile.')
+    } finally { setCreatingProfile(false) }
   }
 
   const submit = async () => {
@@ -403,31 +447,79 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
           {/* Step 2 — Credentials */}
           {step === 1 && (
             <div className="space-y-3">
-              <p className="text-sm text-gray-500 dark:text-gray-400">How should NetPulse connect to this device? Pick one profile covering every protocol it needs. SSH is required for platform auto-detection.</p>
-              <div className="flex gap-2">
-                <select className={inputCls} value={credentialId ?? ''} onChange={(e) => { setCredentialId(e.target.value ? Number(e.target.value) : null); setCredTest(null); setDetect(null) }}>
-                  <option value="">— No profile —</option>
-                  {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.enabled_protocols.join(', ') || 'none'})</option>)}
-                </select>
-                <button onClick={loadProfiles} title="Refresh" className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 shrink-0 dark:text-gray-300">↻</button>
+              <p className="text-sm text-gray-500 dark:text-gray-400">How should NetPulse connect to this device? SSH is required for platform auto-detection. Secrets are stored in OpenBao.</p>
+              <div className="flex gap-4 text-sm">
+                <label className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300">
+                  <input type="radio" checked={credMode === 'existing'} onChange={() => setCredMode('existing')} />
+                  Use existing credential profile
+                </label>
+                <label className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300">
+                  <input type="radio" checked={credMode === 'new'} onChange={() => { setCredMode('new'); setCredentialId(null) }} />
+                  Create new credentials
+                </label>
               </div>
-              {credentialId != null && !hasSSH && (
-                <p className="text-xs text-amber-600">⚠ This profile has no SSH — platform auto-detection won't be available.</p>
+
+              {credMode === 'existing' && (
+                <>
+                  <div className="flex gap-2">
+                    <select className={inputCls} value={credentialId ?? ''} onChange={(e) => { setCredentialId(e.target.value ? Number(e.target.value) : null); setCredTest(null); setDetect(null) }}>
+                      <option value="">— No profile —</option>
+                      {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.enabled_protocols.join(', ') || 'none'})</option>)}
+                    </select>
+                    <button onClick={loadProfiles} title="Refresh" className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 shrink-0 dark:text-gray-300">↻</button>
+                  </div>
+                  {credentialId != null && !hasSSH && (
+                    <p className="text-xs text-amber-600">⚠ This profile has no SSH — platform auto-detection won't be available.</p>
+                  )}
+                  <div>
+                    <button onClick={testCred} disabled={credentialId == null || credTest === 'running'} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">
+                      {credTest === 'running' ? 'Testing…' : 'Test All'}
+                    </button>
+                  </div>
+                  {credTest && credTest !== 'running' && (
+                    <div className="space-y-1.5">
+                      {credTest.results.length === 0 ? <p className="text-xs text-red-600">No protocols to test on this profile.</p> :
+                        credTest.results.map((r) => (
+                          <div key={r.protocol} className={clsx('text-xs', r.success ? 'text-green-700' : 'text-red-700')}>
+                            {r.success ? '✅' : '❌'} {r.label}: {r.message}
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </>
               )}
-              <a href="/settings/credentials" target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-600 hover:text-blue-800">+ New profile (opens Settings → Credentials)</a>
-              <div>
-                <button onClick={testCred} disabled={credentialId == null || credTest === 'running'} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">
-                  {credTest === 'running' ? 'Testing…' : 'Test All'}
-                </button>
-              </div>
-              {credTest && credTest !== 'running' && (
-                <div className="space-y-1.5">
-                  {credTest.results.length === 0 ? <p className="text-xs text-red-600">No protocols to test on this profile.</p> :
-                    credTest.results.map((r) => (
-                      <div key={r.protocol} className={clsx('text-xs', r.success ? 'text-green-700' : 'text-red-700')}>
-                        {r.success ? '✅' : '❌'} {r.label}: {r.message}
-                      </div>
-                    ))}
+
+              {credMode === 'new' && (
+                <div className="space-y-3 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                  {credErr && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-3 py-2 text-xs text-red-700 dark:text-red-400">{credErr}</div>}
+                  <Field label="Profile name *"><input className={inputCls} value={np.name} onChange={(e) => setNp({ ...np, name: e.target.value })} placeholder="Lab Routers" /></Field>
+                  <Row>
+                    <Field label="SSH Username"><input className={inputCls} value={np.ssh_username} onChange={(e) => setNp({ ...np, ssh_username: e.target.value })} placeholder="admin" /></Field>
+                    <Field label="SSH Password"><input type="password" className={inputCls} value={np.ssh_password} onChange={(e) => setNp({ ...np, ssh_password: e.target.value })} placeholder="••••••••" /></Field>
+                  </Row>
+                  <Field label="SNMP">
+                    <select className={inputCls} value={np.snmp} onChange={(e) => setNp({ ...np, snmp: e.target.value as 'none' | 'v2c' | 'v3' })}>
+                      <option value="none">None</option>
+                      <option value="v2c">SNMPv2c (community)</option>
+                      <option value="v3">SNMPv3 (authPriv)</option>
+                    </select>
+                  </Field>
+                  {np.snmp === 'v2c' && (
+                    <Field label="SNMP Community"><input className={inputCls} value={np.community} onChange={(e) => setNp({ ...np, community: e.target.value })} placeholder="netpulse" /></Field>
+                  )}
+                  {np.snmp === 'v3' && (
+                    <>
+                      <Field label="SNMPv3 User"><input className={inputCls} value={np.v3_user} onChange={(e) => setNp({ ...np, v3_user: e.target.value })} placeholder="netpulse" /></Field>
+                      <Row>
+                        <Field label="Auth key (SHA)"><input type="password" className={inputCls} value={np.v3_auth_key} onChange={(e) => setNp({ ...np, v3_auth_key: e.target.value })} /></Field>
+                        <Field label="Priv key (AES)"><input type="password" className={inputCls} value={np.v3_priv_key} onChange={(e) => setNp({ ...np, v3_priv_key: e.target.value })} /></Field>
+                      </Row>
+                    </>
+                  )}
+                  <button onClick={createProfile} disabled={creatingProfile} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+                    {creatingProfile ? 'Saving…' : '🔒 Save credential profile'}
+                  </button>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Secrets are stored securely in OpenBao — never in the database or logs.</p>
                 </div>
               )}
             </div>
