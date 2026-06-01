@@ -1031,6 +1031,16 @@ export async function runDiscoveryJob(id: number): Promise<DiscoveryJob> {
   return data
 }
 
+export async function restartDiscoveryJob(id: number): Promise<DiscoveryJob> {
+  const { data } = await api.post<DiscoveryJob>(`/devices/discovery/jobs/${id}/restart/`)
+  return data
+}
+
+export async function cancelDiscoveryJob(id: number): Promise<DiscoveryJob> {
+  const { data } = await api.post<DiscoveryJob>(`/devices/discovery/jobs/${id}/cancel/`)
+  return data
+}
+
 export async function deleteDiscoveryJob(id: number): Promise<void> {
   await api.delete(`/devices/discovery/jobs/${id}/`)
 }

@@ -4,7 +4,8 @@ import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
 import { SectionHeader } from '../Settings'
 import {
-  fetchDiscoveryJobs, createDiscoveryJob, updateDiscoveryJob, runDiscoveryJob, deleteDiscoveryJob,
+  fetchDiscoveryJobs, createDiscoveryJob, updateDiscoveryJob, runDiscoveryJob,
+  restartDiscoveryJob, cancelDiscoveryJob, deleteDiscoveryJob,
   fetchDiscoveredDevices, approveDiscoveredDevice, rejectDiscoveredDevice,
   fetchCredentials, fetchDiscoveryProgress, fetchJobDiscovered,
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
@@ -15,11 +16,11 @@ const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 const STATUS_BADGE: Record<string, string> = {
-  running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 animate-pulse',
   completed: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
   pending: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
   failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  cancelled: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+  cancelled: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
 }
 
 const METHOD_LABEL: Record<DiscoveryMethod, string> = {
@@ -47,10 +48,25 @@ export default function Discovery() {
   const openNew = () => { setEditJob(null); setShowModal(true) }
   const openEdit = (j: DiscoveryJob) => { setEditJob(j); setShowModal(true) }
 
-  const runJob = async (j: DiscoveryJob) => {
+  const startJob = async (j: DiscoveryJob) => {
     setBusyId(j.id); setError(null)
-    try { await runDiscoveryJob(j.id); flash('Discovery started'); load(true) }
-    catch (e) { setError(apiError(e, 'Failed to start job.')) }
+    try {
+      // Pending jobs run; finished/cancelled jobs restart (both reset+execute).
+      if (j.status === 'pending') await runDiscoveryJob(j.id)
+      else await restartDiscoveryJob(j.id)
+      flash('Discovery started'); load(true)
+    } catch (e) { setError(apiError(e, 'Failed to start job.')) }
+    finally { setBusyId(null) }
+  }
+
+  const cancelJob = async (j: DiscoveryJob) => {
+    const msg = j.status === 'running'
+      ? 'Cancel this scan? Progress will be lost.'
+      : 'Cancel this job?'
+    if (!window.confirm(msg)) return
+    setBusyId(j.id); setError(null)
+    try { await cancelDiscoveryJob(j.id); flash('Job cancelled'); load(true) }
+    catch (e) { setError(apiError(e, 'Failed to cancel job.')) }
     finally { setBusyId(null) }
   }
 
@@ -117,7 +133,8 @@ export default function Discovery() {
                   <JobRow key={j.id} job={j} busy={busyId === j.id}
                     onDelete={() => removeJob(j.id)}
                     onEdit={() => openEdit(j)}
-                    onRun={() => runJob(j)}
+                    onStart={() => startJob(j)}
+                    onCancel={() => cancelJob(j)}
                     onApprove={(d) => setApproving(d)}
                     onReject={reject}
                     onChanged={() => load(true)} />
@@ -210,16 +227,17 @@ function fmtSecs(s: number): string {
 }
 
 const STATUS_ICON: Record<string, string> = {
-  running: '🔄', completed: '✅', failed: '❌', pending: '⏳', cancelled: '⏹',
+  running: '🔄', completed: '✅', failed: '❌', pending: '⏳', cancelled: '✖',
 }
 
 /** Expandable discovery-job row with live progress (polls while running). */
-function JobRow({ job, busy, onDelete, onEdit, onRun, onApprove, onReject, onChanged }: {
+function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onReject, onChanged }: {
   job: DiscoveryJob
   busy: boolean
   onDelete: () => void
   onEdit: () => void
-  onRun: () => void
+  onStart: () => void
+  onCancel: () => void
   onApprove: (d: DiscoveredDevice) => void
   onReject: (d: DiscoveredDevice) => void
   onChanged: () => void
@@ -305,19 +323,32 @@ function JobRow({ job, busy, onDelete, onEdit, onRun, onApprove, onReject, onCha
         </div>
         {isRunning && elapsed > 0 && <span className="text-xs text-gray-400 dark:text-gray-500">{fmtSecs(elapsed)}</span>}
         <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full capitalize', STATUS_BADGE[status])}>{STATUS_ICON[status]} {status}</span>
-        {(job.method === 'scan' || job.method === 'topology') && (
-          <button onClick={onRun} disabled={isRunning}
-            title={isRunning ? 'Job is already running' : 'Run this job'}
-            className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
-            {status === 'completed' || status === 'failed' ? '▶ Run Again' : '▶ Run'}
-          </button>
-        )}
-        <button onClick={onEdit} disabled={isRunning}
-          title={isRunning ? 'Cannot edit a running job' : 'Edit this job'}
-          className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
-          ✏️ Edit
-        </button>
-        <button onClick={onDelete} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">🗑 Delete</button>
+        {(() => {
+          const canStart = job.method === 'scan' || job.method === 'topology'
+          const startLabel = status === 'completed' ? '▶ Run Again' : status === 'failed' ? '▶ Retry' : '▶ Run'
+          const btn = 'px-2.5 py-1 text-xs border rounded-md disabled:opacity-50'
+          const plain = 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300'
+          return (
+            <>
+              {/* Run / Run Again / Retry — hidden while running */}
+              {canStart && !isRunning && (
+                <button onClick={onStart} className={clsx(btn, plain)}>{startLabel}</button>
+              )}
+              {/* Edit — hidden while running (can't edit a running job) */}
+              {!isRunning && (
+                <button onClick={onEdit} className={clsx(btn, plain)} title="Edit this job">✏️ Edit</button>
+              )}
+              {/* Cancel — only for pending / running */}
+              {(status === 'pending' || status === 'running') && (
+                <button onClick={onCancel}
+                  className={clsx(btn, 'border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30')}>
+                  ✖ Cancel
+                </button>
+              )}
+              <button onClick={onDelete} className={clsx(btn, plain)}>🗑 Delete</button>
+            </>
+          )
+        })()}
       </div>
 
       {open && (
