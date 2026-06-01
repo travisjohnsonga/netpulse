@@ -643,25 +643,34 @@ function utilColor(pct: number | null): string {
   return 'text-green-600 dark:text-green-400'
 }
 
-export default function Telemetry({ device, onConfigure }: { device: DeviceDetail; onConfigure?: () => void }) {
+export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { device: DeviceDetail; onConfigure?: () => void; refreshSignal?: number }) {
   const [ifaces, setIfaces] = useState<MonitoredInterface[] | null>(null)
   const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
   const [range, setRange] = useState<(typeof TRAFFIC_RANGES)[number]>('1h')
   const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
+  // Monitored interfaces + config. Re-fetched when refreshSignal changes (i.e.
+  // after the Telemetry Configuration slide-over saves & closes) so the
+  // interface table reflects the new selection without a manual page refresh.
   useEffect(() => {
-    fetchMonitoredInterfaces(device.id).then(setIfaces).catch(() => setIfaces([]))
-    fetchTelemetryConfig(device.id).then(setCfg).catch(() => setCfg(null))
-  }, [device.id])
+    let cancelled = false
+    if (refreshSignal > 0) setRefreshing(true)
+    Promise.all([
+      fetchMonitoredInterfaces(device.id).then((r) => { if (!cancelled) setIfaces(r) }).catch(() => { if (!cancelled) setIfaces([]) }),
+      fetchTelemetryConfig(device.id).then((c) => { if (!cancelled) setCfg(c) }).catch(() => { if (!cancelled) setCfg(null) }),
+    ]).finally(() => { if (!cancelled) setTimeout(() => setRefreshing(false), 800) })
+    return () => { cancelled = true }
+  }, [device.id, refreshSignal])
 
-  // Metrics: refetch on device/range change and auto-refresh every 60s.
+  // Metrics: refetch on device/range/refresh change and auto-refresh every 60s.
   useEffect(() => {
     let cancelled = false
     const load = () => fetchDeviceMetrics(device.id, range).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
     load()
     const t = setInterval(load, 60_000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [device.id, range])
+  }, [device.id, range, refreshSignal])
 
   const health = metrics?.metrics
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -751,7 +760,7 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
             <button onClick={configure} className="text-xs font-medium text-blue-600 hover:text-blue-800">Configure →</button>
           </div>
         </div>
-        <div className="mb-3"><CollectionMethodBar deviceId={device.id} /></div>
+        <div className="mb-3"><CollectionMethodBar deviceId={device.id} refreshKey={refreshSignal} /></div>
         {pollToast && <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{pollToast}</p>}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <HealthCard label="CPU" value={health?.cpu_pct != null ? `${health.cpu_pct.toFixed(1)}%` : null}
@@ -788,7 +797,15 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
       {/* Section 2 — Interface Traffic */}
       <div className={liveCard}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Interface Traffic</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+            Interface Traffic
+            {refreshing && (
+              <span className="inline-flex items-center gap-1 text-xs font-normal text-blue-600 dark:text-blue-400">
+                <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                Refreshing…
+              </span>
+            )}
+          </h3>
           <div className="flex gap-1">
             {TRAFFIC_RANGES.map((r) => (
               <button key={r} onClick={() => setRange(r)}

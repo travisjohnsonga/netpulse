@@ -54,6 +54,9 @@ export default function DeviceDetail() {
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
   const [sshCred, setSshCred] = useState<{ username: string | null; port: number | null }>({ username: null, port: null })
   const [telemetryConfig, setTelemetryConfig] = useState(false)
+  // Bumped when the Telemetry Configuration slide-over closes so the Telemetry
+  // tab refetches interfaces/metrics/collection-status (shows the new selection).
+  const [telemetryRefresh, setTelemetryRefresh] = useState(0)
   const [changingCollector, setChangingCollector] = useState(false)
 
   const load = useCallback(() => {
@@ -189,7 +192,7 @@ export default function DeviceDetail() {
 
       {/* Tab content */}
       {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} onManageCredentials={() => setManagingCreds(true)} />}
-      {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} />}
+      {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} refreshSignal={telemetryRefresh} />}
       {tab === 'logs' && <Logs device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}
       {tab === 'compliance' && <Compliance device={device} />}
@@ -198,7 +201,7 @@ export default function DeviceDetail() {
 
       {editing && <DeviceEditModal device={device} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load() }} />}
       {managingCreds && <DeviceCredentialsPanel device={device} onClose={() => setManagingCreds(false)} onSaved={() => { setManagingCreds(false); load() }} />}
-      {telemetryConfig && <TelemetryConfigPanel device={device} onClose={() => setTelemetryConfig(false)} />}
+      {telemetryConfig && <TelemetryConfigPanel device={device} onClose={() => { setTelemetryConfig(false); setTelemetryRefresh((n) => n + 1) }} />}
       {changingCollector && <ChangeCollectorModal device={device} onClose={() => setChangingCollector(false)} onSaved={() => { setChangingCollector(false); load() }} />}
       {deleting && (
         <Modal title="Delete device?" onClose={() => setDeleting(false)}

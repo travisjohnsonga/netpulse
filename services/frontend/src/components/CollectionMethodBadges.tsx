@@ -28,7 +28,7 @@ function snmpVersionLabel(version: string | null): string {
   return `SNMP${version}` // "v3" → "SNMPv3", "v2c" → "SNMPv2c"
 }
 
-function useCollectionStatus(deviceId: number): CollectionStatus | null {
+function useCollectionStatus(deviceId: number, refreshKey = 0): CollectionStatus | null {
   const [status, setStatus] = useState<CollectionStatus | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -38,7 +38,7 @@ function useCollectionStatus(deviceId: number): CollectionStatus | null {
     load()
     const t = setInterval(load, 60_000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [deviceId])
+  }, [deviceId, refreshKey])
   return status
 }
 
@@ -92,8 +92,8 @@ export function CollectionMethodBadges({ deviceId }: { deviceId: number }) {
   )
 }
 
-export function CollectionMethodBar({ deviceId }: { deviceId: number }) {
-  const status = useCollectionStatus(deviceId)
+export function CollectionMethodBar({ deviceId, refreshKey = 0 }: { deviceId: number; refreshKey?: number }) {
+  const status = useCollectionStatus(deviceId, refreshKey)
 
   // Detect a gNMI→SNMP failover (stream lost, TTL expired) across refreshes so
   // we can surface a one-time fallback notice until gNMI recovers.
