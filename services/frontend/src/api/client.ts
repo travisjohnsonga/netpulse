@@ -906,6 +906,77 @@ export async function deleteUser(id: number): Promise<void> {
   await api.delete(`/users/${id}/`)
 }
 
+// ── Device discovery (Settings → Discovery) ──────────────────────────────────
+
+export type DiscoveryMethod = 'passive' | 'topology' | 'scan' | 'import'
+export type DiscoveryStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface DiscoveryJob {
+  id: number
+  name: string
+  method: DiscoveryMethod
+  status: DiscoveryStatus
+  subnets: string[]
+  allowed_subnets: string[]
+  excluded_subnets: string[]
+  max_depth: number
+  max_devices: number
+  rate_limit_pps: number
+  devices_found: number
+  pending_count: number
+  seed_device_hostname: string | null
+  created_at: string
+}
+
+export interface NewDiscoveryJob {
+  name: string
+  method: DiscoveryMethod
+  subnets?: string[]
+  allowed_subnets?: string[]
+  excluded_subnets?: string[]
+}
+
+export interface DiscoveredDevice {
+  id: number
+  job: number
+  source_ip: string
+  detection_methods: string[]
+  responds_to: Record<string, boolean>
+  confidence_score: number
+  discovered_hostname: string
+  discovered_vendor: string
+  discovered_platform: string
+  status: 'pending' | 'approved' | 'rejected'
+}
+
+export async function fetchDiscoveryJobs(): Promise<DiscoveryJob[]> {
+  const { data } = await api.get<DiscoveryJob[] | Paginated<DiscoveryJob>>('/devices/discovery/jobs/')
+  return unwrap(data)
+}
+
+export async function createDiscoveryJob(payload: NewDiscoveryJob): Promise<DiscoveryJob> {
+  const { data } = await api.post<DiscoveryJob>('/devices/discovery/jobs/', payload)
+  return data
+}
+
+export async function deleteDiscoveryJob(id: number): Promise<void> {
+  await api.delete(`/devices/discovery/jobs/${id}/`)
+}
+
+export async function fetchDiscoveredDevices(status = 'pending'): Promise<DiscoveredDevice[]> {
+  const { data } = await api.get<DiscoveredDevice[] | Paginated<DiscoveredDevice>>(
+    `/devices/discovery/discovered/?status=${status}`)
+  return unwrap(data)
+}
+
+export async function approveDiscoveredDevice(id: number): Promise<void> {
+  await api.post(`/devices/discovery/discovered/${id}/approve/`)
+}
+
+export async function rejectDiscoveredDevice(id: number): Promise<void> {
+  await api.post(`/devices/discovery/discovered/${id}/reject/`)
+}
+
 export interface MonitoredInterface {
   id: number
   if_index: number | null
