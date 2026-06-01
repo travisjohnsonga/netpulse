@@ -994,6 +994,8 @@ export interface NewDiscoveryJob {
   allowed_subnets?: string[]
   excluded_subnets?: string[]
   credential_profile?: number | null
+  max_devices?: number
+  rate_limit_pps?: number
 }
 
 export interface DiscoveredDevice {
@@ -1016,6 +1018,16 @@ export async function fetchDiscoveryJobs(): Promise<DiscoveryJob[]> {
 
 export async function createDiscoveryJob(payload: NewDiscoveryJob): Promise<DiscoveryJob> {
   const { data } = await api.post<DiscoveryJob>('/devices/discovery/jobs/', payload)
+  return data
+}
+
+export async function updateDiscoveryJob(id: number, payload: Partial<NewDiscoveryJob>): Promise<DiscoveryJob> {
+  const { data } = await api.patch<DiscoveryJob>(`/devices/discovery/jobs/${id}/`, payload)
+  return data
+}
+
+export async function runDiscoveryJob(id: number): Promise<DiscoveryJob> {
+  const { data } = await api.post<DiscoveryJob>(`/devices/discovery/jobs/${id}/run/`)
   return data
 }
 

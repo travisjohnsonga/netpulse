@@ -4,7 +4,7 @@ import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
 import { SectionHeader } from '../Settings'
 import {
-  fetchDiscoveryJobs, createDiscoveryJob, deleteDiscoveryJob,
+  fetchDiscoveryJobs, createDiscoveryJob, updateDiscoveryJob, runDiscoveryJob, deleteDiscoveryJob,
   fetchDiscoveredDevices, approveDiscoveredDevice, rejectDiscoveredDevice,
   fetchCredentials, fetchDiscoveryProgress, fetchJobDiscovered,
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
@@ -36,10 +36,23 @@ export default function Discovery() {
   const [pending, setPending] = useState<DiscoveredDevice[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
+  const [showModal, setShowModal] = useState(false)
+  const [editJob, setEditJob] = useState<DiscoveryJob | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
   const [approving, setApproving] = useState<DiscoveredDevice | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(null), 3000) }
+  const openNew = () => { setEditJob(null); setShowModal(true) }
+  const openEdit = (j: DiscoveryJob) => { setEditJob(j); setShowModal(true) }
+
+  const runJob = async (j: DiscoveryJob) => {
+    setBusyId(j.id); setError(null)
+    try { await runDiscoveryJob(j.id); flash('Discovery started'); load(true) }
+    catch (e) { setError(apiError(e, 'Failed to start job.')) }
+    finally { setBusyId(null) }
+  }
 
   // silent=true refreshes data without flipping the loading spinner, so a
   // background refresh (e.g. a running job finishing) doesn't blank the list
@@ -82,9 +95,10 @@ export default function Discovery() {
       <SectionHeader
         title="Discovery"
         description="Discovery jobs, subnet scope and OT/ICS exclusions. Discovered devices require approval before becoming active."
-        action={<button onClick={() => setAdding(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ New Job</button>}
+        action={<button onClick={openNew} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ New Job</button>}
       />
 
+      {notice && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3 text-sm text-green-700 dark:text-green-400 mb-4">✅ {notice}</div>}
       {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-4 py-3 text-sm text-red-700 dark:text-red-400 mb-4">{error}</div>}
 
       {loading ? (
@@ -96,12 +110,14 @@ export default function Discovery() {
           {/* Jobs */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
             {jobs.length === 0 ? (
-              <EmptyState title="No discovery jobs" description="Create a job to scan subnets or walk topology. Found devices land in Pending for review." action={{ label: 'New Job', onClick: () => setAdding(true) }} icon="🔍" />
+              <EmptyState title="No discovery jobs" description="Create a job to scan subnets or walk topology. Found devices land in Pending for review." action={{ label: 'New Job', onClick: openNew }} icon="🔍" />
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-gray-700">
                 {jobs.map((j) => (
                   <JobRow key={j.id} job={j} busy={busyId === j.id}
                     onDelete={() => removeJob(j.id)}
+                    onEdit={() => openEdit(j)}
+                    onRun={() => runJob(j)}
                     onApprove={(d) => setApproving(d)}
                     onReject={reject}
                     onChanged={() => load(true)} />
@@ -159,7 +175,14 @@ export default function Discovery() {
         </>
       )}
 
-      {adding && <NewJobModal profiles={profiles} onClose={() => setAdding(false)} onCreated={() => { setAdding(false); load() }} />}
+      {showModal && (
+        <JobModal
+          job={editJob ?? undefined}
+          profiles={profiles}
+          onClose={() => setShowModal(false)}
+          onSaved={(edited) => { setShowModal(false); flash(edited ? 'Job updated' : 'Job created'); load(true) }}
+        />
+      )}
       {approving && (
         <ApproveModal
           device={approving}
@@ -191,10 +214,12 @@ const STATUS_ICON: Record<string, string> = {
 }
 
 /** Expandable discovery-job row with live progress (polls while running). */
-function JobRow({ job, busy, onDelete, onApprove, onReject, onChanged }: {
+function JobRow({ job, busy, onDelete, onEdit, onRun, onApprove, onReject, onChanged }: {
   job: DiscoveryJob
   busy: boolean
   onDelete: () => void
+  onEdit: () => void
+  onRun: () => void
   onApprove: (d: DiscoveredDevice) => void
   onReject: (d: DiscoveredDevice) => void
   onChanged: () => void
@@ -280,7 +305,19 @@ function JobRow({ job, busy, onDelete, onApprove, onReject, onChanged }: {
         </div>
         {isRunning && elapsed > 0 && <span className="text-xs text-gray-400 dark:text-gray-500">{fmtSecs(elapsed)}</span>}
         <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full capitalize', STATUS_BADGE[status])}>{STATUS_ICON[status]} {status}</span>
-        <button onClick={onDelete} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Delete</button>
+        {(job.method === 'scan' || job.method === 'topology') && (
+          <button onClick={onRun} disabled={isRunning}
+            title={isRunning ? 'Job is already running' : 'Run this job'}
+            className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
+            {status === 'completed' || status === 'failed' ? '▶ Run Again' : '▶ Run'}
+          </button>
+        )}
+        <button onClick={onEdit} disabled={isRunning}
+          title={isRunning ? 'Cannot edit a running job' : 'Edit this job'}
+          className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
+          ✏️ Edit
+        </button>
+        <button onClick={onDelete} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">🗑 Delete</button>
       </div>
 
       {open && (
@@ -409,13 +446,16 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
   )
 }
 
-function NewJobModal({ profiles, onClose, onCreated }: { profiles: CredentialProfileListItem[]; onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState('')
-  const [method, setMethod] = useState<DiscoveryMethod>('scan')
-  const [subnets, setSubnets] = useState('')
-  const [allowed, setAllowed] = useState('10.0.0.0/8')
-  const [excluded, setExcluded] = useState('')
-  const [credId, setCredId] = useState<number | null>(null)
+function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; profiles: CredentialProfileListItem[]; onClose: () => void; onSaved: (edited: boolean) => void }) {
+  const editing = !!job
+  const [name, setName] = useState(job?.name ?? '')
+  const [method, setMethod] = useState<DiscoveryMethod>(job?.method ?? 'scan')
+  const [subnets, setSubnets] = useState(job?.subnets.join('\n') ?? '')
+  const [allowed, setAllowed] = useState(job ? job.allowed_subnets.join('\n') : '10.0.0.0/8')
+  const [excluded, setExcluded] = useState(job?.excluded_subnets.join('\n') ?? '')
+  const [credId, setCredId] = useState<number | null>(job?.credential_profile ?? null)
+  const [maxDevices, setMaxDevices] = useState(job?.max_devices ?? 1000)
+  const [ratePps, setRatePps] = useState(job?.rate_limit_pps ?? 10)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -428,28 +468,32 @@ function NewJobModal({ profiles, onClose, onCreated }: { profiles: CredentialPro
   const submit = async () => {
     if (!name.trim()) { setErr('Name is required.'); return }
     setSaving(true); setErr(null)
+    const payload = {
+      name: name.trim(), method,
+      subnets: parse(subnets),
+      allowed_subnets: parse(allowed),
+      excluded_subnets: parse(excluded),
+      credential_profile: needsCreds ? credId : null,
+      max_devices: maxDevices,
+      rate_limit_pps: ratePps,
+    }
     try {
-      await createDiscoveryJob({
-        name: name.trim(), method,
-        subnets: parse(subnets),
-        allowed_subnets: parse(allowed),
-        excluded_subnets: parse(excluded),
-        credential_profile: needsCreds ? credId : null,
-      })
-      onCreated()
+      if (editing) await updateDiscoveryJob(job.id, payload)
+      else await createDiscoveryJob(payload)
+      onSaved(editing)
     } catch (e) {
-      setSaving(false); setErr(apiError(e, 'Failed to create job.'))
+      setSaving(false); setErr(apiError(e, `Failed to ${editing ? 'update' : 'create'} job.`))
     }
   }
 
   return (
     <Modal
-      title="New Discovery Job"
+      title={editing ? 'Edit Discovery Job' : 'New Discovery Job'}
       onClose={onClose}
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Creating…' : 'Create'}</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </>
       }
     >
@@ -494,6 +538,18 @@ function NewJobModal({ profiles, onClose, onCreated }: { profiles: CredentialPro
           <label className="block text-sm font-medium text-red-600 dark:text-red-400 mb-1">Excluded subnets (OT/ICS)</label>
           <textarea className={`${inputCls} font-mono text-xs h-14`} value={excluded} onChange={(e) => setExcluded(e.target.value)} placeholder="10.99.0.0/16" />
           <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">⚠ Exclude OT/ICS/SCADA networks — probing controllers can cause physical damage.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max devices</label>
+            <input type="number" min={1} className={inputCls} value={maxDevices} onChange={(e) => setMaxDevices(Number(e.target.value))} />
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Circuit breaker.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rate limit (pps)</label>
+            <input type="number" min={1} className={inputCls} value={ratePps} onChange={(e) => setRatePps(Number(e.target.value))} />
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Probes per second.</p>
+          </div>
         </div>
         <p className="text-xs text-gray-400 dark:text-gray-500">Discovered devices land in PENDING and require admin approval before becoming active.</p>
       </div>
