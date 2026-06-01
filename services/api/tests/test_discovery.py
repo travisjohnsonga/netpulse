@@ -399,6 +399,38 @@ class TestNmapParser:
         assert parse_nmap_hosts(b"not xml") == []
         assert parse_nmap_hosts(b"") == []
 
+    def test_parses_services(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_services
+        xml = b"""<?xml version="1.0"?><nmaprun><host>
+          <ports>
+            <port portid="22"><state state="open"/>
+              <service name="ssh" product="Cisco SSH" version="1.25"/></port>
+            <port portid="80"><state state="closed"/></port>
+            <port portid="443"><state state="open"/>
+              <service name="https"/></port>
+          </ports></host></nmaprun>"""
+        svc = parse_nmap_services(xml)
+        assert set(svc.keys()) == {22, 443}
+        assert svc[22]["product"] == "Cisco SSH"
+
+    def test_services_bad_xml(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_services
+        assert parse_nmap_services(b"nope") == {}
+
+
+class TestVendorMapping:
+    def test_sysobjid_enterprise_to_vendor(self):
+        from apps.devices.management.commands.run_discovery import _vendor_from_sysobjid
+        assert _vendor_from_sysobjid("1.3.6.1.4.1.9.1.222") == "cisco"
+        assert _vendor_from_sysobjid("1.3.6.1.4.1.12356.101.1") == "fortinet"
+        assert _vendor_from_sysobjid("1.3.6.1.4.1.2636.1.1.1") == "juniper"
+        assert _vendor_from_sysobjid("1.3.6.1.2.1.1.1.0") == ""
+
+    def test_vendor_from_services(self):
+        from apps.devices.management.commands.run_discovery import _vendor_from_services
+        assert _vendor_from_services({22: {"product": "Cisco SSH", "extrainfo": ""}}) == "cisco"
+        assert _vendor_from_services({443: {"product": "nginx", "extrainfo": ""}}) == ""
+
 
 class TestPlatformDetection:
     def test_platform_from_banner(self):

@@ -36,9 +36,31 @@ logger = logging.getLogger(__name__)
 # ── SNMP OIDs for fingerprinting ──────────────────────────────────────────────
 _OID_SYS_DESCR = "1.3.6.1.2.1.1.1.0"
 _OID_SYS_NAME  = "1.3.6.1.2.1.1.5.0"
+_OID_SYS_OBJID = "1.3.6.1.2.1.1.2.0"         # sysObjectID (enterprise OID)
 _OID_LLDP_REM  = "1.0.8802.1.1.2.1.4.1.1"   # lldpRemTable
 _OID_CDP_CACHE = "1.3.6.1.4.1.9.9.23.1.2.1" # cdpCacheTable
 _OID_ROUTE_TBL = "1.3.6.1.2.1.4.24.4"        # ipCidrRouteTable (RFC 2096)
+
+# sysObjectID enterprise prefix (1.3.6.1.4.1.<N>) → vendor.
+_ENTERPRISE_VENDORS = {
+    "9":     "cisco",
+    "2636":  "juniper",
+    "12356": "fortinet",
+    "30065": "arista",
+    "25461": "paloalto",
+    "14988": "mikrotik",
+    "2011":  "huawei",
+    "14823": "aruba",
+}
+
+
+def _vendor_from_sysobjid(oid: str) -> str:
+    """Map a sysObjectID (1.3.6.1.4.1.<enterprise>.…) to a vendor."""
+    prefix = "1.3.6.1.4.1."
+    if not oid.startswith(prefix):
+        return ""
+    enterprise = oid[len(prefix):].split(".", 1)[0]
+    return _ENTERPRISE_VENDORS.get(enterprise, "")
 
 # Vendor fingerprint patterns in sysDescr
 _VENDOR_PATTERNS = [
@@ -100,6 +122,17 @@ def _platform_from_descr(descr: str) -> str:
     return ""
 
 
+def _vendor_from_services(services: dict[int, dict]) -> str:
+    """Vendor hint from nmap -sV product/extrainfo strings (e.g. 'Cisco SSH')."""
+    blob = " ".join(
+        f"{s.get('product', '')} {s.get('extrainfo', '')}" for s in services.values()
+    ).lower()
+    for needle, vendor in _BANNER_VENDORS:
+        if needle in blob:
+            return vendor
+    return ""
+
+
 def _platform_from_banner(banner: str) -> str:
     """
     Best-effort platform from an SSH identification banner, e.g.
@@ -135,6 +168,36 @@ def parse_nmap_hosts(xml_data: bytes) -> list[str]:
             if addr.get("addrtype") == "ipv4":
                 hosts.append(addr.get("addr"))
     return hosts
+
+
+def parse_nmap_services(xml_data: bytes) -> dict[int, dict]:
+    """Extract {port: {name, product, version, extrainfo}} for open ports."""
+    import xml.etree.ElementTree as ET
+    services: dict[int, dict] = {}
+    try:
+        root = ET.fromstring(xml_data)
+    except ET.ParseError:
+        return services
+    for host in root.findall("host"):
+        ports = host.find("ports")
+        if ports is None:
+            continue
+        for port in ports.findall("port"):
+            state = port.find("state")
+            if state is None or state.get("state") != "open":
+                continue
+            try:
+                portid = int(port.get("portid"))
+            except (TypeError, ValueError):
+                continue
+            svc = port.find("service")
+            services[portid] = {
+                "name": svc.get("name", "") if svc is not None else "",
+                "product": svc.get("product", "") if svc is not None else "",
+                "version": svc.get("version", "") if svc is not None else "",
+                "extrainfo": svc.get("extrainfo", "") if svc is not None else "",
+            }
+    return services
 
 
 class Command(BaseCommand):
@@ -407,6 +470,29 @@ class DiscoveryRunner:
             return None
         return parse_nmap_hosts(stdout)
 
+    async def _nmap_services(self, ip: str) -> dict[int, dict] | None:
+        """
+        nmap service/version scan of a single host (`-sV --open`). Returns
+        {port: {name, product, version, extrainfo}} for open ports, or None when
+        nmap is unavailable/failed (caller falls back to a plain TCP scan).
+        """
+        cmd = [
+            "nmap", "-sV", "-n", "-T4", "--open",
+            "-p", "22,23,80,161,443,830,8080,8443", "-oX", "-", ip,
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except FileNotFoundError:
+            return None
+        except Exception as exc:
+            logger.warning("nmap service scan of %s failed (%s)", ip, exc)
+            return None
+        if proc.returncode != 0:
+            return None
+        return parse_nmap_services(stdout)
+
     # ── topology walk ─────────────────────────────────────────────────────────
 
     async def _topology_walk(self) -> None:
@@ -453,11 +539,18 @@ class DiscoveryRunner:
         self._seen.add(ip)
 
         # Run liveness/identity checks concurrently to keep per-IP time low.
-        ping_ok, snmp, open_ports = await asyncio.gather(
+        # Port scan: nmap -sV (service/version) when available, else a plain TCP
+        # connect scan.
+        ping_ok, snmp, services = await asyncio.gather(
             self._icmp_ping(ip),
             self._snmp_probe(ip),
-            self._tcp_scan(ip, _PROBE_PORTS),
+            self._nmap_services(ip),
         )
+        if services is None:
+            open_ports = await self._tcp_scan(ip, _PROBE_PORTS)
+            services = {}
+        else:
+            open_ports = sorted(services.keys())
         ssh_banner = await self._ssh_banner(ip) if 22 in open_ports else ""
 
         logger.debug(
@@ -477,8 +570,9 @@ class DiscoveryRunner:
             methods.append("icmp"); responds_to["icmp"] = True
             confidence = max(confidence, 10)
         if snmp:
-            descr, hostname = snmp
-            vendor = _vendor_from_descr(descr) or vendor
+            descr, hostname, sysobjid = snmp
+            # sysObjectID enterprise OID is the most reliable vendor signal.
+            vendor = _vendor_from_sysobjid(sysobjid) or _vendor_from_descr(descr) or vendor
             platform = _platform_from_descr(descr) or platform
             methods.append("snmp"); responds_to["snmp"] = True
             confidence = max(confidence, 60)
@@ -488,6 +582,11 @@ class DiscoveryRunner:
             confidence = max(confidence, 20)
             if 443 in open_ports or 80 in open_ports or 8443 in open_ports:
                 responds_to["http"] = True
+            if 830 in open_ports:  # NETCONF → managed network device
+                responds_to["netconf"] = True
+            # nmap -sV product/extrainfo can name the vendor (e.g. Cisco SSH).
+            if not vendor:
+                vendor = _vendor_from_services(services)
         if ssh_banner:
             methods.append("ssh"); responds_to["ssh"] = True
             vendor = vendor or _vendor_from_banner(ssh_banner)
@@ -598,11 +697,12 @@ class DiscoveryRunner:
             return None
         return det if det and det.get("detected") else None
 
-    async def _snmp_probe(self, ip: str) -> tuple[str, str] | None:
+    async def _snmp_probe(self, ip: str) -> tuple[str, str, str] | None:
         """
-        SNMP GET sysDescr+sysName via pysnmp using the job's credentials.
-        Tries the profile auth first (SNMPv3 or its v2c community), then falls
-        back to the v2c "public" community. Returns (sysDescr, sysName) or None.
+        SNMP GET sysDescr+sysName+sysObjectID via pysnmp using the job's
+        credentials. Tries the profile auth first (SNMPv3 or its v2c community),
+        then falls back to the v2c "public" community. Returns
+        (sysDescr, sysName, sysObjectID) or None.
         """
         try:
             from pysnmp.hlapi.v3arch.asyncio import (
@@ -626,14 +726,16 @@ class DiscoveryRunner:
                     SnmpEngine(), auth_data, target, ContextData(),
                     ObjectType(ObjectIdentity(_OID_SYS_DESCR)),
                     ObjectType(ObjectIdentity(_OID_SYS_NAME)),
+                    ObjectType(ObjectIdentity(_OID_SYS_OBJID)),
                 )
                 if err_ind or err_stat:
                     continue
                 vals = [str(vb[1]) for vb in var_binds]
                 descr = vals[0] if len(vals) > 0 else ""
                 name = vals[1] if len(vals) > 1 else ""
+                sysobjid = vals[2] if len(vals) > 2 else ""
                 if descr or name:
-                    return descr, name
+                    return descr, name, sysobjid
             except Exception:
                 continue
         return None
