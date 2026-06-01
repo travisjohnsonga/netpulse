@@ -317,6 +317,15 @@ ok ".env written to $ENV_FILE"
 warn "secrets are stored in $ENV_FILE — keep it secure and never commit it"
 echo
 
+# Mark setup as complete so the UI stops showing the first-run /setup page.
+if grep -q "SETUP_COMPLETE" "$ENV_FILE" 2>/dev/null; then
+  sed -i 's/SETUP_COMPLETE=false/SETUP_COMPLETE=true/' "$ENV_FILE"
+else
+  echo "SETUP_COMPLETE=true" >> "$ENV_FILE"
+fi
+ok "SETUP_COMPLETE=true set in .env"
+echo
+
 # ── 6. start ──────────────────────────────────────────────────────────────────
 url_host="$(env_get COLLECTOR_IP)"; [ -z "$url_host" ] && url_host="localhost"
 if yesno "Pull and start NetPulse now?" Y; then

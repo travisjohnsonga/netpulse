@@ -140,6 +140,26 @@ else
   sleep 30
   wait_for_api
   green "✅ Factory reset complete!"
+
+  # Reset the first-run flag so the UI shows the /setup page until setup.sh runs.
+  if grep -q "SETUP_COMPLETE" .env 2>/dev/null; then
+    sed -i 's/SETUP_COMPLETE=true/SETUP_COMPLETE=false/' .env
+    echo "Reset SETUP_COMPLETE=false in .env"
+  fi
+
+  echo ""
+  echo "=================================================="
+  echo "  !! POST-RESET REQUIRED STEPS"
+  echo "=================================================="
+  echo "  1. Run: ./scripts/setup.sh"
+  echo "     (re-initializes OpenBao with new token)"
+  echo ""
+  echo "  2. Run: ./netpulse.sh rebuild-api"
+  echo "     (picks up new OPENBAO_TOKEN from .env)"
+  echo ""
+  echo "  Without setup.sh, credential operations"
+  echo "  will fail with OpenBao 403 errors."
+  echo "=================================================="
 fi
 
 echo "Access:  http://localhost:3000  (redirects to https://localhost:3443)"
