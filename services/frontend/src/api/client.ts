@@ -484,6 +484,7 @@ export interface AlertRule {
   condition: Record<string, unknown>
   channels: number[]
   is_active: boolean
+  is_system: boolean
   cooldown_minutes: number
   created_at: string
   updated_at: string

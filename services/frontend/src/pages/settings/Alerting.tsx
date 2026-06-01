@@ -97,7 +97,17 @@ function RulesTab() {
                 {rules.map((r) => (
                   <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-5 py-3">
-                      <p className="font-medium text-gray-800 dark:text-gray-100">{r.name}</p>
+                      <p className="font-medium text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                        {r.name}
+                        {r.is_system && (
+                          <span
+                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
+                            title="Default rule — cannot be deleted. Disable it with the toggle instead."
+                          >
+                            System
+                          </span>
+                        )}
+                      </p>
                       {r.description && <p className="text-xs text-gray-500 dark:text-gray-400">{r.description}</p>}
                     </td>
                     <td className="px-5 py-3">
