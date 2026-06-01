@@ -10,6 +10,7 @@ import {
   type MonitoredInterface, type DeviceMetrics, type MetricPoint,
 } from '../../api/client'
 import Modal from '../../components/Modal'
+import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 
@@ -750,6 +751,7 @@ export default function Telemetry({ device, onConfigure }: { device: DeviceDetai
             <button onClick={configure} className="text-xs font-medium text-blue-600 hover:text-blue-800">Configure →</button>
           </div>
         </div>
+        <div className="mb-3"><CollectionMethodBar deviceId={device.id} /></div>
         {pollToast && <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{pollToast}</p>}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <HealthCard label="CPU" value={health?.cpu_pct != null ? `${health.cpu_pct.toFixed(1)}%` : null}

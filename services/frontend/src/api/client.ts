@@ -366,6 +366,30 @@ export async function pollDeviceNow(deviceId: number): Promise<{ status: string;
   return data
 }
 
+// How a device's telemetry is currently being collected (gNMI / SNMP).
+export interface CollectionStatus {
+  device_id: string
+  gnmi: {
+    active: boolean
+    last_seen_seconds_ago: number | null
+    metrics_per_push: number | null
+    interval_seconds: number
+  }
+  snmp: {
+    active: boolean
+    last_poll_seconds_ago: number | null
+    interval_seconds: number
+    version: string | null
+  }
+  primary: 'gnmi' | 'snmp' | null
+  any_active: boolean
+}
+
+export async function fetchCollectionStatus(deviceId: number): Promise<CollectionStatus> {
+  const { data } = await api.get<CollectionStatus>(`/devices/${deviceId}/collection-status/`)
+  return data
+}
+
 export interface SystemSettings {
   allow_config_push: boolean
   collector_ip: string

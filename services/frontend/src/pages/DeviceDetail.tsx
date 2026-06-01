@@ -14,6 +14,7 @@ import Lifecycle from './device/Lifecycle'
 import Modal from '../components/Modal'
 import DeviceEditModal from '../components/DeviceEditModal'
 import DeviceCredentialsPanel from '../components/DeviceCredentialsPanel'
+import { CollectionMethodBadges } from '../components/CollectionMethodBadges'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -134,6 +135,7 @@ export default function DeviceDetail() {
             <ReachabilityIndicator device={device} />
           </div>
           <div className="flex items-center gap-3">
+            <CollectionMethodBadges deviceId={device.id} />
             <span className="text-sm text-gray-500 font-mono">{device.management_ip || device.ip_address}</span>
             <a
               href={sshUrl(device, sshCred.username, sshCred.port)}
