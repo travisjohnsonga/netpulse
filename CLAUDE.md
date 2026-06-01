@@ -856,15 +856,17 @@ Full architecture in docs/ARCHITECTURE.md.
 - Alert auto-resolution: state-driven, label-matched recovery + 90-day purge ✅
 - Maintenance windows: suppress alerts during scheduled maintenance (one-off + daily/weekly/monthly) ✅
 - Notification channels: per-team email + Slack + Discord webhooks ✅
+- Default/system alert rules: seed_alert_rules seeds the six rules the engines
+  emit (is_system, protected from deletion); disabling a rule now suppresses its
+  alerts (stream-processor + interface_monitor honor is_active) ✅
 - Auth rate limiting: JWT token/refresh endpoints throttled (H1 security fix) ✅
 - Dashboard: infrastructure health, empty states, live WebSocket, service-check + cert-expiry widgets ✅
 - Onboarding wizard: 4 steps, integrations selection ✅
 - HTTPS enforced: nginx redirects HTTP :3000 → HTTPS :3443 (self-signed bootstrap) ✅
 - Dependabot: weekly pip/npm/docker/actions updates, grouped (Django/React/Tailwind) ✅
-- Backend tests: 604 passing (services/api) ✅
+- Backend tests: 614 passing (services/api) ✅
 
 ## In Progress
-- Default/system alert rules (seed_alert_rules) + Rules page
 - User delete with safety guards (no self/last-admin delete)
 - Discovery page wiring (DiscoveryJob API + OT/ICS subnet management)
 

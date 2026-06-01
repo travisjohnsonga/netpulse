@@ -389,7 +389,7 @@ Each microservice has its own AppRole with minimal Vault policy:
 - [x] Auth rate limiting (H1 — JWT endpoint throttling)
 - [ ] 🔄 CVE ingestion + applicability (in progress)
 - [ ] 🔄 Lifecycle/EOL management (in progress)
-- [ ] Default/system alert rules + Rules page (in progress)
+- [x] Default/system alert rules (seed_alert_rules; disable-to-suppress)
 - [ ] Discovery page wiring — DiscoveryJob API + OT/ICS exclusions (in progress)
 - [ ] Log group-trend / vendor-bug detection
 
@@ -460,6 +460,13 @@ FTP/LDAP check_types are defined on the model but have no handler yet.
 
 `apps/alerting/` routes alerts to teams via escalation policies.
 
+- **Default rules**: `apps/alerts` `seed_alert_rules` (run from the api
+  entrypoint) seeds the six `is_system` rules the engines actually emit
+  (`Interface State Change`, `device-unreachable`, `service-check-failed`,
+  `flow`/`latency-threshold-exceeded`, `log-anomaly-detected`). System rules are
+  protected from deletion; setting `is_active=False` suppresses their alerts —
+  both `stream-processor._db_write_alert` and `interface_monitor` skip event
+  creation for a disabled rule.
 - **Models**: Team/TeamMember, ContactMethod, EscalationPolicy/EscalationStep,
   AlertRoute (severity/source/check-type/site match conditions, AND logic,
   priority-ordered), AlertNotification.
