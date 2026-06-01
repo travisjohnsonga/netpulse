@@ -538,6 +538,9 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
 
   const parse = (s: string) => s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
 
+  // "Allowed" still at its empty/default catch-all → safe to suggest narrowing.
+  const allowedIsDefault = allowed.trim() === '' || allowed.trim() === '10.0.0.0/8'
+
   // Credentials are needed to actually connect: SNMP (community/v3) for scan
   // fingerprinting, SSH for LLDP/topology walks.
   const needsCreds = method === 'scan' || method === 'topology'
@@ -591,6 +594,11 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subnets to scan</label>
             <textarea className={`${inputCls} font-mono text-xs h-16`} value={subnets} onChange={(e) => setSubnets(e.target.value)} placeholder="10.1.0.0/24&#10;10.2.0.0/24" />
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">One CIDR per line.</p>
+            {parse(subnets).length > 0 && allowedIsDefault && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                Tip: Click "↑ Copy from subnets to scan" below to restrict discovery to only your target subnets.
+              </p>
+            )}
           </div>
         )}
         {needsCreds && (
@@ -610,6 +618,12 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed subnets</label>
           <textarea className={`${inputCls} font-mono text-xs h-14`} value={allowed} onChange={(e) => setAllowed(e.target.value)} placeholder="10.0.0.0/8" />
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Discovery never probes outside these ranges.</p>
+          {method === 'scan' && parse(subnets).length > 0 && (
+            <button type="button" onClick={() => setAllowed(subnets)}
+              className="text-xs text-blue-500 hover:text-blue-400 cursor-pointer mt-1">
+              ↑ Copy from subnets to scan
+            </button>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-red-600 dark:text-red-400 mb-1">Excluded subnets (OT/ICS)</label>
