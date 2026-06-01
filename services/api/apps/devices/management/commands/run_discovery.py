@@ -121,10 +121,12 @@ class Command(BaseCommand):
 
     async def _get_or_create_job(self, options: dict) -> DiscoveryJob:
         if options["job"]:
+            def _fetch():
+                return (DiscoveryJob.objects
+                        .select_related("credential_profile", "seed_device")
+                        .get(id=options["job"]))
             try:
-                return await asyncio.get_event_loop().run_in_executor(
-                    None, DiscoveryJob.objects.get, {"id": options["job"]}
-                )
+                return await asyncio.get_event_loop().run_in_executor(None, _fetch)
             except DiscoveryJob.DoesNotExist:
                 raise CommandError(f"DiscoveryJob {options['job']} not found")
 

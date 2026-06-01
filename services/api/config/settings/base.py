@@ -215,6 +215,11 @@ SETUP_COMPLETE = os.environ.get("SETUP_COMPLETE", "false").lower() == "true"
 # ingest-snmp poller learns about devices. Disabled in tests (no NATS).
 SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "true"
 
+# Auto-execute active-scan / topology discovery jobs in a background thread on
+# creation (run_discovery). Disabled in tests so creating a job doesn't spawn a
+# real network scan.
+DISCOVERY_AUTORUN = os.environ.get("DISCOVERY_AUTORUN", "true").lower() == "true"
+
 # Directory of community-maintained vendor advisory YAML (Juniper/Arista/…),
 # loaded by `load_community_advisories`. Mounted from the repo's advisories/.
 COMMUNITY_ADVISORIES_DIR = os.environ.get("COMMUNITY_ADVISORIES_DIR", "/app/advisories")

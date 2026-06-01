@@ -225,3 +225,58 @@ class TestDiscoveryProgress:
         }, format="json")
         assert resp.status_code == 201
         assert DiscoveryJob.objects.get(pk=resp.json()["id"]).progress_current == 0
+
+
+class TestDiscoveryAutorun:
+    def test_run_discovery_invokes_command(self, monkeypatch):
+        from apps.devices.views import DiscoveryJobViewSet
+        job = DiscoveryJob.objects.create(name="j", method="scan")
+        calls = {}
+
+        def fake_call_command(name, **kwargs):
+            calls["name"] = name
+            calls["kwargs"] = kwargs
+        monkeypatch.setattr("django.core.management.call_command", fake_call_command)
+        DiscoveryJobViewSet._run_discovery(job.id)
+        assert calls["name"] == "run_discovery"
+        assert calls["kwargs"] == {"job": job.id}
+
+    def test_run_discovery_marks_failed_on_error(self, monkeypatch):
+        from apps.devices.views import DiscoveryJobViewSet
+        job = DiscoveryJob.objects.create(name="j", method="scan")
+
+        def boom(name, **kwargs):
+            raise RuntimeError("scan blew up")
+        monkeypatch.setattr("django.core.management.call_command", boom)
+        DiscoveryJobViewSet._run_discovery(job.id)
+        job.refresh_from_db()
+        assert job.status == "failed"
+        assert "scan blew up" in job.progress_message
+        assert "scan blew up" in job.error_message
+
+    def test_start_discovery_schedules_scan_when_enabled(self, monkeypatch, settings):
+        from apps.devices.views import DiscoveryJobViewSet
+        settings.DISCOVERY_AUTORUN = True
+        scheduled = []
+        monkeypatch.setattr("django.db.transaction.on_commit", lambda cb: scheduled.append(cb))
+        job = DiscoveryJob.objects.create(name="j", method="scan")
+        DiscoveryJobViewSet._start_discovery(job)
+        assert len(scheduled) == 1   # a worker was scheduled (not run — callback captured)
+
+    def test_start_discovery_disabled_by_setting(self, monkeypatch, settings):
+        from apps.devices.views import DiscoveryJobViewSet
+        settings.DISCOVERY_AUTORUN = False
+        scheduled = []
+        monkeypatch.setattr("django.db.transaction.on_commit", lambda cb: scheduled.append(cb))
+        job = DiscoveryJob.objects.create(name="j", method="scan")
+        DiscoveryJobViewSet._start_discovery(job)
+        assert scheduled == []
+
+    def test_start_discovery_skips_passive(self, monkeypatch, settings):
+        from apps.devices.views import DiscoveryJobViewSet
+        settings.DISCOVERY_AUTORUN = True
+        scheduled = []
+        monkeypatch.setattr("django.db.transaction.on_commit", lambda cb: scheduled.append(cb))
+        job = DiscoveryJob.objects.create(name="passive", method="passive")
+        DiscoveryJobViewSet._start_discovery(job)
+        assert scheduled == []

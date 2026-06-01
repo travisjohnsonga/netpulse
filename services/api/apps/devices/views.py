@@ -354,7 +354,55 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
-        serializer.save(created_by=user)
+        job = serializer.save(created_by=user)
+        self._start_discovery(job)
+
+    @staticmethod
+    def _start_discovery(job):
+        """
+        Kick off execution for active-scan / topology jobs in a daemon thread so
+        the POST returns immediately while the engine runs (status pending →
+        running → completed). Passive/import jobs have no engine run.
+        """
+        from django.conf import settings as dj_settings
+        from django.db import transaction
+
+        if not getattr(dj_settings, "DISCOVERY_AUTORUN", True):
+            return
+        if job.method not in (DiscoveryJob.Method.SCAN, DiscoveryJob.Method.TOPOLOGY):
+            return
+        from threading import Thread
+
+        job_id = job.id
+        # Start only after the job row is committed, so the worker thread's
+        # separate DB connection can see it (runs immediately when not in an
+        # atomic request).
+        transaction.on_commit(
+            lambda: Thread(target=DiscoveryJobViewSet._discovery_worker, args=(job_id,), daemon=True).start()
+        )
+
+    @staticmethod
+    def _discovery_worker(job_id):
+        """Thread entrypoint: run the job, then close this thread's DB connection."""
+        from django.db import connection
+        try:
+            DiscoveryJobViewSet._run_discovery(job_id)
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _run_discovery(job_id):
+        from django.core.management import call_command
+
+        try:
+            # --job maps to the run_discovery command's `job` dest.
+            call_command("run_discovery", job=job_id)
+        except Exception as exc:  # noqa: BLE001 — record any failure on the job
+            DiscoveryJob.objects.filter(id=job_id).update(
+                status=DiscoveryJob.Status.FAILED,
+                progress_message=str(exc)[:255],
+                error_message=str(exc),
+            )
 
     @action(detail=True, methods=["get"])
     def discovered(self, request, pk=None):
