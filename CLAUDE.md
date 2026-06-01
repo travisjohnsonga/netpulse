@@ -3016,3 +3016,243 @@ Track profile versions when subscriptions change:
 ### Do NOT build until requested.
 ### Priority: High - essential for fleet management
 ### Depends on: gNMI Capability Discovery pin above
+
+## PINNED — gNMI Capability Discovery & Selective Subscriptions
+
+### Vision:
+Instead of hardcoding subscription paths per platform,
+query the device's gNMI capabilities endpoint to discover
+what YANG models and paths are actually supported.
+Engineers then selectively choose what to subscribe to.
+
+### gNMI Capabilities RPC:
+gNMI spec defines a Capabilities() RPC:
+  Request:  CapabilityRequest {}
+  Response: CapabilityResponse {
+    supported_models: [ModelData]
+    supported_encodings: [Encoding]
+    gNMI_version: string
+  }
+  
+  ModelData {
+    name: string      (e.g. "Cisco-IOS-XE-interfaces-oper")
+    organization: str (e.g. "Cisco Systems, Inc.")
+    version: string   (e.g. "2022-11-01")
+  }
+
+### Implementation:
+
+1. New API endpoint:
+   POST /api/devices/{id}/gnmi/capabilities/
+   
+   Connects to device gNMI port (57400 or 6030 for Arista)
+   Sends CapabilityRequest
+   Returns list of supported YANG models + encodings
+   
+   Response:
+   {
+     "gnmi_version": "0.7.0",
+     "supported_encodings": ["JSON_IETF", "PROTO"],
+     "models": [
+       {
+         "name": "Cisco-IOS-XE-interfaces-oper",
+         "organization": "Cisco Systems, Inc.",
+         "version": "2022-11-01",
+         "category": "interfaces",  ← derived
+         "paths": [                  ← known paths for this model
+           "/interfaces-ios-xe-oper:interfaces",
+           "/interfaces-ios-xe-oper:interfaces/interface"
+         ]
+       },
+       {
+         "name": "Cisco-IOS-XE-memory-oper",
+         "organization": "Cisco Systems, Inc.",
+         "version": "2019-01-16",
+         "category": "memory"
+       }
+     ]
+   }
+
+2. Known model → category → subscription path mapping:
+   Maintain a registry of known YANG models:
+   
+   YANG_MODEL_REGISTRY = {
+     # Cisco IOS-XE
+     "Cisco-IOS-XE-interfaces-oper": {
+       "category": "interfaces",
+       "description": "Interface operational data",
+       "paths": ["/interfaces-ios-xe-oper:interfaces/interface"],
+       "metrics": ["in-octets", "out-octets", "rx-kbps", "tx-kbps"]
+     },
+     "Cisco-IOS-XE-memory-oper": {
+       "category": "memory",
+       "description": "Memory statistics",
+       "paths": ["/memory-ios-xe-oper:memory-statistics/memory-statistic"],
+       "metrics": ["free-memory", "used-memory", "total-memory"]
+     },
+     "Cisco-IOS-XE-process-cpu-oper": {
+       "category": "cpu",
+       "description": "CPU utilization",
+       "paths": ["/process-cpu-ios-xe-oper:cpu-usage/cpu-utilization"],
+       "metrics": ["five-seconds", "one-minute", "five-minutes"]
+     },
+     "Cisco-IOS-XE-environment-oper": {
+       "category": "environment",
+       "description": "Temperature, fans, power",
+       "paths": ["/environment-ios-xe-oper:environment-sensors/environment-sensor"],
+       "metrics": ["current-reading", "sensor-status"]
+     },
+     "Cisco-IOS-XE-bgp-oper": {
+       "category": "bgp",
+       "description": "BGP neighbor state",
+       "paths": ["/bgp-ios-xe-oper:bgp-state-data/neighbors/neighbor"],
+       "metrics": ["session-state", "prefixes-received"]
+     },
+     "Cisco-IOS-XE-poe-oper": {
+       "category": "poe",
+       "description": "Power over Ethernet",
+       "paths": ["/poe-ios-xe-oper:poe-data"],
+       "metrics": ["power-used", "power-class", "poe-enabled"]
+     },
+     
+     # OpenConfig (vendor-neutral)
+     "openconfig-interfaces": {
+       "category": "interfaces",
+       "description": "OpenConfig interfaces",
+       "paths": ["/interfaces/interface"],
+       "metrics": ["in-octets", "out-octets", "in-errors"]
+     },
+     "openconfig-bgp": {
+       "category": "bgp",
+       "description": "OpenConfig BGP",
+       "paths": ["/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor"],
+       "metrics": ["session-state", "prefixes-received"]
+     },
+     "openconfig-system": {
+       "category": "system",
+       "description": "System CPU and memory",
+       "paths": ["/system/cpus/cpu", "/system/memory/state"],
+       "metrics": ["instant", "avg", "max"]
+     },
+     
+     # Juniper
+     "junos-interface-common": {
+       "category": "interfaces",
+       "description": "Juniper interface data",
+       "paths": ["/interfaces/interface"],
+       "metrics": ["statistics"]
+     },
+     
+     # Arista
+     "arista-intf-augments": {
+       "category": "interfaces", 
+       "description": "Arista interface extensions",
+       "paths": ["/interfaces/interface"],
+       "metrics": ["in-octets", "out-octets"]
+     },
+   }
+
+3. Subscription selector UI:
+   
+   In Telemetry Configuration slide-over,
+   add "gNMI Subscriptions" section:
+   
+   [Discover Capabilities] button
+   → Calls /api/devices/{id}/gnmi/capabilities/
+   → Shows what device supports
+   
+   After discovery, show categorized checkboxes:
+   
+   ┌─────────────────────────────────────────────┐
+   │ gNMI Subscriptions          [Discover ↻]   │
+   │ Device supports 12 YANG models              │
+   ├─────────────────────────────────────────────┤
+   │ ☑ Interfaces (per-interface)               │
+   │   Cisco-IOS-XE-interfaces-oper             │
+   │   Interval: [30s ▼]                        │
+   │   Interfaces: [GigabitEthernet1 ×] [+Add]  │
+   ├─────────────────────────────────────────────┤
+   │ ☑ CPU Utilization                          │
+   │   Cisco-IOS-XE-process-cpu-oper            │
+   │   Interval: [30s ▼]                        │
+   ├─────────────────────────────────────────────┤
+   │ ☑ Memory Statistics                        │
+   │   Cisco-IOS-XE-memory-oper                 │
+   │   Interval: [30s ▼]                        │
+   ├─────────────────────────────────────────────┤
+   │ ☑ Environment (temp/fan/power)             │
+   │   Cisco-IOS-XE-environment-oper            │
+   │   Interval: [60s ▼]                        │
+   ├─────────────────────────────────────────────┤
+   │ ☐ BGP Neighbors                            │
+   │   Cisco-IOS-XE-bgp-oper                    │
+   │   Interval: [100s ▼]                       │
+   ├─────────────────────────────────────────────┤
+   │ ☐ POE (Power over Ethernet)                │
+   │   Cisco-IOS-XE-poe-oper                    │
+   │   Interval: [30s ▼]                        │
+   ├─────────────────────────────────────────────┤
+   │ ⚪ MPLS (not supported on this device)      │
+   │   Cisco-IOS-XE-mpls-oper (not found)       │
+   └─────────────────────────────────────────────┘
+   
+   [Generate Config] → updates gNMI snippet
+   based on selected subscriptions + intervals
+
+4. Store subscription preferences:
+   New model: DeviceGNMISubscription
+   device: FK(Device)
+   yang_model: CharField
+   category: CharField
+   enabled: BooleanField
+   interval_seconds: IntegerField
+   custom_paths: ArrayField (override defaults)
+   
+   Used by telemetry config generator to produce
+   targeted subscription config.
+
+5. Config generation uses selections:
+   Only generate subscriptions for:
+   - Enabled categories
+   - At specified intervals
+   - With device-supported paths
+   
+   Replaces current hardcoded subscription list.
+
+6. gNMI connection for capabilities:
+   Use existing ingest-grpc infrastructure
+   OR connect directly from api service
+   using grpcio + gnmi_pb2
+   
+   Connection: device.management_ip : 57400
+   TLS: optional (check device cert or skip verify)
+   Auth: device credential profile
+   
+   Note: capabilities don't require auth on most
+   devices but may require TLS.
+
+7. Fallback when capabilities not available:
+   If device doesn't respond to Capabilities():
+   Show platform-default subscriptions
+   (current hardcoded behavior)
+   Mark as "Platform defaults (capabilities 
+   not available)"
+
+### Benefits:
+- No more wrong OIDs for platform versions
+- Engineers see exactly what device supports
+- Selective subscription = less device load
+- Automatic when new YANG models available
+- Works across all vendors using gNMI
+
+### Connection options:
+  Port 57400: standard gNMI (Cisco MDT)
+  Port 6030: Arista gNMI
+  Port 32767: some Juniper implementations
+  Store preferred port in TelemetryConfig
+
+### Do NOT build until requested.
+### Priority: High - makes gNMI setup much easier
+### Depends on: gNMI dial-in capability
+###   (current ingest-grpc is dial-OUT only)
+###   Need to add dial-IN gNMI client to api service
