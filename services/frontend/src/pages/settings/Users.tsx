@@ -1,21 +1,27 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
 import Modal from '../../components/Modal'
+import EmptyState from '../../components/EmptyState'
 import { useAuthStore } from '../../store/authStore'
 import { SectionHeader, Tabs } from '../Settings'
+import {
+  fetchUsers, createUser, updateUser, deleteUser,
+  type AdminUser, type UserRole as RoleId,
+} from '../../api/client'
 
-// Note: a users management API is a later backend phase. This screen operates on
-// local state seeded with the signed-in user so the intended UX is reviewable.
+function apiError(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: { error?: string; detail?: string; password?: string[] } } }
+  const d = e?.response?.data
+  return d?.error || d?.detail || d?.password?.[0] || fallback
+}
 
-type RoleId = 'admin' | 'engineer' | 'viewer' | 'api'
-
-interface UiUser {
-  id: number
-  name: string
-  email: string
-  role: RoleId
-  lastLogin: string | null
-  active: boolean
+function relTime(iso: string | null): string {
+  if (!iso) return 'Never'
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (secs < 60) return 'Just now'
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
+  return `${Math.floor(secs / 86400)}d ago`
 }
 
 const ROLE_BADGE: Record<RoleId, string> = {
@@ -48,27 +54,39 @@ export default function Users() {
 // ── Users tab ────────────────────────────────────────────────────────────────
 
 function UsersTab() {
-  const { username, role } = useAuthStore()
-  const [users, setUsers] = useState<UiUser[]>(() => [
-    {
-      id: 1,
-      name: username ?? 'You',
-      email: 'you@example.com',
-      role: (role as RoleId) || 'admin',
-      lastLogin: 'Just now',
-      active: true,
-    },
-    { id: 2, name: 'Dana Engineer', email: 'dana@example.com', role: 'engineer', lastLogin: '2h ago', active: true },
-    { id: 3, name: 'Sam Viewer', email: 'sam@example.com', role: 'viewer', lastLogin: '3d ago', active: true },
-    { id: 4, name: 'telemetry-svc', email: '—', role: 'api', lastLogin: '5m ago', active: true },
-  ])
+  const { username: me } = useAuthStore()
+  const [users, setUsers] = useState<AdminUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [inviting, setInviting] = useState(false)
-  const [editing, setEditing] = useState<UiUser | null>(null)
+  const [editing, setEditing] = useState<AdminUser | null>(null)
+  const [deleting, setDeleting] = useState<AdminUser | null>(null)
+  const [busyId, setBusyId] = useState<number | null>(null)
 
-  const setRole = (id: number, r: RoleId) =>
-    setUsers((u) => u.map((x) => (x.id === id ? { ...x, role: r } : x)))
-  const toggleActive = (id: number) =>
-    setUsers((u) => u.map((x) => (x.id === id ? { ...x, active: !x.active } : x)))
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchUsers()
+      .then((data) => { setUsers(data); setError(null) })
+      .catch(() => setError('Failed to load users.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const toggleActive = async (u: AdminUser) => {
+    setBusyId(u.id); setError(null)
+    try {
+      const updated = await updateUser(u.id, { is_active: !u.is_active })
+      setUsers((us) => us.map((x) => (x.id === u.id ? updated : x)))
+    } catch (err) {
+      setError(apiError(err, 'Failed to update user.'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const displayName = (u: AdminUser) =>
+    [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username
 
   return (
     <div>
@@ -81,7 +99,16 @@ function UsersTab() {
         </button>
       </div>
 
+      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-4 py-3 text-sm text-red-700 dark:text-red-400 mb-4">{error}</div>}
+
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : users.length === 0 ? (
+          <EmptyState title="No users" description="Add a user to grant access to NetPulse." action={{ label: 'Add User', onClick: () => setInviting(true) }} icon="👤" />
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -94,14 +121,19 @@ function UsersTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {users.map((u) => (
-                <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              {users.map((u) => {
+                const isSelf = u.username === me
+                return (
+                <tr key={u.id} className={clsx('hover:bg-gray-50 dark:hover:bg-gray-700/50', busyId === u.id && 'opacity-50')}>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
-                      <Avatar name={u.name} />
+                      <Avatar name={displayName(u)} />
                       <div className="min-w-0">
-                        <p className="font-medium text-gray-800 dark:text-gray-100 truncate">{u.name}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{u.email}</p>
+                        <p className="font-medium text-gray-800 dark:text-gray-100 truncate flex items-center gap-2">
+                          {displayName(u)}
+                          {isSelf && <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">You</span>}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{u.email || '—'}</p>
                       </div>
                     </div>
                   </td>
@@ -110,43 +142,56 @@ function UsersTab() {
                       {ROLE_LABEL[u.role]}
                     </span>
                   </td>
-                  <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{u.lastLogin ?? 'Never'}</td>
+                  <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{relTime(u.last_login)}</td>
                   <td className="px-5 py-3">
                     <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium',
-                      u.active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')}>
-                      {u.active ? 'Active' : 'Deactivated'}
+                      u.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')}>
+                      {u.is_active ? 'Active' : 'Deactivated'}
                     </span>
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button onClick={() => setEditing(u)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Edit Role</button>
-                      <button onClick={() => toggleActive(u.id)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">
-                        {u.active ? 'Deactivate' : 'Reactivate'}
+                      <button disabled={busyId === u.id} onClick={() => toggleActive(u)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
+                        {u.is_active ? 'Deactivate' : 'Reactivate'}
                       </button>
-                      <button className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Reset Password</button>
+                      <button
+                        disabled={isSelf}
+                        title={isSelf ? 'You cannot delete your own account.' : 'Delete user'}
+                        onClick={() => setDeleting(u)}
+                        className="px-2.5 py-1 text-xs border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {inviting && (
-        <InviteModal
+        <AddUserModal
           onClose={() => setInviting(false)}
-          onInvite={(email, r) => {
-            setUsers((u) => [...u, { id: Date.now(), name: email.split('@')[0], email, role: r, lastLogin: null, active: true }])
-            setInviting(false)
-          }}
+          onCreated={() => { setInviting(false); load() }}
         />
       )}
       {editing && (
         <EditRoleModal
           user={editing}
           onClose={() => setEditing(null)}
-          onSave={(r) => { setRole(editing.id, r); setEditing(null) }}
+          onSaved={() => { setEditing(null); load() }}
+        />
+      )}
+      {deleting && (
+        <DeleteUserModal
+          user={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => { setDeleting(null); load() }}
         />
       )}
     </div>
@@ -170,24 +215,50 @@ function RoleSelect({ value, onChange }: { value: RoleId; onChange: (r: RoleId) 
   )
 }
 
-function InviteModal({ onClose, onInvite }: { onClose: () => void; onInvite: (email: string, role: RoleId) => void }) {
+function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [role, setRole] = useState<RoleId>('viewer')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const submit = async () => {
+    if (!username.trim()) { setErr('Username is required.'); return }
+    if (password.length < 8) { setErr('Password must be at least 8 characters.'); return }
+    setSaving(true); setErr(null)
+    try {
+      await createUser({ username: username.trim(), email: email.trim() || undefined, role, password })
+      onCreated()
+    } catch (e) {
+      setSaving(false); setErr(apiError(e, 'Failed to create user.'))
+    }
+  }
+
   return (
     <Modal
-      title="Invite User"
+      title="Add User"
       onClose={onClose}
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
-          <button onClick={() => email && onInvite(email, role)} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Send Invite</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Creating…' : 'Create User'}</button>
         </>
       }
     >
       <div className="space-y-3">
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email address</label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+          <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="jdoe" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email <span className="text-gray-400">(optional)</span></label>
           <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="person@company.com" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+          <input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
@@ -198,21 +269,70 @@ function InviteModal({ onClose, onInvite }: { onClose: () => void; onInvite: (em
   )
 }
 
-function EditRoleModal({ user, onClose, onSave }: { user: UiUser; onClose: () => void; onSave: (r: RoleId) => void }) {
+function EditRoleModal({ user, onClose, onSaved }: { user: AdminUser; onClose: () => void; onSaved: () => void }) {
   const [role, setRole] = useState<RoleId>(user.role)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username
+
+  const submit = async () => {
+    setSaving(true); setErr(null)
+    try {
+      await updateUser(user.id, { role })
+      onSaved()
+    } catch (e) {
+      setSaving(false); setErr(apiError(e, 'Failed to update role.'))
+    }
+  }
+
   return (
     <Modal
-      title={`Edit role — ${user.name}`}
+      title={`Edit role — ${name}`}
       onClose={onClose}
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
-          <button onClick={() => onSave(role)} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Save</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
         </>
       }
     >
+      {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-3">{err}</div>}
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
       <RoleSelect value={role} onChange={setRole} />
+    </Modal>
+  )
+}
+
+function DeleteUserModal({ user, onClose, onDeleted }: { user: AdminUser; onClose: () => void; onDeleted: () => void }) {
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username
+
+  const submit = async () => {
+    setSaving(true); setErr(null)
+    try {
+      await deleteUser(user.id)
+      onDeleted()
+    } catch (e) {
+      setSaving(false); setErr(apiError(e, 'Failed to delete user.'))
+    }
+  }
+
+  return (
+    <Modal
+      title="Delete user"
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Deleting…' : 'Delete'}</button>
+        </>
+      }
+    >
+      {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-3">{err}</div>}
+      <p className="text-sm text-gray-600 dark:text-gray-300">
+        Permanently delete <span className="font-semibold">{name}</span> ({user.username})? This cannot be undone.
+      </p>
     </Modal>
   )
 }

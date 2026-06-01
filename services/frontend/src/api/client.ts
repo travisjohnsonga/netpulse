@@ -863,6 +863,49 @@ export async function changePassword(current_password: string, new_password: str
   await api.post('/users/me/change-password/', { current_password, new_password })
 }
 
+// ── Admin user management (Settings → Users) ─────────────────────────────────
+
+export type UserRole = 'admin' | 'engineer' | 'viewer' | 'api'
+
+export interface AdminUser {
+  id: number
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  role: UserRole
+  is_active: boolean
+  is_superuser: boolean
+  last_login: string | null
+  date_joined: string
+}
+
+export interface NewUser {
+  username: string
+  email?: string
+  role: UserRole
+  password: string
+}
+
+export async function fetchUsers(): Promise<AdminUser[]> {
+  const { data } = await api.get<AdminUser[] | Paginated<AdminUser>>('/users/')
+  return unwrap(data)
+}
+
+export async function createUser(payload: NewUser): Promise<AdminUser> {
+  const { data } = await api.post<AdminUser>('/users/', payload)
+  return data
+}
+
+export async function updateUser(id: number, payload: Partial<AdminUser>): Promise<AdminUser> {
+  const { data } = await api.patch<AdminUser>(`/users/${id}/`, payload)
+  return data
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await api.delete(`/users/${id}/`)
+}
+
 export interface MonitoredInterface {
   id: number
   if_index: number | null
