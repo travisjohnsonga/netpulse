@@ -377,6 +377,8 @@ export interface CollectionStatus {
   }
   snmp: {
     active: boolean
+    suppressed?: boolean
+    suppressed_reason?: string
     last_poll_seconds_ago: number | null
     interval_seconds: number
     version: string | null

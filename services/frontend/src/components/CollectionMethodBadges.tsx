@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { fetchCollectionStatus, type CollectionStatus } from '../api/client'
 
@@ -67,9 +67,10 @@ export function CollectionMethodBadges({ deviceId }: { deviceId: number }) {
         <span
           className={clsx(badgeCls, 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300')}
           title={[
-            'Streaming telemetry active',
+            'gNMI streaming active',
             `Last message: ${relAgo(gnmi.last_seen_seconds_ago)}`,
             `${gnmi.metrics_per_push ?? '?'} metrics/push · ${everyLabel(gnmi.interval_seconds)}`,
+            ...(snmp.suppressed ? ['', 'SNMP polling suppressed', '(gNMI provides all metrics)'] : []),
           ].join('\n')}
         >
           📡 gNMI
@@ -93,6 +94,22 @@ export function CollectionMethodBadges({ deviceId }: { deviceId: number }) {
 
 export function CollectionMethodBar({ deviceId }: { deviceId: number }) {
   const status = useCollectionStatus(deviceId)
+
+  // Detect a gNMI→SNMP failover (stream lost, TTL expired) across refreshes so
+  // we can surface a one-time fallback notice until gNMI recovers.
+  const wasGnmiActive = useRef(false)
+  const [fellBack, setFellBack] = useState(false)
+  useEffect(() => {
+    if (!status) return
+    if (status.gnmi.active) {
+      wasGnmiActive.current = true
+      if (fellBack) setFellBack(false)
+    } else if (wasGnmiActive.current && status.snmp.active) {
+      wasGnmiActive.current = false
+      setFellBack(true)
+    }
+  }, [status, fellBack])
+
   if (!status) return null
 
   const { gnmi, snmp } = status
@@ -106,22 +123,34 @@ export function CollectionMethodBar({ deviceId }: { deviceId: number }) {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-xs space-y-1">
-      {gnmi.active && (
-        <div className="text-gray-700 dark:text-gray-300">
-          <span className="text-green-600 dark:text-green-400 font-medium">📡 gNMI streaming</span>
-          {' — '}
-          {gnmi.metrics_per_push != null ? `${gnmi.metrics_per_push} metrics/push · ` : ''}
-          {everyLabel(gnmi.interval_seconds)} · last {relAgo(gnmi.last_seen_seconds_ago)}
+    <div className="space-y-2">
+      {fellBack && snmp.active && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          ⚠️ gNMI stream lost — falling back to SNMP polling
         </div>
       )}
-      {snmp.active && (
-        <div className="text-gray-700 dark:text-gray-300">
-          <span className="text-blue-600 dark:text-blue-400 font-medium">📊 SNMP polling</span>
-          {' — '}
-          {snmpVersionLabel(snmp.version)} · {everyLabel(snmp.interval_seconds)} · last {relAgo(snmp.last_poll_seconds_ago)}
-        </div>
-      )}
+      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-xs space-y-1">
+        {gnmi.active && (
+          <div className="text-gray-700 dark:text-gray-300">
+            <span className="text-green-600 dark:text-green-400 font-medium">📡 gNMI streaming</span>
+            {' — '}
+            {gnmi.metrics_per_push != null ? `${gnmi.metrics_per_push} metrics/push · ` : ''}
+            {everyLabel(gnmi.interval_seconds)} · last {relAgo(gnmi.last_seen_seconds_ago)}
+          </div>
+        )}
+        {gnmi.active && snmp.suppressed && (
+          <div className="text-gray-400 dark:text-gray-500">
+            📊 SNMP polling suppressed (gNMI provides all metrics)
+          </div>
+        )}
+        {snmp.active && (
+          <div className="text-gray-700 dark:text-gray-300">
+            <span className="text-blue-600 dark:text-blue-400 font-medium">📊 SNMP polling</span>
+            {' — '}
+            {snmpVersionLabel(snmp.version)} · {everyLabel(snmp.interval_seconds)} · last {relAgo(snmp.last_poll_seconds_ago)}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
