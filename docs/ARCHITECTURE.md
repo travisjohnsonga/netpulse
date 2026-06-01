@@ -393,7 +393,7 @@ Each microservice has its own AppRole with minimal Vault policy:
 - [ ] 🔄 Lifecycle/EOL management (in progress)
 - [x] Default/system alert rules (seed_alert_rules; disable-to-suppress)
 - [x] Admin user management (/api/users/ CRUD; self/last-admin delete guards)
-- [ ] Discovery page wiring — DiscoveryJob API + OT/ICS exclusions (in progress)
+- [x] Discovery page wiring — DiscoveryJob API + approve/reject + OT/ICS exclusions
 - [ ] Log group-trend / vendor-bug detection
 
 ### Phase 4 — Frontend & Flow

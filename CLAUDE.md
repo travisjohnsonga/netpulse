@@ -867,10 +867,13 @@ Full architecture in docs/ARCHITECTURE.md.
 - Onboarding wizard: 4 steps, integrations selection ✅
 - HTTPS enforced: nginx redirects HTTP :3000 → HTTPS :3443 (self-signed bootstrap) ✅
 - Dependabot: weekly pip/npm/docker/actions updates, grouped (Django/React/Tailwind) ✅
-- Backend tests: 631 passing (services/api) ✅
+- Discovery page wiring: /api/devices/discovery/{jobs,discovered}/ — job CRUD +
+  discovered-device approve (creates active Device)/reject; live Settings →
+  Discovery page with subnet scope + OT/ICS exclusions and pending-approval queue ✅
+- Backend tests: 648 passing (services/api) ✅
 
 ## In Progress
-- Discovery page wiring (DiscoveryJob API + OT/ICS subnet management)
+- (queue clear — see Planned Features for what's next)
 
 ## Technology Stack
 - Backend: Python 3.13, Django 6.0, DRF, Django Channels
@@ -1002,6 +1005,8 @@ DeviceCredential (through model):
 /api/devices/:id/interfaces/    — monitored interfaces (GET/POST replace selection)
 /api/devices/:id/interfaces/discover/ — SNMP/SSH interface + LLDP discovery
 /api/devices/:id/topology/discover/   — LLDP neighbour discovery → TopologyLink
+/api/devices/discovery/jobs/    — discovery job CRUD (+ /:id/discovered/)
+/api/devices/discovery/discovered/    — discovered devices (+ /:id/approve/ | /reject/)
 /api/credentials/               — credential profile CRUD
 /api/credentials/:id/test/      — test credential against IP
 /api/sites/                     — site CRUD (+ /:id/devices/)
