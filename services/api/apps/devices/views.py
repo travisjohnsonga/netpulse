@@ -403,6 +403,18 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         platform = dd.discovered_platform if dd.discovered_platform in _PLATFORM_VALUES \
             else Device.Platform.OTHER
 
+        # Credentials to attach to the new device: explicit choice in the request,
+        # else the job's credential profile (the creds used to discover it).
+        cred_profile = dd.job.credential_profile
+        cred_id = request.data.get("credential_profile")
+        if cred_id not in (None, ""):
+            cred_profile = CredentialProfile.objects.filter(pk=cred_id).first()
+            if cred_profile is None:
+                return Response(
+                    {"error": f"Credential profile {cred_id} not found."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         device = Device.objects.create(
             hostname=hostname,
             ip_address=dd.source_ip,
@@ -412,6 +424,7 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
             platform=platform,
             os_version=dd.discovered_os or "",
             status=Device.Status.ACTIVE,
+            credential_profile=cred_profile,
         )
         dd.status = DiscoveredDevice.Status.APPROVED
         dd.approved_device = device

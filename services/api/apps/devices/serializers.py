@@ -118,6 +118,8 @@ class DiscoveredDeviceSerializer(serializers.ModelSerializer):
 class DiscoveryJobSerializer(serializers.ModelSerializer):
     seed_device_hostname = serializers.CharField(
         source="seed_device.hostname", read_only=True, default=None)
+    credential_profile_name = serializers.CharField(
+        source="credential_profile.name", read_only=True, default=None)
     pending_count = serializers.SerializerMethodField()
 
     class Meta:

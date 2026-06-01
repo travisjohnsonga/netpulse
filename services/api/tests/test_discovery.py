@@ -129,3 +129,48 @@ class TestDiscoveredDeviceApproval:
         discovered.refresh_from_db()
         assert discovered.status == "rejected"
         assert not Device.objects.filter(ip_address="10.1.0.5").exists()
+
+
+class TestDiscoveryCredentials:
+    @pytest.fixture
+    def profile(self, db):
+        from apps.credentials.models import CredentialProfile
+        return CredentialProfile.objects.create(name="Lab creds", snmpv2c_enabled=True)
+
+    def test_create_job_with_credential_profile(self, auth_client, profile):
+        resp = auth_client.post("/api/devices/discovery/jobs/", {
+            "name": "scan w/ creds", "method": "scan",
+            "subnets": ["10.1.0.0/24"], "credential_profile": profile.id,
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        body = resp.json()
+        assert body["credential_profile"] == profile.id
+        assert body["credential_profile_name"] == "Lab creds"
+        assert DiscoveryJob.objects.get(pk=body["id"]).credential_profile_id == profile.id
+
+    def test_approve_inherits_job_credential_profile(self, auth_client, profile):
+        job = DiscoveryJob.objects.create(name="j", method="scan", credential_profile=profile)
+        dd = DiscoveredDevice.objects.create(job=job, source_ip="10.1.0.20")
+        resp = auth_client.post(f"/api/devices/discovery/discovered/{dd.pk}/approve/")
+        assert resp.status_code == 201, resp.content
+        assert Device.objects.get(ip_address="10.1.0.20").credential_profile_id == profile.id
+
+    def test_approve_explicit_credential_overrides_job(self, auth_client, profile):
+        from apps.credentials.models import CredentialProfile
+        other = CredentialProfile.objects.create(name="Other", ssh_enabled=True)
+        job = DiscoveryJob.objects.create(name="j2", method="scan", credential_profile=profile)
+        dd = DiscoveredDevice.objects.create(job=job, source_ip="10.1.0.21")
+        resp = auth_client.post(
+            f"/api/devices/discovery/discovered/{dd.pk}/approve/",
+            {"credential_profile": other.id}, format="json")
+        assert resp.status_code == 201, resp.content
+        assert Device.objects.get(ip_address="10.1.0.21").credential_profile_id == other.id
+
+    def test_approve_with_unknown_credential_is_rejected(self, auth_client):
+        job = DiscoveryJob.objects.create(name="j3", method="scan")
+        dd = DiscoveredDevice.objects.create(job=job, source_ip="10.1.0.22")
+        resp = auth_client.post(
+            f"/api/devices/discovery/discovered/{dd.pk}/approve/",
+            {"credential_profile": 99999}, format="json")
+        assert resp.status_code == 400
+        assert not Device.objects.filter(ip_address="10.1.0.22").exists()

@@ -93,12 +93,31 @@ class Command(BaseCommand):
         )
 
         job = await self._get_or_create_job(options)
+        # Prefer the job's credential profile's SNMP community (from OpenBao);
+        # fall back to the --community flag (default "public").
+        community = await asyncio.get_event_loop().run_in_executor(
+            None, self._job_community, job, options["community"]
+        )
         runner = DiscoveryRunner(
             job=job,
-            community=options["community"],
+            community=community,
             rate_pps=job.rate_limit_pps,
         )
         await runner.run()
+
+    @staticmethod
+    def _job_community(job: DiscoveryJob, default: str) -> str:
+        """SNMPv2c community for the job from its credential profile (OpenBao)."""
+        profile = job.credential_profile
+        if not (profile and profile.snmpv2c_enabled and profile.vault_path):
+            return default
+        try:
+            from apps.credentials import vault
+            secrets = vault.read_secret(profile.vault_path) or {}
+            return secrets.get("snmpv2c_community") or default
+        except Exception as exc:  # OpenBao down / path missing — fall back safely.
+            logger.warning("could not read SNMP community for job %d: %s", job.id, exc)
+            return default
 
     async def _get_or_create_job(self, options: dict) -> DiscoveryJob:
         if options["job"]:

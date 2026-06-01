@@ -167,6 +167,13 @@ class DiscoveryJob(TimestampedModel):
     max_devices       = models.PositiveIntegerField(default=1000)
     rate_limit_pps    = models.PositiveIntegerField(default=10)
     devices_found     = models.PositiveIntegerField(default=0)
+    # Credentials used to probe discovered devices (SNMP community / SNMPv3 for
+    # scanning, SSH for LLDP). Secrets live in OpenBao via the profile's
+    # vault_path — never on the job. Assigned to devices on approval.
+    credential_profile = models.ForeignKey(
+        "credentials.CredentialProfile", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="discovery_jobs",
+    )
     started_at        = models.DateTimeField(null=True, blank=True)
     completed_at      = models.DateTimeField(null=True, blank=True)
     error_message     = models.TextField(blank=True)
