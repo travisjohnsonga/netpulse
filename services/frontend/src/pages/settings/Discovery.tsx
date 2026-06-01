@@ -50,6 +50,111 @@ function InventoryBadge({ deviceId }: { deviceId: number }) {
   )
 }
 
+// A discovered device is bulk-approvable only when it's still pending, not
+// already in inventory, and discovery identified its platform.
+function isApprovable(d: DiscoveredDevice): boolean {
+  return d.status === 'pending' && !d.already_exists && !!d.discovered_platform
+}
+
+interface BulkSummary { ok: number; skipped: number; failed: number }
+
+/**
+ * Checkbox selection + bulk-approve for a discovered-devices table. Selection
+ * is preserved across list refreshes (running-job polling) and pruned to the
+ * still-eligible device ids.
+ */
+function useBulkApprove(devices: DiscoveredDevice[], onComplete: (s: BulkSummary) => void) {
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [approving, setApproving] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
+  const headerRef = useRef<HTMLInputElement>(null)
+
+  const eligibleIds = devices.filter(isApprovable).map((d) => d.id)
+
+  // Keep selection across polls but drop ids that are no longer eligible.
+  useEffect(() => {
+    setSelected((prev) => {
+      const valid = [...prev].filter((id) => eligibleIds.includes(id))
+      return valid.length === prev.size ? prev : new Set(valid)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices])
+
+  const allChecked = eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id))
+  const someChecked = selected.size > 0 && !allChecked
+  useEffect(() => {
+    if (headerRef.current) headerRef.current.indeterminate = someChecked
+  }, [someChecked])
+
+  const toggle = (id: number) =>
+    setSelected((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleAll = () =>
+    setSelected(allChecked ? new Set() : new Set(eligibleIds))
+  const clear = () => setSelected(new Set())
+
+  const approveSelected = async () => {
+    const ids = [...selected]
+    if (!ids.length) return
+    setApproving(true)
+    const summary: BulkSummary = { ok: 0, skipped: 0, failed: 0 }
+    for (let i = 0; i < ids.length; i++) {
+      setProgress(`Approving ${i + 1}/${ids.length}...`)
+      try {
+        const res = await approveDiscoveredDevice(ids[i], {})
+        if (res.already_exists) summary.skipped++; else summary.ok++
+      } catch { summary.failed++ }
+    }
+    setApproving(false); setProgress(null); setSelected(new Set())
+    onComplete(summary)
+  }
+
+  return {
+    selected, headerRef, allChecked, eligibleCount: eligibleIds.length,
+    approving, progress, toggle, toggleAll, clear, approveSelected,
+  }
+}
+
+function bulkResultMessage(s: BulkSummary): string {
+  const parts = [`${s.ok} device${s.ok === 1 ? '' : 's'} approved`]
+  if (s.skipped) parts.push(`${s.skipped} skipped (already exists)`)
+  if (s.failed) parts.push(`${s.failed} failed`)
+  return parts.join(', ')
+}
+
+// Disabled checkbox (with reason tooltip) for non-approvable rows.
+function RowCheckbox({ d, checked, onToggle }: {
+  d: DiscoveredDevice; checked: boolean; onToggle: () => void
+}) {
+  if (!isApprovable(d)) {
+    return (
+      <input type="checkbox" disabled className="opacity-40 cursor-not-allowed"
+        title={d.already_exists ? 'Already in inventory' : 'Select platform before bulk approve'} />
+    )
+  }
+  return <input type="checkbox" checked={checked} onChange={onToggle} className="cursor-pointer" />
+}
+
+function BulkBar({ count, approving, progress, onApprove, onClear }: {
+  count: number; approving: boolean; progress: string | null
+  onApprove: () => void; onClear: () => void
+}) {
+  if (count === 0) return null
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 mb-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-sm">
+      <span className="font-medium text-blue-700 dark:text-blue-300">☑ {count} selected</span>
+      {progress && <span className="text-xs text-gray-500 dark:text-gray-400">{progress}</span>}
+      <div className="ml-auto flex items-center gap-2">
+        <button onClick={onApprove} disabled={approving}
+          className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-md font-medium">
+          {approving ? 'Approving…' : '✅ Approve Selected'}
+        </button>
+        <button onClick={onClear} title="Clear selection"
+          className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">✖</button>
+      </div>
+    </div>
+  )
+}
+
 export default function Discovery() {
   const [jobs, setJobs] = useState<DiscoveryJob[]>([])
   const [pending, setPending] = useState<DiscoveredDevice[]>([])
@@ -65,6 +170,8 @@ export default function Discovery() {
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(null), 3000) }
   const openNew = () => { setEditJob(null); setShowModal(true) }
   const openEdit = (j: DiscoveryJob) => { setEditJob(j); setShowModal(true) }
+
+  const bulk = useBulkApprove(pending, (s) => { flash(bulkResultMessage(s)); load(true) })
 
   const startJob = async (j: DiscoveryJob) => {
     setBusyId(j.id); setError(null)
@@ -157,6 +264,7 @@ export default function Discovery() {
                     onCancel={() => cancelJob(j)}
                     onApprove={(d) => setApproving(d)}
                     onReject={reject}
+                    onNotify={flash}
                     onChanged={() => load(true)} />
                 ))}
               </div>
@@ -172,9 +280,18 @@ export default function Discovery() {
               <div className="px-5 py-8 text-center text-sm text-gray-400 dark:text-gray-500">No devices awaiting approval.</div>
             ) : (
               <div className="overflow-x-auto">
+                <div className="px-3 pt-3">
+                  <BulkBar count={bulk.selected.size} approving={bulk.approving} progress={bulk.progress}
+                    onApprove={bulk.approveSelected} onClear={bulk.clear} />
+                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+                      <th className="px-5 py-3 font-medium w-8">
+                        <input ref={bulk.headerRef} type="checkbox" checked={bulk.allChecked}
+                          disabled={bulk.eligibleCount === 0} onChange={bulk.toggleAll}
+                          className="cursor-pointer disabled:opacity-40" title="Select all approvable" />
+                      </th>
                       <th className="px-5 py-3 font-medium">IP</th>
                       <th className="px-5 py-3 font-medium">Hostname</th>
                       <th className="px-5 py-3 font-medium">Vendor / Platform</th>
@@ -185,6 +302,9 @@ export default function Discovery() {
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                     {pending.map((d) => (
                       <tr key={d.id} className={clsx('hover:bg-gray-50 dark:hover:bg-gray-700/50', busyId === d.id && 'opacity-50')}>
+                        <td className="px-5 py-3">
+                          <RowCheckbox d={d} checked={bulk.selected.has(d.id)} onToggle={() => bulk.toggle(d.id)} />
+                        </td>
                         <td className="px-5 py-3 font-mono text-gray-700 dark:text-gray-300">{d.source_ip}</td>
                         <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{d.discovered_hostname || '—'}</td>
                         <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{[d.discovered_vendor, d.discovered_platform].filter(Boolean).join(' / ') || '—'}</td>
@@ -257,7 +377,7 @@ const STATUS_ICON: Record<string, string> = {
 }
 
 /** Expandable discovery-job row with live progress (polls while running). */
-function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onReject, onChanged }: {
+function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onReject, onNotify, onChanged }: {
   job: DiscoveryJob
   busy: boolean
   onDelete: () => void
@@ -266,6 +386,7 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
   onCancel: () => void
   onApprove: (d: DiscoveredDevice) => void
   onReject: (d: DiscoveredDevice) => void
+  onNotify: (msg: string) => void
   onChanged: () => void
 }) {
   const [open, setOpen] = useState(job.status === 'running')
@@ -335,6 +456,13 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
 
   const pendingCount = devices.filter(
     (d) => d.status === 'pending' && !d.already_exists && d.discovered_platform).length
+
+  const bulk = useBulkApprove(devices, (s) => {
+    onNotify(bulkResultMessage(s))
+    notified.current = false
+    onChanged()
+    fetchJobDiscovered(job.id).then(setDevices).catch(() => {})
+  })
 
   return (
     <div className={clsx(busy && 'opacity-50')}>
@@ -424,10 +552,17 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
                   </button>
                 )}
               </div>
+              <BulkBar count={bulk.selected.size} approving={bulk.approving} progress={bulk.progress}
+                onApprove={bulk.approveSelected} onClear={bulk.clear} />
               <div className="overflow-x-auto rounded-md border border-gray-200 dark:border-gray-700">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-left">
+                      <th className="px-3 py-1.5 font-medium w-6">
+                        <input ref={bulk.headerRef} type="checkbox" checked={bulk.allChecked}
+                          disabled={bulk.eligibleCount === 0} onChange={bulk.toggleAll}
+                          className="cursor-pointer disabled:opacity-40" title="Select all approvable" />
+                      </th>
                       <th className="px-3 py-1.5 font-medium">IP</th>
                       <th className="px-3 py-1.5 font-medium">Hostname</th>
                       <th className="px-3 py-1.5 font-medium">Platform</th>
@@ -438,6 +573,9 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                     {devices.map((d) => (
                       <tr key={d.id} className="text-gray-700 dark:text-gray-300">
+                        <td className="px-3 py-1.5">
+                          <RowCheckbox d={d} checked={bulk.selected.has(d.id)} onToggle={() => bulk.toggle(d.id)} />
+                        </td>
                         <td className="px-3 py-1.5 font-mono">{d.source_ip}</td>
                         <td className="px-3 py-1.5">{d.discovered_hostname || '—'}</td>
                         <td className="px-3 py-1.5">{d.discovered_platform || 'unknown'}</td>
