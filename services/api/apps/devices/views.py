@@ -357,6 +357,34 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
         job = serializer.save(created_by=user)
         self._start_discovery(job)
 
+    def update(self, request, *args, **kwargs):
+        """Edit a job (PUT/PATCH) — blocked while it is running."""
+        job = self.get_object()
+        if job.status == DiscoveryJob.Status.RUNNING:
+            return Response({"error": "Cannot edit a running job."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return super().update(request, *args, **kwargs)
+
+    @extend_schema(summary="Re-run a discovery job", request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk=None):
+        """Reset progress and execute the job again (scan/topology only)."""
+        job = self.get_object()
+        if job.status == DiscoveryJob.Status.RUNNING:
+            return Response({"error": "Job is already running."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if job.method not in (DiscoveryJob.Method.SCAN, DiscoveryJob.Method.TOPOLOGY):
+            return Response({"error": "Only scan and topology jobs can be run."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        job.status = DiscoveryJob.Status.PENDING
+        job.progress_current = job.progress_total = job.ips_scanned = job.devices_found = 0
+        job.progress_message = ""
+        job.error_message = ""
+        job.started_at = job.completed_at = None
+        job.save()
+        self._start_discovery(job)
+        return Response(DiscoveryJobSerializer(job).data)
+
     @staticmethod
     def _start_discovery(job):
         """

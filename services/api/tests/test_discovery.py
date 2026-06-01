@@ -280,3 +280,68 @@ class TestDiscoveryAutorun:
         job = DiscoveryJob.objects.create(name="passive", method="passive")
         DiscoveryJobViewSet._start_discovery(job)
         assert scheduled == []
+
+
+class TestDiscoveryJobEdit:
+    def test_patch_updates_editable_fields(self, auth_client, job):
+        resp = auth_client.patch(f"/api/devices/discovery/jobs/{job.id}/", {
+            "name": "renamed", "subnets": ["10.2.0.0/24"], "rate_limit_pps": 25,
+        }, format="json")
+        assert resp.status_code == 200, resp.content
+        job.refresh_from_db()
+        assert job.name == "renamed"
+        assert job.subnets == ["10.2.0.0/24"]
+        assert job.rate_limit_pps == 25
+
+    def test_patch_credential_profile(self, auth_client, job):
+        from apps.credentials.models import CredentialProfile
+        prof = CredentialProfile.objects.create(name="Edit creds", snmpv2c_enabled=True)
+        resp = auth_client.patch(f"/api/devices/discovery/jobs/{job.id}/",
+                                 {"credential_profile": prof.id}, format="json")
+        assert resp.status_code == 200
+        job.refresh_from_db()
+        assert job.credential_profile_id == prof.id
+
+    def test_cannot_edit_running_job(self, auth_client, job):
+        job.status = "running"
+        job.save()
+        resp = auth_client.patch(f"/api/devices/discovery/jobs/{job.id}/",
+                                 {"name": "nope"}, format="json")
+        assert resp.status_code == 400
+        assert "running" in resp.json()["error"].lower()
+        job.refresh_from_db()
+        assert job.name != "nope"
+
+    def test_status_stays_read_only_on_patch(self, auth_client, job):
+        resp = auth_client.patch(f"/api/devices/discovery/jobs/{job.id}/",
+                                 {"status": "completed"}, format="json")
+        assert resp.status_code == 200
+        job.refresh_from_db()
+        assert job.status == "pending"
+
+
+class TestDiscoveryJobRun:
+    def test_run_resets_and_triggers(self, auth_client, monkeypatch):
+        # _start_discovery is a no-op here (DISCOVERY_AUTORUN false in tests),
+        # but run() must reset progress and re-pend the job.
+        job = DiscoveryJob.objects.create(
+            name="done", method="scan", subnets=["10.1.0.0/24"],
+            status="completed", progress_current=10, progress_total=10,
+            ips_scanned=10, devices_found=2, progress_message="Complete",
+        )
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/run/")
+        assert resp.status_code == 200, resp.content
+        job.refresh_from_db()
+        assert job.status == "pending"
+        assert job.progress_current == 0 and job.ips_scanned == 0 and job.devices_found == 0
+        assert job.progress_message == ""
+
+    def test_run_blocked_when_running(self, auth_client):
+        job = DiscoveryJob.objects.create(name="r", method="scan", status="running")
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/run/")
+        assert resp.status_code == 400
+
+    def test_run_rejects_passive(self, auth_client):
+        job = DiscoveryJob.objects.create(name="p", method="passive")
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/run/")
+        assert resp.status_code == 400
