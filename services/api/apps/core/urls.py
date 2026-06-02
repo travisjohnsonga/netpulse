@@ -7,6 +7,8 @@ from .views import (
     ChangePasswordView,
     MeView,
     MyPreferencesView,
+    OnboardingCompleteView,
+    OnboardingStatusView,
     UserViewSet,
     health,
     infrastructure_health,
@@ -27,6 +29,9 @@ urlpatterns = [
     path("users/me/",                 MeView.as_view(),             name="users-me"),
     path("users/me/preferences/",     MyPreferencesView.as_view(),  name="users-me-preferences"),
     path("users/me/change-password/", ChangePasswordView.as_view(), name="users-me-change-password"),
+    # Onboarding (Get Started wizard) gating.
+    path("onboarding/status/",   OnboardingStatusView.as_view(),   name="onboarding-status"),
+    path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     # ChatOps webhook receivers
     path("webhooks/slack/",   webhook_slack,   name="webhook-slack"),
     path("webhooks/teams/",   webhook_teams,   name="webhook-teams"),
