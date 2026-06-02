@@ -51,6 +51,18 @@ PLATFORM_DEVICE_OIDS = {
     "fortios": [SYSUPTIME, HRPROCLOAD,
                 FG_CPU_USAGE, FG_MEM_USAGE, FG_MEM_CAPACITY],  # FortiGate
     "panos":   [SYSUPTIME, HRPROCLOAD],                   # Palo Alto: hostMIB CPU
+    # SonicWall SonicOS (SONICWALL-FIREWALL enterprise 8741).
+    "sonicwall": [SYSUPTIME,
+                  "1.3.6.1.4.1.8741.1.3.2.1.0",   # sonicCpuUtil (%)
+                  "1.3.6.1.4.1.8741.1.3.2.2.0",   # sonicRamUtil (%)
+                  "1.3.6.1.4.1.8741.1.3.2.3.0"],  # sonicRamTotal (KB)
+    # HPE AOS-CX exposes CPU/memory via standard HOST-RESOURCES-MIB.
+    "aos_cx":  [SYSUPTIME, HRPROCLOAD],
+    # Aruba AOS mobility controllers (ARUBA enterprise 14823).
+    "aruba":   [SYSUPTIME,
+                "1.3.6.1.4.1.14823.2.2.1.1.1.11.0",  # wlsxSysXCpuUtilization (%)
+                "1.3.6.1.4.1.14823.2.2.1.1.1.10.0",  # wlsxSysXMemoryUsage (%)
+                "1.3.6.1.4.1.14823.2.2.1.1.1.9.0"],  # wlsxSysXMemorySize
     "_default": [SYSUPTIME, HRPROCLOAD],                  # universal fallback
 }
 

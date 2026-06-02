@@ -75,3 +75,20 @@ junit/
 # Site-specific MIBs (not committed to the public repo)
 mibs/custom/*
 !mibs/custom/.gitkeep
+
+# Downloaded MIB collections — fetch via scripts/download_mibs.sh, too large/
+# licensing-restricted to commit. READMEs (*.md) stay tracked.
+mibs/standard/*.my
+mibs/standard/*.mib
+mibs/standard/*.txt
+mibs/vendor/cisco/*.my
+mibs/vendor/cisco/*.mib
+mibs/vendor/cisco/*.txt
+mibs/vendor/juniper/*.my
+mibs/vendor/juniper/*.mib
+mibs/vendor/sonicwall/*.my
+mibs/vendor/sonicwall/*.mib
+mibs/vendor/aruba/*.my
+mibs/vendor/aruba/*.mib
+mibs/vendor/aos-cx/*.my
+mibs/vendor/aos-cx/*.mib

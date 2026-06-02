@@ -48,6 +48,18 @@ FIELD_MAP = {
     "fgSysMemUsage_0": "memory_used_pct",
     "1_3_6_1_4_1_12356_101_4_1_5_0": "memory_total_kb",  # fgSysMemCapacity (KB)
     "fgSysMemCapacity_0": "memory_total_kb",
+    # SonicWall SonicOS (enterprise 8741) — CPU/mem already percentages.
+    "1_3_6_1_4_1_8741_1_3_2_1_0": "cpu_pct",          # sonicCpuUtil
+    "sonicCpuUtil_0": "cpu_pct",
+    "1_3_6_1_4_1_8741_1_3_2_2_0": "memory_used_pct",  # sonicRamUtil
+    "sonicRamUtil_0": "memory_used_pct",
+    "1_3_6_1_4_1_8741_1_3_2_3_0": "memory_total_kb",  # sonicRamTotal
+    "sonicRamTotal_0": "memory_total_kb",
+    # Aruba AOS mobility controllers (enterprise 14823) — CPU/mem percentages.
+    "1_3_6_1_4_1_14823_2_2_1_1_1_11_0": "cpu_pct",          # wlsxSysXCpuUtilization
+    "wlsxSysXCpuUtilization_0": "cpu_pct",
+    "1_3_6_1_4_1_14823_2_2_1_1_1_10_0": "memory_used_pct",  # wlsxSysXMemoryUsage
+    "wlsxSysXMemoryUsage_0": "memory_used_pct",
     "poll_duration_ms": "poll_duration_ms",
 }
 

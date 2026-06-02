@@ -540,6 +540,14 @@ class TestPlatformDetection:
         assert _platform_from_descr("Cisco IOS XR Software") == "ios_xr"
         assert _platform_from_descr("FortiGate-60F FortiOS v7.2") == "fortios"
         assert _platform_from_descr("Fortinet appliance") == "fortios"  # bare "Fortinet"
+        assert _platform_from_descr("SonicWALL NSA 3700 SonicOS 7.0") == "sonicwall"
+        assert _platform_from_descr("ArubaOS-CX FL.10.09") == "aos_cx"   # CX before generic Aruba
+        assert _platform_from_descr("ArubaOS (MODEL: 7210), Version 8.10") == "aruba"
+
+    def test_default_platform_for_new_vendors(self):
+        from apps.devices.management.commands.run_discovery import default_platform_for_vendor
+        assert default_platform_for_vendor("sonicwall") == "sonicwall"
+        assert default_platform_for_vendor("aruba") == "aruba"
 
 
 class TestRunnerCancellation:

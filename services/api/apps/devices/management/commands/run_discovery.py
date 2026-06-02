@@ -66,14 +66,15 @@ def _vendor_from_sysobjid(oid: str) -> str:
 # FortiGate sysDescr reads "FortiGate-…"/"FortiOS …" and rarely the literal
 # "fortinet", so all three spellings map to fortinet.
 _VENDOR_PATTERNS = [
-    ("cisco",    ("cisco",)),
-    ("juniper",  ("juniper", "junos")),
-    ("arista",   ("arista",)),
-    ("aruba",    ("aruba",)),
-    ("fortinet", ("fortios", "fortigate", "fortinet")),
-    ("paloalto", ("palo alto", "pan-os")),
-    ("mikrotik", ("mikrotik", "routeros")),
-    ("huawei",   ("huawei",)),
+    ("cisco",     ("cisco",)),
+    ("juniper",   ("juniper", "junos")),
+    ("arista",    ("arista",)),
+    ("sonicwall", ("sonicwall", "sonicos")),
+    ("aruba",     ("aruba", "arubaos")),
+    ("fortinet",  ("fortios", "fortigate", "fortinet")),
+    ("paloalto",  ("palo alto", "pan-os")),
+    ("mikrotik",  ("mikrotik", "routeros")),
+    ("huawei",    ("huawei",)),
 ]
 
 
@@ -90,6 +91,7 @@ def _vendor_from_descr(descr: str) -> str:
 _BANNER_VENDORS = [
     ("cisco", "cisco"), ("arista", "arista"), ("juniper", "juniper"),
     ("fortinet", "fortinet"), ("forti", "fortinet"), ("paloalto", "paloalto"),
+    ("sonicwall", "sonicwall"), ("aruba", "aruba"),
     ("mikrotik", "mikrotik"), ("huawei", "huawei"), ("vyos", "vyos"),
 ]
 
@@ -122,6 +124,13 @@ def _platform_from_descr(descr: str) -> str:
         return "fortios"
     if "pan-os" in low or "palo alto" in low:
         return "panos"
+    if "sonicos" in low or "sonicwall" in low:
+        return "sonicwall"
+    # AOS-CX must be matched before generic ArubaOS (its sysDescr contains both).
+    if "aos-cx" in low or "arubaos-cx" in low:
+        return "aos_cx"
+    if "arubaos" in low or "aruba networks" in low or "aruba" in low:
+        return "aruba"
     if "junos" in low or "juniper" in low:
         return "junos"
     if "arista" in low or " eos" in low:
@@ -134,11 +143,13 @@ def _platform_from_descr(descr: str) -> str:
 # are listed; multi-platform vendors (e.g. cisco → ios/ios_xe/ios_xr/nxos) are
 # intentionally absent so the operator picks one.
 _VENDOR_DEFAULT_PLATFORM = {
-    "fortinet": "fortios",
-    "paloalto": "panos",
-    "arista":   "eos",
-    "juniper":  "junos",
-    "mikrotik": "routeros",
+    "fortinet":  "fortios",
+    "paloalto":  "panos",
+    "arista":    "eos",
+    "juniper":   "junos",
+    "mikrotik":  "routeros",
+    "sonicwall": "sonicwall",
+    "aruba":     "aruba",
 }
 
 
@@ -166,6 +177,12 @@ def _platform_from_banner(banner: str) -> str:
     low = banner.lower()
     if "fortissh" in low or "forti" in low:
         return "fortios"
+    if "sonicwall" in low:
+        return "sonicwall"
+    if "arubaos-cx" in low or "aos-cx" in low:
+        return "aos_cx"
+    if "aruba" in low:
+        return "aruba"
     if "cisco" in low:
         return "ios_xe"   # routers usually IOS-XE; refined at device-add time
     if "arista" in low:

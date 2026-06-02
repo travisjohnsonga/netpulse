@@ -268,6 +268,33 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
 | Arista EOS        | ✅   | ✅  | ✅   | ✅     |
 | Fortinet FortiOS  | ✅   | ✅  | —    | ✅     |
 | Palo Alto PAN-OS  | ✅   | ✅  | —    | ✅     |
+| SonicWall SonicOS | ✅   | ✅  | —    | ✅     |
+| HPE AOS-CX        | ✅   | ✅  | 📋   | ✅     |
+| Aruba AOS         | ✅   | ✅  | —    | ✅     |
+
+---
+
+## SNMP MIBs
+
+NetPulse resolves SNMP OIDs to human-readable names using MIB files under
+`mibs/`. Download the publicly available vendor + standard MIBs with:
+
+```bash
+./scripts/download_mibs.sh
+```
+
+This fetches MIBs from public sources:
+- net-snmp (standard RFC MIBs)
+- github.com/cisco/cisco-mibs
+- github.com/fortinet/fortios-mibs
+- github.com/aristanetworks/eos-snmp-mibs
+- github.com/sonicwall/sonicwall-mibs, github.com/aruba/aruba-mibs
+
+Downloaded collections are git-ignored (large / licensing-restricted); each
+`mibs/vendor/<name>/README.md` has manual-download links for sources that aren't
+publicly cloneable. Upload site-specific MIBs in the UI (**Settings → MIB Files**)
+— they're saved to `mibs/custom/`. The tree is mounted into the `api` and
+`ingest-snmp` containers.
 
 ---
 

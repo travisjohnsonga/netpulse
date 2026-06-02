@@ -89,6 +89,9 @@ class Device(TimestampedModel):
         JUNOS = "junos", "Juniper JunOS"
         FORTIOS = "fortios", "Fortinet FortiOS"
         PANOS = "panos", "Palo Alto PAN-OS"
+        SONICWALL = "sonicwall", "SonicWall SonicOS"
+        AOS_CX = "aos_cx", "HPE AOS-CX"
+        ARUBA = "aruba", "Aruba AOS"
         SONIC = "sonic", "SONiC"
         OTHER = "other", "Other"
 

@@ -91,6 +91,13 @@ class TestMetricsModule:
         assert FIELD_MAP["1_3_6_1_4_1_12356_101_4_1_4_0"] == "memory_used_pct"
         assert FIELD_MAP["1_3_6_1_4_1_12356_101_4_1_5_0"] == "memory_total_kb"
 
+    def test_field_map_sonicwall_aruba(self):
+        from apps.devices.metrics_influx import FIELD_MAP
+        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_2_1_0"] == "cpu_pct"          # sonicCpuUtil
+        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_2_2_0"] == "memory_used_pct"  # sonicRamUtil
+        assert FIELD_MAP["1_3_6_1_4_1_14823_2_2_1_1_1_11_0"] == "cpu_pct"    # wlsxSysXCpuUtilization
+        assert FIELD_MAP["1_3_6_1_4_1_14823_2_2_1_1_1_10_0"] == "memory_used_pct"
+
     def test_fortinet_cpu_mem_surfaced(self, monkeypatch):
         # FortiGate reports CPU% and memory% directly (not bytes) — both surface.
         from apps.devices import metrics_influx as mi

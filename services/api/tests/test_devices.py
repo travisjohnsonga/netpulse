@@ -227,7 +227,8 @@ class TestDeviceModel:
     def test_platform_choices(self):
         for value, _ in Device.Platform.choices:
             assert value in ("ios", "ios_xe", "ios_xr", "nxos", "eos", "junos",
-                             "fortios", "panos", "sonic", "other")
+                             "fortios", "panos", "sonicwall", "aos_cx", "aruba",
+                             "sonic", "other")
 
     def test_site_nullable(self):
         d = Device.objects.create(hostname="no-site", ip_address="172.16.0.1")
