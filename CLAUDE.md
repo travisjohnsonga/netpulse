@@ -3375,3 +3375,161 @@ After reboot:
   Services start automatically via docker compose up -d
   Run ./scripts/setup.sh only if OpenBao was wiped
   (factory reset or volume deletion)
+
+## PINNED — AOS-CX and Aruba Telemetry + Config Templates
+
+### Next session starts here.
+
+### HPE AOS-CX:
+
+Config push template (SSH):
+  Needs Netmiko device_type: 'aruba_aoscx'
+  Or use REST API (AOS-CX has full REST API on port 443)
+  
+  SNMP config snippet:
+  snmp-server vrf mgmt
+  snmp-server community netpulse
+  snmpv3 user testsnmp auth sha auth-pass netmagic \
+    priv aes priv-pass netmagic
+  
+  Syslog config snippet:
+  logging <collector_ip> severity info
+  
+  gNMI: AOS-CX supports OpenConfig gNMI
+    Port: 8443 (not 57400)
+    Uses OpenConfig YANG models
+    TerminAttr NOT needed (native gNMI support)
+  
+  OpenConfig paths for AOS-CX:
+    CPU:        /system/cpus/cpu[index=0]/state/usage
+    Memory:     /system/memory/state
+    Interfaces: /interfaces/interface/state/counters
+    BGP:        /network-instances/network-instance/
+                protocols/protocol/bgp/neighbors/neighbor
+
+### Aruba AOS (Mobility Controllers):
+
+Config push template:
+  Netmiko device_type: 'aruba_os' or 'aruba_osswitch'
+  
+  SNMP config:
+  snmp-server community netpulse
+  snmp-server enable trap
+  
+  Syslog:
+  logging <collector_ip>
+  
+  gNMI: NOT supported on AOS mobility controllers
+  Use SNMP + Syslog only
+  
+  Key OIDs already configured:
+  wlsxSysXCpuUtilization: 1.3.6.1.4.1.14823.2.2.1.1.1.11.0
+  wlsxSysXMemoryUsage:    1.3.6.1.4.1.14823.2.2.1.1.1.10.0
+  wlsxTotalNumAPs:        1.3.6.1.4.1.14823.2.2.1.1.3.3.0
+  wlsxTotalNumClients:    1.3.6.1.4.1.14823.2.2.1.1.3.4.0
+
+### Tasks for next session:
+
+1. Add AOS-CX to telemetry config generator:
+   - SNMP snippet (v3 preferred)
+   - Syslog snippet
+   - gNMI snippet (OpenConfig, port 8443)
+   - Show "AOS-CX supports native gNMI on port 8443"
+
+2. Add Aruba AOS to telemetry config generator:
+   - SNMP snippet
+   - Syslog snippet
+   - Note: no gNMI support
+
+3. Update ingest-grpc for AOS-CX gNMI:
+   - AOS-CX uses port 8443 (not 57400)
+   - Uses standard gNMI dial-out (not Cisco MDT)
+   - OpenConfig field names differ from Cisco
+
+4. Test with real AOS-CX and Aruba hardware
+   in remote lab
+
+5. Config push via Netmiko:
+   - AOS-CX: test 'aruba_aoscx' device_type
+   - Aruba: test 'aruba_os' device_type
+   - May need REST API for AOS-CX instead of SSH
+
+### Do NOT build until next session.
+
+## PINNED — Aruba Central Integration (AOS-CX)
+
+### Background:
+Aruba Central is HPE's cloud management platform for
+AOS-CX switches and Aruba APs. When Central is in use:
+- Device config is managed via Central (not SSH directly)
+- Config push should go via Central API not SSH
+- Telemetry may flow via Central not directly to NetPulse
+- SSH may still work but config changes should use Central
+
+### New Device Setting:
+Add to Device model or DeviceTelemetryConfig:
+
+aruba_central_enabled: BooleanField(default=False)
+aruba_central_device_id: CharField(null=True)
+  ← Device ID in Aruba Central
+
+### Aruba Central API:
+Base URL: https://apigw-prod2.central.arubanetworks.com
+Auth: OAuth2 client credentials
+
+Required .env when Central enabled:
+ARUBA_CENTRAL_CLIENT_ID=
+ARUBA_CENTRAL_CLIENT_SECRET=
+ARUBA_CENTRAL_CUSTOMER_ID=
+ARUBA_CENTRAL_BASE_URL=https://apigw-prod2.central.arubanetworks.com
+
+### UI Setting:
+In Device Settings → Edit Device or Telemetry Config:
+
+┌─────────────────────────────────────────────────┐
+│ Management Mode                                 │
+│ ○ Direct (SSH + SNMP)                          │
+│ ● Aruba Central managed                         │
+│   Central Device ID: [abc123        ]           │
+│   [Test Central Connection]                     │
+└─────────────────────────────────────────────────┘
+
+### Behavior when Central enabled:
+
+Config Collection:
+  Use Central API instead of SSH:
+  GET /monitoring/v1/switches/{device_id}/config
+  
+Config Push:
+  Use Central API instead of SSH:
+  POST /configuration/v1/devices/{device_id}/config
+  Show warning: "Config will be pushed via Aruba Central"
+
+Telemetry:
+  Central can stream telemetry via webhooks
+  OR direct SNMP/gNMI still works if accessible
+  
+  If direct access available: use SNMP/gNMI directly
+  If behind Central only: use Central streaming API
+
+SNMP:
+  Usually still accessible directly even with Central
+  Use standard SNMP polling as normal
+
+### Central API endpoints useful for NetPulse:
+GET  /monitoring/v1/switches          ← list devices
+GET  /monitoring/v1/switches/{id}     ← device details
+GET  /monitoring/v1/switches/{id}/ports ← interface stats
+GET  /monitoring/v1/switches/{id}/config ← running config
+POST /configuration/v1/devices/{id}/config ← push config
+GET  /monitoring/v1/alerts            ← Central alerts
+
+### When to show Central option in UI:
+Only show Aruba Central settings when:
+  device.platform == 'aos_cx' OR device.platform == 'aruba'
+  
+For other platforms: hide Central settings entirely.
+
+### Do NOT build until next session.
+### Build AFTER basic AOS-CX telemetry templates.
+### Priority: Medium (after direct telemetry works)
