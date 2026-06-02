@@ -200,6 +200,32 @@ if os.path.exists(_CA_BUNDLE):
 # generating device telemetry config). Configured under Settings → General.
 COLLECTOR_IP = os.environ.get("COLLECTOR_IP", "")
 
+# ── Version / update checking ─────────────────────────────────────────────────
+# Version = 1.0.<commit count>. The container has no .git, so the build bakes
+# NETPULSE_GIT_COMMIT / NETPULSE_GIT_COUNT / NETPULSE_BUILT_AT (via docker build
+# args); fall back to a live git call (dev on the host) then to unknown/0.
+
+def _git(args, default=""):
+    import subprocess
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=BASE_DIR, capture_output=True, text=True, timeout=3,
+        ).stdout.strip() or default
+    except Exception:
+        return default
+
+GIT_COMMIT = os.environ.get("NETPULSE_GIT_COMMIT") or _git(["rev-parse", "--short", "HEAD"], "unknown")
+_GIT_COUNT = os.environ.get("NETPULSE_GIT_COUNT") or _git(["rev-list", "--count", "HEAD"], "0")
+VERSION = f"1.0.{_GIT_COUNT}"
+BUILT_AT = os.environ.get("NETPULSE_BUILT_AT", "")
+
+# Update-check source. Repo is public, so no token is required; GITHUB_TOKEN is
+# only needed for a private repo. VERSION_CHECK_ENABLED=false disables the check.
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "travisjohnsonga/netpulse")
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+VERSION_CHECK_ENABLED = os.environ.get("VERSION_CHECK_ENABLED", "true").lower() != "false"
+
 # Path to the web-UI TLS certificate, read by /api/health/ to report
 # ssl_cert_days_remaining. Defaults to the shared ssl-certs volume the tls app
 # writes and nginx serves; override with SSL_CERT_PATH if mounted elsewhere.

@@ -167,7 +167,13 @@ services:
   # ─────────────────────────────────────────────────────────────────────────────
 
   api:
-    build: ./services/api
+    build:
+      context: ./services/api
+      # Version baked into the image; netpulse.sh exports these on rebuild.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
+        GIT_COUNT: ${GIT_COUNT:-}
+        BUILT_AT: ${BUILT_AT:-}
     restart: unless-stopped
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
     env_file: .env

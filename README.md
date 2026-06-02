@@ -232,14 +232,25 @@ sudo systemctl enable netpulse.service
 
 ---
 
-## Upgrading
+## Updating NetPulse
 
 ```bash
-git pull origin main
-docker compose build
-docker compose up -d
-docker compose exec api python manage.py migrate
+./scripts/update.sh
 ```
+The update script shows the current vs latest version, lists what changed, asks
+to confirm, then pulls `origin/main`, rebuilds only the services that changed
+(migrations run on api startup), and reports the new version. The running
+version is shown in the sidebar (a `v1.0.NNN` badge that turns amber with `↑`
+when an update is available — `GET /api/version/check/` compares against GitHub).
+
+Manual equivalent:
+```bash
+git pull origin main
+./netpulse.sh rebuild-api      # and rebuild-frontend if the UI changed
+```
+
+Update checks hit the public GitHub repo (no token needed). For a private repo
+set `GITHUB_TOKEN` in `.env`, or disable with `VERSION_CHECK_ENABLED=false`.
 
 ---
 

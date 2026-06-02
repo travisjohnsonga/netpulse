@@ -24,6 +24,15 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
+# Bake the version (git isn't present in the image). Supplied by the build —
+# see docker-compose api build.args / netpulse.sh; empty in plain builds.
+ARG GIT_COMMIT=""
+ARG GIT_COUNT=""
+ARG BUILT_AT=""
+ENV NETPULSE_GIT_COMMIT=$GIT_COMMIT \
+    NETPULSE_GIT_COUNT=$GIT_COUNT \
+    NETPULSE_BUILT_AT=$BUILT_AT
+
 RUN useradd -m -u 1000 netpulse && chown -R netpulse:netpulse /app
 USER netpulse
 

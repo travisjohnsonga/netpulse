@@ -8,6 +8,14 @@ cd "$(dirname "$0")"
 # (postgres, nats, …) is left untouched.
 API_SERVICES="api websocket config-manager scheduler alert-engine cve-engine lifecycle-engine security-engine stream-processor check-engine reachability-monitor"
 
+# Version stamped into the api image at build time (the image has no .git).
+# Exported so docker-compose's api build.args pick them up on any build below.
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+  export GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"
+  export GIT_COUNT="$(git rev-list --count HEAD 2>/dev/null)"
+  export BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+
 case "$1" in
   start)
     echo "Starting NetPulse..."
