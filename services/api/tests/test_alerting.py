@@ -105,6 +105,46 @@ class TestNotification:
         assert process_alert_event(ev) == {"matched": False, "route": None, "notified": 0}
 
 
+class TestTeamNotificationTargets:
+    def test_targets_expand_member_channels_and_webhooks(self, django_user_model):
+        from apps.alerting.engine import get_team_notification_targets
+        from apps.core.models import UserPreferences
+
+        team = Team.objects.create(name="NOC", slack_webhook_url="https://hooks/x",
+                                   discord_webhook_url="https://discord/y")
+        u = django_user_model.objects.create_user(
+            username="jsmith", password="x", email="j@co", first_name="John", last_name="Smith")
+        prefs = UserPreferences.for_user(u)
+        prefs.slack_user_id = "U123"; prefs.discord_user_id = "D456"; prefs.save()
+        TeamMember.objects.create(team=team, user=u, role="member",
+                                  notify_email=True, notify_slack=True, notify_discord=True)
+
+        targets = get_team_notification_targets(team)
+        assert {"type": "email", "address": "j@co", "name": "John Smith"} in targets
+        assert {"type": "slack_dm", "user_id": "U123"} in targets
+        assert {"type": "discord_mention", "user_id": "D456"} in targets
+        assert {"type": "slack_webhook", "url": "https://hooks/x"} in targets
+        assert {"type": "discord_webhook", "url": "https://discord/y"} in targets
+
+    def test_opt_out_and_missing_handle_excluded(self, team, django_user_model):
+        from apps.alerting.engine import get_team_notification_targets
+        u = django_user_model.objects.create_user(username="noslack", password="x", email="n@co")
+        # opted into slack but no slack_user_id on the (auto-created) profile.
+        TeamMember.objects.create(team=team, user=u, notify_email=True, notify_slack=True)
+        targets = get_team_notification_targets(team)
+        assert any(t["type"] == "email" for t in targets)
+        assert not any(t["type"] == "slack_dm" for t in targets)
+
+    def test_on_call_lead_limits_member_targets(self, team, policy, django_user_model):
+        from apps.alerting.engine import get_team_notification_targets
+        lead = django_user_model.objects.create_user(username="lead", password="x", email="lead@co")
+        member = django_user_model.objects.create_user(username="m2", password="x", email="m2@co")
+        TeamMember.objects.create(team=team, user=member, role="member", notify_email=True)
+        TeamMember.objects.create(team=team, user=lead, role="lead", notify_email=True)
+        emails = {t["address"] for t in get_team_notification_targets(team) if t["type"] == "email"}
+        assert emails == {"lead@co"}   # on-call falls back to the lead only
+
+
 # ── API ──────────────────────────────────────────────────────────────────────
 
 class TestAlertingApi:
@@ -117,6 +157,14 @@ class TestAlertingApi:
         assert add.status_code == 201
         members = auth_client.get(f"/api/alerting/teams/{tid}/members/").json()
         assert len(members) == 1 and members[0]["role"] == "lead"
+        assert members[0]["notify_discord"] is False  # default
+
+        # PATCH the membership: change role + notify toggles.
+        patch = auth_client.patch(f"/api/alerting/teams/{tid}/members/{u.id}/",
+                                  {"role": "manager", "notify_discord": True}, format="json")
+        assert patch.status_code == 200
+        assert patch.json()["role"] == "manager" and patch.json()["notify_discord"] is True
+
         rm = auth_client.delete(f"/api/alerting/teams/{tid}/members/{u.id}/")
         assert rm.status_code == 204
         assert auth_client.get(f"/api/alerting/teams/{tid}/members/").json() == []

@@ -40,6 +40,7 @@ class TeamMember(TimestampedModel):
     notify_email = models.BooleanField(default=True)
     notify_sms = models.BooleanField(default=False)
     notify_slack = models.BooleanField(default=False)
+    notify_discord = models.BooleanField(default=False)
 
     class Meta(TimestampedModel.Meta):
         unique_together = ["team", "user"]

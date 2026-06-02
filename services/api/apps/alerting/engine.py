@@ -89,6 +89,48 @@ def step_email_recipients(step) -> list[tuple]:
     return out
 
 
+def get_team_notification_targets(team) -> list[dict]:
+    """
+    Resolve a team to a flat list of notification targets:
+      - the on-call member if a schedule resolves one, else every member,
+        each expanded into the channels they opted into:
+          {"type": "email", "address", "name"}
+          {"type": "slack_dm", "user_id"}        (member's profile slack_user_id)
+          {"type": "discord_mention", "user_id"} (member's profile discord_user_id)
+      - plus the team's channel webhooks:
+          {"type": "slack_webhook", "url"} / {"type": "discord_webhook", "url"}
+    Slack/Discord per-user targets are only included when the member opted in
+    AND has the corresponding handle set in their profile.
+    """
+    from apps.core.models import UserPreferences
+
+    on_call = get_on_call_user(team)
+    members = list(team.memberships.select_related("user").all())
+    if on_call:
+        members = [m for m in members if m.user_id == on_call.id]
+
+    prefs = {p.user_id: p for p in
+             UserPreferences.objects.filter(user_id__in=[m.user_id for m in members])}
+
+    targets: list[dict] = []
+    for tm in members:
+        user = tm.user
+        p = prefs.get(user.id)
+        if tm.notify_email and user.email:
+            targets.append({"type": "email", "address": user.email,
+                            "name": user.get_full_name() or user.username})
+        if tm.notify_slack and p and p.slack_user_id:
+            targets.append({"type": "slack_dm", "user_id": p.slack_user_id})
+        if tm.notify_discord and p and p.discord_user_id:
+            targets.append({"type": "discord_mention", "user_id": p.discord_user_id})
+
+    if team.slack_webhook_url:
+        targets.append({"type": "slack_webhook", "url": team.slack_webhook_url})
+    if team.discord_webhook_url:
+        targets.append({"type": "discord_webhook", "url": team.discord_webhook_url})
+    return targets
+
+
 def process_alert_event(alert_event) -> dict:
     """
     Match an AlertEvent to a route and fire the policy's first step by email.

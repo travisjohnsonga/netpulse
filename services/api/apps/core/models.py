@@ -95,6 +95,10 @@ class UserPreferences(TimestampedModel):
 
     # Notifications
     email_alerts = models.BooleanField(default=True)
+    # Chat handles for alert routing — used to DM / @mention the user when their
+    # team is notified (see apps.alerting.engine.get_team_notification_targets).
+    slack_user_id = models.CharField(max_length=64, blank=True)
+    discord_user_id = models.CharField(max_length=64, blank=True)
 
     class Meta:
         verbose_name = "user preferences"

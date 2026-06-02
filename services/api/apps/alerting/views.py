@@ -50,13 +50,20 @@ class TeamViewSet(viewsets.ModelViewSet):
         ok, err = channels.send_discord(team.discord_webhook_url, payload)
         return Response({"ok": ok, "error": err})
 
-    @action(detail=True, methods=["delete"], url_path=r"members/(?P<user_id>[^/.]+)")
-    def remove_member(self, request, pk=None, user_id=None):
+    @action(detail=True, methods=["delete", "patch"], url_path=r"members/(?P<user_id>[^/.]+)")
+    def member_detail(self, request, pk=None, user_id=None):
+        """PATCH role / notify_* for a member, or DELETE them from the team."""
         team = self.get_object()
-        deleted, _ = team.memberships.filter(user_id=user_id).delete()
-        if not deleted:
+        membership = team.memberships.filter(user_id=user_id).select_related("user").first()
+        if membership is None:
             return Response({"detail": "not a member"}, status=status.HTTP_404_NOT_FOUND)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        if request.method == "DELETE":
+            membership.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        ser = TeamMemberSerializer(membership, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
 
 
 class ContactMethodViewSet(viewsets.ModelViewSet):
