@@ -36,12 +36,20 @@ def _poller(activity, publisher):
     return p
 
 
-def test_poll_skipped_when_gnmi_active():
+def _device_metrics():
+    # A profile of device-metric OIDs that gNMI covers (none are always-poll).
+    return Device.from_dict({
+        "device_id": "8", "hostname": "r8", "ip": "10.0.0.8", "version": 2,
+        "poll_profiles": [{"name": "device", "oids": ["1.3.6.1.4.1.9.9.109.1.1.1.1.8.1"]}],
+    })
+
+
+def test_poll_skipped_when_gnmi_active_for_covered_oids():
+    # A profile with only gNMI-covered metric OIDs is fully suppressed.
     pub = _FakePublisher()
     poller = _poller(_FakeActivity(True), pub)
-    dev = _device()
+    dev = _device_metrics()
 
-    # Should return before doing any SNMP work / publishing.
     snmp_called = False
 
     async def _fail_snmp(*a, **k):
@@ -54,7 +62,28 @@ def test_poll_skipped_when_gnmi_active():
 
     assert snmp_called is False
     assert pub.published == []
-    assert poller._suppressed["7"] is True
+    assert poller._suppressed["8"] is True
+
+
+def test_sysuptime_still_polled_when_gnmi_active():
+    # gNMI doesn't carry uptime — sysUpTime must still be polled (fix #3), so the
+    # profile is reduced to the always-poll OIDs rather than skipped entirely.
+    pub = _FakePublisher()
+    poller = _poller(_FakeActivity(True), pub)
+    dev = _device()  # profile oids = [sysUpTime]
+
+    seen_oids = {}
+
+    async def _ok_snmp(device, oids, creds):
+        seen_oids["oids"] = oids
+        return {"1.3.6.1.2.1.1.3.0": {"value": "123", "type": "TimeTicks", "name": "sysUpTime.0"}}
+
+    poller._snmp_get = _ok_snmp
+    asyncio.run(poller._poll(dev, dev.poll_profiles[0]))
+
+    assert seen_oids["oids"] == ["1.3.6.1.2.1.1.3.0"]  # only the always-poll OID
+    assert len(pub.published) == 1
+    assert poller._suppressed["7"] is True  # device metrics still marked suppressed
 
 
 def test_poll_runs_when_gnmi_inactive():
