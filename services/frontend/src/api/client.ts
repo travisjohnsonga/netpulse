@@ -1056,6 +1056,9 @@ export interface DiscoveredDevice {
   discovered_hostname: string
   discovered_vendor: string
   discovered_platform: string
+  device_category: 'network_device' | 'endpoint' | 'server' | 'printer' | 'unknown'
+  os_detected: string
+  os_accuracy: number | null
   status: 'pending' | 'approved' | 'rejected'
   already_exists: boolean
   existing_device_id: number | null
@@ -1106,9 +1109,15 @@ export async function fetchJobDiscovered(jobId: number): Promise<DiscoveredDevic
   return unwrap(data)
 }
 
-export async function fetchDiscoveredDevices(status = 'pending'): Promise<DiscoveredDevice[]> {
+export async function fetchDiscoveredDevices(
+  status = 'pending',
+  showAll = false,
+): Promise<DiscoveredDevice[]> {
+  // showAll=true also returns endpoints/workstations (hidden by default server-side).
+  const params = new URLSearchParams({ status })
+  if (showAll) params.set('show_all', 'true')
   const { data } = await api.get<DiscoveredDevice[] | Paginated<DiscoveredDevice>>(
-    `/devices/discovery/discovered/?status=${status}`)
+    `/devices/discovery/discovered/?${params.toString()}`)
   return unwrap(data)
 }
 
