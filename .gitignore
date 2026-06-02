@@ -94,3 +94,9 @@ mibs/vendor/aruba/*.my
 mibs/vendor/aruba/*.mib
 mibs/vendor/aos-cx/*.my
 mibs/vendor/aos-cx/*.mib
+mibs/vendor/fortinet/*.my
+mibs/vendor/fortinet/*.mib
+mibs/vendor/arista/*.my
+mibs/vendor/arista/*.mib
+# Keep the per-vendor READMEs (download instructions) tracked.
+!mibs/vendor/*/README.md

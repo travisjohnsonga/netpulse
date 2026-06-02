@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 #
 # Download publicly available SNMP MIB files for OID resolution.
-# Pulls standard RFC MIBs from net-snmp and vendor MIBs from public GitHub repos.
-# Re-runnable; missing sources are warned about, not fatal.
+#
+# Only two sources are reliably public + cloneable: net-snmp (standard RFC MIBs)
+# and cisco/cisco-mibs. Other vendors require an authenticated portal download —
+# this script tries a best-effort circitor.fr fallback for a few and otherwise
+# prints manual-download instructions. Re-runnable.
 set -u
+export GIT_TERMINAL_PROMPT=0   # never prompt for git credentials on a 404/private repo
 
 cd "$(dirname "$0")/.." || exit 1
 
@@ -14,7 +18,7 @@ for d in standard vendor/cisco vendor/fortinet vendor/juniper vendor/arista \
   mkdir -p "mibs/$d"
 done
 
-# ── Standard RFC MIBs (net-snmp) ──────────────────────────────────────────────
+# ── Standard RFC MIBs (net-snmp — public) ─────────────────────────────────────
 BASE="https://raw.githubusercontent.com/net-snmp/net-snmp/master/mibs"
 for mib in SNMPv2-SMI SNMPv2-TC SNMPv2-MIB RFC1213-MIB IF-MIB IP-MIB \
            TCP-MIB UDP-MIB HOST-RESOURCES-MIB ENTITY-MIB DISMAN-EVENT-MIB; do
@@ -23,34 +27,65 @@ for mib in SNMPv2-SMI SNMPv2-TC SNMPv2-MIB RFC1213-MIB IF-MIB IP-MIB \
     || echo "    WARNING: $mib not found"
 done
 
-# ── helper: shallow-clone a repo and copy MIB files into a vendor dir ─────────
-clone_copy() {  # <repo-url> <dest-dir> <src-subdir-or-.>
-  local url="$1" dest="$2" sub="${3:-.}" tmp
-  tmp="$(mktemp -d)"
-  echo "  cloning $(basename "$url" .git) ..."
-  if git clone --depth=1 --quiet "$url" "$tmp" 2>/dev/null; then
-    cp "$tmp/$sub"/*.my  "$dest"/ 2>/dev/null
-    cp "$tmp/$sub"/*.mib "$dest"/ 2>/dev/null
-    cp "$tmp/$sub"/*.txt "$dest"/ 2>/dev/null
-    echo "    -> $(find "$dest" -maxdepth 1 -type f \( -name '*.my' -o -name '*.mib' -o -name '*.txt' \) | wc -l) file(s) in $dest"
-  else
-    echo "    WARNING: could not clone $url (offline? private?) — see $dest/README.md"
-  fi
-  rm -rf "$tmp"
+# ── Cisco MIBs (github.com/cisco/cisco-mibs — public) ─────────────────────────
+echo "  cloning cisco/cisco-mibs ..."
+tmp="$(mktemp -d)"
+if git clone --depth=1 --quiet https://github.com/cisco/cisco-mibs.git "$tmp" 2>/dev/null; then
+  cp "$tmp"/v2/*.my mibs/vendor/cisco/ 2>/dev/null
+  echo "    -> $(find mibs/vendor/cisco -maxdepth 1 -name '*.my' | wc -l) Cisco MIB(s)"
+else
+  echo "    WARNING: could not clone cisco-mibs (offline?)"
+fi
+rm -rf "$tmp"
+
+# ── Best-effort circitor.fr fallback (public mirror; many MIBs, no guarantees) ─
+CIRC="https://www.circitor.fr/Mibs/Mib"
+try_circitor() {  # <letter> <MIB-NAME> <dest-dir>
+  curl -sf "$CIRC/$1/$2.mib" -o "$3/$2.mib" 2>/dev/null \
+    && echo "    circitor: $2" || echo "    circitor: $2 not available"
 }
-
-clone_copy https://github.com/cisco/cisco-mibs.git           mibs/vendor/cisco     v2
-clone_copy https://github.com/fortinet/fortios-mibs.git      mibs/vendor/fortinet  .
-clone_copy https://github.com/aristanetworks/eos-snmp-mibs.git mibs/vendor/arista  .
-clone_copy https://github.com/sonicwall/sonicwall-mibs.git   mibs/vendor/sonicwall .
-clone_copy https://github.com/aruba/aruba-mibs.git           mibs/vendor/aruba     .
-# HPE AOS-CX — try a couple of known org paths.
-clone_copy https://github.com/aruba/aos-cx-mibs.git          mibs/vendor/aos-cx    . \
-  || clone_copy https://github.com/hpe-networking/aos-cx-mibs.git mibs/vendor/aos-cx .
+echo "  trying circitor.fr fallbacks ..."
+try_circitor F FORTINET-CORE-MIB      mibs/vendor/fortinet
+try_circitor F FORTINET-FORTIGATE-MIB mibs/vendor/fortinet
+try_circitor J JUNIPER-SMI            mibs/vendor/juniper
+try_circitor J JUNIPER-MIB            mibs/vendor/juniper
+try_circitor A ARUBA-MIB              mibs/vendor/aruba
 
 echo ""
-echo "MIB download complete. Files in mibs/:"
+echo "MIBs present in mibs/:"
 find mibs -type f \( -name '*.my' -o -name '*.mib' \) | sort | sed 's/^/  /'
-echo ""
-echo "Note: standard MIBs are git-ignored; small vendor MIBs (fortinet/arista) are"
-echo "committed. Re-run any time to refresh."
+
+# ── Manual downloads (vendor portals require authentication) ──────────────────
+cat <<'EOF'
+
+==================================================
+  Manual MIB Downloads (authenticated portals)
+==================================================
+Vendor MIBs below are not publicly cloneable. Download from the vendor portal
+and extract into the matching mibs/vendor/<name>/ directory:
+
+Fortinet FortiOS:
+  https://support.fortinet.com  → Download → Firmware Images → MIBs
+  → mibs/vendor/fortinet/
+
+Arista EOS:
+  https://www.arista.com/en/support/software-download  → MIBs
+  → mibs/vendor/arista/
+
+Aruba AOS (controllers/APs):
+  https://asp.arubanetworks.com  → Downloads → Software → MIBs
+  → mibs/vendor/aruba/
+
+HPE AOS-CX:
+  https://networkingsupport.hpe.com  → search "AOS-CX MIB"
+  → mibs/vendor/aos-cx/
+
+SonicWall SonicOS:
+  https://www.sonicwall.com/support/  → Downloads → MIBs
+  → mibs/vendor/sonicwall/
+
+Juniper Junos:
+  https://www.juniper.net/documentation/  → SNMP MIB Explorer
+  → mibs/vendor/juniper/
+==================================================
+EOF
