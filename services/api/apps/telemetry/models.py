@@ -77,6 +77,7 @@ class MonitoredInterface(TimestampedModel):
         AUTO = "auto", "Auto"
         SNMP = "snmp", "SNMP"
         GNMI = "gnmi", "gNMI"
+        REST = "rest", "REST API"  # AOS-CX REST interface discovery
 
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="monitored_interfaces")
     if_index = models.IntegerField(null=True, blank=True)

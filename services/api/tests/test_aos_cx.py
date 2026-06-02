@@ -175,6 +175,98 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(enrich, "_collect_config", lambda d: None)
 
 
+class _FakeClient:
+    """Context-manager stand-in for AOSCXClient (canned interfaces + neighbours)."""
+
+    def __init__(self, ifaces, neighbors):
+        self._ifaces = ifaces
+        self._neighbors = neighbors
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def login(self, username, password):
+        return {}
+
+    def get_interfaces(self):
+        return self._ifaces
+
+    def get_lldp_neighbors(self):
+        return self._neighbors
+
+
+class TestAOSCXInterfaceDiscovery:
+    def test_aos_cx_interface_discovery(self, aos_device, aos_profile, monkeypatch):
+        from apps.telemetry import discovery
+
+        aos_profile.vault_path = "secret/devices/cx"
+        aos_profile.save()
+        monkeypatch.setattr(discovery.vault, "read_secret", lambda p: {"ssh_password": "pw"})
+        ifaces = [
+            {"name": "1/1/1", "type": "system", "admin_state": "up", "link_state": "up",
+             "ip": "", "description": "uplink", "speed_mbps": 1000},
+            {"name": "1/1/2", "type": "system", "admin_state": "down", "link_state": "down",
+             "ip": "", "description": "", "speed_mbps": None},
+        ]
+        neighbors = [{"local_port": "1/1/1", "neighbor_hostname": "spine-1",
+                      "neighbor_port": "1/1/24", "neighbor_mgmt_ip": "10.0.0.9"}]
+        monkeypatch.setattr("apps.devices.aos_cx_client.AOSCXClient",
+                            lambda host, **kw: _FakeClient(ifaces, neighbors))
+
+        rows = discovery.discover_interfaces(aos_device)
+        by = {r["if_name"]: r for r in rows}
+
+        assert by["1/1/1"]["collection_method"] == "rest"
+        assert by["1/1/1"]["lldp_neighbor_hostname"] == "spine-1"
+        assert by["1/1/1"]["lldp_neighbor_port"] == "1/1/24"
+        assert by["1/1/1"]["lldp_neighbor_mgmt_ip"] == "10.0.0.9"
+        assert by["1/1/1"]["if_speed_mbps"] == 1000
+        assert by["1/1/1"]["auto_select"] is True    # up + LLDP neighbour
+        assert by["1/1/2"]["auto_select"] is False    # down
+
+    def test_aos_cx_interface_discovery_falls_back_to_ssh(self, aos_device, monkeypatch):
+        """REST failure (no creds / unreachable) falls through to the SSH path."""
+        from apps.telemetry import discovery
+
+        # aos_profile fixture has ssh_enabled=True; REST raises → SSH fallback.
+        monkeypatch.setattr(discovery.vault, "read_secret", lambda p: {})
+
+        def _boom(device, profile, creds):
+            raise discovery.DiscoveryError("REST down")
+        monkeypatch.setattr(discovery, "_discover_via_aos_cx_rest", _boom)
+        ssh_rows = [{"if_name": "1/1/1", "if_type": "", "oper_status": "up",
+                     "lldp_neighbor_hostname": None}]
+        monkeypatch.setattr(discovery, "_discover_via_ssh", lambda d, p, c: list(ssh_rows))
+
+        rows = discovery.discover_interfaces(aos_device)
+        assert rows[0]["collection_method"] == "snmp"  # non-REST rows keep the snmp label
+
+
+class TestAOSCXLLDPDiscovery:
+    def test_aos_cx_lldp_discovery(self, aos_device):
+        from apps.devices import topology
+        from apps.devices.models import Device, TopologyLink
+
+        neighbor = Device.objects.create(
+            hostname="spine-1", ip_address="10.0.0.9", management_ip="10.0.0.9",
+            platform="aos_cx")
+        interfaces = [{
+            "if_index": None, "if_name": "1/1/1", "if_description": "",
+            "if_speed_mbps": 1000, "if_type": "system", "oper_status": "up",
+            "admin_status": "up", "lldp_neighbor_hostname": "spine-1",
+            "lldp_neighbor_port": "1/1/24", "lldp_neighbor_desc": "1/1/24",
+            "lldp_neighbor_mgmt_ip": "10.0.0.9",
+        }]
+
+        found = topology.discover_links(aos_device, interfaces=interfaces)
+
+        assert any(f.get("matched_device_id") == neighbor.id for f in found)
+        assert TopologyLink.objects.count() == 1
+
+
 class TestAOSCXEnrichmentPipeline:
     def test_aos_cx_enrichment_pipeline(self, aos_device, monkeypatch):
         _no_network(monkeypatch)

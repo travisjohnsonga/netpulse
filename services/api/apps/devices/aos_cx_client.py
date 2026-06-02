@@ -104,7 +104,8 @@ class AOSCXClient:
     # ── interfaces (wired into enrichment in Stage 2) ────────────────────────
     def get_interfaces(self) -> list[dict]:
         """
-        Return interfaces as ``[{name, type, admin_state, link_state, ip}]``.
+        Return interfaces as
+        ``[{name, type, admin_state, link_state, ip, description, speed_mbps}]``.
         ``GET /system/interfaces?depth=2`` returns a dict keyed by interface
         name (depth>=2) or a map of name→URI (depth 1); both are handled.
         """
@@ -114,7 +115,8 @@ class AOSCXClient:
             if not isinstance(obj, dict):
                 # depth-1 form (name → URI string): nothing but the name.
                 out.append({"name": name, "type": "", "admin_state": "",
-                            "link_state": "", "ip": ""})
+                            "link_state": "", "ip": "", "description": "",
+                            "speed_mbps": None})
                 continue
             out.append({
                 "name": obj.get("name", name) or name,
@@ -122,6 +124,8 @@ class AOSCXClient:
                 "admin_state": obj.get("admin_state", "") or "",
                 "link_state": obj.get("link_state", "") or "",
                 "ip": obj.get("ip4_address", "") or "",
+                "description": obj.get("description", "") or "",
+                "speed_mbps": _speed_mbps(obj.get("link_speed")),
             })
         return out
 
@@ -136,12 +140,12 @@ class AOSCXClient:
         for key, obj in _iter_named(data):
             if not isinstance(obj, dict):
                 continue
+            info = obj.get("neighbor_info") if isinstance(obj.get("neighbor_info"), dict) else {}
             out.append({
-                "local_port": obj.get("port", key) or key,
-                "neighbor_hostname": obj.get("neighbor_info", {}).get("chassis_name", "")
-                if isinstance(obj.get("neighbor_info"), dict) else "",
-                "neighbor_port": obj.get("neighbor_info", {}).get("port_id", "")
-                if isinstance(obj.get("neighbor_info"), dict) else "",
+                "local_port": obj.get("port") or _last_segment(key),
+                "neighbor_hostname": info.get("chassis_name", "") or "",
+                "neighbor_port": (info.get("port_id") or obj.get("port_id", "")) or "",
+                "neighbor_mgmt_ip": (info.get("mgmt_ip") or info.get("chassis_id", "")) or "",
             })
         return out
 
@@ -167,3 +171,27 @@ def _iter_named(data):
         for obj in data:
             name = obj.get("name") if isinstance(obj, dict) else None
             yield (name or "", obj)
+
+
+def _speed_mbps(link_speed):
+    """
+    Normalize AOS-CX ``link_speed`` to Mbps. AOS-CX reports it in bits/sec
+    (e.g. 1_000_000_000 for 1G); values that already look like Mbps are passed
+    through. Returns None when absent/unparseable.
+    """
+    try:
+        val = int(link_speed)
+    except (TypeError, ValueError):
+        return None
+    if val <= 0:
+        return None
+    return val // 1_000_000 if val >= 1_000_000 else val
+
+
+def _last_segment(key: str) -> str:
+    """
+    The local port for an LLDP entry. AOS-CX keys this collection by the local
+    interface name, sometimes as a composite "<port>,<chassis>,<port_id>"; the
+    local port is the leading segment.
+    """
+    return str(key).split(",", 1)[0]
