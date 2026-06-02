@@ -194,6 +194,14 @@ class DeviceViewSet(viewsets.ModelViewSet):
         data["lldp_neighbors"] = self._lldp_neighbors(device)
         return Response(data)
 
+    @action(detail=True, methods=["get"], url_path="reachability")
+    def reachability(self, request, pk=None):
+        """Ping/RTT latency + reachability history (?period=1h|6h|24h|7d)."""
+        from . import metrics_influx
+        device = self.get_object()
+        return Response(metrics_influx.query_reachability(
+            str(device.id), request.query_params.get("period", "1h")))
+
     @staticmethod
     def _lldp_neighbors(device):
         from django.db.models import Q

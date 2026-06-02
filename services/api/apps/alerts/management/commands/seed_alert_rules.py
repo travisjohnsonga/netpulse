@@ -60,6 +60,16 @@ DEFAULT_RULES = [
         "Syslog/trap message matched an anomaly keyword.",
         {"source": "stream-processor", "metric": "log_keywords"}, 60,
     ),
+    (
+        "High Ping Latency", "medium",
+        "Device RTT exceeded the warning threshold (default >100ms for 3 checks).",
+        {"source": "reachability_monitor", "metric": "rtt_ms"}, 30,
+    ),
+    (
+        "Ping Latency Critical", "high",
+        "Device RTT exceeded the critical threshold (default >500ms for 2 checks).",
+        {"source": "reachability_monitor", "metric": "rtt_ms"}, 15,
+    ),
 ]
 
 

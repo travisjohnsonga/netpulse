@@ -330,7 +330,7 @@ class TestAutoResolution:
         cmd = Command()
         row = {"id": d.id, "hostname": d.hostname, "ip_address": d.ip_address,
                "status": "unreachable", "consecutive_failures": 5}
-        cmd._apply_all([(row, True, "tcp")])  # device came back up
+        cmd._apply_all([(row, True, "tcp", 2.5)])  # device came back up
         assert AlertEvent.objects.filter(state="firing").count() == 0
         assert AlertEvent.objects.get(state="resolved").resolved_by == "auto"
 

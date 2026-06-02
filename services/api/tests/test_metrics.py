@@ -37,6 +37,32 @@ class TestMetricsEndpoint:
         assert captured["p"] == "1h"
 
 
+class TestReachabilityEndpoint:
+    def test_requires_auth(self, api_client, device):
+        assert api_client.get(f"/api/devices/{device.id}/reachability/").status_code == 401
+
+    def test_returns_query_result(self, auth_client, device, monkeypatch):
+        from apps.devices import metrics_influx
+        sample = {"device_id": str(device.id), "period": "24h", "current": True,
+                  "rtt_ms": 2.3, "uptime_pct_24h": 99.8, "avg_rtt_ms": 2.1,
+                  "max_rtt_ms": 45.2, "data": [{"time": "t", "rtt_ms": 2.1, "reachable": True}]}
+        captured = {}
+        monkeypatch.setattr(metrics_influx, "query_reachability",
+                            lambda d, p: captured.update(d=d, p=p) or sample)
+        resp = auth_client.get(f"/api/devices/{device.id}/reachability/?period=24h")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["uptime_pct_24h"] == 99.8 and body["rtt_ms"] == 2.3
+        assert captured == {"d": str(device.id), "p": "24h"}
+
+    def test_invalid_period_degrades(self, monkeypatch):
+        from apps.devices import metrics_influx
+        monkeypatch.setattr(metrics_influx, "_client", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+        out = metrics_influx.query_reachability("3", "999d")
+        assert out["period"] == "1h"          # bad period normalised
+        assert out["rtt_ms"] is None and out["data"] == []  # degrades, no raise
+
+
 class TestMetricsModule:
     def test_pct_used(self):
         from apps.devices.metrics_influx import _pct_used

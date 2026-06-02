@@ -68,6 +68,14 @@ def _empty(device_id: str, period: str) -> dict:
         "timeseries": {"uptime": [], "memory_used_pct": [], "cpu_pct": []},
         "interfaces": [],
         "environment": {},
+        "reachability": _empty_reachability(),
+    }
+
+
+def _empty_reachability() -> dict:
+    return {
+        "current": None, "rtt_ms": None, "uptime_pct_24h": None,
+        "avg_rtt_ms": None, "max_rtt_ms": None, "data": [],
     }
 
 
@@ -177,7 +185,91 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
 
     # ── timeseries ────────────────────────────────────────────────────────────
     result["timeseries"] = series
+
+    # ── reachability / ping latency ───────────────────────────────────────────
+    try:
+        result["reachability"] = _reachability(query_api, bucket, device_id, period)
+    except Exception as exc:
+        logger.warning("reachability query failed for device %s: %s", device_id, exc)
     return result
+
+
+def query_reachability(device_id: str, period: str = "1h") -> dict:
+    """Standalone ping/RTT history for GET /api/devices/{id}/reachability/."""
+    if period not in VALID_PERIODS:
+        period = "1h"
+    bucket = getattr(settings, "INFLUXDB_BUCKET", "metrics")
+    out = {"device_id": device_id, "period": period, **_empty_reachability()}
+    try:
+        client = _client()
+    except Exception as exc:
+        logger.warning("InfluxDB client unavailable: %s", exc)
+        return out
+    try:
+        out.update(_reachability(client.query_api(), bucket, device_id, period))
+    except Exception as exc:
+        logger.warning("reachability query failed for device %s: %s", device_id, exc)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    return out
+
+
+def _reachability(query_api, bucket, device_id, period) -> dict:
+    """
+    rtt_ms + is_reachable from the device_reachability measurement: current
+    sample, period avg/max RTT, 24h uptime %, and a windowed series for charting.
+    """
+    window = _WINDOW.get(period, "1m")
+    out = _empty_reachability()
+
+    # Windowed series (mean rtt + mean reachable per bucket).
+    series_flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -{period})
+  |> filter(fn: (r) => r._measurement == "device_reachability" and r.device_id == "{device_id}")
+  |> filter(fn: (r) => r._field == "rtt_ms" or r._field == "is_reachable")
+  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+'''
+    data, rtts = [], []
+    for table in query_api.query(series_flux):
+        for rec in table.records:
+            t = rec.get_time().isoformat().replace("+00:00", "Z")
+            v = rec.values
+            rtt = v.get("rtt_ms")
+            reach = v.get("is_reachable")
+            rtt = round(rtt, 2) if isinstance(rtt, (int, float)) else None
+            reachable = (reach >= 0.5) if isinstance(reach, (int, float)) else None
+            data.append({"time": t, "rtt_ms": rtt, "reachable": reachable})
+            if rtt is not None and reachable:
+                rtts.append(rtt)
+    out["data"] = data
+    if rtts:
+        out["avg_rtt_ms"] = round(sum(rtts) / len(rtts), 2)
+        out["max_rtt_ms"] = round(max(rtts), 2)
+    # Latest sample (current state + rtt).
+    for d in reversed(data):
+        if d["reachable"] is not None:
+            out["current"] = d["reachable"]
+            out["rtt_ms"] = d["rtt_ms"]
+            break
+    # 24h uptime % = mean of is_reachable over the last 24h.
+    up_flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "device_reachability" and r.device_id == "{device_id}")
+  |> filter(fn: (r) => r._field == "is_reachable")
+  |> mean()
+'''
+    for table in query_api.query(up_flux):
+        for rec in table.records:
+            val = rec.get_value()
+            if isinstance(val, (int, float)):
+                out["uptime_pct_24h"] = round(val * 100, 2)
+    return out
 
 
 _OPER = {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6: "notPresent", 7: "lowerLayerDown"}

@@ -23,7 +23,7 @@ def device():
 class TestReachabilityApply:
     def test_reachable_updates_heartbeat(self, device):
         cmd = _cmd()
-        t = cmd._apply_all([(_row(device), True, "tcp")])
+        t = cmd._apply_all([(_row(device), True, "tcp", 2.5)])
         device.refresh_from_db()
         assert device.is_reachable is True
         assert device.consecutive_failures == 0
@@ -34,12 +34,12 @@ class TestReachabilityApply:
         from apps.devices.models import Device
         cmd = _cmd()
         # 2 failures: still active, no transition
-        cmd._apply_all([(_row(device), False, "tcp")])
+        cmd._apply_all([(_row(device), False, "tcp", None)])
         device.refresh_from_db(); assert device.consecutive_failures == 1 and device.status == "active"
-        cmd._apply_all([(_row(device), False, "tcp")])
+        cmd._apply_all([(_row(device), False, "tcp", None)])
         device.refresh_from_db(); assert device.consecutive_failures == 2
         # 3rd failure → unreachable + high transition
-        trans = cmd._apply_all([(_row(device), False, "tcp")])
+        trans = cmd._apply_all([(_row(device), False, "tcp", None)])
         device.refresh_from_db()
         assert device.consecutive_failures == 3
         assert device.status == Device.Status.UNREACHABLE
@@ -56,12 +56,49 @@ class TestReachabilityApply:
         device.unreachable_since = timezone.now()
         device.save()
         cmd = _cmd()
-        trans = cmd._apply_all([(_row(device), True, "tcp")])
+        trans = cmd._apply_all([(_row(device), True, "tcp", 2.5)])
         device.refresh_from_db()
         assert device.status == "active" and device.is_reachable is True
         assert device.consecutive_failures == 0
         assert device.unreachable_since is None  # outage clock cleared on recovery
         assert trans and trans[0][0] == "info" and "reachable again" in trans[0][3]
+
+
+class TestLatencyAlerts:
+    def test_classify_latency(self):
+        from apps.devices.management.commands.run_reachability_monitor import classify_latency
+        assert classify_latency(None) == "ok"      # unreachable handled elsewhere
+        assert classify_latency(5.0) == "ok"
+        assert classify_latency(150.0) == "warn"    # > 100ms default
+        assert classify_latency(600.0) == "crit"    # > 500ms default
+
+    def test_warn_after_consecutive_then_recovers(self, device):
+        cmd = _cmd(); cmd._lat_state = {}
+        row = _row(device)
+        assert cmd._latency_alerts([(row, True, "tcp", 150.0)]) == []   # 1/3
+        assert cmd._latency_alerts([(row, True, "tcp", 150.0)]) == []   # 2/3
+        a = cmd._latency_alerts([(row, True, "tcp", 150.0)])            # 3/3 → warn
+        assert a and a[0][0] == "medium" and a[0][3] == "High Ping Latency"
+        # Already warn → no re-emit while it stays high.
+        assert cmd._latency_alerts([(row, True, "tcp", 150.0)]) == []
+        # Drops back below threshold → info recovery.
+        rec = cmd._latency_alerts([(row, True, "tcp", 5.0)])
+        assert rec and rec[0][0] == "info"
+
+    def test_crit_after_consecutive(self, device):
+        cmd = _cmd(); cmd._lat_state = {}
+        row = _row(device)
+        assert cmd._latency_alerts([(row, True, "tcp", 600.0)]) == []   # 1/2
+        a = cmd._latency_alerts([(row, True, "tcp", 600.0)])            # 2/2 → crit
+        assert a and a[0][0] == "high" and a[0][3] == "Ping Latency Critical"
+
+    def test_unreachable_resets_latency_state(self, device):
+        cmd = _cmd(); cmd._lat_state = {}
+        row = _row(device)
+        cmd._latency_alerts([(row, True, "tcp", 150.0)])
+        assert device.id in cmd._lat_state
+        cmd._latency_alerts([(row, False, "tcp", None)])
+        assert device.id not in cmd._lat_state
 
 
 class TestReachabilitySerializer:
