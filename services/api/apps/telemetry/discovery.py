@@ -76,15 +76,15 @@ def discover_interfaces(device) -> list[dict]:
     host = str(device.management_ip or device.ip_address)
     collection_method = "gnmi" if profile.gnmi_enabled else "snmp"
 
-    if profile.snmpv2c_enabled:
-        community = creds.get("snmpv2c_community") or "public"
-        raw = _discover_via_snmp(host, community, profile.snmpv2c_port or 161)
+    if profile.snmpv2c_enabled or profile.snmpv3_enabled:
+        from apps.credentials.snmp_auth import build_snmp_auth
+        auth = build_snmp_auth(profile, creds)
+        port = (profile.snmpv3_port if profile.snmpv3_enabled else profile.snmpv2c_port) or 161
+        raw = _discover_via_snmp(host, port, auth)
     elif profile.ssh_enabled:
         raw = _discover_via_ssh(device, profile, creds)
-    elif profile.snmpv3_enabled:
-        raise DiscoveryError("SNMPv3 discovery is not implemented yet")
     else:
-        raise DiscoveryError("profile has neither SNMP v2c nor SSH enabled")
+        raise DiscoveryError("profile has neither SNMP nor SSH enabled")
 
     for r in raw:
         r["auto_select"] = should_auto_select(r)
@@ -94,26 +94,23 @@ def discover_interfaces(device) -> list[dict]:
 
 # ── SNMP ──────────────────────────────────────────────────────────────────────
 
-def _discover_via_snmp(host: str, community: str, port: int) -> list[dict]:
+def _discover_via_snmp(host: str, port: int, auth_data) -> list[dict]:
     try:
-        return asyncio.run(_snmp_walk_all(host, community, port))
+        return asyncio.run(_snmp_walk_all(host, port, auth_data))
     except DiscoveryError:
         raise
     except Exception as exc:
         raise DiscoveryError(f"SNMP discovery failed: {exc}") from exc
 
 
-async def _snmp_walk_column(host: str, port: int, community: str, base_oid: str) -> dict[str, str]:
-    """Walk one OID column; return {index_suffix: value}."""
+async def _snmp_walk_column(engine, target, auth_data, base_oid: str) -> dict[str, str]:
+    """Walk one OID column on a shared engine/target; return {index_suffix: value}."""
     from pysnmp.hlapi.v3arch.asyncio import (
-        CommunityData, ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-        UdpTransportTarget, bulk_walk_cmd,
+        ContextData, ObjectIdentity, ObjectType, bulk_walk_cmd,
     )
     out: dict[str, str] = {}
-    engine = SnmpEngine()
-    target = await UdpTransportTarget.create((host, port), timeout=3, retries=1)
     objects = bulk_walk_cmd(
-        engine, CommunityData(community, mpModel=1), target, ContextData(),
+        engine, auth_data, target, ContextData(),
         0, 25, ObjectType(ObjectIdentity(base_oid)), lexicographicMode=False,
     )
     prefix = base_oid + "."
@@ -130,19 +127,26 @@ async def _snmp_walk_column(host: str, port: int, community: str, base_oid: str)
     return out
 
 
-async def _snmp_walk_all(host: str, community: str, port: int) -> list[dict]:
-    descr = await _snmp_walk_column(host, port, community, OID_IF_DESCR)
+async def _snmp_walk_all(host: str, port: int, auth_data) -> list[dict]:
+    from pysnmp.hlapi.v3arch.asyncio import SnmpEngine, UdpTransportTarget
+
+    # One engine + target shared across every column walk so v3 engine-ID
+    # discovery happens once, not per column.
+    engine = SnmpEngine()
+    target = await UdpTransportTarget.create((host, port), timeout=3, retries=1)
+
+    descr = await _snmp_walk_column(engine, target, auth_data, OID_IF_DESCR)
     if not descr:
-        raise DiscoveryError("no interfaces returned (check SNMP community / reachability)")
-    itype = await _snmp_walk_column(host, port, community, OID_IF_TYPE)
-    speed = await _snmp_walk_column(host, port, community, OID_IF_SPEED)
-    admin = await _snmp_walk_column(host, port, community, OID_IF_ADMIN)
-    oper = await _snmp_walk_column(host, port, community, OID_IF_OPER)
-    name = await _snmp_walk_column(host, port, community, OID_IF_NAME)
-    alias = await _snmp_walk_column(host, port, community, OID_IF_ALIAS)
-    hispeed = await _snmp_walk_column(host, port, community, OID_IF_HIGHSPEED)
-    lldp_name = await _snmp_walk_column(host, port, community, OID_LLDP_REM_SYSNAME)
-    lldp_port = await _snmp_walk_column(host, port, community, OID_LLDP_REM_PORTDESC)
+        raise DiscoveryError("no interfaces returned (check SNMP credentials / reachability)")
+    itype = await _snmp_walk_column(engine, target, auth_data, OID_IF_TYPE)
+    speed = await _snmp_walk_column(engine, target, auth_data, OID_IF_SPEED)
+    admin = await _snmp_walk_column(engine, target, auth_data, OID_IF_ADMIN)
+    oper = await _snmp_walk_column(engine, target, auth_data, OID_IF_OPER)
+    name = await _snmp_walk_column(engine, target, auth_data, OID_IF_NAME)
+    alias = await _snmp_walk_column(engine, target, auth_data, OID_IF_ALIAS)
+    hispeed = await _snmp_walk_column(engine, target, auth_data, OID_IF_HIGHSPEED)
+    lldp_name = await _snmp_walk_column(engine, target, auth_data, OID_LLDP_REM_SYSNAME)
+    lldp_port = await _snmp_walk_column(engine, target, auth_data, OID_LLDP_REM_PORTDESC)
 
     # lldp index = timeMark.localPortNum.remIndex — map by localPortNum (≈ ifIndex).
     def lldp_by_port(col: dict) -> dict[str, str]:

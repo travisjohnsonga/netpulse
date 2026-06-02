@@ -156,6 +156,62 @@ class TestDiscover:
         assert resp.status_code == 502
         assert "SNMP timeout" in resp.json()["error"]
 
+    def test_snmpv3_routes_to_snmp_walk(self, monkeypatch):
+        # An SNMPv3-only profile (no v2c, no SSH) must go through the SNMP walk,
+        # not raise, and use the v3 port.
+        from pysnmp.hlapi.v3arch.asyncio import UsmUserData
+
+        profile = CredentialProfile.objects.create(
+            name="v3-disc", snmpv3_enabled=True, snmpv3_username="netpulse-mon",
+            snmpv3_port=1610, vault_path="x")
+        dev = Device.objects.create(
+            hostname="v3rtr", ip_address="10.9.0.2", management_ip="10.9.0.2",
+            platform="ios_xe", status="active", credential_profile=profile)
+        raw = [
+            {"if_name": "GigabitEthernet0/0", "oper_status": "up",
+             "lldp_neighbor_hostname": "core1"},
+            {"if_name": "Loopback0", "oper_status": "up", "lldp_neighbor_hostname": None},
+        ]
+        captured = {}
+
+        def fake(host, port, auth_data):
+            captured.update(host=host, port=port, auth=auth_data)
+            return raw
+        monkeypatch.setattr(discovery, "_discover_via_snmp", fake)
+
+        out = discovery.discover_interfaces(dev)
+        assert captured["host"] == "10.9.0.2"
+        assert captured["port"] == 1610                       # v3 port, not 161
+        assert isinstance(captured["auth"], UsmUserData)      # v3 auth, not community
+        gi, lo = out
+        assert gi["auto_select"] is True and gi["collection_method"] == "snmp"
+        assert lo["auto_select"] is False                     # loopback, no neighbour
+
+
+# ── SNMP auth object ──────────────────────────────────────────────────────────
+
+
+class TestBuildSnmpAuth:
+    def test_v3_returns_usm_user_data(self):
+        from apps.credentials.snmp_auth import build_snmp_auth
+        from pysnmp.hlapi.v3arch.asyncio import UsmUserData
+
+        profile = CredentialProfile(
+            snmpv3_enabled=True, snmpv3_username="netpulse-mon",
+            snmpv3_auth_protocol="SHA", snmpv3_priv_protocol="AES",
+            snmpv3_security_level="authPriv")
+        auth = build_snmp_auth(
+            profile, {"snmpv3_auth_key": "authkey123", "snmpv3_priv_key": "privkey123"})
+        assert isinstance(auth, UsmUserData)
+
+    def test_v2c_returns_community_data(self):
+        from apps.credentials.snmp_auth import build_snmp_auth
+        from pysnmp.hlapi.v3arch.asyncio import CommunityData
+
+        profile = CredentialProfile(snmpv2c_enabled=True)
+        auth = build_snmp_auth(profile, {"snmpv2c_community": "public"})
+        assert isinstance(auth, CommunityData)
+
 
 # ── monitored interfaces CRUD ─────────────────────────────────────────────────
 

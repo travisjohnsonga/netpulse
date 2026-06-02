@@ -61,48 +61,13 @@ async def _snmp_get(ip: str, oids: list[str], auth_data) -> dict:
     return {str(vb[0]): str(vb[1]) for vb in var_binds}
 
 
-def _build_auth(profile, secrets):
-    """pysnmp auth object from the device's credential profile + OpenBao secrets."""
-    from pysnmp.hlapi.v3arch.asyncio import CommunityData, UsmUserData
-
-    if profile.snmpv3_enabled and profile.snmpv3_username:
-        from pysnmp.hlapi.v3arch.asyncio import (
-            usmAesCfb128Protocol, usmAesCfb192Protocol, usmAesCfb256Protocol,
-            usmDESPrivProtocol, usmHMAC128SHA224AuthProtocol, usmHMAC192SHA256AuthProtocol,
-            usmHMAC256SHA384AuthProtocol, usmHMAC384SHA512AuthProtocol,
-            usmHMACMD5AuthProtocol, usmHMACSHAAuthProtocol,
-        )
-        auth_map = {
-            "MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol,
-            "SHA224": usmHMAC128SHA224AuthProtocol, "SHA256": usmHMAC192SHA256AuthProtocol,
-            "SHA384": usmHMAC256SHA384AuthProtocol, "SHA512": usmHMAC384SHA512AuthProtocol,
-        }
-        priv_map = {
-            "DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol,
-            "AES128": usmAesCfb128Protocol, "AES192": usmAesCfb192Protocol,
-            "AES256": usmAesCfb256Protocol,
-        }
-        auth_p = auth_map.get((profile.snmpv3_auth_protocol or "SHA").upper(), usmHMACSHAAuthProtocol)
-        priv_p = priv_map.get((profile.snmpv3_priv_protocol or "AES").upper(), usmAesCfb128Protocol)
-        level = profile.snmpv3_security_level or "authPriv"
-        auth_key = secrets.get("snmpv3_auth_key") or None
-        priv_key = secrets.get("snmpv3_priv_key") or None
-        if level == "noAuthNoPriv":
-            return UsmUserData(profile.snmpv3_username)
-        if level == "authNoPriv" or not priv_key:
-            return UsmUserData(profile.snmpv3_username, auth_key, authProtocol=auth_p)
-        return UsmUserData(profile.snmpv3_username, auth_key, priv_key,
-                           authProtocol=auth_p, privProtocol=priv_p)
-    # SNMPv2c (community).
-    return CommunityData(secrets.get("snmpv2c_community") or "public", mpModel=1)
-
-
 def _snmp_collect(ip: str, profile, secrets) -> dict:
     """Run the SNMP GET (sync wrapper). Returns {oid: value} or {}."""
     if not (profile.snmpv3_enabled or profile.snmpv2c_enabled):
         return {}
     try:
-        auth = _build_auth(profile, secrets)
+        from apps.credentials.snmp_auth import build_snmp_auth
+        auth = build_snmp_auth(profile, secrets)
         return asyncio.run(_snmp_get(ip, _ENRICH_OIDS, auth))
     except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
         logger.warning("SNMP enrichment failed for %s: %s", ip, exc)
@@ -281,6 +246,16 @@ def enrich_device(device_id: int) -> dict:
     interfaces = None
     try:
         interfaces, _found, _enabled = _discover_interfaces(device)
+        # bulk_create skips the MonitoredInterface post_save signal that
+        # republishes the device to the poller, and there's no periodic
+        # republish — so without this nudge the new interfaces are persisted
+        # but never polled.
+        try:
+            from . import snmp_publish
+            snmp_publish.publish_device_upsert(device)
+        except Exception as exc:  # noqa: BLE001 — best-effort republish
+            logger.warning("Poller republish after interface discovery failed for %s: %s",
+                           device.hostname, exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Interface discovery failed for %s: %s", device.hostname, exc)
 
