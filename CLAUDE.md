@@ -3533,3 +3533,105 @@ For other platforms: hide Central settings entirely.
 ### Do NOT build until next session.
 ### Build AFTER basic AOS-CX telemetry templates.
 ### Priority: Medium (after direct telemetry works)
+
+## PINNED — AOS-CX Central Managed Config Push Pattern
+
+### Important: Config push on Central-managed AOS-CX
+
+When Aruba Central is managing an AOS-CX switch,
+direct SSH config push requires temporarily
+disabling Central management first.
+
+### Required sequence for config push:
+
+Step 1: Disable Central management via SSH
+  aruba-central disable
+
+Step 2: WAIT 2 seconds (critical!)
+  time.sleep(2)
+  ← Changes often fail without this delay
+  ← Central needs time to release control
+
+Step 3: Push config changes via SSH
+  (normal Netmiko config push)
+
+Step 4: Re-enable Central management
+  aruba-central enable
+
+Step 5: Verify Central reconnects
+  show aruba-central
+
+### Implementation in config push:
+
+def push_config_aos_cx_central(device, commands):
+    with netmiko.ConnectHandler(**ssh_params) as conn:
+        
+        # Step 1: Disable Central
+        conn.send_command('aruba-central disable')
+        logger.info(f"Central disabled on {device.hostname}")
+        
+        # Step 2: Critical delay
+        time.sleep(2)
+        
+        # Step 3: Push changes
+        output = conn.send_config_set(commands)
+        conn.save_config()  # write memory
+        logger.info(f"Config pushed to {device.hostname}")
+        
+        # Step 4: Re-enable Central
+        conn.send_command('aruba-central enable')
+        logger.info(f"Central re-enabled on {device.hostname}")
+        
+        # Step 5: Verify
+        status = conn.send_command('show aruba-central')
+        logger.info(f"Central status: {status[:100]}")
+        
+        return output
+
+### Error handling:
+
+If push fails after disabling Central:
+  MUST still re-enable Central before raising exception
+  Use try/finally:
+  
+  try:
+      conn.send_command('aruba-central disable')
+      time.sleep(2)
+      output = conn.send_config_set(commands)
+      conn.save_config()
+  except Exception as e:
+      logger.error(f"Config push failed: {e}")
+      raise
+  finally:
+      # Always re-enable Central even if push failed
+      try:
+          conn.send_command('aruba-central enable')
+      except Exception:
+          logger.error("CRITICAL: Failed to re-enable Central!")
+          # Alert engineer - switch stuck in non-Central mode
+
+### UI Warning when Central enabled + config push:
+
+Show before pushing:
+┌─────────────────────────────────────────────────┐
+│ ⚠️  Aruba Central Managed Device                │
+│                                                 │
+│ Config push will:                               │
+│ 1. Temporarily disable Aruba Central (2s)       │
+│ 2. Push configuration via SSH                   │
+│ 3. Re-enable Aruba Central                      │
+│                                                 │
+│ Device will briefly lose Central management.    │
+│ Do not interrupt this process.                  │
+│                                                 │
+│ [Cancel]  [Proceed with Push]                   │
+└─────────────────────────────────────────────────┘
+
+### Also applies to:
+- Compliance remediation pushes
+- Telemetry subscription config push
+- Any automated config changes
+
+### Do NOT build until next session.
+### This pattern is REQUIRED for Central-managed AOS-CX.
+### The 2-second delay is non-negotiable.
