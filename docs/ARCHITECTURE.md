@@ -211,6 +211,40 @@ results to cloud. No firewall holes needed for SNMP.
 
 ---
 
+### 11. Single Sign-On (SSO)
+
+Enterprise authentication via external identity providers. Local admin login is
+**always** available as a fallback so a provider outage can't lock everyone out.
+
+**Supported providers:**
+- Google Workspace (OAuth2) — Stage 1
+- Microsoft Azure AD (OAuth2 + tenant) — Stage 2
+- Okta (OAuth2) — Stage 2
+- GitHub (OAuth2)
+- SAML 2.0 — planned (Stage 3)
+- LDAP / Active Directory — planned (Stage 4)
+
+**Features:**
+- Domain restriction (e.g. only `@company.com` may sign in)
+- Auto-assign a role to new SSO users (default: viewer)
+- Sync name/email from the identity provider
+- `client_secret` stored in OpenBao (never in PostgreSQL)
+- Multiple providers configured simultaneously
+- Optional default provider (auto-redirect from the login page)
+- New-user signup control per provider
+
+**Implementation:**
+- Pipeline: `social-auth-app-django` (social-auth core)
+- Provider config lives in the `SSOProvider` model; per-provider secrets in
+  OpenBao KV-v2 at `secret/sso/{provider_id}/credentials`
+- Tokens: SSO login mints the **same JWT** (DRF SimpleJWT) as local auth, so the
+  frontend/API treat both identically
+- Dynamic settings: a thin custom backend overrides `get_setting()` to read
+  `client_id`/`client_secret` from the DB+OpenBao at request time (social-auth
+  normally reads keys from Django settings)
+
+---
+
 ## Technology Stack
 
 All components are open source with permissive licenses. Zero licensing landmines.
@@ -225,6 +259,8 @@ All components are open source with permissive licenses. Zero licensing landmine
 | Secrets management | OpenBao | MPL 2.0 | HashiCorp Vault fork — BSL concern |
 | API framework | Django 6.0 + DRF | BSD | Latest stable |
 | WebSockets | Django Channels | BSD | |
+| SSO / OAuth2 | social-auth-app-django | BSD | Google / Azure AD / Okta / GitHub |
+| JWT validation | python-jose | MIT | SSO ID-token validation |
 | Frontend | React | MIT | |
 | Charting | Apache ECharts | Apache 2.0 | |
 | Config templates | Jinja2 | BSD | |
@@ -279,6 +315,21 @@ All components are open source with permissive licenses. Zero licensing landmine
 6. Rotate easily — credential rotation should be frictionless
 7. Zero secrets in code — no hardcoded anything, ever
 8. Secrets never in logs — scrub before writing
+
+### Authentication Methods
+- **Local** — username/password → JWT (DRF SimpleJWT). Always available as a
+  fallback; the first admin is created locally by `scripts/setup.sh`.
+- **SSO** — OAuth2 / SAML via external IdP → the **same JWT** format as local
+  auth (see Core Capability #11).
+- **API** — Bearer JWT for service/integration accounts.
+- **Service-to-service** — OpenBao AppRole per microservice (least privilege).
+
+**SSO security:**
+- `client_secret` stored in OpenBao only — never in PostgreSQL or logs.
+- Domain allowlist (`allowed_domains`) enforced server-side in the auth pipeline.
+- New SSO users default to the **viewer** role; an admin must explicitly elevate.
+- HTTPS required for OAuth2 callbacks (already enforced by the frontend proxy).
+- Redirect URIs validated to prevent open redirects.
 
 ### Credential Storage Pattern
 ```
@@ -391,6 +442,7 @@ Each microservice has its own AppRole with minimal Vault policy:
 - [x] Auth rate limiting (H1 — JWT endpoint throttling)
 - [ ] 🔄 CVE ingestion + applicability (in progress)
 - [ ] 🔄 Lifecycle/EOL management (in progress)
+- [ ] 🔄 SSO authentication (Stage 1 — Google OAuth2 — in progress)
 - [x] Default/system alert rules (seed_alert_rules; disable-to-suppress)
 - [x] Admin user management (/api/users/ CRUD; self/last-admin delete guards)
 - [x] Discovery page wiring — DiscoveryJob API + approve/reject + OT/ICS exclusions

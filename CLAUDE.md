@@ -922,7 +922,8 @@ Full architecture in docs/ARCHITECTURE.md.
 - fortinet1: id=3, 192.168.98.154, fortios (SNMP CPU/mem/uptime)
 
 ## In Progress
-- (queue clear — see Planned Features for what's next)
+- SSO authentication — Stage 1 (Google OAuth2 backend; apps/sso + SSOProvider).
+  See "SSO / Single Sign-On" below.
 
 ## Technology Stack
 - Backend: Python 3.13, Django 6.0, DRF, Django Channels
@@ -932,7 +933,8 @@ Full architecture in docs/ARCHITECTURE.md.
 - Flow viz: D3.js
 - State: Zustand
 - Data fetching: React Query
-- Auth: JWT (djangorestframework-simplejwt)
+- Auth: JWT (djangorestframework-simplejwt); SSO via social-auth-app-django
+  (Google/Azure AD/Okta/GitHub OAuth2) minting the same JWT
 - Database: PostgreSQL 17 + JSONB
 - Time-series: InfluxDB OSS
 - Search/logs: OpenSearch
@@ -971,6 +973,8 @@ Model names below reflect what is actually defined in each app's models.py.
 - alerting: Team, TeamMember, ContactMethod, EscalationPolicy, EscalationStep,
   AlertRoute, AlertNotification (Stage 1: route matching + email; on-call +
   acknowledgement are Stage 2)
+- sso: SSOProvider (external-IdP login config; client_secret in OpenBao, not the
+  DB). Stage 1 = Google OAuth2. See "SSO / Single Sign-On" below.
 
 ## Service Check Types & Libraries (apps/checks/runner.py)
 - http/https → aiohttp; tcp → asyncio.open_connection; icmp → icmplib
@@ -1060,6 +1064,10 @@ DeviceCredential (through model):
 /api/health/infrastructure/     — service connectivity check
 /api/auth/token/                — JWT obtain
 /api/auth/token/refresh/        — JWT refresh
+/api/sso/providers/             — GET public (enabled providers for login buttons); admin CRUD
+/api/sso/providers/{id}/        — admin GET/PUT/DELETE one provider
+/api/sso/providers/{id}/test/   — admin: validate provider config
+/auth/complete/{backend}/       — OAuth callback (social_django); success → redirect to frontend with JWT
 /api/users/                     — admin user management CRUD (AdminOnly; delete/demote guards)
 /api/users/me/                  — current user profile + preferences
 /api/devices/                   — device CRUD (sortable: ?ordering=, filter: ?site=&status=)
@@ -1136,6 +1144,9 @@ exist for them yet. Do not document them as current.
   (teams, policies, route matching, email) is built.
 - SMS alerts (Twilio), NetPulse Collector agent, Helm chart, NetBox import,
   CVE applicability engine, lifecycle/EOL UI, bandwidth 95th-percentile trending.
+- SSO beyond Stage 1: Azure AD + Okta (Stage 2), SAML 2.0 (Stage 3), LDAP/AD
+  (Stage 4), login-page SSO buttons + Settings → Security → SSO UI (Stage 5).
+  See "SSO / Single Sign-On" above. Stage 1 (Google OAuth2 backend) in progress.
 
 ## SNMP Trap Receiver
 ingest-snmp handles both polling AND trap reception:
@@ -1214,6 +1225,76 @@ Admin    — full platform access
 Engineer — read/write devices, configs, alerts
 Viewer   — read only
 API      — service account for integrations
+
+## SSO / Single Sign-On (Stage 1 in progress)
+Enterprise login via external identity providers. Local admin login is ALWAYS
+available as a fallback (set SSO_ALLOW_LOCAL_LOGIN=true); the first admin is a
+local account from scripts/setup.sh.
+
+### App + dependencies
+- New app: apps/sso/ (model SSOProvider). Built on social-auth-app-django
+  (social-auth core); python-jose for ID-token validation.
+- requirements.txt: social-auth-app-django>=5.4.0, python-jose>=3.3.0
+  (pin to a Django-6.0-compatible release — verify before adding).
+
+### SSOProvider model
+  name, provider, client_id, is_enabled, is_default, allow_signup,
+  default_role (default 'viewer'), allowed_domains (ArrayField),
+  tenant_id (Azure), okta_domain, saml_metadata_url
+  client_secret is NOT a DB column — stored in OpenBao at
+  secret/sso/{provider_id}/credentials (+ saml_private_key for SAML).
+
+### Supported providers
+  google-oauth2          Google Workspace        (Stage 1)
+  azuread-tenant-oauth2  Microsoft Azure AD       (Stage 2)
+  okta-oauth2            Okta                     (Stage 2)
+  github                 GitHub OAuth2
+  saml                   SAML 2.0                 (Stage 3, planned)
+  ldap                   LDAP / Active Directory  (Stage 4, planned)
+
+### Auth flow
+1. User clicks an SSO button on the login page
+2. Redirect to provider (Google/Azure/Okta)
+3. Provider redirects back to /auth/complete/{backend}/
+4. social-auth validates the token
+5. Custom pipeline (apps/sso): enforce allowed_domains, assign default_role to
+   new users, sync name/email from the IdP
+6. Mint the SAME JWT as local auth (DRF SimpleJWT)
+7. Redirect to the frontend with the token; frontend stores it, clears the URL
+
+### Dynamic settings
+social-auth reads provider keys from Django settings; NetPulse stores them in
+the DB+OpenBao. A thin custom backend overrides get_setting() to return
+client_id from SSOProvider and client_secret from OpenBao at request time.
+
+### Security
+- client_secret in OpenBao only — never PostgreSQL or logs
+- allowed_domains enforced server-side (e.g. only @company.com)
+- new SSO users get the viewer role by default; admin must elevate
+- HTTPS required for OAuth2 callbacks (already enforced)
+- validate redirect_uri (no open redirects)
+
+### .env additions
+  SSO_ALLOW_LOCAL_LOGIN=true
+  SSO_DEFAULT_ROLE=viewer
+  SOCIAL_AUTH_GOOGLE_OAUTH2_KEY= / _SECRET=
+  SOCIAL_AUTH_AZUREAD_TENANT_OAUTH2_KEY= / _SECRET= / _TENANT_ID=
+  SOCIAL_AUTH_OKTA_OAUTH2_KEY= / _SECRET= / _API_URL=
+(Provider config is normally set in the UI → Settings → Security → SSO; these
+env vars are an alternative for static config.)
+
+### Frontend
+- Login page: SSO buttons above the local username/password form; auto-redirect
+  if a provider is is_default; local login always shown as fallback.
+- Settings → Security → SSO Providers: list + add-provider wizard + Test.
+- Profile: shows SSO connection status ("Signed in via Google").
+
+### Build stages
+  Stage 1: backend models + Google OAuth2   ← in progress
+  Stage 2: Azure AD + Okta                  ← planned
+  Stage 3: SAML 2.0                         ← planned
+  Stage 4: LDAP                             ← planned
+  Stage 5: frontend SSO buttons + settings UI
 
 ## Security Rules (NEVER violate)
 1. Never store plaintext credentials anywhere
