@@ -1782,3 +1782,54 @@ export async function saveMaintenanceWindow(payload: MaintenanceWindowPayload, i
 }
 export async function deleteMaintenanceWindow(id: number): Promise<void> { await api.delete(`/alerting/maintenance/${id}/`) }
 export async function endMaintenanceNow(id: number): Promise<void> { await api.post(`/alerting/maintenance/${id}/end-now/`) }
+
+// ── MIB files (Settings → MIB Files) ─────────────────────────────────────────
+
+// `path` is the relative dir: "standard", "vendor/cisco", "vendor/community",
+// or "custom". Only custom MIBs are deletable.
+export interface MibInfo {
+  name: string
+  file: string
+  path: string
+  objects: number
+  loaded: boolean
+  deletable: boolean
+}
+
+export interface MibUploadResult {
+  success: boolean
+  objects_loaded: number
+  module: string
+  warnings: string[]
+}
+
+export async function fetchMibs(): Promise<MibInfo[]> {
+  const { data } = await api.get<{ mibs: MibInfo[] }>('/mibs/')
+  return data.mibs ?? []
+}
+
+// Multipart upload — let axios set the Content-Type (with boundary) for FormData.
+export async function uploadMib(file: File): Promise<MibUploadResult> {
+  const form = new FormData()
+  form.append('file', file)
+  // Override the instance's JSON default so axios sets multipart + boundary.
+  const { data } = await api.post<MibUploadResult>('/mibs/upload/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+export async function deleteMib(name: string): Promise<void> {
+  await api.delete(`/mibs/${encodeURIComponent(name)}/`)
+}
+
+export interface OidResolution {
+  oid: string
+  name: string | null
+  resolved: boolean
+}
+
+export async function resolveOid(oid: string): Promise<OidResolution> {
+  const { data } = await api.get<OidResolution>(`/mibs/resolve/${encodeURIComponent(oid)}/`)
+  return data
+}

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "apps.tls",
     "apps.checks",
     "apps.alerting",
+    "apps.mibs",
 ]
 
 MIDDLEWARE = [
@@ -142,6 +143,9 @@ INFLUXDB_URL = os.environ.get("INFLUXDB_URL", "http://influxdb:8086")
 INFLUXDB_TOKEN = os.environ.get("INFLUXDB_ADMIN_TOKEN", "")
 INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG", "netpulse")
 INFLUXDB_BUCKET = os.environ.get("INFLUXDB_BUCKET", "metrics")
+
+# SNMP MIB tree (standard / vendor / community / custom), mounted from ./mibs.
+MIBS_DIR = os.environ.get("MIBS_DIR", "/app/mibs")
 
 # ── OpenSearch ────────────────────────────────────────────────────────────────
 

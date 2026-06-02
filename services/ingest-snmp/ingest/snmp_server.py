@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 async def serve() -> None:
+    # ── MIB sources (mounted /app/mibs) for OID resolution ────────────────────
+    from .mib_sources import register_mib_sources
+    register_mib_sources()
+
     # ── NATS publisher ────────────────────────────────────────────────────────
     publisher = NATSPublisher(
         url=cfg.nats_url,

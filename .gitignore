@@ -71,3 +71,7 @@ junit/
 # Compiled Protobuf
 *_pb2.py
 *_pb2_grpc.py
+
+# Site-specific MIBs (not committed to the public repo)
+mibs/custom/*
+!mibs/custom/.gitkeep

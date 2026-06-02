@@ -190,6 +190,8 @@ services:
       - openbao-data:/openbao/data
       # Community advisory YAML (Juniper/Arista/…) for load_community_advisories.
       - ./advisories:/app/advisories:ro
+      # SNMP MIB tree — read-write so MIB uploads can be saved into mibs/custom/.
+      - ./mibs:/app/mibs
     # Service-check "Run now" executes the probe in this process, so the api
     # needs the same unprivileged-ICMP sysctl as check-engine for ICMP checks.
     sysctls:
@@ -298,6 +300,8 @@ services:
       # Read the OpenBao root token from the shared keys file (OPENBAO_TOKEN is
       # blank by default) so SNMPv3/v2c device credentials can be fetched.
       - openbao-data:/openbao/data:ro
+      # SNMP MIB tree (read-only) for OID resolution.
+      - ./mibs:/app/mibs:ro
     networks:
       - netpulse-net
     depends_on:
