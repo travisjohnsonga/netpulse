@@ -3319,3 +3319,23 @@ gNMI spec defines a Capabilities() RPC:
 ### Depends on: gNMI dial-in capability
 ###   (current ingest-grpc is dial-OUT only)
 ###   Need to add dial-IN gNMI client to api service
+
+## System Service (Auto-start on Boot)
+
+NetPulse runs as a systemd service:
+
+  sudo systemctl start netpulse    # start
+  sudo systemctl stop netpulse     # stop
+  sudo systemctl restart netpulse  # restart
+  sudo systemctl status netpulse   # check status
+  sudo systemctl enable netpulse   # enable on boot
+  sudo systemctl disable netpulse  # disable on boot
+
+Service file: /etc/systemd/system/netpulse.service
+Requires: docker.service
+WorkingDirectory: /home/netmagic/netpulse
+
+After reboot:
+  Services start automatically via docker compose up -d
+  Run ./scripts/setup.sh only if OpenBao was wiped
+  (factory reset or volume deletion)
