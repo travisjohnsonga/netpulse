@@ -163,6 +163,9 @@ class SNMPPoller:
             return
 
         duration_ms = round((time.monotonic() - t0) * 1000)
+        # Aid diagnosis: log the resolved field names returned by this poll.
+        logger.debug("poll result for device %s: %s",
+                     device.device_id, [m.get("name") for m in metrics.values()])
 
         payload = {
             "device_id": device.device_id,

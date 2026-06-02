@@ -85,6 +85,31 @@ class TestMetricsModule:
         assert FIELD_MAP["1_3_6_1_4_1_9_9_48_1_1_1_5_1"] == "memory_used_bytes"
         assert FIELD_MAP["1_3_6_1_4_1_9_9_109_1_1_1_1_8_1"] == "cpu_5min_pct"
 
+    def test_field_map_fortinet(self):
+        from apps.devices.metrics_influx import FIELD_MAP
+        assert FIELD_MAP["1_3_6_1_4_1_12356_101_4_1_3_0"] == "cpu_pct"
+        assert FIELD_MAP["1_3_6_1_4_1_12356_101_4_1_4_0"] == "memory_used_pct"
+        assert FIELD_MAP["1_3_6_1_4_1_12356_101_4_1_5_0"] == "memory_total_kb"
+
+    def test_fortinet_cpu_mem_surfaced(self, monkeypatch):
+        # FortiGate reports CPU% and memory% directly (not bytes) — both surface.
+        from apps.devices import metrics_influx as mi
+
+        class _C:
+            def query_api(self): return None
+            def close(self): pass
+        monkeypatch.setattr(mi, "_client", lambda: _C())
+        monkeypatch.setattr(mi, "_latest_snapshot", lambda *a: {
+            "cpu_pct": 12.0, "memory_used_pct": 47.0, "memory_total_kb": 2048000,
+            "uptime_seconds": 100.0})
+        monkeypatch.setattr(mi, "_timeseries", lambda *a: {"uptime": [], "memory_used_pct": [], "cpu_pct": []})
+        monkeypatch.setattr(mi, "_interface_stats", lambda *a: [])
+        monkeypatch.setattr(mi, "_reachability", lambda *a: mi._empty_reachability())
+        out = mi.query_device_metrics("3", "all", "1h")
+        assert out["metrics"]["cpu_pct"] == 12.0
+        assert out["metrics"]["memory_used_pct"] == 47.0
+        assert out["metrics"]["memory_total_bytes"] == 2048000 * 1024
+
     def test_field_map_gnmi_memory_and_cpu(self):
         # Cisco IOS-XE gNMI memory-statistics + cpu-utilization field names.
         from apps.devices.metrics_influx import FIELD_MAP

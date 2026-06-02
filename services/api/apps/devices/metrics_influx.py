@@ -39,6 +39,15 @@ FIELD_MAP = {
     "five_seconds": "cpu_5sec_pct",
     "one_minute": "cpu_1min_pct",
     "five_minutes": "cpu_5min_pct",
+    # Fortinet FortiGate enterprise OIDs (FORTINET-FORTIGATE-MIB). The MIB
+    # resolver doesn't know enterprise 12356, so the written field is the raw
+    # OID form; the resolved-name aliases are kept too in case a MIB is loaded.
+    "1_3_6_1_4_1_12356_101_4_1_3_0": "cpu_pct",          # fgSysCpuUsage (%)
+    "fgSysCpuUsage_0": "cpu_pct",
+    "1_3_6_1_4_1_12356_101_4_1_4_0": "memory_used_pct",  # fgSysMemUsage (already %)
+    "fgSysMemUsage_0": "memory_used_pct",
+    "1_3_6_1_4_1_12356_101_4_1_5_0": "memory_total_kb",  # fgSysMemCapacity (KB)
+    "fgSysMemCapacity_0": "memory_total_kb",
     "poll_duration_ms": "poll_duration_ms",
 }
 
@@ -165,12 +174,19 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
     for key in ("cpu_5sec_pct", "cpu_1min_pct", "cpu_5min_pct"):
         if cpu is None:
             cpu = snapshot.get(key)
+    # Prefer a directly-reported memory utilisation % (FortiGate fgSysMemUsage)
+    # over the bytes-derived value (Cisco/gNMI report used+free/total bytes).
+    mem_pct = snapshot.get("memory_used_pct")
+    if mem_pct is None:
+        mem_pct = _mem_used_pct(used, free, total)
+    total_kb = snapshot.get("memory_total_kb")
     result["metrics"] = {
         "uptime_seconds": snapshot.get("uptime_seconds"),
         "memory_used_bytes": used,
         "memory_free_bytes": free,
-        "memory_total_bytes": total,
-        "memory_used_pct": _mem_used_pct(used, free, total),
+        "memory_total_bytes": total if total is not None else (
+            int(total_kb * 1024) if isinstance(total_kb, (int, float)) else None),
+        "memory_used_pct": round(mem_pct, 1) if isinstance(mem_pct, (int, float)) else None,
         "cpu_pct": cpu,
         "poll_duration_ms": snapshot.get("poll_duration_ms"),
     }
