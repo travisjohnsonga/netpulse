@@ -3635,3 +3635,105 @@ Show before pushing:
 ### Do NOT build until next session.
 ### This pattern is REQUIRED for Central-managed AOS-CX.
 ### The 2-second delay is non-negotiable.
+
+## PINNED — AOS-CX Device Enrichment
+
+### When an AOS-CX device is approved from discovery
+or added manually, enrichment should collect:
+
+### SNMP Enrichment (standard + AOS-CX specific):
+
+sysDescr:     1.3.6.1.2.1.1.1.0
+  → Parse: "ArubaOS-CX 10.10.1010" → os_version
+  → Parse: "6300M" or "6400" → model
+
+sysObjectID:  1.3.6.1.2.1.1.2.0
+  → Map to model name:
+  1.3.6.1.4.1.47196.4.1.1.3.8 → Aruba 6300M
+  1.3.6.1.4.1.47196.4.1.1.3.9 → Aruba 6400
+
+entPhysDescr: 1.3.6.1.2.1.47.1.1.1.1.2.1
+  → Physical description (chassis/module info)
+
+entSerialNum: 1.3.6.1.2.1.47.1.1.1.1.11.1
+  → Serial number
+
+### REST API Enrichment (preferred for AOS-CX):
+
+AOS-CX has full REST API on port 443:
+Base: https://{device_ip}/rest/v10.09/
+
+Auth: Basic auth or token
+  POST /rest/v10.09/login
+  username/password from credential profile
+
+Endpoints useful for enrichment:
+  GET /rest/v10.09/system
+    → hostname, software_version, hardware_info
+    → serial_number, product_name (model)
+  
+  GET /rest/v10.09/system/interfaces
+    → all interfaces with stats
+  
+  GET /rest/v10.09/system/vrfs/default/bgp_routers
+    → BGP config if present
+
+REST API response example:
+{
+  "hostname": "core-sw-1",
+  "software_version": "FL.10.10.1010",
+  "hardware_info": {
+    "product_name": "Aruba6300M-48G-Class4PoEP-4SFP56"
+  },
+  "serial_number": "SGxxxxxxxxxx"
+}
+
+### Enrichment priority:
+1. Try REST API first (most accurate)
+2. Fall back to SNMP if REST unavailable
+3. Fall back to SSH "show version" if both fail
+
+### SSH enrichment (fallback):
+Netmiko device_type: 'aruba_aoscx'
+
+Command: show version
+Output parsing:
+  "ArubaOS-CX 10.10.1010" → os_version
+  "Aruba6300M" → model
+  "Serial Number: SGxx" → serial
+
+### sysDescr parsing patterns for AOS-CX:
+"ArubaOS-CX" → platform = aos_cx ✅ (already done)
+Version regex: r'ArubaOS-CX\s+([\d\.]+)'
+Model regex: r'(Aruba\d+[A-Z]?)' or from sysObjectID
+
+### Interface discovery for AOS-CX:
+Use REST API:
+GET /rest/v10.09/system/interfaces?depth=2
+
+Returns all interfaces with:
+- name, type, admin_state, link_state
+- ip_address, description
+- Much faster than SSH for large switches
+
+OR use SNMP ifTable (standard, already works)
+
+### LLDP for AOS-CX:
+REST API:
+GET /rest/v10.09/system/lldp_neighbors_info
+
+Returns LLDP neighbor table directly.
+Faster and more reliable than SSH parsing.
+
+### AOS-CX REST API credential storage:
+Store in OpenBao alongside SSH:
+secret/devices/{uuid}/aos_cx_rest:
+  username: admin
+  password: ****
+  verify_ssl: false  ← self-signed cert common
+
+OR reuse SSH credentials (same username/password
+usually works for both SSH and REST API)
+
+### Do NOT build until next session.
+### Priority: High - needed for remote lab testing
