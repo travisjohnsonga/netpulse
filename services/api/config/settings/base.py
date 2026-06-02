@@ -63,6 +63,11 @@ ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+# The suite is pytest-style and lives in services/api/tests/, so Django's
+# default unittest DiscoverRunner finds nothing. Delegate `manage.py test`
+# to pytest (see config/test_runner.py). `python -m pytest` is still canonical.
+TEST_RUNNER = "config.test_runner.PytestTestRunner"
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
