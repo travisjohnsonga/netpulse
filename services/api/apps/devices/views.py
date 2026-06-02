@@ -26,6 +26,11 @@ from .serializers import (
 )
 
 
+def _truthy(value) -> bool:
+    """Loose truthiness for query-string flags (?show_all=true|1|yes)."""
+    return str(value).lower() in ("1", "true", "yes", "on")
+
+
 def _ssh_creds(profile_id):
     """Return (profile, ssh_password) for a credential profile id, or (None, None)."""
     profile = CredentialProfile.objects.filter(pk=profile_id).first()
@@ -542,9 +547,27 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = DiscoveredDevice.objects.select_related("job", "approved_device").all()
     serializer_class = DiscoveredDeviceSerializer
-    filterset_fields = ["status", "job"]
+    filterset_fields = ["status", "job", "device_category"]
     ordering_fields = ["confidence_score", "created_at"]
     ordering = ["-confidence_score"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        # When DISCOVERY_FILTER_ENDPOINTS is on, hide endpoint/workstation rows
+        # from the list (they're still stored and reachable by id) unless the
+        # caller passes ?show_all=true (or ?include_endpoints=true). Detail
+        # routes and the explicit ?device_category= filter are never hidden.
+        if self.action != "list":
+            return qs
+        from django.conf import settings
+        if not getattr(settings, "DISCOVERY_FILTER_ENDPOINTS", True):
+            return qs
+        params = self.request.query_params
+        if _truthy(params.get("show_all")) or _truthy(params.get("include_endpoints")):
+            return qs
+        if params.get("device_category"):  # explicit category filter wins
+            return qs
+        return qs.exclude(device_category=DiscoveredDevice.Category.ENDPOINT)
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):

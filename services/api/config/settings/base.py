@@ -245,6 +245,12 @@ DEVICE_AUTO_ENRICH = os.environ.get("DEVICE_AUTO_ENRICH", "true").lower() == "tr
 # loaded by `load_community_advisories`. Mounted from the repo's advisories/.
 COMMUNITY_ADVISORIES_DIR = os.environ.get("COMMUNITY_ADVISORIES_DIR", "/app/advisories")
 
+# Hide endpoints/workstations (device_category="endpoint") from the discovered-
+# devices list by default. They are still stored; the list endpoint shows them
+# with ?show_all=true (or ?include_endpoints=true). Network devices and unknowns
+# are never hidden.
+DISCOVERY_FILTER_ENDPOINTS = os.environ.get("DISCOVERY_FILTER_ENDPOINTS", "true").lower() == "true"
+
 # ── Django REST Framework ─────────────────────────────────────────────────────
 
 # ── JWT ───────────────────────────────────────────────────────────────────────

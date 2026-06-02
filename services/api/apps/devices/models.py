@@ -215,6 +215,13 @@ class DiscoveredDevice(TimestampedModel):
         APPROVED = "approved", "Approved"
         REJECTED = "rejected", "Rejected"
 
+    class Category(models.TextChoices):
+        NETWORK_DEVICE = "network_device", "Network Device"
+        ENDPOINT       = "endpoint",       "Endpoint/Workstation"
+        SERVER         = "server",         "Server"
+        PRINTER        = "printer",        "Printer"
+        UNKNOWN        = "unknown",        "Unknown"
+
     job                  = models.ForeignKey(DiscoveryJob, on_delete=models.CASCADE,
                                               related_name="discovered_devices")
     source_ip            = models.GenericIPAddressField(db_index=True)
@@ -230,6 +237,12 @@ class DiscoveredDevice(TimestampedModel):
     discovered_os        = models.CharField(max_length=100, blank=True)
     # Raw sysDescr / banner / API response
     raw_fingerprint      = models.TextField(blank=True)
+    # Classification — is this a managed network device or an endpoint/workstation
+    # we should hide from the approval queue? Separate from confidence_score.
+    device_category      = models.CharField(max_length=20, choices=Category.choices,
+                                             default=Category.UNKNOWN, db_index=True)
+    os_detected          = models.CharField(max_length=255, blank=True, default="")
+    os_accuracy          = models.IntegerField(null=True, blank=True)
     status               = models.CharField(max_length=20, choices=Status.choices,
                                              default=Status.PENDING, db_index=True)
     # Set when admin approves — links to the created Device record

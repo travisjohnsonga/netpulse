@@ -550,6 +550,138 @@ class TestPlatformDetection:
         assert default_platform_for_vendor("aruba") == "aruba"
 
 
+class TestNmapOsParser:
+    def test_parses_highest_accuracy_osmatch(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_os
+        import xml.etree.ElementTree as ET
+        xml = """<host><os>
+            <osmatch name="Linux 3.x" accuracy="88">
+              <osclass type="general purpose" vendor="Linux" osfamily="Linux"/>
+            </osmatch>
+            <osmatch name="Cisco IOS 15.x" accuracy="95">
+              <osclass type="router" vendor="Cisco" osfamily="IOS"/>
+            </osmatch>
+        </os></host>"""
+        host = ET.fromstring(xml)
+        info = parse_nmap_os(host)
+        assert info["os_name"] == "Cisco IOS 15.x"
+        assert info["os_accuracy"] == 95
+        assert info["os_family"] == "IOS"
+        assert info["os_vendor"] == "Cisco"
+        assert info["os_type"] == "router"
+
+    def test_no_os_element_returns_empty(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_os
+        import xml.etree.ElementTree as ET
+        assert parse_nmap_os(ET.fromstring("<host></host>")) == {}
+
+    def test_no_osmatch_returns_empty(self):
+        from apps.devices.management.commands.run_discovery import parse_nmap_os
+        import xml.etree.ElementTree as ET
+        assert parse_nmap_os(ET.fromstring("<host><os></os></host>")) == {}
+
+
+class TestClassifyDevice:
+    def test_network_os_name_is_high(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({"os_name": "Cisco IOS 15.5"}, [], None) == (
+            "network_device", "high")
+        assert classify_device({"os_name": "FortiOS 7.2"}, [], None) == (
+            "network_device", "high")
+
+    def test_snmp_enterprise_oid_is_network_high(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        snmp = ("some descr", "name", "1.3.6.1.4.1.9.1.222")  # cisco enterprise
+        assert classify_device({}, [], snmp) == ("network_device", "high")
+
+    def test_endpoint_os_name_is_high(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({"os_name": "Microsoft Windows 11"}, [], None) == (
+            "endpoint", "high")
+        assert classify_device({"os_name": "Ubuntu 22.04"}, [], None) == (
+            "endpoint", "high")
+
+    def test_rdp_port_is_endpoint_medium(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({}, [3389], None) == ("endpoint", "medium")
+
+    def test_smb_netbios_ports_are_endpoint_medium(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({}, [139, 445], None) == ("endpoint", "medium")
+
+    def test_os_type_router_is_network_medium(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({"os_type": "router"}, [], None) == (
+            "network_device", "medium")
+
+    def test_os_type_general_purpose_is_endpoint_medium(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({"os_type": "general purpose"}, [], None) == (
+            "endpoint", "medium")
+
+    def test_unknown_when_nothing_matches(self):
+        from apps.devices.management.commands.run_discovery import classify_device
+        assert classify_device({}, [22, 443], None) == ("unknown", "low")
+        assert classify_device(None, [], None) == ("unknown", "low")
+
+
+class TestDiscoveredCategorySerializer:
+    def test_serializer_exposes_classification_fields(self, auth_client, job):
+        dd = DiscoveredDevice.objects.create(
+            job=job, source_ip="10.1.0.50", device_category="network_device",
+            os_detected="Cisco IOS 15.5", os_accuracy=95)
+        resp = auth_client.get("/api/devices/discovery/discovered/")
+        row = next(r for r in unwrap(resp.json()) if r["id"] == dd.id)
+        assert row["device_category"] == "network_device"
+        assert row["os_detected"] == "Cisco IOS 15.5"
+        assert row["os_accuracy"] == 95
+
+
+class TestEndpointFiltering:
+    def _make(self, job, ip, category):
+        return DiscoveredDevice.objects.create(
+            job=job, source_ip=ip, device_category=category)
+
+    def test_endpoints_hidden_by_default(self, auth_client, job, settings):
+        settings.DISCOVERY_FILTER_ENDPOINTS = True
+        net = self._make(job, "10.1.0.60", "network_device")
+        end = self._make(job, "10.1.0.61", "endpoint")
+        unk = self._make(job, "10.1.0.62", "unknown")
+        ids = {r["id"] for r in unwrap(auth_client.get(
+            "/api/devices/discovery/discovered/").json())}
+        assert net.id in ids
+        assert unk.id in ids        # unknown never hidden
+        assert end.id not in ids    # endpoint hidden
+
+    def test_show_all_reveals_endpoints(self, auth_client, job, settings):
+        settings.DISCOVERY_FILTER_ENDPOINTS = True
+        end = self._make(job, "10.1.0.63", "endpoint")
+        ids = {r["id"] for r in unwrap(auth_client.get(
+            "/api/devices/discovery/discovered/?show_all=true").json())}
+        assert end.id in ids
+
+    def test_include_endpoints_alias(self, auth_client, job, settings):
+        settings.DISCOVERY_FILTER_ENDPOINTS = True
+        end = self._make(job, "10.1.0.64", "endpoint")
+        ids = {r["id"] for r in unwrap(auth_client.get(
+            "/api/devices/discovery/discovered/?include_endpoints=true").json())}
+        assert end.id in ids
+
+    def test_explicit_category_filter_not_hidden(self, auth_client, job, settings):
+        settings.DISCOVERY_FILTER_ENDPOINTS = True
+        end = self._make(job, "10.1.0.65", "endpoint")
+        ids = {r["id"] for r in unwrap(auth_client.get(
+            "/api/devices/discovery/discovered/?device_category=endpoint").json())}
+        assert end.id in ids
+
+    def test_filter_off_shows_endpoints(self, auth_client, job, settings):
+        settings.DISCOVERY_FILTER_ENDPOINTS = False
+        end = self._make(job, "10.1.0.66", "endpoint")
+        ids = {r["id"] for r in unwrap(auth_client.get(
+            "/api/devices/discovery/discovered/").json())}
+        assert end.id in ids
+
+
 class TestRunnerCancellation:
     """
     Unit-test the runner's cancel control flow with its DB/network methods

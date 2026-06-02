@@ -242,6 +242,119 @@ def parse_nmap_services(xml_data: bytes) -> dict[int, dict]:
     return services
 
 
+def parse_nmap_os(host_xml) -> dict:
+    """
+    From a single nmap <host> XML element, pick the highest-accuracy <osmatch>
+    and return {os_name, os_accuracy, os_family, os_vendor, os_type}. The
+    os_family / os_vendor / os_type come from the nested <osclass>. Returns {}
+    when there is no OS match.
+    """
+    os_el = host_xml.find("os")
+    if os_el is None:
+        return {}
+    best = None
+    best_acc = -1
+    for match in os_el.findall("osmatch"):
+        try:
+            acc = int(match.get("accuracy", "0"))
+        except (TypeError, ValueError):
+            acc = 0
+        if acc > best_acc:
+            best_acc = acc
+            best = match
+    if best is None:
+        return {}
+    osclass = best.find("osclass")
+    return {
+        "os_name": best.get("name", ""),
+        "os_accuracy": best_acc,
+        "os_family": osclass.get("osfamily", "") if osclass is not None else "",
+        "os_vendor": osclass.get("vendor", "") if osclass is not None else "",
+        "os_type": osclass.get("type", "") if osclass is not None else "",
+    }
+
+
+# ── Device classification (network device vs endpoint) ────────────────────────
+# OS-name substrings that mark a managed network device (matched case-insensitive).
+NETWORK_OS_PATTERNS = (
+    "cisco ios", "ios-xe", "ios xe", "ios-xr", "ios xr", "nx-os", "nxos", "nexus",
+    "junos", "fortios", "fortigate", "arubaos", "arista eos", " eos",
+    "sonicos", "pan-os", "extremexos", "vyos", "pfsense", "opnsense",
+    "mikrotik", "routeros",
+)
+# OS-name substrings that mark an endpoint/workstation/server OS.
+ENDPOINT_OS_PATTERNS = (
+    "windows", "macos", "mac os x", "android", "ipados", "ios ",
+    " ios", "ubuntu", "debian", "fedora", "centos", "red hat", "opensuse",
+)
+# nmap osclass <type> values that imply a network device.
+NETWORK_OS_TYPES = {
+    "router", "switch", "firewall", "load balancer", "broadband router",
+    "wap", "bridge",
+}
+# nmap osclass <type> values that imply an endpoint/general-purpose host.
+ENDPOINT_OS_TYPES = {
+    "general purpose", "printer", "phone", "media device", "game console",
+    "storage-misc",
+}
+# Known network-vendor SNMP enterprise prefixes (1.3.6.1.4.1.<N>).
+NETWORK_ENTERPRISE_PREFIXES = {
+    "9", "2636", "12356", "30065", "14823", "8741", "25461", "14988", "2011",
+}
+
+
+def _enterprise_id(sysobjid: str) -> str:
+    prefix = "1.3.6.1.4.1."
+    if not sysobjid or not sysobjid.startswith(prefix):
+        return ""
+    return sysobjid[len(prefix):].split(".", 1)[0]
+
+
+def classify_device(os_info: dict | None, open_ports, snmp_data) -> tuple[str, str]:
+    """
+    Classify a probed host as a network device, endpoint, or unknown.
+
+    Returns (category, confidence) where category ∈
+    {"network_device", "endpoint", "unknown"} and confidence ∈
+    {"high", "medium", "low"}. Pure function — no I/O.
+
+      os_info    : dict from parse_nmap_os (may be {} / None)
+      open_ports : iterable of open TCP ports
+      snmp_data  : (sysDescr, sysName, sysObjectID) tuple, or falsy
+    """
+    os_info = os_info or {}
+    os_name = (os_info.get("os_name") or "").lower()
+    os_type = (os_info.get("os_type") or "").lower()
+    ports = set(open_ports or [])
+    sysobjid = snmp_data[2] if snmp_data and len(snmp_data) > 2 else ""
+
+    # 1. Network OS name → network device (high).
+    if os_name and any(p in os_name for p in NETWORK_OS_PATTERNS):
+        return "network_device", "high"
+
+    # 2. SNMP sysObjectID under a known network-vendor enterprise prefix (high).
+    if _enterprise_id(sysobjid) in NETWORK_ENTERPRISE_PREFIXES:
+        return "network_device", "high"
+
+    # 3. Endpoint OS name → endpoint (high).
+    if os_name and any(p in os_name for p in ENDPOINT_OS_PATTERNS):
+        return "endpoint", "high"
+
+    # 4. Port heuristics → endpoint (medium).
+    if 3389 in ports:                      # RDP
+        return "endpoint", "medium"
+    if 445 in ports and 139 in ports:      # SMB/NetBIOS
+        return "endpoint", "medium"
+
+    # 5. nmap os_type → network device / endpoint (medium).
+    if os_type in NETWORK_OS_TYPES:
+        return "network_device", "medium"
+    if os_type in ENDPOINT_OS_TYPES:
+        return "endpoint", "medium"
+
+    return "unknown", "low"
+
+
 class Command(BaseCommand):
     help = "Run device discovery (scan, topology walk, or resume existing job)"
 
@@ -512,20 +625,23 @@ class DiscoveryRunner:
             return None
         return parse_nmap_hosts(stdout)
 
-    async def _nmap_services(self, ip: str) -> dict[int, dict] | None:
+    async def _nmap_services(self, ip: str) -> tuple[dict[int, dict], dict] | None:
         """
-        nmap service/version scan of a single host (`-sV --open`). Returns
-        {port: {name, product, version, extrainfo}} for open ports, or None when
-        nmap is unavailable/failed (caller falls back to a plain TCP scan).
+        nmap service/version + OS scan of a single host
+        (`-sV -O --osscan-guess --open`; OS detection needs NET_RAW, which the
+        discovery container has). Returns (services, os_info) where services is
+        {port: {name, product, version, extrainfo}} and os_info is the
+        parse_nmap_os dict (may be {}). Returns None when nmap is
+        unavailable/failed (caller falls back to a plain TCP scan).
         """
         cmd = [
-            "nmap", "-sV", "-n", "-T4", "--open",
+            "nmap", "-sV", "-O", "--osscan-guess", "-n", "-T4", "--open",
             "-p", "22,23,80,161,443,830,8080,8443", "-oX", "-", ip,
         ]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
         except FileNotFoundError:
             return None
         except Exception as exc:
@@ -533,7 +649,20 @@ class DiscoveryRunner:
             return None
         if proc.returncode != 0:
             return None
-        return parse_nmap_services(stdout)
+        services = parse_nmap_services(stdout)
+        os_info = self._parse_first_host_os(stdout)
+        return services, os_info
+
+    @staticmethod
+    def _parse_first_host_os(xml_data: bytes) -> dict:
+        """parse_nmap_os against the first <host> in single-host scan output."""
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(xml_data)
+        except ET.ParseError:
+            return {}
+        host = root.find("host")
+        return parse_nmap_os(host) if host is not None else {}
 
     # ── topology walk ─────────────────────────────────────────────────────────
 
@@ -583,15 +712,17 @@ class DiscoveryRunner:
         # Run liveness/identity checks concurrently to keep per-IP time low.
         # Port scan: nmap -sV (service/version) when available, else a plain TCP
         # connect scan.
-        ping_ok, snmp, services = await asyncio.gather(
+        ping_ok, snmp, nmap_result = await asyncio.gather(
             self._icmp_ping(ip),
             self._snmp_probe(ip),
             self._nmap_services(ip),
         )
-        if services is None:
+        os_info: dict = {}
+        if nmap_result is None:
             open_ports = await self._tcp_scan(ip, _PROBE_PORTS)
             services = {}
         else:
+            services, os_info = nmap_result
             open_ports = sorted(services.keys())
         ssh_banner = await self._ssh_banner(ip) if 22 in open_ports else ""
 
@@ -659,6 +790,9 @@ class DiscoveryRunner:
         if vendor and not platform:
             platform = default_platform_for_vendor(vendor)
 
+        # Classify (network device vs endpoint) — independent of confidence_score.
+        category, _cat_conf = classify_device(os_info, open_ports, snmp)
+
         await self._save_discovered(ip, {
             "detection_methods": methods,
             "responds_to": responds_to,
@@ -669,6 +803,9 @@ class DiscoveryRunner:
             "discovered_os": os_version,
             "discovered_model": model,
             "raw_fingerprint": (descr or ssh_banner)[:500],
+            "device_category": category,
+            "os_detected": os_info.get("os_name", ""),
+            "os_accuracy": os_info.get("os_accuracy"),
         })
         self._found += 1
         await self._update_count(self._found)
@@ -867,6 +1004,10 @@ class DiscoveryRunner:
                     "discovered_os":       data.get("discovered_os", ""),
                     "discovered_model":    data.get("discovered_model", ""),
                     "raw_fingerprint":     data.get("raw_fingerprint", ""),
+                    "device_category":     data.get("device_category",
+                                                    DiscoveredDevice.Category.UNKNOWN),
+                    "os_detected":         data.get("os_detected", ""),
+                    "os_accuracy":         data.get("os_accuracy"),
                     "status": DiscoveredDevice.Status.PENDING,
                 },
             )

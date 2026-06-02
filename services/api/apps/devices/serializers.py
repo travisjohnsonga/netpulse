@@ -139,7 +139,8 @@ class DiscoveredDeviceSerializer(serializers.ModelSerializer):
             "job", "source_ip", "detection_methods", "responds_to",
             "confidence_score", "discovered_hostname", "discovered_vendor",
             "discovered_platform", "discovered_model", "discovered_os",
-            "raw_fingerprint", "status", "approved_device", "approved_by",
+            "raw_fingerprint", "device_category", "os_detected", "os_accuracy",
+            "status", "approved_device", "approved_by",
             "approved_at", "created_at", "updated_at",
         )
 
