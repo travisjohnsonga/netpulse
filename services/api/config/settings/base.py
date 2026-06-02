@@ -215,6 +215,13 @@ SSL_CERT_PATH = os.environ.get(
 # GET /api/settings/system/ so the UI can disable "Push to Device".
 ALLOW_CONFIG_PUSH = os.environ.get("ALLOW_CONFIG_PUSH", "false").lower() == "true"
 
+# ── Hostname display ──────────────────────────────────────────────────────────
+# Strip a domain suffix from device hostnames for DISPLAY ONLY (the stored
+# hostname is still used for SSH/SNMP/syslog). These act as the platform default
+# when no SystemSetting override is present; see apps.core.hostname.
+STRIP_DOMAIN_FROM_HOSTNAMES = os.environ.get("STRIP_DOMAIN_FROM_HOSTNAMES", "false").lower() == "true"
+DOMAIN_SUFFIX = os.environ.get("DOMAIN_SUFFIX", "")
+
 # First-run setup gate. setup.sh sets SETUP_COMPLETE=true in .env when done;
 # factory-reset.sh resets it to false. The frontend gates the whole app on
 # GET /api/setup/status/ and shows the /setup welcome page until this is true.

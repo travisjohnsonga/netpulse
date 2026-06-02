@@ -16,7 +16,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Role, UserPreferences
+from .models import Role, SystemSetting, UserPreferences
 from .permissions import AdminOnly
 from .serializers import (
     AdminUserSerializer,
@@ -270,6 +270,65 @@ class SystemSettingsView(APIView):
                 "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
             }
         )
+
+
+class HostnameDisplayView(APIView):
+    """Get or update the device-hostname display mode (strip domain suffix).
+
+    Display-only: changing this never affects the stored hostname used for
+    SSH/SNMP/syslog. PUT requires admin.
+    """
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return super().get_permissions()
+        return [AdminOnly()]
+
+    def _state(self):
+        from .hostname import hostname_display_config
+
+        strip_enabled, suffix = hostname_display_config()
+        return {"mode": "strip" if strip_enabled else "full", "domain_suffix": suffix}
+
+    @extend_schema(
+        summary="Hostname display settings",
+        responses=inline_serializer(
+            "HostnameDisplay",
+            {
+                "mode": serializers.ChoiceField(choices=["strip", "full"]),
+                "domain_suffix": serializers.CharField(allow_blank=True),
+            },
+        ),
+    )
+    def get(self, request):
+        return Response(self._state())
+
+    @extend_schema(
+        request=inline_serializer(
+            "HostnameDisplayUpdate",
+            {
+                "mode": serializers.ChoiceField(choices=["strip", "full"]),
+                "domain_suffix": serializers.CharField(allow_blank=True, required=False),
+            },
+        ),
+        responses=inline_serializer(
+            "HostnameDisplay",
+            {
+                "mode": serializers.ChoiceField(choices=["strip", "full"]),
+                "domain_suffix": serializers.CharField(allow_blank=True),
+            },
+        ),
+    )
+    def put(self, request):
+        mode = request.data.get("mode")
+        if mode not in ("strip", "full"):
+            raise ValidationError({"mode": "Must be 'strip' or 'full'."})
+        suffix = request.data.get("domain_suffix", "")
+        if suffix is None:
+            suffix = ""
+        SystemSetting.set("hostname_display_mode", mode)
+        SystemSetting.set("domain_suffix", str(suffix).strip())
+        return Response(self._state())
 
 
 def _active_admin_q():

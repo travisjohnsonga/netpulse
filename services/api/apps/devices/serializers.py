@@ -25,11 +25,15 @@ class DeviceSerializer(serializers.ModelSerializer):
     collector_name = serializers.SerializerMethodField()
     collector_ip = serializers.SerializerMethodField()
     collector_status = serializers.SerializerMethodField()
+    display_hostname = serializers.SerializerMethodField()
 
     class Meta:
         model = Device
         fields = "__all__"
         read_only_fields = ("created_at", "updated_at")
+
+    def get_display_hostname(self, obj):
+        return obj.display_hostname
 
     def _effective(self, obj):
         from apps.collectors.resolve import effective_collector
@@ -50,17 +54,22 @@ class DeviceSerializer(serializers.ModelSerializer):
 
 class DeviceListSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source="site.name", read_only=True, default=None)
+    display_hostname = serializers.SerializerMethodField()
 
     class Meta:
         model = Device
         # Lightweight, but carries enough for the configurable Devices columns
         # (vendor, model, OS, serial, mgmt IP, last seen, credentials, notes).
         fields = (
-            "id", "hostname", "ip_address", "management_ip", "platform", "vendor",
-            "model", "os_version", "serial_number", "status", "site_name",
-            "credential_profile", "last_seen", "is_reachable", "consecutive_failures",
-            "last_reachability_check", "unreachable_since", "notes", "created_at",
+            "id", "hostname", "display_hostname", "ip_address", "management_ip",
+            "platform", "vendor", "model", "os_version", "serial_number", "status",
+            "site_name", "credential_profile", "last_seen", "is_reachable",
+            "consecutive_failures", "last_reachability_check", "unreachable_since",
+            "notes", "created_at",
         )
+
+    def get_display_hostname(self, obj):
+        return obj.display_hostname
 
 
 class TestConnectionRequestSerializer(serializers.Serializer):

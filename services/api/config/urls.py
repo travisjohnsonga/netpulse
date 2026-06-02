@@ -5,7 +5,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenVerifyView
 
 from apps.core.throttled_auth import ThrottledTokenObtainPairView, ThrottledTokenRefreshView
-from apps.core.views import SystemSettingsView
+from apps.core.views import HostnameDisplayView, SystemSettingsView
 from apps.devices.views import SiteViewSet
 from apps.telemetry.views import PollingSettingsView
 
@@ -45,6 +45,7 @@ urlpatterns = [
     path("api/mibs/",         include("apps.mibs.urls")),
     path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
     path("api/settings/system/",  SystemSettingsView.as_view(),  name="system-settings"),
+    path("api/settings/hostname-display/", HostnameDisplayView.as_view(), name="hostname-display"),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),

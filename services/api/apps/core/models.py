@@ -51,6 +51,34 @@ class TimestampedModel(models.Model):
         ordering = ["-created_at"]
 
 
+class SystemSetting(TimestampedModel):
+    """Simple key/value store for platform-level runtime settings.
+
+    Used for settings that admins can change at runtime (no redeploy) and that
+    fall back to environment-based defaults when unset — e.g. hostname display.
+    """
+
+    key = models.CharField(max_length=128, unique=True, db_index=True)
+    value = models.CharField(max_length=512, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        verbose_name = "system setting"
+        verbose_name_plural = "system settings"
+
+    def __str__(self):
+        return f"{self.key}={self.value}"
+
+    @classmethod
+    def get(cls, key, default=None):
+        obj = cls.objects.filter(key=key).first()
+        return obj.value if obj is not None else default
+
+    @classmethod
+    def set(cls, key, value):
+        obj, _ = cls.objects.update_or_create(key=key, defaults={"value": value})
+        return obj
+
+
 class UserPreferences(TimestampedModel):
     """Per-user UI preferences (theme, log viewer defaults, table sizing, etc.)."""
 

@@ -139,6 +139,15 @@ class Device(TimestampedModel):
     def __str__(self):
         return self.hostname
 
+    @property
+    def display_hostname(self) -> str:
+        """Hostname for UI display, with the configured domain suffix stripped.
+
+        DISPLAY ONLY — `hostname` remains the value used for SSH/SNMP/syslog.
+        """
+        from apps.core.hostname import strip_domain
+        return strip_domain(self.hostname)
+
 
 class DiscoveryJob(TimestampedModel):
     class Method(models.TextChoices):
