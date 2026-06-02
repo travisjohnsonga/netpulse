@@ -24,8 +24,9 @@ class TestDiscoverLinks:
         found = topology.discover_links(a)
         assert len(found) == 2
         assert sum(1 for f in found if f["matched_device_id"]) == 1
-        link = TopologyLink.objects.get(device_a=a, port_a="Gi4")
-        assert link.device_b == b and link.port_b == "Gi4" and link.link_speed_mbps == 1000
+        # Stored canonicalised: Gi4 → GigabitEthernet4.
+        link = TopologyLink.objects.get(device_a=a, port_a="GigabitEthernet4")
+        assert link.device_b == b and link.port_b == "GigabitEthernet4" and link.link_speed_mbps == 1000
 
     def test_matches_by_stripped_hostname(self, devices, monkeypatch):
         a, b = devices  # b.hostname == "router2"
@@ -41,7 +42,7 @@ class TestDiscoverLinks:
              "lldp_neighbor_port": "Gi2"}])
         found = topology.discover_links(a)
         assert found[0]["matched_device_id"] == b.id
-        assert TopologyLink.objects.filter(device_a=a, device_b=b, port_a="Gi7").exists()
+        assert TopologyLink.objects.filter(device_a=a, device_b=b, port_a="GigabitEthernet7").exists()
 
     def test_idempotent_update(self, devices, monkeypatch):
         a, b = devices
@@ -70,7 +71,52 @@ class TestDiscoverLinks:
         topology.discover_links(b)
         assert TopologyLink.objects.count() == 1
         link = TopologyLink.objects.get()
-        assert (link.device_a_id, link.port_a, link.device_b_id, link.port_b) == (a.id, "Gi4", b.id, "Gi5")
+        assert (link.device_a_id, link.port_a, link.device_b_id, link.port_b) == (a.id, "GigabitEthernet4", b.id, "GigabitEthernet5")
+
+    def test_abbreviated_and_full_names_dedupe_to_one_link(self, devices, monkeypatch):
+        # The same physical port discovered abbreviated (SSH) then full (SNMP)
+        # must collapse to one canonical link, not two.
+        a, b = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi3", "lldp_neighbor_hostname": "router2", "lldp_neighbor_port": "Gi3"}])
+        topology.discover_links(a)
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "GigabitEthernet3", "lldp_neighbor_hostname": "router2",
+             "lldp_neighbor_port": "GigabitEthernet3"}])
+        topology.discover_links(a)
+        links = TopologyLink.objects.filter(device_a=a, device_b=b)
+        assert links.count() == 1
+        assert links.first().port_a == "GigabitEthernet3"
+
+    def test_stale_remote_port_replaced(self, devices, monkeypatch):
+        # A local port whose neighbour/remote port changed (or an old abbreviated
+        # duplicate) is replaced, not accumulated.
+        a, b = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi3", "lldp_neighbor_hostname": "router2", "lldp_neighbor_port": "Gi4"}])
+        topology.discover_links(a)
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi3", "lldp_neighbor_hostname": "router2", "lldp_neighbor_port": "Gi3"}])
+        topology.discover_links(a)
+        links = TopologyLink.objects.filter(device_a=a, device_b=b, port_a="GigabitEthernet3")
+        assert links.count() == 1
+        assert links.first().port_b == "GigabitEthernet3"  # latest remote port wins
+
+
+class TestCanonicalIfname:
+    @pytest.mark.parametrize("raw,expected", [
+        ("Gi3", "GigabitEthernet3"),
+        ("gi0/0/1", "GigabitEthernet0/0/1"),
+        ("GigabitEthernet3", "GigabitEthernet3"),
+        ("Te1/1", "TenGigabitEthernet1/1"),
+        ("Po10", "Port-channel10"),
+        ("Eth1", "Ethernet1"),
+        ("mgmt0", "Management0"),
+        ("weird9", "weird9"),     # unknown prefix → unchanged
+        ("", ""),
+    ])
+    def test_canonical_ifname(self, raw, expected):
+        assert topology.canonical_ifname(raw) == expected
 
 
 class TestTopologyEndpoint:
