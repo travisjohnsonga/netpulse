@@ -880,10 +880,46 @@ Full architecture in docs/ARCHITECTURE.md.
 - Collection-method display: /api/devices/{id}/collection-status/ +
   device-header badges / Telemetry-tab bar (📡 gNMI / 📊 SNMP / ⚠️ none) ✅
 - gNMI/SNMP adaptive polling: ingest-grpc stamps a Valkey gNMI heartbeat
-  (gnmi:last_seen:{id}, TTL 180s); ingest-snmp suppresses the device poll while
-  gNMI is active and auto-resumes when it stalls; collection-status reports
-  snmp.suppressed ✅
-- Backend tests: 661 passing (services/api); ingest-snmp 48; ingest-grpc 32 ✅
+  (gnmi:last_seen:{id}, TTL 180s); while gNMI is active ingest-snmp polls ONLY
+  the essential system OIDs (ALWAYS_POLL_OIDS: sysUpTime/sysDescr/sysName/
+  sysLocation — gNMI doesn't carry uptime) and suppresses the rest, auto-resuming
+  the full poll when the stream stalls; collection-status reports snmp.suppressed ✅
+- SNMPv3 interface discovery: approved v3 devices auto-add LLDP-connected
+  interfaces (build_snmp_auth shared by enrich + discovery; one SnmpEngine per
+  walk for v3 engine-ID discovery); enrich republishes to the poller ✅
+- FortiOS detection from sysDescr (FortiOS/FortiGate/Fortinet) + bulk-approve of
+  unknown-platform devices when the vendor is known (vendor default platform;
+  cisco → operator picks) ✅
+- FortiGate SNMP CPU/memory surfaced (fgSysCpuUsage/MemUsage/MemCapacity →
+  metrics FIELD_MAP; direct memory_used_pct honored) ✅
+- Ping latency: reachability-monitor stores TCP RTT in InfluxDB
+  (device_reachability); GET /api/devices/{id}/reachability/; Telemetry latency
+  chart, Overview Ping tile, dashboard latency sparklines; latency alert rules ✅
+- Reachability liveness probes TCP/22 then TCP/443 fallback (firewalls blocking
+  SSH from the collector still register as live) ✅
+- Config collection: initial baseline on approval (enrich step 4) + twice-daily
+  scheduled run (config-manager at CONFIG_COLLECTION_HOUR_1/_2, default 07:00 &
+  19:00 UTC) with change detection + "Config Changed" alert ✅
+- Team notification targets: TeamMember notify_email/slack/discord + user profile
+  slack_user_id/discord_user_id; get_team_notification_targets; member CRUD UI ✅
+- Hostname display: STRIP_DOMAIN_FROM_HOSTNAMES + DOMAIN_SUFFIX, SystemSetting
+  override, Device.display_hostname, Settings → General; full hostname kept for
+  SSH/SNMP/syslog ✅
+- Topology: interface names canonicalised (Gi3 → GigabitEthernet3) so LLDP links
+  don't duplicate across SNMP/SSH; stale-port cleanup; data migration 0015 ✅
+- MIB support: mibs/ tree (standard/vendor/community/custom) mounted into api +
+  ingest-snmp; apps.mibs parser/index + /api/mibs/ (list/upload/delete/resolve);
+  validate_mib/list_mibs commands; Settings → MIB Files; scripts/download_mibs.sh ✅
+- Platforms: added sonicwall (SonicOS), aos_cx (HPE AOS-CX), aruba (Aruba AOS) —
+  PLATFORM_DEVICE_OIDS, FIELD_MAP, sysDescr/banner detection, choices migration ✅
+- manage.py test now delegates to pytest (config/test_runner.py) ✅
+- Backend tests: 795 passing (services/api); ingest-snmp 51; ingest-grpc 32 ✅
+
+## Lab devices (current)
+- router2: id=1, 192.168.98.152, ios_xe (SNMPv3 "Unknown USM user" device-side —
+  uptime/CPU need router2's SNMP engine configured for the profile's v3 user)
+- router1: id=2, 192.168.98.100, ios_xe (gNMI streaming; SNMP suppressed)
+- fortinet1: id=3, 192.168.98.154, fortios (SNMP CPU/mem/uptime)
 
 ## In Progress
 - (queue clear — see Planned Features for what's next)

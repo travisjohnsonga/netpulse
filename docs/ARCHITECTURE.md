@@ -888,3 +888,44 @@ Push alerts to designated channels without being asked:
 - Action commands require explicit approval
 - All queries audit logged
 - Responses restricted to approved channels
+
+---
+
+## Recent Additions (implemented)
+
+This section summarizes capabilities added since the original design above. The
+living, authoritative status list lives in [CLAUDE.md](../CLAUDE.md) ("Current
+Status").
+
+- **Adaptive SNMP/gNMI polling** — ingest-grpc stamps a Valkey heartbeat
+  (`gnmi:last_seen:{id}`, TTL 180s). While gNMI streams, ingest-snmp polls only
+  the essential system OIDs (`ALWAYS_POLL_OIDS`: sysUpTime/sysDescr/sysName/
+  sysLocation — gNMI doesn't carry uptime) and suppresses the rest, auto-resuming
+  the full poll when the stream stalls. `ADAPTIVE_POLLING=false` disables it.
+- **Collection-status API** — `GET /api/devices/{id}/collection-status/` reports
+  gNMI/SNMP active state, last-seen, metrics-per-push and the suppressed flag;
+  device-header 📡/📊 badges refresh every 60s.
+- **Discovery → enrichment pipeline** — nmap-based active scan; approve creates a
+  PENDING→ACTIVE device, then enrichment runs SNMP/SSH info → interface discovery
+  (auto-add LLDP-connected ports, SNMPv3 supported) → LLDP topology → initial
+  config baseline. Steps are independent. FortiOS detected from sysDescr;
+  unknown-platform devices with a known vendor are bulk-approvable.
+- **Config collection** — initial baseline on approval + a scheduled run at
+  `CONFIG_COLLECTION_HOUR_1/_2` (default 07:00 & 19:00 UTC) with change detection
+  and a "Config Changed" alert.
+- **Ping latency** — reachability-monitor stores TCP RTT in InfluxDB
+  (`device_reachability`); `GET /api/devices/{id}/reachability/`; Telemetry chart,
+  Overview tile, dashboard sparklines, latency alert rules. Liveness probes
+  TCP/22 then TCP/443 (firewalls blocking SSH still register live).
+- **FortiGate SNMP** — fgSysCpuUsage/MemUsage/MemCapacity surfaced as CPU/memory.
+- **Topology dedup** — interface names canonicalised (Gi3 → GigabitEthernet3) so
+  the same physical link isn't recorded twice across SNMP/SSH discovery.
+- **Hostname display** — optional domain-suffix stripping for display only
+  (`display_hostname`); full hostname retained for SSH/SNMP/syslog.
+- **Team notification targets** — system users are first-class targets
+  (per-member email/Slack/Discord opt-in + profile chat handles).
+- **MIB support** — `mibs/` tree (standard/vendor/community/custom) mounted into
+  api + ingest-snmp; `/api/mibs/` (list/upload/delete/resolve);
+  `scripts/download_mibs.sh`; Settings → MIB Files.
+- **Platforms** — added SonicWall SonicOS, HPE AOS-CX, Aruba AOS (OIDs, field
+  mapping, sysDescr/banner detection).
