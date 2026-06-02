@@ -4,6 +4,24 @@ from dataclasses import dataclass, field
 from urllib.parse import quote
 
 
+def _resolve_openbao_token() -> str:
+    """
+    Resolve the OpenBao token the same way the api does: prefer an explicit
+    OPENBAO_TOKEN, else read the root token from the auto-init keys file on the
+    shared openbao-data volume (OPENBAO_TOKEN is left blank by setup.sh, so the
+    keys file is the normal source). Returns "" if neither is available.
+    """
+    token = os.environ.get("OPENBAO_TOKEN", "")
+    if token:
+        return token
+    keys_file = os.environ.get("OPENBAO_KEYS_FILE", "/openbao/data/.init_keys")
+    try:
+        with open(keys_file) as fh:
+            return json.load(fh).get("root_token", "") or ""
+    except Exception:
+        return ""
+
+
 def _valkey_url() -> str:
     """
     Build a Valkey/Redis URL. Prefer an explicit VALKEY_URL; otherwise assemble
@@ -54,7 +72,7 @@ class Config:
 
     # OpenBao
     openbao_addr: str = field(default_factory=lambda: os.environ.get("OPENBAO_ADDR", "http://openbao:8200"))
-    openbao_token: str = field(default_factory=lambda: os.environ.get("OPENBAO_TOKEN", ""))
+    openbao_token: str = field(default_factory=_resolve_openbao_token)
     cred_cache_ttl: int = field(default_factory=lambda: int(os.environ.get("CRED_CACHE_TTL", "300")))
 
     log_level: str = field(default_factory=lambda: os.environ.get("LOG_LEVEL", "INFO").upper())

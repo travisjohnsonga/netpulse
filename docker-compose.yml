@@ -294,6 +294,10 @@ services:
       # Port 162 is privileged on Linux; map to an unprivileged host port in
       # docker-compose.override.yml if binding 162 fails on your host.
       - "${SNMP_TRAP_PORT:-162}:162/udp"
+    volumes:
+      # Read the OpenBao root token from the shared keys file (OPENBAO_TOKEN is
+      # blank by default) so SNMPv3/v2c device credentials can be fetched.
+      - openbao-data:/openbao/data:ro
     networks:
       - netpulse-net
     depends_on:
