@@ -1,0 +1,9 @@
+snmp-server vrf mgmt
+{% if snmpv3 %}
+snmpv3 user {{ username }} auth {{ auth_protocol }} auth-pass {{ auth_key }} priv {{ priv_protocol }} priv-pass {{ priv_key }}
+snmp-server host {{ collector_ip }} vrf mgmt version 3 {{ username }}
+{% else %}
+snmp-server community {{ community }}
+snmp-server host {{ collector_ip }} vrf mgmt community {{ community }}
+{% endif %}
+snmp-server enable trap snmp

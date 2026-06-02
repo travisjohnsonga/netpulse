@@ -211,6 +211,53 @@ def generate_fortios_snmp(device, collector_ip, interfaces, cfg=None):
     ])
 
 
+AOS_CX_GNMI_PORT = 8443
+
+# AOS-CX device-level OpenConfig paths (dial-IN: NetPulse subscribes to these).
+_AOS_CX_DEVICE_PATHS = [
+    ("CPU", "/system/cpus/cpu[index=0]/state/usage/instant"),
+    ("Memory used", "/system/memory/state/used"),
+    ("Memory free", "/system/memory/state/free"),
+    ("BGP", "/network-instances/network-instance[name='default']/protocols/"
+            "protocol[identifier=BGP][name=BGP]/bgp/neighbors/neighbor/state"),
+]
+
+
+def generate_aos_cx_gnmi(device, collector_ip, interfaces, cfg=None):
+    """
+    Aruba AOS-CX streams native OpenConfig gNMI on :8443 in DIAL-IN mode -
+    NetPulse (ingest-grpc) connects TO the device, unlike Cisco MDT dial-out, so
+    there is no device-side subscription/receiver config. The only device config
+    is enabling the REST/gNMI server; the OpenConfig paths below document what
+    ingest-grpc subscribes to.
+    """
+    mgmt_ip = device.management_ip or device.ip_address or "<device-ip>"
+    n = len(interfaces)
+    lines = [
+        "! NetPulse gNMI Telemetry Configuration",
+        f"! Generated for {device.hostname or device.ip_address} "
+        f"(aos_cx) - {n} monitored interface{'' if n == 1 else 's'}",
+        f"! AOS-CX gNMI is DIAL-IN: NetPulse connects to {mgmt_ip}:{AOS_CX_GNMI_PORT} "
+        "(not dial-out like Cisco MDT).",
+        "! No device-side subscription config needed - native OpenConfig, no TerminAttr.",
+        "!",
+        "! Enable the REST/gNMI server (mgmt VRF):",
+        "https-server rest access-mode read-write",
+        "https-server vrf mgmt",
+        "!",
+        "! Subscribed OpenConfig paths:",
+    ]
+    for label, path in _AOS_CX_DEVICE_PATHS:
+        lines.append(f"!   {label:11}: {path}")
+    if interfaces:
+        lines.append("!   Interfaces :")
+        for iface in interfaces:
+            lines.append(f"!     /interfaces/interface[name='{iface.if_name}']/state/counters")
+    else:
+        lines.append("!   Interfaces : /interfaces/interface/state/counters")
+    return "\n".join(lines)
+
+
 def generate_generic_gnmi(device, collector_ip, interfaces, cfg=None):
     """Best-effort OpenConfig paths for unknown platforms."""
     lines = [
@@ -237,6 +284,7 @@ SNIPPET_GENERATORS = {
     "eos": generate_eos_gnmi,
     "panos": generate_panos_otlp,
     "fortios": generate_fortios_snmp,
+    "aos_cx": generate_aos_cx_gnmi,
 }
 
 
