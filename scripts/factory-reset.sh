@@ -153,6 +153,7 @@ else
   echo "=================================================="
   echo "  1. Run: ./scripts/setup.sh"
   echo "     (re-initializes OpenBao with new token)"
+  echo "     NOTE: setup.sh requires admin password >= 12 chars"
   echo ""
   echo "  2. Run: ./netpulse.sh rebuild-api"
   echo "     (picks up new OPENBAO_TOKEN from .env)"

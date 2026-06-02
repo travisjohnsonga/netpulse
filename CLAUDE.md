@@ -101,6 +101,13 @@ docker compose exec api python -m pytest tests/test_checks.py -q
 
 Copy `.env.example` to `.env` and fill in all `change-me` values before running any service.
 
+### Admin credentials (dev)
+- The Django admin password is set during `scripts/setup.sh`.
+- Minimum 12 characters required (enforced by `scripts/setup.sh`).
+- The configured value lives in `.env` (`DJANGO_SUPERUSER_PASSWORD`) after
+  setup — never commit real passwords to git.
+- Do NOT document actual passwords here or anywhere in the repo.
+
 External integrations requiring API credentials (set in `.env`):
 - NVD API key — CVE data feed
 - Cisco PSIRT client ID/secret — Cisco advisory feed
