@@ -44,7 +44,9 @@ docker-compose.override.yml
 
 # Data Volumes
 data/
-logs/
+# Runtime log output only — anchored to repo root so it never swallows the
+# `apps/logs/` Django package (that footgun once dropped the whole logs app).
+/logs/
 influxdb/data/
 opensearch/data/
 postgres/data/
