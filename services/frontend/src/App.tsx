@@ -28,6 +28,7 @@ import Collectors from './pages/settings/Collectors'
 import DataSources from './pages/settings/DataSources'
 import Mibs from './pages/settings/Mibs'
 import Certificates from './pages/settings/Certificates'
+import SSO from './pages/settings/SSO'
 import System from './pages/settings/System'
 import Topology from './pages/Topology'
 import ApiDocs from './pages/ApiDocs'
@@ -97,6 +98,7 @@ function AppRoutes() {
                   <Route path="data-sources" element={<DataSources />} />
                   <Route path="mibs" element={<Mibs />} />
                   <Route path="certificates" element={<Certificates />} />
+                  <Route path="sso" element={<SSO />} />
                   <Route path="system" element={<System />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

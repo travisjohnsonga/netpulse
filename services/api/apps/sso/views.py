@@ -26,14 +26,24 @@ class SSOProviderViewSet(viewsets.ModelViewSet):
 
     queryset = SSOProvider.objects.all()
 
+    def _request_is_admin(self) -> bool:
+        u = getattr(self.request, "user", None)
+        return bool(u and u.is_authenticated and (u.is_superuser or getattr(u, "role", "") == "admin"))
+
     def get_permissions(self):
+        # list is public (login page buttons); everything else is AdminOnly.
         return [AllowAny()] if self.action == "list" else [AdminOnly()]
 
     def get_serializer_class(self):
-        return SSOProviderPublicSerializer if self.action == "list" else SSOProviderAdminSerializer
+        # Anonymous / non-admin callers see the public shape; admins get full
+        # config so the Settings management page can render every field.
+        if self.action == "list" and not self._request_is_admin():
+            return SSOProviderPublicSerializer
+        return SSOProviderAdminSerializer
 
     def get_queryset(self):
-        if self.action == "list":
+        # Public list is enabled-only; admins see all (incl. disabled) to manage.
+        if self.action == "list" and not self._request_is_admin():
             return SSOProvider.objects.filter(is_enabled=True)
         return SSOProvider.objects.all()
 

@@ -21,6 +21,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'data-sources', label: 'Data Sources',   icon: '🗄' },
   { to: 'mibs',         label: 'MIB Files',      icon: '📚' },
   { to: 'certificates', label: 'Certificates',   icon: '🔒' },
+  { to: 'sso',          label: 'SSO / Login',    icon: '🔐' },
   { to: 'system',       label: 'System',         icon: '🖥' },
 ]
 
