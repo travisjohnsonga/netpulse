@@ -69,6 +69,9 @@ export interface InfraHealth {
 export interface Device {
   id: number
   hostname: string
+  // Display-only hostname (domain suffix optionally stripped). The serializer
+  // always returns it; use `display_hostname || hostname` when rendering.
+  display_hostname: string
   ip_address: string
   management_ip: string | null
   platform: string
@@ -440,6 +443,21 @@ export interface SystemSettings {
 
 export async function fetchSystemSettings(): Promise<SystemSettings> {
   const { data } = await api.get<SystemSettings>('/settings/system/')
+  return data
+}
+
+export interface HostnameDisplay {
+  mode: 'strip' | 'full'
+  domain_suffix: string
+}
+
+export async function fetchHostnameDisplay(): Promise<HostnameDisplay> {
+  const { data } = await api.get<HostnameDisplay>('/settings/hostname-display/')
+  return data
+}
+
+export async function saveHostnameDisplay(payload: HostnameDisplay): Promise<HostnameDisplay> {
+  const { data } = await api.put<HostnameDisplay>('/settings/hostname-display/', payload)
   return data
 }
 
@@ -1286,6 +1304,9 @@ export async function fetchSiteDevices(id: number): Promise<Device[]> {
 export interface DeviceDetail {
   id: number
   hostname: string
+  // Display-only hostname (domain suffix optionally stripped); SSH/SNMP/syslog
+  // still use `hostname`. Always returned by the serializer.
+  display_hostname: string
   ip_address: string
   management_ip: string | null
   vendor: string

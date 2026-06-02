@@ -133,7 +133,7 @@ export default function DeviceDetail() {
         <Link to="/devices" className="text-sm text-blue-600 hover:text-blue-800">&larr; Devices</Link>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-2">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{device.hostname}</h1>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100" title={device.hostname}>{device.display_hostname || device.hostname}</h1>
             <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600')}>{device.status}</span>
             <ReachabilityIndicator device={device} />
           </div>

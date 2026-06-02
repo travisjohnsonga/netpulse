@@ -214,7 +214,7 @@ export default function Topology() {
         </select>
         <select className={selCls} value={center} onChange={(e) => setCenter(e.target.value)}>
           <option value="">All Devices (center)</option>
-          {devices.map((d) => <option key={d.id} value={String(d.id)}>{d.hostname}</option>)}
+          {devices.map((d) => <option key={d.id} value={String(d.id)} title={d.hostname}>{d.display_hostname || d.hostname}</option>)}
         </select>
         <select className={selCls} value={depth} onChange={(e) => setDepth(e.target.value)} disabled={!center} title={!center ? 'Pick a center device' : ''}>
           <option value="all">All hops</option>

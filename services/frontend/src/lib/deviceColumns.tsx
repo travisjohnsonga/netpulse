@@ -64,7 +64,7 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
     key: 'hostname', label: 'Hostname', locked: true, default: true, sortKey: 'hostname',
     render: (d) => (
       <span className="inline-flex items-center gap-2">
-        <span className="font-medium text-gray-800 dark:text-gray-100">{d.hostname}</span>
+        <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
         <a
           href={sshUrl(d)}
           onClick={(e) => e.stopPropagation()}
