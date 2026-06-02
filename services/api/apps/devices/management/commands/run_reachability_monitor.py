@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 FAILURE_THRESHOLD = 3
 SSH_PORT = 22
+# Liveness probe ports, tried in order. SSH first; HTTPS (443) as a fallback for
+# devices that block SSH from the collector (firewall trusted-hosts).
+REACHABILITY_PORTS = [22, 443]
 
 # Ping/RTT latency alerting thresholds (env-overridable). A device must exceed
 # the threshold for N consecutive checks before the alert escalates, so a single
@@ -254,23 +257,30 @@ class Command(BaseCommand):
     # ── checks ─────────────────────────────────────────────────────────────────
 
     async def _check(self, d: dict, timeout: float):
-        """TCP-connect to port 22. Returns (device, reachable_bool, method, rtt_ms)."""
+        """
+        TCP-connect to each REACHABILITY_PORT in order (SSH first, then HTTPS).
+        Firewalls (e.g. FortiOS trusted-hosts) often block SSH from the collector
+        but answer on 443, so the 443 fallback keeps such devices marked live.
+        Returns (device, reachable_bool, method="tcp/<port>", rtt_ms).
+        """
         host = d.get("management_ip") or d.get("ip_address")
         if not host:
             return d, False, "tcp", None
-        start = time.monotonic()
-        try:
-            fut = asyncio.open_connection(host, SSH_PORT)
-            reader, writer = await asyncio.wait_for(fut, timeout=timeout)
-            rtt_ms = (time.monotonic() - start) * 1000
-            writer.close()
+        for port in REACHABILITY_PORTS:
+            start = time.monotonic()
             try:
-                await writer.wait_closed()
+                fut = asyncio.open_connection(host, port)
+                _reader, writer = await asyncio.wait_for(fut, timeout=timeout)
+                rtt_ms = (time.monotonic() - start) * 1000
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return d, True, f"tcp/{port}", rtt_ms
             except Exception:
-                pass
-            return d, True, "tcp", rtt_ms
-        except Exception:
-            return d, False, "tcp", None
+                continue
+        return d, False, "tcp", None
 
     # ── alerts ─────────────────────────────────────────────────────────────────
 

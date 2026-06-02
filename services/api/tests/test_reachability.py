@@ -64,6 +64,29 @@ class TestReachabilityApply:
         assert trans and trans[0][0] == "info" and "reachable again" in trans[0][3]
 
 
+class TestCheck:
+    def test_falls_back_to_443_when_ssh_blocked(self, device, monkeypatch):
+        import asyncio
+        from apps.devices.management.commands import run_reachability_monitor as rm
+
+        attempts = []
+
+        class _W:
+            def close(self): pass
+            async def wait_closed(self): pass
+
+        async def fake_open(host, port):
+            attempts.append(port)
+            if port == 22:
+                raise OSError("connection refused")  # firewall blocks SSH
+            return object(), _W()
+        monkeypatch.setattr(rm.asyncio, "open_connection", fake_open)
+
+        d, ok, method, rtt = asyncio.run(_cmd()._check(_row(device), 1.0))
+        assert ok is True and method == "tcp/443" and attempts == [22, 443]
+        assert isinstance(rtt, float)
+
+
 class TestLatencyAlerts:
     def test_classify_latency(self):
         from apps.devices.management.commands.run_reachability_monitor import classify_latency

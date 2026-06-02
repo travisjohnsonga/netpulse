@@ -124,7 +124,7 @@ export default function DeviceDetail() {
     )
   }
 
-  const menuItem = 'w-full text-left px-4 py-2 text-sm hover:bg-gray-50'
+  const menuItem = 'w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
 
   return (
     <div className="space-y-4">
@@ -133,7 +133,7 @@ export default function DeviceDetail() {
         <Link to="/devices" className="text-sm text-blue-600 hover:text-blue-800">&larr; Devices</Link>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-2">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">{device.hostname}</h1>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{device.hostname}</h1>
             <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600')}>{device.status}</span>
             <ReachabilityIndicator device={device} />
           </div>
@@ -144,27 +144,27 @@ export default function DeviceDetail() {
               href={sshUrl(device, sshCred.username, sshCred.port)}
               target="_blank" rel="noopener noreferrer"
               title={sshTooltip(device.hostname, device, sshCred.username, sshCred.port)}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700"
+              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 font-medium text-gray-700 dark:text-gray-200"
             >
               🔒 SSH
             </a>
             <div className="relative">
-              <button onClick={() => setMenuOpen((o) => !o)} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">
+              <button onClick={() => setMenuOpen((o) => !o)} className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 font-medium text-gray-700 dark:text-gray-200">
                 ⚙ Settings ▾
               </button>
               {menuOpen && (
                 <>
                   <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-40 py-1">
+                  <div className="absolute right-0 mt-1 w-52 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-40 py-1">
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setEditing(true) }}>Edit Device Info</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setManagingCreds(true) }}>Manage Credentials</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setChangingCollector(true) }}>Change Collector</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setTelemetryConfig(true) }}>Telemetry Configuration</button>
-                    <div className="my-1 border-t border-gray-100" />
+                    <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
                     <button className={menuItem} onClick={collectNow} disabled={busy === 'collect'}>Collect Config Now</button>
                     <button className={menuItem} onClick={runDiscovery} disabled={busy === 'discover'}>Run Discovery</button>
-                    <div className="my-1 border-t border-gray-100" />
-                    <button className={clsx(menuItem, 'text-red-600 hover:bg-red-50')} onClick={() => { setMenuOpen(false); setDeleting(true) }}>Delete Device</button>
+                    <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
+                    <button className={clsx(menuItem, '!text-red-600 dark:!text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30')} onClick={() => { setMenuOpen(false); setDeleting(true) }}>Delete Device</button>
                   </div>
                 </>
               )}
