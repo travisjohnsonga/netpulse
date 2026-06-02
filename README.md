@@ -314,17 +314,17 @@ NetPulse resolves SNMP OIDs to human-readable names using MIB files under
 ```
 
 This fetches MIBs from public sources:
-- net-snmp (standard RFC MIBs)
-- github.com/cisco/cisco-mibs
-- github.com/fortinet/fortios-mibs
-- github.com/aristanetworks/eos-snmp-mibs
-- github.com/sonicwall/sonicwall-mibs, github.com/aruba/aruba-mibs
+- **Standard RFC MIBs** — github.com/net-snmp/net-snmp
+- **Cisco** — github.com/cisco/cisco-mibs
+- **All other vendors** — github.com/librenms/librenms (`mibs/`, organised by
+  vendor): Fortinet, Juniper, Arista, Aruba AOS, Aruba AOS-CX, SonicWall,
+  Palo Alto, MikroTik, and 100+ more.
 
-Downloaded collections are git-ignored (large / licensing-restricted); each
-`mibs/vendor/<name>/README.md` has manual-download links for sources that aren't
-publicly cloneable. Upload site-specific MIBs in the UI (**Settings → MIB Files**)
-— they're saved to `mibs/custom/`. The tree is mounted into the `api` and
-`ingest-snmp` containers.
+Run it after first install and after updates (~1800 MIB files). Downloaded
+collections are git-ignored (too large to commit) — only the per-vendor
+`README.md` files are tracked. Upload site-specific MIBs in the UI
+(**Settings → MIB Files**) → saved to `mibs/custom/`. The tree is mounted into
+the `api` and `ingest-snmp` containers for OID resolution.
 
 ---
 

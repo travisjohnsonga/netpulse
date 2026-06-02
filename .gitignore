@@ -78,25 +78,13 @@ junit/
 mibs/custom/*
 !mibs/custom/.gitkeep
 
-# Downloaded MIB collections — fetch via scripts/download_mibs.sh, too large/
-# licensing-restricted to commit. READMEs (*.md) stay tracked.
+# Downloaded MIB collections — populate via scripts/download_mibs.sh (LibreNMS +
+# net-snmp + cisco-mibs; hundreds of files), too large to commit. READMEs stay.
 mibs/standard/*.my
 mibs/standard/*.mib
 mibs/standard/*.txt
-mibs/vendor/cisco/*.my
-mibs/vendor/cisco/*.mib
-mibs/vendor/cisco/*.txt
-mibs/vendor/juniper/*.my
-mibs/vendor/juniper/*.mib
-mibs/vendor/sonicwall/*.my
-mibs/vendor/sonicwall/*.mib
-mibs/vendor/aruba/*.my
-mibs/vendor/aruba/*.mib
-mibs/vendor/aos-cx/*.my
-mibs/vendor/aos-cx/*.mib
-mibs/vendor/fortinet/*.my
-mibs/vendor/fortinet/*.mib
-mibs/vendor/arista/*.my
-mibs/vendor/arista/*.mib
+mibs/vendor/**/*.my
+mibs/vendor/**/*.mib
+mibs/vendor/**/*.txt
 # Keep the per-vendor READMEs (download instructions) tracked.
 !mibs/vendor/*/README.md
