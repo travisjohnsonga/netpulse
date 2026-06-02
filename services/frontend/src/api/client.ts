@@ -1365,6 +1365,25 @@ export async function createDevice(payload: DeviceCreatePayload): Promise<Device
   return data
 }
 
+export interface VersionCheck {
+  current_version: string
+  current_commit: string
+  latest_commit: string | null
+  latest_version: string | null
+  update_available: boolean
+  commits_behind: number
+  release_notes_url: string
+}
+// Update check — returns null on any failure so the UI just hides the badge.
+export async function fetchVersionCheck(): Promise<VersionCheck | null> {
+  try {
+    const { data } = await api.get<VersionCheck>('/version/check/')
+    return data
+  } catch {
+    return null
+  }
+}
+
 export interface PlatformOption { value: string; label: string }
 // Supported device platforms, sourced from the backend (Device.Platform) so new
 // platforms appear in dropdowns without a frontend change.

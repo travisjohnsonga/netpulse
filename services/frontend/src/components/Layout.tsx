@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
 import ErrorBoundary from './ErrorBoundary'
+import VersionBadge from './VersionBadge'
 
 interface NavItem {
   label: string
@@ -133,16 +134,19 @@ export default function Layout({ children }: Props) {
               </div>
             </div>
           )}
-          <div className="flex items-center gap-2 text-xs">
-            <span
-              className={clsx(
-                'w-2 h-2 rounded-full',
-                connected ? 'bg-green-400 animate-pulse' : 'bg-gray-500',
-              )}
-            />
-            <span className={connected ? 'text-green-400' : 'text-gray-500'}>
-              {connected ? 'Live' : 'Disconnected'}
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="flex items-center gap-2">
+              <span
+                className={clsx(
+                  'w-2 h-2 rounded-full',
+                  connected ? 'bg-green-400 animate-pulse' : 'bg-gray-500',
+                )}
+              />
+              <span className={connected ? 'text-green-400' : 'text-gray-500'}>
+                {connected ? 'Live' : 'Disconnected'}
+              </span>
             </span>
+            <VersionBadge />
           </div>
         </div>
       </aside>
