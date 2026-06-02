@@ -231,6 +231,17 @@ class TestDeviceModel:
                              "fortios", "panos", "sonicwall", "aos_cx", "aruba",
                              "sonic", "other")
 
+    def test_platforms_endpoint(self, auth_client):
+        resp = auth_client.get("/api/devices/platforms/")
+        assert resp.status_code == 200
+        body = resp.json()
+        values = {p["value"] for p in body}
+        assert {"ios_xe", "fortios", "sonicwall", "aos_cx", "aruba"} <= values
+        assert all("label" in p for p in body)
+
+    def test_platforms_endpoint_requires_auth(self, api_client):
+        assert api_client.get("/api/devices/platforms/").status_code == 401
+
     def test_site_nullable(self):
         d = Device.objects.create(hostname="no-site", ip_address="172.16.0.1")
         assert d.site is None

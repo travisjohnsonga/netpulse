@@ -207,6 +207,15 @@ class DeviceViewSet(viewsets.ModelViewSet):
         return Response(metrics_influx.query_reachability(
             str(device.id), request.query_params.get("period", "1h")))
 
+    @action(detail=False, methods=["get"], url_path="platforms")
+    def platforms(self, request):
+        """
+        Supported device platforms as [{value, label}] for UI dropdowns. Driven
+        by Device.Platform, so adding a platform to the model surfaces it in the
+        UI with no frontend change.
+        """
+        return Response([{"value": v, "label": label} for v, label in Device.Platform.choices])
+
     @staticmethod
     def _lldp_neighbors(device):
         from django.db.models import Q
