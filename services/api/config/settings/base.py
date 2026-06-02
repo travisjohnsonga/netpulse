@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "channels",
     "django_celery_beat",
+    "social_django",
     # NetPulse
     "apps.core",
     "apps.devices",
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
     "apps.checks",
     "apps.alerting",
     "apps.mibs",
+    "apps.sso",
 ]
 
 MIDDLEWARE = [
@@ -58,6 +60,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Translates social-auth exceptions (AuthForbidden, etc.) into redirects.
+    "social_django.middleware.SocialAuthExceptionMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -354,6 +358,46 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# ── SSO / Single Sign-On (social-auth-app-django) ─────────────────────────────
+# Local username/password stays as a fallback (ModelBackend) so an IdP outage
+# can never lock everyone out. Provider client_id/secret are resolved per-request
+# from the SSOProvider row + OpenBao by the Dynamic* backends (apps/sso/backends).
+AUTHENTICATION_BACKENDS = [
+    "apps.sso.backends.DynamicGoogleOAuth2",      # Stage 1: Google (DB+OpenBao creds)
+    "django.contrib.auth.backends.ModelBackend",  # local username/password fallback
+]
+
+SSO_ALLOW_LOCAL_LOGIN = os.environ.get("SSO_ALLOW_LOCAL_LOGIN", "true").lower() == "true"
+SSO_DEFAULT_ROLE = os.environ.get("SSO_DEFAULT_ROLE", "viewer")
+# Where the SPA lives; SSO mints a JWT and redirects here with it in the fragment.
+FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "")
+
+# Store social-auth extra data as JSON (Postgres + SQLite compatible).
+SOCIAL_AUTH_JSONFIELD_ENABLED = True
+# Let SocialAuthExceptionMiddleware turn pipeline exceptions into redirects.
+SOCIAL_AUTH_RAISE_EXCEPTIONS = False
+SOCIAL_AUTH_LOGIN_REDIRECT_URL = "/api/sso/jwt/"
+SOCIAL_AUTH_LOGIN_ERROR_URL = "/api/sso/jwt/"
+
+# Static fallbacks — the Dynamic* backends override these from the DB/OpenBao.
+SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get("SOCIAL_AUTH_GOOGLE_OAUTH2_KEY", "")
+SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get("SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET", "")
+
+SOCIAL_AUTH_PIPELINE = (
+    "social_core.pipeline.social_auth.social_details",
+    "social_core.pipeline.social_auth.social_uid",
+    "social_core.pipeline.social_auth.auth_allowed",
+    "social_core.pipeline.social_auth.social_user",
+    "social_core.pipeline.user.get_username",
+    "apps.sso.pipeline.check_allowed_domain",      # custom: domain allowlist + signup gate
+    "social_core.pipeline.user.create_user",
+    "apps.sso.pipeline.assign_default_role",       # custom: default role for new users
+    "social_core.pipeline.social_auth.associate_user",
+    "social_core.pipeline.social_auth.load_extra_data",
+    "social_core.pipeline.user.user_details",
+    "apps.sso.pipeline.sync_user_profile",         # custom: sync name/email from IdP
+)
 
 # ── Localisation ──────────────────────────────────────────────────────────────
 

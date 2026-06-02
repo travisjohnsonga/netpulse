@@ -39,6 +39,11 @@ pyrad>=2.4       # RADIUS Access-Request health check
 # Secrets
 hvac~=2.1
 
+# SSO / Single Sign-On (OAuth2). >=5.9 declares Django 6.0 support (Framework ::
+# Django :: 6.0); 5.4.x predates it. Pulls social-auth-core (<5.0,>=4.8.3).
+social-auth-app-django~=5.9
+python-jose~=3.3       # JWT/JWS ID-token validation for SSO
+
 # Device access (config collection / interface discovery) — imported lazily
 netmiko~=4.4
 ntc-templates~=9.1   # TextFSM templates for show-command parsing (LLDP, interfaces)

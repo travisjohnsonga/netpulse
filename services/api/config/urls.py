@@ -21,6 +21,11 @@ urlpatterns = [
     path("api/auth/token/refresh/", ThrottledTokenRefreshView.as_view(),     name="token-refresh"),
     path("api/auth/token/verify/",  TokenVerifyView.as_view(),      name="token-verify"),
 
+    # ── SSO (Single Sign-On) ──────────────────────────────────────────────────
+    path("api/sso/", include("apps.sso.urls")),
+    # social-auth begin/complete/disconnect (/auth/login/<backend>/ etc.)
+    path("auth/", include("social_django.urls", namespace="social")),
+
     # ── Core (health check, chatops webhooks) ─────────────────────────────────
     path("api/", include("apps.core.urls")),
 
