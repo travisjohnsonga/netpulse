@@ -10,6 +10,7 @@ import {
   fetchCheckSummary,
   fetchChecks,
   fetchDeviceReachability,
+  fetchReachabilitySummary,
   checkHealth,
   checkInfraHealth,
   reachabilityOf,
@@ -19,6 +20,7 @@ import {
   type CheckSummary,
   type ServiceCheck,
   type DeviceReachability,
+  type ReachabilitySummary,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import clsx from 'clsx'
@@ -30,39 +32,36 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
 }
 
-const now = Date.now()
-const timeLabels = Array.from({ length: 12 }, (_, i) =>
-  new Date(now - (11 - i) * 5 * 60 * 1000).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  }),
-)
+const REACH_PERIODS = ['1h', '6h', '24h', '7d'] as const
 
-const deviceStatusChartOption: EChartsOption = {
-  title: { text: 'Device Status Over Time', textStyle: { fontSize: 14, fontWeight: 600 } },
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['Active', 'Unreachable'], bottom: 0 },
-  grid: { left: 40, right: 20, top: 40, bottom: 40 },
-  xAxis: { type: 'category', data: timeLabels, axisLabel: { fontSize: 11 } },
-  yAxis: { type: 'value', minInterval: 1 },
-  series: [
-    {
-      name: 'Active',
-      type: 'line',
-      smooth: true,
-      data: Array(12).fill(0) as number[],
-      itemStyle: { color: '#22c55e' },
-      areaStyle: { opacity: 0.1 },
-    },
-    {
-      name: 'Unreachable',
-      type: 'line',
-      smooth: true,
-      data: Array(12).fill(0) as number[],
-      itemStyle: { color: '#ef4444' },
-      areaStyle: { opacity: 0.1 },
-    },
-  ],
+// Build the "Device Status Over Time" chart from the real reachability summary.
+// Y-axis is integer device counts (max = total devices) so a flat line reads
+// as "N devices active", not a normalised value.
+function deviceStatusOption(summary: ReachabilitySummary | null): EChartsOption {
+  const data = summary?.data ?? []
+  const total = summary?.total_devices ?? 0
+  const times = data.map((d) =>
+    new Date(d.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+  return {
+    title: { text: 'Device Status Over Time', textStyle: { fontSize: 14, fontWeight: 600 } },
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['Active', 'Unreachable'], bottom: 0 },
+    grid: { left: 40, right: 20, top: 40, bottom: 40 },
+    xAxis: { type: 'category', data: times, axisLabel: { fontSize: 11 } },
+    yAxis: { type: 'value', minInterval: 1, min: 0, max: total || undefined },
+    series: [
+      {
+        name: 'Active', type: 'line', smooth: true,
+        data: data.map((d) => d.active),
+        itemStyle: { color: '#22c55e' }, areaStyle: { opacity: 0.1 },
+      },
+      {
+        name: 'Unreachable', type: 'line', smooth: true,
+        data: data.map((d) => d.unreachable),
+        itemStyle: { color: '#ef4444' }, areaStyle: { opacity: 0.1 },
+      },
+    ],
+  }
 }
 
 const topTalkersChartOption: EChartsOption = {
@@ -150,12 +149,25 @@ export default function Dashboard() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [checkSummary, setCheckSummary] = useState<CheckSummary | null>(null)
   const [tlsChecks, setTlsChecks] = useState<ServiceCheck[]>([])
+  const [reachData, setReachData] = useState<ReachabilitySummary | null>(null)
+  const [reachPeriod, setReachPeriod] = useState<typeof REACH_PERIODS[number]>('1h')
   const { connected } = useWebSocket('/ws/telemetry/')
 
   useEffect(() => {
     fetchCheckSummary().then(setCheckSummary).catch(() => {})
     fetchChecks({ check_type: 'tls' }).then(setTlsChecks).catch(() => {})
   }, [])
+
+  // Device-status-over-time chart: real reachability summary, refetched on
+  // period change and refreshed every 60s.
+  useEffect(() => {
+    let cancelled = false
+    const load = () => fetchReachabilitySummary(reachPeriod)
+      .then((d) => { if (!cancelled) setReachData(d) }).catch(() => {})
+    load()
+    const t = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [reachPeriod])
 
   // TLS checks within their warn window (days_remaining set + below threshold),
   // soonest first.
@@ -350,10 +362,22 @@ export default function Dashboard() {
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+          <div className="flex justify-end gap-1 mb-1">
+            {REACH_PERIODS.map((p) => (
+              <button key={p} onClick={() => setReachPeriod(p)}
+                className={clsx('px-2 py-0.5 text-xs rounded-md border',
+                  reachPeriod === p
+                    ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
+                    : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800')}>
+                {p}
+              </button>
+            ))}
+          </div>
           <ReactECharts
-            option={deviceStatusChartOption}
+            option={deviceStatusOption(reachData)}
             style={{ height: 240 }}
             opts={{ renderer: 'svg' }}
+            notMerge
           />
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">

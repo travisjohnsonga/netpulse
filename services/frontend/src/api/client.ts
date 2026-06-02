@@ -1384,6 +1384,18 @@ export async function fetchVersionCheck(): Promise<VersionCheck | null> {
   }
 }
 
+export interface ReachabilitySummaryPoint { time: string; active: number; unreachable: number }
+export interface ReachabilitySummary {
+  period: string
+  total_devices: number
+  data: ReachabilitySummaryPoint[]
+}
+// Fleet active/unreachable counts over time (dashboard "Device Status Over Time").
+export async function fetchReachabilitySummary(period = '1h'): Promise<ReachabilitySummary> {
+  const { data } = await api.get<ReachabilitySummary>('/devices/reachability-summary/', { params: { period } })
+  return data
+}
+
 export interface PlatformOption { value: string; label: string }
 // Supported device platforms, sourced from the backend (Device.Platform) so new
 // platforms appear in dropdowns without a frontend change.
