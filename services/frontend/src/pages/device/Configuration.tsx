@@ -15,6 +15,40 @@ interface DeviceConfigRow {
   diff_summary: string | null
 }
 
+// UTC hours at which config-manager collects (mirrors the backend default
+// CONFIG_COLLECTION_HOUR_1 / _2). Used to show the schedule + next-run estimate.
+const COLLECTION_HOURS_UTC = [7, 19]
+
+function nextCollectionUTC(): Date {
+  const now = new Date()
+  for (let day = 0; day <= 1; day++) {
+    for (const h of COLLECTION_HOURS_UTC) {
+      const d = new Date(Date.UTC(
+        now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + day, h, 0, 0))
+      if (d.getTime() > now.getTime()) return d
+    }
+  }
+  return now
+}
+
+function untilNext(): string {
+  const mins = Math.max(0, Math.round((nextCollectionUTC().getTime() - Date.now()) / 60000))
+  if (mins < 60) return `in ${mins}m`
+  const hrs = Math.floor(mins / 60)
+  return `in ${hrs}h ${mins % 60}m`
+}
+
+function ScheduleBanner({ lastCollectedAt }: { lastCollectedAt?: string }) {
+  const hours = COLLECTION_HOURS_UTC.map((h) => `${String(h).padStart(2, '0')}:00`).join(' and ')
+  return (
+    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-2 mb-4 text-xs text-blue-800 dark:text-blue-300 flex flex-wrap gap-x-4 gap-y-1">
+      <span>🕑 Auto-collected at {hours} UTC daily</span>
+      {lastCollectedAt && <span>· Last collected: {relativeTime(lastCollectedAt)}</span>}
+      <span>· Next collection: {untilNext()}</span>
+    </div>
+  )
+}
+
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime()
   const secs = Math.max(0, Math.round((Date.now() - then) / 1000))
@@ -93,7 +127,9 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div>
+      <ScheduleBanner lastCollectedAt={configs[0]?.collected_at} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       {/* Version history */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
@@ -144,6 +180,7 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
             )}>{line || ' '}</div>
           ))}
         </pre>
+      </div>
       </div>
     </div>
   )
