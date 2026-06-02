@@ -87,7 +87,7 @@ def read_secret(path: str) -> dict:
         return {}
     try:
         resp = _client().secrets.kv.v2.read_secret_version(
-            path=path, mount_point=_MOUNT_POINT,
+            path=path, mount_point=_MOUNT_POINT, raise_on_deleted_version=True,
         )
         return resp["data"]["data"]
     except Exception as exc:  # hvac.exceptions.InvalidPath, etc.
