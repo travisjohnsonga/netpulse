@@ -311,3 +311,29 @@ class TestSSOAdminList:
         on = next(r for r in rows if r["name"] == "On")
         assert "is_enabled" in on and "allow_signup" in on and "client_id" in on
         assert "client_secret" not in on            # still write-only
+
+
+class TestAzureV2Endpoints:
+    def test_azure_backend_uses_v2_endpoints(self):
+        from apps.sso.backends import DynamicAzureADTenantOAuth2 as B
+        # Name unchanged (existing provider rows / URLs / seed keep working)…
+        assert B.name == "azuread-tenant-oauth2"
+        # …but the endpoints are v2.0 (v1 token aud = resource → Invalid audience).
+        assert "v2.0" in B.AUTHORIZATION_URL
+        assert "v2.0" in B.ACCESS_TOKEN_URL
+        assert "v2.0" in B.OPENID_CONFIGURATION_URL
+
+    def test_azure_key_and_secret_resolve_from_db(self, fake_vault):
+        from apps.sso.backends import DynamicAzureADTenantOAuth2
+        p = SSOProvider.objects.create(
+            name="Azure", provider="azuread-tenant-oauth2", client_id="az-client",
+            tenant_id="tid-1", is_enabled=True)
+        p.vault_path = p.default_vault_path()
+        p.save(update_fields=["vault_path"])
+        fake_vault[p.vault_path] = {"client_secret": "az-secret"}
+        b = _mk(DynamicAzureADTenantOAuth2)
+        # social-core reads setting("KEY") directly when validating the id_token
+        # audience — it must resolve to the DB client_id, not a static env var.
+        assert b.setting("KEY") == "az-client"
+        assert b.setting("SECRET") == "az-secret"
+        assert b.setting("TENANT_ID") == "tid-1"
