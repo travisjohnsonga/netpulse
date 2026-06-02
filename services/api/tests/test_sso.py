@@ -294,3 +294,20 @@ class TestSeedSSOProviders:
         call_command("seed_sso_providers")
         az = SSOProvider.objects.get(provider="azuread-tenant-oauth2")
         assert az.client_id == "az-client" and az.tenant_id == "tid-9" and az.is_enabled
+
+
+class TestSSOAdminList:
+    def test_admin_list_includes_disabled_and_full_fields(self, auth_client):
+        SSOProvider.objects.create(name="On", provider="google-oauth2", is_enabled=True,
+                                   client_id="cid")
+        SSOProvider.objects.create(name="Off", provider="github", is_enabled=False)
+        resp = auth_client.get("/api/sso/providers/")
+        assert resp.status_code == 200
+        data = resp.json()
+        rows = data["results"] if isinstance(data, dict) and "results" in data else data
+        names = sorted(r["name"] for r in rows)
+        assert names == ["Off", "On"]              # disabled included for admins
+        # Admin serializer exposes management fields.
+        on = next(r for r in rows if r["name"] == "On")
+        assert "is_enabled" in on and "allow_signup" in on and "client_id" in on
+        assert "client_secret" not in on            # still write-only

@@ -378,6 +378,10 @@ FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "")
 
 # Store social-auth extra data as JSON (Postgres + SQLite compatible).
 SOCIAL_AUTH_JSONFIELD_ENABLED = True
+# The API runs behind the frontend's HTTPS proxy (proxy_pass is plain http), so
+# Django sees request.scheme == "http". Force the OAuth redirect_uri to https so
+# it matches what the IdP has registered (NetPulse enforces HTTPS end-to-end).
+SOCIAL_AUTH_REDIRECT_IS_HTTPS = os.environ.get("SSO_REDIRECT_IS_HTTPS", "true").lower() == "true"
 # Let SocialAuthExceptionMiddleware turn pipeline exceptions into redirects.
 SOCIAL_AUTH_RAISE_EXCEPTIONS = False
 SOCIAL_AUTH_LOGIN_REDIRECT_URL = "/api/sso/jwt/"

@@ -1902,3 +1902,84 @@ export async function resolveOid(oid: string): Promise<OidResolution> {
   const { data } = await api.get<OidResolution>(`/mibs/resolve/${encodeURIComponent(oid)}/`)
   return data
 }
+
+// ── SSO providers ──────────────────────────────────────────────────────────────
+
+/** Public shape returned by GET /sso/providers/ to anonymous callers. */
+export interface SSOProviderPublic {
+  id: number
+  name: string
+  provider: string
+  is_default: boolean
+  login_url: string
+}
+
+/** Full admin shape (GET as admin / retrieve / create / update). */
+export interface SSOProvider {
+  id: number
+  name: string
+  provider: string
+  client_id: string
+  has_secret: boolean
+  tenant_id: string
+  okta_domain: string
+  saml_metadata_url: string
+  is_enabled: boolean
+  is_default: boolean
+  allow_signup: boolean
+  default_role: string
+  allowed_domains: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SSOProviderInput {
+  name: string
+  provider: string
+  client_id?: string
+  client_secret?: string
+  tenant_id?: string
+  okta_domain?: string
+  saml_metadata_url?: string
+  is_enabled?: boolean
+  is_default?: boolean
+  allow_signup?: boolean
+  default_role?: string
+  allowed_domains?: string[]
+}
+
+export interface SSOTestResult {
+  valid: boolean
+  error: string | null
+}
+
+/** Public list for the login page (no auth required; enabled providers only). */
+export async function fetchSSOProvidersPublic(): Promise<SSOProviderPublic[]> {
+  const { data } = await api.get('/sso/providers/')
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+/** Admin list — full fields incl. disabled providers (admin auth required). */
+export async function fetchSSOProviders(): Promise<SSOProvider[]> {
+  const { data } = await api.get('/sso/providers/')
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+export async function createSSOProvider(input: SSOProviderInput): Promise<SSOProvider> {
+  const { data } = await api.post<SSOProvider>('/sso/providers/', input)
+  return data
+}
+
+export async function updateSSOProvider(id: number, input: Partial<SSOProviderInput>): Promise<SSOProvider> {
+  const { data } = await api.patch<SSOProvider>(`/sso/providers/${id}/`, input)
+  return data
+}
+
+export async function deleteSSOProvider(id: number): Promise<void> {
+  await api.delete(`/sso/providers/${id}/`)
+}
+
+export async function testSSOProvider(id: number): Promise<SSOTestResult> {
+  const { data } = await api.post<SSOTestResult>(`/sso/providers/${id}/test/`, {})
+  return data
+}
