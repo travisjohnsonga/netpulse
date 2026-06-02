@@ -7,7 +7,7 @@ import {
   generateTelemetryConfig, pushTelemetryConfig, fetchPushHistory, checkHealth, fetchSystemSettings,
   fetchDeviceMetrics, pollDeviceNow,
   type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
-  type MonitoredInterface, type DeviceMetrics, type MetricPoint,
+  type MonitoredInterface, type DeviceMetrics, type MetricPoint, type DeviceReachability,
 } from '../../api/client'
 import Modal from '../../components/Modal'
 import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
@@ -794,6 +794,14 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
         })()}
       </div>
 
+      {/* Section 1b — Ping Latency */}
+      <div className={clsx(liveCard, 'p-4')}>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Ping Latency</h3>
+        </div>
+        <PingLatencyChart reach={metrics?.reachability} />
+      </div>
+
       {/* Section 2 — Interface Traffic */}
       <div className={liveCard}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
@@ -958,6 +966,66 @@ function HealthCard({ label, value, series, color = '#3b82f6', subtitle }: {
         : series && series.length > 1
           ? <MiniSpark series={series} color={color} />
           : <p className="text-[10px] text-gray-300 dark:text-gray-600">{hasData ? '' : 'no data'}</p>}
+    </div>
+  )
+}
+
+// Ping/RTT latency over the selected range, colored by latency zone
+// (<10ms green · 10-50 blue · 50-100 yellow · >100 red), with a 100ms warning
+// threshold line and gaps where the device was unreachable.
+function PingLatencyChart({ reach }: { reach?: DeviceReachability }) {
+  const data = reach?.data ?? []
+  const hasData = data.some((p) => p.rtt_ms != null)
+  const fmt = (v: number | null | undefined) => (v == null ? '—' : `${v.toFixed(1)}ms`)
+
+  const option: EChartsOption = {
+    grid: { left: 44, right: 14, top: 14, bottom: 26 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        const v = Array.isArray(p.value) ? p.value[1] : p.value
+        const t = new Date(Array.isArray(p.value) ? p.value[0] : p.axisValue).toLocaleString()
+        return v == null ? `${t}<br/>unreachable` : `${t}<br/>${Number(v).toFixed(1)} ms`
+      },
+    },
+    xAxis: { type: 'time', axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: 'ms', nameTextStyle: { fontSize: 10 }, min: 0, scale: true, axisLabel: { fontSize: 10 } },
+    visualMap: {
+      show: false, dimension: 1, seriesIndex: 0,
+      pieces: [
+        { lte: 10, color: '#22c55e' },
+        { gt: 10, lte: 50, color: '#3b82f6' },
+        { gt: 50, lte: 100, color: '#eab308' },
+        { gt: 100, color: '#ef4444' },
+      ],
+      outOfRange: { color: '#ef4444' },
+    },
+    series: [{
+      type: 'line', showSymbol: false, smooth: true, connectNulls: false,
+      data: data.map((p) => [p.time, p.rtt_ms]),
+      lineStyle: { width: 1.5 },
+      areaStyle: { opacity: 0.08 },
+      markLine: {
+        silent: true, symbol: 'none',
+        lineStyle: { color: '#ef4444', type: 'dashed', width: 1 },
+        data: [{ yAxis: 100 }],
+        label: { formatter: 'warn 100ms', fontSize: 9, color: '#ef4444', position: 'insideEndTop' },
+      },
+    }],
+  }
+
+  return (
+    <div>
+      {hasData
+        ? <ReactECharts option={option} style={{ height: 180 }} opts={{ renderer: 'svg' }} notMerge />
+        : <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">No latency data yet</div>}
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+        Current: <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(reach?.rtt_ms)}</span>
+        {' · '}Avg: <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(reach?.avg_rtt_ms)}</span>
+        {' · '}Max: <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(reach?.max_rtt_ms)}</span>
+        {reach?.uptime_pct_24h != null && <>{' · '}Uptime: <span className="font-medium text-gray-700 dark:text-gray-300">{reach.uptime_pct_24h.toFixed(1)}% (24h)</span></>}
+      </p>
     </div>
   )
 }

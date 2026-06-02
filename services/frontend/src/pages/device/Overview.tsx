@@ -184,10 +184,11 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
       {/* Quick stats */}
       <Card>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Quick Stats</h3>
-        <div className="grid grid-cols-3 gap-3 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
           <Stat label="Uptime" value={fmtUptime(m?.uptime_seconds)} />
           <Stat label="CPU" value={m?.cpu_pct != null ? `${m.cpu_pct.toFixed(0)}%` : '—'} />
           <Stat label="Memory" value={m?.memory_used_pct != null ? `${m.memory_used_pct.toFixed(0)}%` : '—'} />
+          <Stat label="Ping" value={metrics?.reachability?.rtt_ms != null ? `${metrics.reachability.rtt_ms.toFixed(1)}ms` : '—'} />
         </div>
         <button onClick={() => onTab('telemetry')} className="block w-full text-center text-sm font-medium text-gray-700 dark:text-gray-300 mt-3 hover:text-blue-700">
           {ifaceCount ?? 0} interface{ifaceCount === 1 ? '' : 's'} monitored →

@@ -9,6 +9,7 @@ import {
   fetchAlerts,
   fetchCheckSummary,
   fetchChecks,
+  fetchDeviceReachability,
   checkHealth,
   checkInfraHealth,
   reachabilityOf,
@@ -17,6 +18,7 @@ import {
   type InfraHealth,
   type CheckSummary,
   type ServiceCheck,
+  type DeviceReachability,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import clsx from 'clsx'
@@ -363,6 +365,9 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Device latency sparklines */}
+      {safeDevices.length > 0 && <DeviceLatencyWidget devices={safeDevices} />}
+
       {/* Recent alerts table */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
@@ -427,6 +432,85 @@ export default function Dashboard() {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// Per-device current RTT + a 1h latency sparkline. Color follows the same zones
+// as the device Telemetry chart (<10ms green · 10-50 blue · 50-100 yellow · >100 red).
+function latencyColor(rtt: number | null | undefined): string {
+  if (rtt == null) return '#9ca3af'
+  if (rtt < 10) return '#22c55e'
+  if (rtt < 50) return '#3b82f6'
+  if (rtt < 100) return '#eab308'
+  return '#ef4444'
+}
+
+function LatencySpark({ data }: { data: DeviceReachability['data'] }) {
+  const pts = data.filter((p) => p.rtt_ms != null)
+  if (pts.length < 2) {
+    return <span className="text-[10px] text-gray-300 dark:text-gray-600">no data</span>
+  }
+  const option: EChartsOption = {
+    grid: { left: 0, right: 0, top: 2, bottom: 0 },
+    xAxis: { type: 'category', show: false, data: pts.map((p) => p.time) },
+    yAxis: { type: 'value', show: false, scale: true },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        return `${new Date(p.axisValue).toLocaleString()}<br/>${Number(p.value).toFixed(1)} ms`
+      },
+    },
+    series: [{
+      type: 'line', data: pts.map((p) => p.rtt_ms), showSymbol: false, smooth: true,
+      lineStyle: { color: '#3b82f6', width: 1.25 }, areaStyle: { color: '#3b82f6', opacity: 0.1 },
+    }],
+  }
+  return <ReactECharts option={option} style={{ height: 24, width: 120 }} opts={{ renderer: 'svg' }} notMerge />
+}
+
+function DeviceLatencyWidget({ devices }: { devices: Device[] }) {
+  const [data, setData] = useState<Record<number, DeviceReachability>>({})
+  const list = devices.slice(0, 8)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      Promise.allSettled(list.map((d) => fetchDeviceReachability(d.id, '1h').then((r) => [d.id, r] as const)))
+        .then((res) => {
+          if (cancelled) return
+          const m: Record<number, DeviceReachability> = {}
+          for (const r of res) if (r.status === 'fulfilled') m[r.value[0]] = r.value[1]
+          setData(m)
+        })
+    }
+    load()
+    const t = setInterval(load, 30_000)
+    return () => { cancelled = true; clearInterval(t) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices.map((d) => d.id).join(',')])
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 className="font-semibold text-gray-800 dark:text-gray-100">Device Latency</h2>
+      </div>
+      <div className="divide-y divide-gray-100 dark:divide-gray-700">
+        {list.map((d) => {
+          const r = data[d.id]
+          const rtt = r?.rtt_ms ?? null
+          return (
+            <div key={d.id} className="flex items-center gap-3 px-5 py-2 text-sm">
+              <a href={`/devices/${d.id}`} className="flex-1 min-w-0 truncate text-gray-700 dark:text-gray-300 hover:text-blue-600">{d.hostname}</a>
+              <div className="shrink-0"><LatencySpark data={r?.data ?? []} /></div>
+              <span className="w-16 text-right font-mono font-medium" style={{ color: latencyColor(rtt) }}>
+                {rtt != null ? `${rtt.toFixed(1)}ms` : '—'}
+              </span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

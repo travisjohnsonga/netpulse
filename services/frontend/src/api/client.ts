@@ -334,6 +334,23 @@ export interface DeviceMetrics {
   interfaces: InterfaceStat[]
   lldp_neighbors?: LldpNeighbor[]
   environment?: DeviceEnvironment
+  reachability?: DeviceReachability
+}
+
+export interface ReachabilityPoint {
+  time: string
+  rtt_ms: number | null
+  reachable: boolean | null
+}
+
+// Ping/RTT latency history (from device_reachability in InfluxDB).
+export interface DeviceReachability {
+  current: boolean | null
+  rtt_ms: number | null
+  uptime_pct_24h: number | null
+  avg_rtt_ms: number | null
+  max_rtt_ms: number | null
+  data: ReachabilityPoint[]
 }
 
 // Physical-sensor summary; empty {} for devices that report none (e.g. virtual).
@@ -371,6 +388,11 @@ export interface InterfaceStat {
 
 export async function fetchDeviceMetrics(deviceId: number, period = '1h'): Promise<DeviceMetrics> {
   const { data } = await api.get<DeviceMetrics>(`/devices/${deviceId}/metrics/`, { params: { period } })
+  return data
+}
+
+export async function fetchDeviceReachability(deviceId: number, period = '1h'): Promise<DeviceReachability & { device_id: string; period: string }> {
+  const { data } = await api.get(`/devices/${deviceId}/reachability/`, { params: { period } })
   return data
 }
 
