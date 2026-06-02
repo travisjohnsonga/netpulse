@@ -1,0 +1,212 @@
+"""
+AOS-CX enrichment — Stage 1 (REST API client + system enrichment).
+
+Covers apps.devices.aos_cx_client.AOSCXClient and the AOS-CX paths added to
+apps.devices.enrich (REST-first system enrichment + SNMP sysDescr fallback).
+"""
+import pytest
+
+from apps.credentials.models import CredentialProfile
+from apps.devices import enrich
+from apps.devices.aos_cx_client import AOSCXClient
+from apps.devices.models import Device
+
+pytestmark = pytest.mark.django_db
+
+
+# ── fake HTTP plumbing (no network) ─────────────────────────────────────────────
+
+class _FakeResp:
+    def __init__(self, json_data=None, status=200):
+        self._json = json_data or {}
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._json
+
+
+class _FakeCookies:
+    def __init__(self, data):
+        self._data = data
+
+    def get_dict(self):
+        return dict(self._data)
+
+
+class _FakeSession:
+    """Stand-in for requests.Session that returns canned payloads."""
+
+    def __init__(self, *, get_json=None, post_status=200, cookies=None):
+        self._get_json = get_json or {}
+        self._post_status = post_status
+        self.cookies = _FakeCookies(cookies or {})
+        self.verify = True
+        self.posts = []
+        self.closed = False
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        return _FakeResp(status=self._post_status)
+
+    def get(self, url, **kwargs):
+        # url is ".../rest/<version>/<resource>"; key the canned map by <resource>.
+        after_rest = url.split("/rest/", 1)[-1]
+        path = after_rest.split("/", 1)[1] if "/" in after_rest else after_rest
+        return _FakeResp(json_data=self._get_json.get(path, self._get_json))
+
+    def close(self):
+        self.closed = True
+
+
+_SYSTEM_PAYLOAD = {
+    "hostname": "core-sw-1",
+    "software_version": "FL.10.10.1010",
+    "hardware_info": {"product_name": "Aruba6300M-48G-Class4PoEP-4SFP56"},
+    "serial_number": "SG12345678",
+}
+
+
+# ── client ──────────────────────────────────────────────────────────────────────
+
+class TestAOSCXClient:
+    def test_aos_cx_rest_client_login(self):
+        client = AOSCXClient("10.0.0.5")
+        assert client.base_url == "https://10.0.0.5/rest/v10.09"
+        assert client.verify_ssl is False
+        assert client.timeout == 10
+        client._session = _FakeSession(cookies={"sessionId": "abc123"})
+
+        cookies = client.login("admin", "secret")
+
+        assert cookies == {"sessionId": "abc123"}
+        assert client._logged_in is True
+        # credentials posted as form data to the login endpoint
+        url, kwargs = client._session.posts[0]
+        assert url.endswith("/rest/v10.09/login")
+        assert kwargs["data"] == {"username": "admin", "password": "secret"}
+
+    def test_aos_cx_login_raises_on_http_error(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(post_status=401)
+        with pytest.raises(RuntimeError):
+            client.login("admin", "wrong")
+        assert client._logged_in is False
+
+    def test_aos_cx_system_info_parse(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system": _SYSTEM_PAYLOAD})
+
+        info = client.get_system()
+
+        assert info["hostname"] == "core-sw-1"
+        assert info["version"] == "FL.10.10.1010"
+        assert info["model"] == "Aruba6300M-48G-Class4PoEP-4SFP56"
+        assert info["serial"] == "SG12345678"
+        assert info["raw"] == _SYSTEM_PAYLOAD
+
+    def test_aos_cx_context_manager_logs_out(self):
+        client = AOSCXClient("10.0.0.5")
+        session = _FakeSession()
+        client._session = session
+        with client as c:
+            c._logged_in = True
+        # logout POSTed + session closed on exit
+        assert any(url.endswith("/logout") for url, _ in session.posts)
+        assert session.closed is True
+        assert client._logged_in is False
+
+    def test_aos_cx_interface_parse(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces": {
+            "1/1/1": {"name": "1/1/1", "type": "system", "admin_state": "up",
+                      "link_state": "up", "ip4_address": "10.0.0.5/24"},
+            "1/1/2": {"name": "1/1/2", "type": "system", "admin_state": "down",
+                      "link_state": "down"},
+        }})
+        ifaces = client.get_interfaces()
+        by_name = {i["name"]: i for i in ifaces}
+        assert by_name["1/1/1"]["link_state"] == "up"
+        assert by_name["1/1/1"]["ip"] == "10.0.0.5/24"
+        assert by_name["1/1/2"]["admin_state"] == "down"
+        assert by_name["1/1/2"]["ip"] == ""
+
+
+# ── SNMP sysDescr fallback parsing ──────────────────────────────────────────────
+
+class TestAOSCXSysDescr:
+    def test_aos_cx_sysdescr_parsing(self):
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: "ArubaOS-CX 10.10.1010, Aruba6300M Switch",
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.47196.4.1.1.3.8",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["os_version"] == "10.10.1010"
+        assert updates["platform"] == "aos_cx"
+        assert updates["vendor"] == "aruba"
+        assert updates["model"] == "Aruba6300M"
+
+
+# ── enrichment pipeline ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def aos_profile():
+    return CredentialProfile.objects.create(
+        name="aoscx", ssh_enabled=True, ssh_username="admin")
+
+
+@pytest.fixture
+def aos_device(aos_profile):
+    return Device.objects.create(
+        hostname="cx", ip_address="10.0.0.5", management_ip="10.0.0.5",
+        platform="aos_cx", credential_profile=aos_profile)
+
+
+def _no_network(monkeypatch):
+    monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: {})
+    monkeypatch.setattr(enrich, "_ssh_collect", lambda ip, p, s: {})
+    monkeypatch.setattr(enrich, "_discover_interfaces", lambda d: ([], 0, 0))
+    monkeypatch.setattr(enrich, "_discover_lldp", lambda d, i=None: 0)
+    monkeypatch.setattr(enrich, "_publish_topology_updated", lambda did: None)
+    monkeypatch.setattr(enrich, "_collect_config", lambda d: None)
+
+
+class TestAOSCXEnrichmentPipeline:
+    def test_aos_cx_enrichment_pipeline(self, aos_device, monkeypatch):
+        _no_network(monkeypatch)
+        rest = {"hostname": "core-sw-1", "version": "FL.10.10.1010",
+                "model": "Aruba6300M-48G", "serial": "SG12345678", "raw": {}}
+        monkeypatch.setattr(enrich, "_aos_cx_collect", lambda ip, p, s: rest)
+        # If REST succeeds, SNMP must not be consulted.
+        monkeypatch.setattr(enrich, "_snmp_collect",
+                            lambda ip, p, s: pytest.fail("SNMP should not run when REST succeeds"))
+
+        changed = enrich.enrich_device(aos_device.id)
+        aos_device.refresh_from_db()
+
+        assert aos_device.os_version == "FL.10.10.1010"
+        assert aos_device.model == "Aruba6300M-48G"
+        assert aos_device.serial_number == "SG12345678"
+        assert aos_device.hostname == "core-sw-1"
+        assert aos_device.vendor == "aruba"
+        assert set(changed) >= {"os_version", "model", "serial_number"}
+
+    def test_aos_cx_falls_back_to_snmp_when_rest_fails(self, aos_device, monkeypatch):
+        _no_network(monkeypatch)
+        monkeypatch.setattr(enrich, "_aos_cx_collect", lambda ip, p, s: {})
+        snmp = {
+            enrich._OID_SYS_DESCR: "ArubaOS-CX 10.10.1010, Aruba6300M Switch",
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.47196.4.1.1.3.8",
+        }
+        monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: snmp)
+
+        enrich.enrich_device(aos_device.id)
+        aos_device.refresh_from_db()
+
+        assert aos_device.os_version == "10.10.1010"
+        assert aos_device.model == "Aruba6300M"
+        assert aos_device.vendor == "aruba"
