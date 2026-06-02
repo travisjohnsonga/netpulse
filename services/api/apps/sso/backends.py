@@ -1,31 +1,45 @@
 """
 SSO auth backends with dynamic (DB + OpenBao) credential resolution.
 
-social-auth normally reads a backend's client id/secret from static Django
-settings (SOCIAL_AUTH_<BACKEND>_KEY/SECRET). NetPulse stores them per-provider
-in the database (client_id) and OpenBao (client_secret), so each backend
-overrides ``get_key_and_secret()`` — the single method social-core uses to
-resolve OAuth credentials — to read from the active SSOProvider row at request
-time. Falls back to the static setting when no enabled provider exists.
+social-auth normally reads a backend's settings from static Django settings
+(SOCIAL_AUTH_<BACKEND>_KEY/SECRET/TENANT_ID/API_URL...). NetPulse stores them
+per-provider in the database (client_id, tenant_id, okta_domain) and OpenBao
+(client_secret), so each backend mixes in `_DBCredentialsMixin`, which:
+
+  - overrides ``get_key_and_secret()`` — social-core's seam for OAuth creds —
+    to return the active SSOProvider's client_id + the OpenBao client_secret;
+  - overrides ``setting()`` so provider-specific extras (Azure TENANT_ID, Okta
+    API_URL) resolve from the DB row at request time.
+
+Both fall back to the static SOCIAL_AUTH_* setting when no enabled provider row
+exists, so env-configured static credentials still work.
 """
 from __future__ import annotations
 
 import logging
 
+from social_core.backends.azuread_tenant import AzureADTenantOAuth2
+from social_core.backends.github import GithubOAuth2
 from social_core.backends.google import GoogleOAuth2
+from social_core.backends.okta import OktaOAuth2
 
 logger = logging.getLogger(__name__)
 
 
 class _DBCredentialsMixin:
-    """Resolve (key, secret) from the matching enabled SSOProvider + OpenBao."""
+    """Resolve credentials/settings from the matching enabled SSOProvider + OpenBao."""
 
     # Subclasses keep social-core's ``name`` (e.g. "google-oauth2"); we match
     # SSOProvider.provider against it.
 
     def _provider(self):
-        from apps.sso.models import SSOProvider
-        return SSOProvider.objects.filter(provider=self.name, is_enabled=True).first()
+        # Cache for the lifetime of this (per-request) backend instance so a
+        # single auth flow doesn't re-query for every setting() lookup.
+        if not hasattr(self, "_cached_provider"):
+            from apps.sso.models import SSOProvider
+            self._cached_provider = SSOProvider.objects.filter(
+                provider=self.name, is_enabled=True).first()
+        return self._cached_provider
 
     def _db_secret(self, provider) -> str:
         if not provider or not provider.vault_path:
@@ -37,6 +51,14 @@ class _DBCredentialsMixin:
             logger.warning("SSO: could not read client_secret from OpenBao: %s", exc)
             return ""
 
+    def _db_extra(self, name: str, provider):
+        """
+        Provider-specific extra settings resolved from the DB row.
+        Subclasses override; return a truthy value to use it, else None to fall
+        back to the static SOCIAL_AUTH_* setting.
+        """
+        return None
+
     def get_key_and_secret(self):
         provider = self._provider()
         if provider:
@@ -44,8 +66,36 @@ class _DBCredentialsMixin:
             return (provider.client_id or static_key, self._db_secret(provider) or static_secret)
         return super().get_key_and_secret()
 
+    def setting(self, name, default=None):
+        provider = self._provider()
+        if provider is not None:
+            val = self._db_extra(name, provider)
+            if val:
+                return val
+        return super().setting(name, default)
+
 
 class DynamicGoogleOAuth2(_DBCredentialsMixin, GoogleOAuth2):
-    """Google OAuth2 backend reading client_id/secret from the DB + OpenBao."""
-    # ``name`` stays "google-oauth2" (inherited) so /auth/{login,complete}/ URLs
-    # and the SOCIAL_AUTH_PIPELINE resolve against the same backend.
+    """Google OAuth2 — client_id/secret from DB + OpenBao. name='google-oauth2'."""
+
+
+class DynamicAzureADTenantOAuth2(_DBCredentialsMixin, AzureADTenantOAuth2):
+    """Azure AD (tenant) OAuth2 — adds TENANT_ID from the DB. name='azuread-tenant-oauth2'."""
+
+    def _db_extra(self, name, provider):
+        if name == "TENANT_ID" and provider.tenant_id:
+            return provider.tenant_id
+        return None
+
+
+class DynamicOktaOAuth2(_DBCredentialsMixin, OktaOAuth2):
+    """Okta OAuth2 — derives API_URL from okta_domain. name='okta-oauth2'."""
+
+    def _db_extra(self, name, provider):
+        if name == "API_URL" and provider.okta_domain:
+            return f"https://{provider.okta_domain}/oauth2/default"
+        return None
+
+
+class DynamicGithubOAuth2(_DBCredentialsMixin, GithubOAuth2):
+    """GitHub OAuth2 — client_id/secret from DB + OpenBao. name='github'."""

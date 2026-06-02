@@ -364,8 +364,11 @@ AUTH_PASSWORD_VALIDATORS = [
 # can never lock everyone out. Provider client_id/secret are resolved per-request
 # from the SSOProvider row + OpenBao by the Dynamic* backends (apps/sso/backends).
 AUTHENTICATION_BACKENDS = [
-    "apps.sso.backends.DynamicGoogleOAuth2",      # Stage 1: Google (DB+OpenBao creds)
-    "django.contrib.auth.backends.ModelBackend",  # local username/password fallback
+    "apps.sso.backends.DynamicGoogleOAuth2",            # Google (DB+OpenBao creds)
+    "apps.sso.backends.DynamicAzureADTenantOAuth2",     # Microsoft Azure AD (+ tenant)
+    "apps.sso.backends.DynamicOktaOAuth2",              # Okta (+ okta_domain → API_URL)
+    "apps.sso.backends.DynamicGithubOAuth2",            # GitHub
+    "django.contrib.auth.backends.ModelBackend",        # local username/password fallback
 ]
 
 SSO_ALLOW_LOCAL_LOGIN = os.environ.get("SSO_ALLOW_LOCAL_LOGIN", "true").lower() == "true"
