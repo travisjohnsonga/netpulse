@@ -208,3 +208,75 @@ class TestCommand:
         call_command("run_config_manager", "--once", "--device-id", str(device.id))
         cfg = DeviceConfig.objects.get(device=device)
         assert cfg.collected_by == "manual"
+
+
+class TestConfigTasks:
+    def test_collect_device_config_delegates(self, device, monkeypatch):
+        from apps.configbackup import tasks
+        seen = {}
+        monkeypatch.setattr(collector, "collect_one",
+                            lambda d, collected_by="scheduled": seen.update(d=d.id, by=collected_by) or {"ok": True})
+        res = tasks.collect_device_config(device.id, collected_by="enrichment")
+        assert res["ok"] and seen == {"d": device.id, "by": "enrichment"}
+
+    def test_collect_device_config_missing(self):
+        from apps.configbackup import tasks
+        assert tasks.collect_device_config(999999)["ok"] is False
+
+    def test_collect_all_aggregates_and_alerts_on_change(self, device, monkeypatch):
+        from apps.configbackup import tasks
+
+        class Cfg:
+            diff_summary = "+5 -2"
+        monkeypatch.setattr(collector, "collect_one",
+                            lambda d, collected_by="scheduled": {"ok": True, "stored": True, "changed": True, "config": Cfg()})
+        alerts = []
+        monkeypatch.setattr(tasks, "publish_config_change_alert", lambda dev, res: alerts.append(dev.id))
+        out = tasks.collect_all_configs()
+        assert out == {"total": 1, "success": 1, "failed": 0, "unchanged": 0, "changed": 1}
+        assert alerts == [device.id]
+
+    def test_collect_all_unchanged_no_alert(self, device, monkeypatch):
+        from apps.configbackup import tasks
+        monkeypatch.setattr(collector, "collect_one",
+                            lambda d, collected_by="scheduled": {"ok": True, "stored": False, "changed": False, "config": None})
+        alerts = []
+        monkeypatch.setattr(tasks, "publish_config_change_alert", lambda dev, res: alerts.append(dev.id))
+        out = tasks.collect_all_configs()
+        assert out["unchanged"] == 1 and out["changed"] == 0 and alerts == []
+
+    def test_publish_config_change_alert_payload(self, device, monkeypatch):
+        from apps.configbackup import tasks
+        captured = {}
+
+        async def fake_publish(payload):
+            captured.update(payload)
+        monkeypatch.setattr(tasks, "_publish_alert", fake_publish)
+
+        class Cfg:
+            diff_summary = "+3 -1"
+        tasks.publish_config_change_alert(device, {"config": Cfg()})
+        assert captured["rule_name"] == "Config Changed"
+        assert captured["device_id"] == device.id
+        assert "+3 -1" in captured["message"]
+
+
+class TestConfigSchedule:
+    def test_collection_hours_default(self, monkeypatch):
+        from apps.compliance.management.commands.run_config_manager import _collection_hours
+        monkeypatch.delenv("CONFIG_COLLECTION_HOUR_1", raising=False)
+        monkeypatch.delenv("CONFIG_COLLECTION_HOUR_2", raising=False)
+        assert _collection_hours() == {7, 19}
+
+    def test_collection_hours_override(self, monkeypatch):
+        from apps.compliance.management.commands.run_config_manager import _collection_hours
+        monkeypatch.setenv("CONFIG_COLLECTION_HOUR_1", "6")
+        monkeypatch.setenv("CONFIG_COLLECTION_HOUR_2", "18")
+        assert _collection_hours() == {6, 18}
+
+    def test_enabled_flag(self, monkeypatch):
+        from apps.compliance.management.commands.run_config_manager import _enabled
+        monkeypatch.setenv("CONFIG_COLLECTION_ENABLED", "false")
+        assert _enabled() is False
+        monkeypatch.setenv("CONFIG_COLLECTION_ENABLED", "true")
+        assert _enabled() is True

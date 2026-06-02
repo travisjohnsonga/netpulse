@@ -267,8 +267,24 @@ def enrich_device(device_id: int) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLDP discovery failed for %s: %s", device.hostname, exc)
 
+    # ── Step 4: initial config collection ─────────────────────────────────────
+    # Capture a baseline running-config immediately so drift detection works from
+    # day one (don't wait for the next scheduled collection window).
+    try:
+        _collect_config(device)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Config collection failed for %s: %s", device.hostname, exc)
+
     logger.info("Enrichment complete for %s", device.hostname)
     return {f: getattr(device, f) for f in changed}
+
+
+def _collect_config(device) -> None:
+    """Collect and store the device's running config (initial baseline)."""
+    from apps.configbackup.tasks import collect_device_config
+
+    logger.info("Collecting initial config for %s", device.hostname)
+    collect_device_config(device.id, collected_by="enrichment")
 
 
 def _enrich_worker(device_id: int) -> None:

@@ -70,6 +70,11 @@ DEFAULT_RULES = [
         "Device RTT exceeded the critical threshold (default >500ms for 2 checks).",
         {"source": "reachability_monitor", "metric": "rtt_ms"}, 15,
     ),
+    (
+        "Config Changed", "medium",
+        "A scheduled config collection detected a running-config change.",
+        {"source": "config_manager", "metric": "config_diff"}, 0,
+    ),
 ]
 
 

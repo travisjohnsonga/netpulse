@@ -27,6 +27,7 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(enrich, "_discover_interfaces", lambda d: ([], 0, 0))
     monkeypatch.setattr(enrich, "_discover_lldp", lambda d, i=None: 0)
     monkeypatch.setattr(enrich, "_publish_topology_updated", lambda did: None)
+    monkeypatch.setattr(enrich, "_collect_config", lambda d: None)
 
 
 class TestEnrichDevice:
@@ -93,6 +94,7 @@ class TestEnrichDevice:
         monkeypatch.setattr(enrich, "_snmp_collect", lambda *a: {})
         monkeypatch.setattr(enrich, "_ssh_collect", lambda *a: {})
         monkeypatch.setattr(enrich, "_publish_topology_updated", lambda did: None)
+        monkeypatch.setattr(enrich, "_collect_config", lambda d: None)
 
         def boom_iface(d):
             calls["iface"] += 1
@@ -125,6 +127,8 @@ class TestEnrichChain:
         monkeypatch.setattr(enrich, "_ssh_collect", lambda *a: {})
         published = []
         monkeypatch.setattr(enrich, "_publish_topology_updated", lambda did: published.append(did))
+        collected = []
+        monkeypatch.setattr(enrich, "_collect_config", lambda d: collected.append(d.id))
 
         enrich.enrich_device(device.id)
         # Only the LLDP-connected (auto-selected) interface is monitored.
@@ -133,6 +137,8 @@ class TestEnrichChain:
         assert rows.first().if_name == "GigabitEthernet1"
         # Topology refresh published because a link matched.
         assert published == [device.id]
+        # Step 4: initial config collection ran for the device.
+        assert collected == [device.id]
 
 
 class TestTriggerEnrich:
