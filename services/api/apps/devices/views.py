@@ -1,7 +1,11 @@
+import logging
+
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 
 from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
@@ -229,6 +233,24 @@ class DeviceViewSet(viewsets.ModelViewSet):
         from . import collection_status as cs
         device = self.get_object()
         return Response(cs.build_collection_status(device))
+
+    @extend_schema(summary="Re-run SNMP/SSH enrichment + interface/LLDP discovery", request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="enrich")
+    def enrich(self, request, pk=None):
+        """
+        Re-probe the device in the background to refresh model/OS/serial/platform
+        and rediscover interfaces + LLDP links. Returns immediately (202); the
+        device record updates in place.
+        """
+        from .enrich import trigger_enrich
+        device = self.get_object()
+        scheduled = trigger_enrich(device)
+        return Response(
+            {"status": "enrichment started" if scheduled else "enrichment unavailable",
+             "device_id": device.id,
+             "detail": None if scheduled else "No credential profile, or enrichment is disabled."},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="poll-now")
@@ -580,6 +602,13 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         dd.approved_by = request.user if request.user.is_authenticated else None
         dd.approved_at = timezone.now()
         dd.save(update_fields=["status", "approved_device", "approved_by", "approved_at", "updated_at"])
+        logger.info("Device created from discovery: %s (id=%s, ip=%s)",
+                    device.hostname, device.id, device.ip_address)
+
+        # Enrich in the background (SNMP/SSH device info → interfaces → LLDP).
+        from .enrich import trigger_enrich
+        trigger_enrich(device)
+
         return Response(
             {"device": DeviceSerializer(device).data,
              "discovered": DiscoveredDeviceSerializer(dd).data},

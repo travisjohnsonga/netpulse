@@ -30,3 +30,7 @@ class DeviceStatusConsumer(AsyncWebsocketConsumer):
     async def device_status(self, event: dict):
         """Pushed when a device's reachability/status changes."""
         await self.send(text_data=json.dumps({"type": "device_status", **event.get("payload", {})}))
+
+    async def topology_updated(self, event: dict):
+        """Pushed when discovery/enrichment changes topology links."""
+        await self.send(text_data=json.dumps({"type": "topology_updated", **event.get("payload", {})}))

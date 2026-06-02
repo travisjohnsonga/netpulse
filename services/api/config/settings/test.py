@@ -35,6 +35,9 @@ SNMP_DEVICE_PUBLISH = False
 # Don't spawn a real discovery scan thread when a job is created in tests.
 DISCOVERY_AUTORUN = False
 
+# Don't spawn a real enrichment probe when a device is approved in tests.
+DEVICE_AUTO_ENRICH = False
+
 # Disable the auth throttle by default so the suite is deterministic; the
 # throttle test re-enables a tiny rate via override_settings.
 REST_FRAMEWORK = {**REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": None}}  # noqa: F405

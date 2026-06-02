@@ -220,6 +220,11 @@ SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "
 # real network scan.
 DISCOVERY_AUTORUN = os.environ.get("DISCOVERY_AUTORUN", "true").lower() == "true"
 
+# After a discovered device is approved, enrich it in the background (SNMP/SSH
+# for model/OS/serial/platform, then interface + LLDP discovery). Disabled in
+# tests so approving a device never spawns a real probe.
+DEVICE_AUTO_ENRICH = os.environ.get("DEVICE_AUTO_ENRICH", "true").lower() == "true"
+
 # Directory of community-maintained vendor advisory YAML (Juniper/Arista/…),
 # loaded by `load_community_advisories`. Mounted from the repo's advisories/.
 COMMUNITY_ADVISORIES_DIR = os.environ.get("COMMUNITY_ADVISORIES_DIR", "/app/advisories")

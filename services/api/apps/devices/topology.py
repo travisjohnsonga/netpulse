@@ -25,18 +25,22 @@ def canonical_link(dev_a, port_a, dev_b, port_b):
     return dev_a, port_a, dev_b, port_b
 
 
-def discover_links(device) -> list[dict]:
+def discover_links(device, interfaces=None) -> list[dict]:
     """
     Discover this device's LLDP neighbors and persist matched links.
     Returns the discovered neighbors (matched or not). Raises DiscoveryError on
     a discovery failure (no usable credential, unreachable, …).
+
+    Pass `interfaces` (a discover_interfaces result) to reuse an existing scan
+    and avoid a second SNMP/SSH walk; otherwise it discovers them itself.
     """
     from django.db.models import Q
 
     from apps.telemetry import discovery
     from .models import Device, TopologyLink
 
-    interfaces = discovery.discover_interfaces(device)
+    if interfaces is None:
+        interfaces = discovery.discover_interfaces(device)
     now = timezone.now()
     found = []
     for iface in interfaces:
