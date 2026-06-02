@@ -63,6 +63,35 @@ class TestReachabilityEndpoint:
         assert out["rtt_ms"] is None and out["data"] == []  # degrades, no raise
 
 
+class TestReachabilitySummary:
+    def test_requires_auth(self, api_client):
+        assert api_client.get("/api/devices/reachability-summary/").status_code == 401
+
+    def test_returns_total_and_data(self, auth_client, device, monkeypatch):
+        from apps.devices import metrics_influx
+        sample = {"period": "6h", "total_devices": 3,
+                  "data": [{"time": "t", "active": 2, "unreachable": 1}]}
+        captured = {}
+        monkeypatch.setattr(metrics_influx, "query_reachability_summary",
+                            lambda p: captured.update(p=p) or sample)
+        body = auth_client.get("/api/devices/reachability-summary/?period=6h").json()
+        assert body["total_devices"] == 3 and body["data"][0]["active"] == 2
+        assert captured["p"] == "6h"
+
+    def test_summary_counts_active_unreachable_devices_and_degrades(self, monkeypatch):
+        # InfluxDB down → total from the DB (active+unreachable), data empty.
+        from apps.devices import metrics_influx
+        from apps.devices.models import Device
+        Device.objects.create(hostname="a1", ip_address="10.0.0.1", status="active")
+        Device.objects.create(hostname="u1", ip_address="10.0.0.2", status="unreachable")
+        Device.objects.create(hostname="i1", ip_address="10.0.0.3", status="inactive")  # excluded
+        monkeypatch.setattr(metrics_influx, "_client", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+        out = metrics_influx.query_reachability_summary("999d")
+        assert out["period"] == "1h"           # normalised
+        assert out["total_devices"] == 2       # active + unreachable only
+        assert out["data"] == []
+
+
 class TestMetricsModule:
     def test_pct_used(self):
         from apps.devices.metrics_influx import _pct_used

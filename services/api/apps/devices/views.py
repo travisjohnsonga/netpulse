@@ -207,6 +207,13 @@ class DeviceViewSet(viewsets.ModelViewSet):
         return Response(metrics_influx.query_reachability(
             str(device.id), request.query_params.get("period", "1h")))
 
+    @action(detail=False, methods=["get"], url_path="reachability-summary")
+    def reachability_summary(self, request):
+        """Fleet active/unreachable counts over time (?period=1h|6h|24h|7d)."""
+        from . import metrics_influx
+        return Response(metrics_influx.query_reachability_summary(
+            request.query_params.get("period", "1h")))
+
     @action(detail=False, methods=["get"], url_path="platforms")
     def platforms(self, request):
         """

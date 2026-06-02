@@ -245,6 +245,56 @@ def query_reachability(device_id: str, period: str = "1h") -> dict:
     return out
 
 
+def query_reachability_summary(period: str = "1h") -> dict:
+    """
+    Fleet active/unreachable counts over time for the dashboard "Device Status
+    Over Time" chart. Takes the LAST is_reachable per device per window (so a
+    device sampled twice a minute isn't double-counted) then sums across devices
+    to get the active count; unreachable = total - active.
+    """
+    if period not in VALID_PERIODS:
+        period = "1h"
+    window = _WINDOW.get(period, "1m")
+    bucket = getattr(settings, "INFLUXDB_BUCKET", "metrics")
+
+    from .models import Device
+    total = Device.objects.filter(
+        status__in=[Device.Status.ACTIVE, Device.Status.UNREACHABLE]).count()
+    out = {"period": period, "total_devices": total, "data": []}
+
+    try:
+        client = _client()
+    except Exception as exc:
+        logger.warning("InfluxDB client unavailable: %s", exc)
+        return out
+
+    flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -{period})
+  |> filter(fn: (r) => r._measurement == "device_reachability" and r._field == "is_reachable")
+  |> aggregateWindow(every: {window}, fn: last, createEmpty: false)
+  |> group(columns: ["_time"])
+  |> sum()
+'''
+    data = []
+    try:
+        for table in client.query_api().query(flux):
+            for rec in table.records:
+                active = int(rec.get_value() or 0)
+                active = max(0, min(active, total))   # guard against clock-skew dupes
+                t = rec.get_time().isoformat().replace("+00:00", "Z")
+                data.append({"time": t, "active": active, "unreachable": max(0, total - active)})
+    except Exception as exc:
+        logger.warning("reachability summary query failed: %s", exc)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    out["data"] = sorted(data, key=lambda d: d["time"])
+    return out
+
+
 def _reachability(query_api, bucket, device_id, period) -> dict:
     """
     rtt_ms + is_reachable from the device_reachability measurement: current
