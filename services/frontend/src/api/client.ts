@@ -379,6 +379,12 @@ export async function pollDeviceNow(deviceId: number): Promise<{ status: string;
   return data
 }
 
+// Re-run SNMP/SSH enrichment + interface/LLDP discovery in the background.
+export async function enrichDevice(deviceId: number): Promise<{ status: string; device_id: number }> {
+  const { data } = await api.post(`/devices/${deviceId}/enrich/`)
+  return data
+}
+
 // How a device's telemetry is currently being collected (gNMI / SNMP).
 export interface CollectionStatus {
   device_id: string

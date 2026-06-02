@@ -52,6 +52,7 @@ export default function Topology() {
   const [nodeCount, setNodeCount] = useState(0)
   const [edgeCount, setEdgeCount] = useState(0)
   const { lastMessage } = useWebSocket('/ws/telemetry/')
+  const { lastMessage: deviceMessage } = useWebSocket('/ws/devices/')
 
   // Filters
   const [devices, setDevices] = useState<Device[]>([])
@@ -170,6 +171,12 @@ export default function Topology() {
       if (id in msg.utilization!) edge.data('color', UTILIZATION_COLORS.green)
     })
   }, [lastMessage])
+
+  // Discovery/enrichment created new topology links → reload the graph.
+  useEffect(() => {
+    const msg = deviceMessage as { type?: string } | null
+    if (msg?.type === 'topology_updated') reload()
+  }, [deviceMessage, reload])
 
   const discoverAll = async () => {
     setDiscovering(true); setToast(null)

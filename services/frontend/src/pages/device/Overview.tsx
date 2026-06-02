@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
-  fetchDeviceMetrics,
+  fetchDeviceMetrics, enrichDevice,
   type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig, type DeviceMetrics,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
@@ -55,6 +55,30 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
     return `${Math.round(s / 86400)}d ago`
   }
 
+  // Enrichment status: a freshly-approved device's details fill in shortly
+  // after a background SNMP/SSH probe. Show a spinner + auto-refresh while
+  // that's expected, and a re-run option once it's clearly stalled.
+  const [enriching, setEnriching] = useState(false)
+  const needsDetails = !device.model && !device.os_version
+  const ageSec = Math.max(0, (Date.now() - new Date(device.created_at).getTime()) / 1000)
+  const justAdded = ageSec < 90
+
+  useEffect(() => {
+    if (!needsDetails) { setEnriching(false); return }
+    // Auto-refresh once after 5s for a just-added device (gives enrichment time).
+    if (justAdded || enriching) {
+      const t = setTimeout(() => onRefresh?.(), 5000)
+      return () => clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device.id, needsDetails, justAdded, enriching])
+
+  const rerunEnrich = async () => {
+    setEnriching(true)
+    try { await enrichDevice(device.id) } catch { /* surfaced by no-change */ }
+    setTimeout(() => onRefresh?.(), 5000)
+  }
+
   const reachable = device.status === 'active'
 
   const m = metrics?.metrics
@@ -72,6 +96,20 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Device Information</h3>
           <button onClick={() => setEditing(true)} className="px-3 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 font-medium">Edit Device</button>
         </div>
+        {needsDetails && (enriching || justAdded) && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+            <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            Enriching device info… (model, OS version and serial fill in automatically)
+          </div>
+        )}
+        {needsDetails && !enriching && !justAdded && (
+          <div className="mb-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-3 flex-wrap">
+            <span>⚠️ Could not auto-detect device details.</span>
+            <button onClick={() => setEditing(true)} className="underline hover:no-underline">Edit Device</button>
+            <span className="text-amber-400">·</span>
+            <button onClick={rerunEnrich} className="underline hover:no-underline">Re-run Enrichment</button>
+          </div>
+        )}
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm">
           <Info label="Hostname" value={device.hostname} />
           <Info label="IP Address" value={device.ip_address} mono />

@@ -50,6 +50,7 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
   const [platform, setPlatform] = useState(device.platform || 'other')
   const [osVersion, setOsVersion] = useState(device.os_version)
   const [model, setModel] = useState(device.model)
+  const [serial, setSerial] = useState(device.serial_number)
   const [siteId, setSiteId] = useState<number | ''>(device.site ?? '')
   const [role, setRole] = useState(parsed.role)
   const [tags, setTags] = useState<string[]>(parsed.tags)
@@ -79,7 +80,7 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
         platform,
         os_version: osVersion,
         model,
-        serial_number: device.serial_number,   // preserve
+        serial_number: serial,
         status: device.status,                  // preserve
         site: siteId === '' ? null : Number(siteId),
         credential_profile: device.credential_profile,  // preserve
@@ -124,6 +125,9 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
         <Row>
           <Field label="OS Version"><input className={inputCls} value={osVersion} onChange={(e) => setOsVersion(e.target.value)} /></Field>
           <Field label="Hardware Model"><input className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} /></Field>
+        </Row>
+        <Row>
+          <Field label="Serial Number"><input className={inputCls} value={serial} onChange={(e) => setSerial(e.target.value)} /></Field>
         </Row>
         <Row>
           <Field label="Site">
