@@ -14,6 +14,27 @@ import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 
+// Interface-name abbreviation → full form, so LLDP neighbours reported
+// abbreviated (Gi3) and full (GigabitEthernet3) by the two sources dedupe.
+const INTERFACE_ABBREV: Record<string, string> = {
+  Gi: 'GigabitEthernet',
+  Te: 'TenGigabitEthernet',
+  Fa: 'FastEthernet',
+  Se: 'Serial',
+  Lo: 'Loopback',
+  Mg: 'Management',
+  Et: 'Ethernet',
+}
+
+function expandIfName(name: string): string {
+  const m = (name || '').trim().match(/^([A-Za-z]+)(\d.*)$/)
+  if (!m) return name
+  for (const [abbr, full] of Object.entries(INTERFACE_ABBREV)) {
+    if (m[1].toLowerCase() === abbr.toLowerCase()) return `${full}${m[2]}`
+  }
+  return name
+}
+
 const inputCls =
   'px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -704,15 +725,20 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
   // endpoint), keyed by local port. This surfaces neighbours for devices that
   // have topology links but no per-interface LLDP fields (e.g. router1).
   const lldp = useMemo(() => {
+    // Normalise interface names to canonical full form so the same physical port
+    // reported abbreviated (Gi3) and full (GigabitEthernet3) by the two sources
+    // collapses to one row. MonitoredInterface wins (inserted first).
     const byPort = new Map<string, { local_port: string; neighbor: string; remote_port: string }>()
     for (const i of ifaces || []) {
       if (i.lldp_neighbor_hostname) {
-        byPort.set(i.if_name, { local_port: i.if_name, neighbor: i.lldp_neighbor_hostname, remote_port: i.lldp_neighbor_port || '' })
+        const key = expandIfName(i.if_name)
+        byPort.set(key, { local_port: key, neighbor: i.lldp_neighbor_hostname, remote_port: expandIfName(i.lldp_neighbor_port || '') })
       }
     }
     for (const n of metrics?.lldp_neighbors ?? []) {
-      if (!byPort.has(n.local_port)) {
-        byPort.set(n.local_port, { local_port: n.local_port, neighbor: n.neighbor_hostname, remote_port: n.remote_port || '' })
+      const key = expandIfName(n.local_port)
+      if (!byPort.has(key)) {
+        byPort.set(key, { local_port: key, neighbor: n.neighbor_hostname, remote_port: expandIfName(n.remote_port || '') })
       }
     }
     return [...byPort.values()]
