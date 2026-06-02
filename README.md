@@ -153,7 +153,16 @@ docker compose logs -f api
 ```
 Wait for: `starting: gunicorn config.wsgi:application`.
 
-### 4. Access the UI
+### 4. Download MIB files
+```bash
+./scripts/download_mibs.sh
+```
+Downloads ~1,800 vendor MIBs for SNMP OID resolution — Cisco (1650),
+Fortinet (39), AOS-CX (35), Aruba (25), Juniper (13), Arista (8), Palo Alto (7),
+SonicWall (4), Standard RFC (10). `setup.sh` runs this for you; re-run after
+updates. Files are git-ignored (see the "SNMP MIBs" section below).
+
+### 5. Access the UI
 ```
 https://YOUR_SERVER_IP:3443
 ```
@@ -182,7 +191,7 @@ then `docker compose down && docker compose up -d`. Access `http://YOUR_IP`
 internet-facing use. The nginx container always listens on 80/443 internally;
 only the host port mapping changes.
 
-### 5. Add your first device
+### 6. Add your first device
 1. Go to **Settings → Discovery**
 2. Create a new job with your network subnet
 3. Approve discovered devices

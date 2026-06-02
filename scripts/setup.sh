@@ -349,6 +349,10 @@ if yesno "Pull and start NetPulse now?" Y; then
   info "starting the stack…"
   (cd "$ROOT_DIR" && docker compose up -d)
   echo
+  info "Downloading SNMP MIB files (LibreNMS + net-snmp + Cisco)…"
+  (cd "$ROOT_DIR" && ./scripts/download_mibs.sh) \
+    || warn "MIB download failed — run ./scripts/download_mibs.sh later"
+  echo
   ok "NetPulse is starting!"
   echo "   Web UI:   https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)  (HTTP :$(env_get FRONTEND_PORT || echo 3000) redirects here)"
   echo "   API docs: http://${url_host}:$(env_get API_PORT || echo 8000)/api/docs/"
