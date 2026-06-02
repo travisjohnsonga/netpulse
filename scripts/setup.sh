@@ -239,6 +239,21 @@ if [ -n "$ci" ] && [ "$ci" != "127.0.0.1" ]; then
   env_set REACT_APP_API_URL "http://${ci}:$(env_get API_PORT || echo 8000)"
   env_set REACT_APP_WS_URL  "ws://${ci}:$(env_get API_PORT || echo 8000)"
 fi
+
+# Web UI ports: dev (3000/3443) vs production (80/443) vs custom.
+echo "Web UI port configuration:"
+echo "  1) Development — 3000 (HTTP) / 3443 (HTTPS)  [default]"
+echo "  2) Production  — 80 (HTTP) / 443 (HTTPS)"
+echo "  3) Custom"
+printf "Choose [1]: "; read -r port_choice
+case "${port_choice:-1}" in
+  2) env_set FRONTEND_PORT 80;  env_set FRONTEND_HTTPS_PORT 443 ;;
+  3) ask FRONTEND_PORT       "HTTP port"  "$(env_get FRONTEND_PORT || echo 3000)"
+     ask FRONTEND_HTTPS_PORT "HTTPS port" "$(env_get FRONTEND_HTTPS_PORT || echo 3443)" ;;
+  *) env_set FRONTEND_PORT "$(env_get FRONTEND_PORT || echo 3000)"
+     env_set FRONTEND_HTTPS_PORT "$(env_get FRONTEND_HTTPS_PORT || echo 3443)" ;;
+esac
+ok "Web UI: HTTP $(env_get FRONTEND_PORT) (redirects to HTTPS) / HTTPS $(env_get FRONTEND_HTTPS_PORT)"
 echo
 
 # ── 2. credentials ────────────────────────────────────────────────────────────
@@ -335,9 +350,9 @@ if yesno "Pull and start NetPulse now?" Y; then
   (cd "$ROOT_DIR" && docker compose up -d)
   echo
   ok "NetPulse is starting!"
-  echo "   Web UI:   http://${url_host}:$(env_get FRONTEND_PORT || echo 3000)"
+  echo "   Web UI:   https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)  (HTTP :$(env_get FRONTEND_PORT || echo 3000) redirects here)"
   echo "   API docs: http://${url_host}:$(env_get API_PORT || echo 8000)/api/docs/"
 else
   info "skipped startup. When ready:  docker compose up -d"
-  echo "   Web UI will be at http://${url_host}:$(env_get FRONTEND_PORT || echo 3000)"
+  echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)"
 fi

@@ -163,6 +163,25 @@ Log in with the admin credentials set during setup.
 > shows a security warning — this is expected. Add a proper TLS certificate in
 > **Settings → SSL** for production use.
 
+### Port Configuration
+
+Default (development):
+```
+http://YOUR_IP:3000   → redirects to HTTPS
+https://YOUR_IP:3443  → NetPulse UI
+```
+
+Production (standard ports) — set in `.env` (setup.sh can do this for you):
+```
+FRONTEND_PORT=80
+FRONTEND_HTTPS_PORT=443
+```
+then `docker compose down && docker compose up -d`. Access `http://YOUR_IP`
+(redirects) / `https://YOUR_IP`. Binding 80/443 needs root or
+`CAP_NET_BIND_SERVICE`, plus a proper TLS cert (Settings → SSL/TLS) for
+internet-facing use. The nginx container always listens on 80/443 internally;
+only the host port mapping changes.
+
 ### 5. Add your first device
 1. Go to **Settings → Discovery**
 2. Create a new job with your network subnet
