@@ -32,6 +32,10 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] seeding default alert rules..."
     python manage.py seed_alert_rules || echo "[entrypoint] alert-rule seed had issues (continuing)"
 
+    # Seed SSO providers from any SOCIAL_AUTH_* env vars (idempotent).
+    echo "[entrypoint] seeding SSO providers from env..."
+    python manage.py seed_sso_providers || echo "[entrypoint] SSO provider seed had issues (continuing)"
+
     # Seed the ingest-snmp poller with the current device inventory (api only).
     # Best-effort: a NATS hiccup must not block startup.
     echo "[entrypoint] publishing device configs to NATS..."

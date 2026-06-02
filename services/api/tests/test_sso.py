@@ -179,3 +179,118 @@ class TestJwtBridge:
         tokens = get_tokens_for_user(admin_user)
         assert set(tokens) == {"access", "refresh"}
         assert tokens["access"] and tokens["refresh"]
+
+
+# ── Stage 2: Azure AD + Okta + GitHub backends ──────────────────────────────────
+
+class _FakeStrategy:
+    """Minimal social-core strategy: returns the default for every setting."""
+
+    def setting(self, name, default=None, backend=None):
+        return default
+
+
+def _mk(cls):
+    """
+    Build a backend without social-core's __init__ (which needs a full request
+    strategy). The mixin only uses self.name + self.strategy, so this is enough
+    to exercise get_key_and_secret()/setting().
+    """
+    b = cls.__new__(cls)
+    b.strategy = _FakeStrategy()
+    b.redirect_uri = None
+    b.data = {}
+    return b
+
+
+def _named_backend(name):
+    class _B:
+        pass
+    b = _B()
+    b.name = name
+    return b
+
+
+class TestStage2Backends:
+    def test_azure_ad_backend_reads_tenant_id(self, fake_vault):
+        from apps.sso.backends import DynamicAzureADTenantOAuth2
+        p = SSOProvider.objects.create(
+            name="Azure", provider="azuread-tenant-oauth2", client_id="az-key",
+            tenant_id="tid-123", is_enabled=True)
+        p.vault_path = p.default_vault_path()
+        p.save(update_fields=["vault_path"])
+        fake_vault[p.vault_path] = {"client_secret": "az-secret"}
+
+        b = _mk(DynamicAzureADTenantOAuth2)
+        assert b.setting("TENANT_ID") == "tid-123"
+        assert b.get_key_and_secret() == ("az-key", "az-secret")
+
+    def test_azure_ad_domain_restriction(self):
+        SSOProvider.objects.create(
+            name="Azure", provider="azuread-tenant-oauth2",
+            allowed_domains=["company.com"], is_enabled=True)
+        backend = _named_backend("azuread-tenant-oauth2")
+        with pytest.raises(AuthForbidden):
+            pipeline.check_allowed_domain(backend, {"email": "x@other.com"}, user=None)
+        # Allowed domain → no exception.
+        pipeline.check_allowed_domain(backend, {"email": "x@company.com"}, user=None)
+
+    def test_okta_backend_builds_api_url(self):
+        from apps.sso.backends import DynamicOktaOAuth2
+        SSOProvider.objects.create(
+            name="Okta", provider="okta-oauth2", client_id="ok-key",
+            okta_domain="company.okta.com", is_enabled=True)
+        b = _mk(DynamicOktaOAuth2)
+        assert b.setting("API_URL") == "https://company.okta.com/oauth2/default"
+
+    def test_github_backend_config(self, fake_vault):
+        from apps.sso.backends import DynamicGithubOAuth2
+        p = SSOProvider.objects.create(
+            name="GitHub", provider="github", client_id="gh-key", is_enabled=True)
+        p.vault_path = p.default_vault_path()
+        p.save(update_fields=["vault_path"])
+        fake_vault[p.vault_path] = {"client_secret": "gh-secret"}
+        b = _mk(DynamicGithubOAuth2)
+        assert b.name == "github"
+        assert b.get_key_and_secret() == ("gh-key", "gh-secret")
+
+    def test_provider_choices_include_all_providers(self):
+        values = set(SSOProvider.Provider.values)
+        assert {"google-oauth2", "azuread-tenant-oauth2", "okta-oauth2",
+                "github", "saml", "ldap"} <= values
+
+    def test_authentication_backends_registered(self, settings):
+        for b in ("DynamicGoogleOAuth2", "DynamicAzureADTenantOAuth2",
+                  "DynamicOktaOAuth2", "DynamicGithubOAuth2"):
+            assert f"apps.sso.backends.{b}" in settings.AUTHENTICATION_BACKENDS
+        assert "django.contrib.auth.backends.ModelBackend" in settings.AUTHENTICATION_BACKENDS
+
+
+class TestSeedSSOProviders:
+    def test_seed_sso_providers_from_env(self, monkeypatch, fake_vault):
+        from django.core.management import call_command
+        for prov in ("AZUREAD_TENANT_OAUTH2", "OKTA_OAUTH2", "GOOGLE_OAUTH2", "GITHUB"):
+            monkeypatch.delenv(f"SOCIAL_AUTH_{prov}_KEY", raising=False)
+        monkeypatch.setenv("SOCIAL_AUTH_GITHUB_KEY", "gh-client")
+        monkeypatch.setenv("SOCIAL_AUTH_GITHUB_SECRET", "gh-secret")
+
+        call_command("seed_sso_providers")
+        gh = SSOProvider.objects.get(provider="github")
+        assert gh.client_id == "gh-client" and gh.is_enabled
+        assert fake_vault[gh.vault_path]["client_secret"] == "gh-secret"
+
+        # Idempotent — a second run doesn't duplicate.
+        call_command("seed_sso_providers")
+        assert SSOProvider.objects.filter(provider="github").count() == 1
+
+    def test_seed_azure_from_env_with_tenant(self, monkeypatch, fake_vault):
+        from django.core.management import call_command
+        for prov in ("OKTA_OAUTH2", "GOOGLE_OAUTH2", "GITHUB"):
+            monkeypatch.delenv(f"SOCIAL_AUTH_{prov}_KEY", raising=False)
+        monkeypatch.setenv("SOCIAL_AUTH_AZUREAD_TENANT_OAUTH2_KEY", "az-client")
+        monkeypatch.setenv("SOCIAL_AUTH_AZUREAD_TENANT_OAUTH2_TENANT_ID", "tid-9")
+        monkeypatch.setenv("SOCIAL_AUTH_AZUREAD_TENANT_OAUTH2_SECRET", "az-secret")
+
+        call_command("seed_sso_providers")
+        az = SSOProvider.objects.get(provider="azuread-tenant-oauth2")
+        assert az.client_id == "az-client" and az.tenant_id == "tid-9" and az.is_enabled
