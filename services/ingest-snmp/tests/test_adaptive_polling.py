@@ -44,46 +44,28 @@ def _device_metrics():
     })
 
 
-def test_poll_skipped_when_gnmi_active_for_covered_oids():
-    # A profile with only gNMI-covered metric OIDs is fully suppressed.
+def test_essential_oids_polled_when_gnmi_active():
+    # When gNMI is active the full profile is replaced by the essential system
+    # OIDs (sysUpTime/Descr/Name/Location) — uptime keeps flowing at minimal load.
+    from ingest.poller import ALWAYS_POLL_OIDS
     pub = _FakePublisher()
     poller = _poller(_FakeActivity(True), pub)
-    dev = _device_metrics()
+    dev = _device_metrics()  # profile has only a gNMI-covered CPU OID
 
-    snmp_called = False
-
-    async def _fail_snmp(*a, **k):
-        nonlocal snmp_called
-        snmp_called = True
-        return {}
-
-    poller._snmp_get = _fail_snmp
-    asyncio.run(poller._poll(dev, dev.poll_profiles[0]))
-
-    assert snmp_called is False
-    assert pub.published == []
-    assert poller._suppressed["8"] is True
-
-
-def test_sysuptime_still_polled_when_gnmi_active():
-    # gNMI doesn't carry uptime — sysUpTime must still be polled (fix #3), so the
-    # profile is reduced to the always-poll OIDs rather than skipped entirely.
-    pub = _FakePublisher()
-    poller = _poller(_FakeActivity(True), pub)
-    dev = _device()  # profile oids = [sysUpTime]
-
-    seen_oids = {}
+    seen = {}
 
     async def _ok_snmp(device, oids, creds):
-        seen_oids["oids"] = oids
+        seen["oids"] = oids
         return {"1.3.6.1.2.1.1.3.0": {"value": "123", "type": "TimeTicks", "name": "sysUpTime.0"}}
 
     poller._snmp_get = _ok_snmp
     asyncio.run(poller._poll(dev, dev.poll_profiles[0]))
 
-    assert seen_oids["oids"] == ["1.3.6.1.2.1.1.3.0"]  # only the always-poll OID
+    # The CPU OID is dropped; the 4 essential OIDs (incl. sysUpTime) are polled.
+    assert seen["oids"] == list(ALWAYS_POLL_OIDS.values())
+    assert "1.3.6.1.2.1.1.3.0" in seen["oids"]
     assert len(pub.published) == 1
-    assert poller._suppressed["7"] is True  # device metrics still marked suppressed
+    assert poller._suppressed["8"] is True
 
 
 def test_poll_runs_when_gnmi_inactive():

@@ -24,13 +24,16 @@ from .publisher import NATSPublisher
 logger = logging.getLogger(__name__)
 
 # OIDs polled even while gNMI is active (adaptive polling). gNMI subscriptions
-# carry CPU/memory/interfaces but NOT system uptime, so we keep polling these
-# cheap single-instance system OIDs as the source of truth for uptime/identity.
-ALWAYS_POLL_OIDS = frozenset({
-    "1.3.6.1.2.1.1.3.0",  # sysUpTime
-    "1.3.6.1.2.1.1.1.0",  # sysDescr
-    "1.3.6.1.2.1.1.5.0",  # sysName
-})
+# carry CPU/memory/interfaces but NOT system uptime, so when gNMI is active we
+# poll just these cheap single-instance system OIDs (4 vs the full ~26) as the
+# source of truth for uptime/identity. sysUpTime resolves to the field
+# "sysUpTime_0", matching FIELD_MAP in metrics_influx.py.
+ALWAYS_POLL_OIDS = {
+    "sysUpTime":   "1.3.6.1.2.1.1.3.0",
+    "sysDescr":    "1.3.6.1.2.1.1.1.0",
+    "sysName":     "1.3.6.1.2.1.1.5.0",
+    "sysLocation": "1.3.6.1.2.1.1.6.0",
+}
 
 
 def _map_snmp_creds(raw: dict, device) -> dict:
@@ -113,7 +116,7 @@ class SNMPPoller:
             return
         self._suppressed[device_id] = suppressed
         if suppressed:
-            logger.info("Skipping SNMP device metrics for device %s - gNMI active", device_id)
+            logger.info("gNMI active for device %s - polling essential OIDs only", device_id)
         elif prev is True:
             # We were suppressing; the heartbeat went stale (TTL expired) → resume.
             logger.info("gNMI stream timeout for device %s - resuming SNMP fallback polling", device_id)
@@ -135,19 +138,16 @@ class SNMPPoller:
         if not profile.oids:
             return
 
-        # Adaptive polling: while gNMI is streaming, suppress the redundant
-        # device-metric OIDs (CPU/memory/interfaces — gNMI provides those) but
-        # KEEP polling the always-poll OIDs (sysUpTime/sysName/sysDescr), since
-        # gNMI subscriptions don't carry uptime. So we always have uptime even
-        # when everything else comes from gNMI.
-        oids = profile.oids
+        # Adaptive polling: while gNMI is streaming, poll only the essential
+        # system OIDs (sysUpTime/Descr/Name/Location) — gNMI carries CPU/memory/
+        # interfaces but not uptime, so this keeps uptime flowing at minimal
+        # device load (4 OIDs vs the full poll). Otherwise do the full poll.
         if self._gnmi is not None and await self._gnmi.is_active(device.device_id):
             self._note_suppression(device.device_id, True)
-            oids = [o for o in profile.oids if o in ALWAYS_POLL_OIDS]
-            if not oids:
-                return  # nothing in this profile survives suppression
+            oids = list(ALWAYS_POLL_OIDS.values())
         else:
             self._note_suppression(device.device_id, False)
+            oids = profile.oids
 
         try:
             creds = await self._creds.get(device.cred_path) if device.cred_path else {}
