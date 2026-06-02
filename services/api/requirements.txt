@@ -45,6 +45,7 @@ ntc-templates~=9.1   # TextFSM templates for show-command parsing (LLDP, interfa
 textfsm~=2.1
 ncclient~=0.6
 pysnmp~=7.1
+requests~=2.32       # AOS-CX REST API client (apps.devices.aos_cx_client)
 Jinja2~=3.1
 
 # WSGI server + static files

@@ -550,3 +550,99 @@ class TestConfigSanitize:
         secs = auth_client.get(f"/api/devices/{device.id}/telemetry-config/generate/").json()["sections"]
         assert secs["gnmi"]["config"].isascii()
         assert "monitored interface" in secs["gnmi"]["config"]
+
+
+# ── AOS-CX config generation (Stage 3) ──────────────────────────────────────────
+
+
+class TestAosCxConfigGen:
+    @pytest.fixture
+    def v3_profile(self):
+        return CredentialProfile.objects.create(
+            name="aoscx-v3", snmpv3_enabled=True, snmpv3_username="netpulse-mon",
+            snmpv3_auth_protocol="sha", snmpv3_priv_protocol="aes128", vault_path="x")
+
+    @pytest.fixture
+    def aos_device(self, v3_profile):
+        return Device.objects.create(
+            hostname="cx1", ip_address="10.0.0.51", management_ip="10.0.0.51",
+            vendor="aruba", platform="aos_cx", status="active",
+            credential_profile=v3_profile)
+
+    def test_generate_aos_cx_sections(self, auth_client, aos_device, settings):
+        settings.COLLECTOR_IP = "10.0.0.50"
+        secs = auth_client.get(
+            f"/api/devices/{aos_device.id}/telemetry-config/generate/").json()["sections"]
+
+        # SNMPv3 authPriv on the mgmt VRF.
+        snmp = secs["snmp"]["config"]
+        assert "snmp-server vrf mgmt" in snmp
+        assert "snmpv3 user netpulse-mon auth sha auth-pass YOUR-AUTH-KEY-HERE" in snmp
+        assert "priv aes priv-pass YOUR-PRIV-KEY-HERE" in snmp
+        assert "snmp-server host 10.0.0.50 vrf mgmt version 3 netpulse-mon" in snmp
+        assert "snmp-server enable trap snmp" in snmp
+
+        # Syslog: AOS-CX "logging <ip> severity ...".
+        syslog = secs["syslog"]["config"]
+        assert "logging 10.0.0.50 severity informational" in syslog
+        assert "logging on" in syslog
+
+        # The "netflow" slot carries sFlow (AOS-CX has no NetFlow).
+        sflow = secs["netflow"]["config"]
+        assert "sflow 10.0.0.50 vrf mgmt" in sflow
+        assert "sflow sampling 512" in sflow
+        assert "sflow polling 30" in sflow
+        assert "sflow enable" in sflow
+
+        # gNMI: dial-IN note + REST enable + OpenConfig paths, port 8443.
+        gnmi = secs["gnmi"]["config"]
+        assert "DIAL-IN" in gnmi
+        assert "8443" in gnmi
+        assert "https-server rest access-mode read-write" in gnmi
+        assert "https-server vrf mgmt" in gnmi
+        assert "/system/cpus/cpu[index=0]/state/usage/instant" in gnmi
+        assert gnmi.isascii()
+
+    def test_aos_cx_v2c_fallback_warns(self, auth_client, settings):
+        settings.COLLECTOR_IP = "10.0.0.50"
+        prof = CredentialProfile.objects.create(
+            name="aoscx-v2c", snmpv2c_enabled=True, vault_path="x")
+        d = Device.objects.create(
+            hostname="cx2", ip_address="10.0.0.52", management_ip="10.0.0.52",
+            vendor="aruba", platform="aos_cx", status="active", credential_profile=prof)
+        body = auth_client.get(f"/api/devices/{d.id}/telemetry-config/generate/").json()
+        snmp = body["sections"]["snmp"]["config"]
+        assert "snmp-server vrf mgmt" in snmp
+        assert "snmp-server community" in snmp
+        assert body["snmp_warning"]  # v2c plaintext warning surfaced
+
+    def test_generate_aos_cx_gnmi_unit(self):
+        from apps.telemetry import gnmi_subscriptions as gs
+        d = Device.objects.create(
+            hostname="cx3", ip_address="10.0.0.60", management_ip="10.0.0.60",
+            platform="aos_cx", status="active")
+        for i, n in enumerate(["1/1/1", "1/1/2"], start=1):
+            MonitoredInterface.objects.create(device=d, if_index=i, if_name=n)
+        ifaces = list(d.monitored_interfaces.all().order_by("if_index"))
+        cfg = gs.generate_aos_cx_gnmi(d, "10.0.0.50", ifaces)
+        assert "10.0.0.60:8443" in cfg                      # dial-in target = device
+        assert "https-server vrf mgmt" in cfg
+        assert "/system/memory/state/used" in cfg
+        assert "/system/memory/state/free" in cfg
+        assert "neighbor/state" in cfg                       # BGP path
+        assert "interface[name='1/1/1']/state/counters" in cfg
+        assert "interface[name='1/1/2']/state/counters" in cfg
+
+    def test_aos_cx_dispatch_via_generate_push_config(self):
+        from apps.telemetry import gnmi_subscriptions as gs
+        d = Device.objects.create(
+            hostname="cx4", ip_address="10.0.0.61", management_ip="10.0.0.61",
+            platform="aos_cx", status="active")
+        cfg = gs.generate_push_config(d, "10.0.0.50", [])
+        assert "AOS-CX gNMI is DIAL-IN" in cfg
+
+    def test_aos_cx_openconfig_field_map(self):
+        from apps.devices.metrics_influx import FIELD_MAP
+        assert FIELD_MAP["/system/cpus/cpu/state/usage/instant"] == "cpu_pct"
+        assert FIELD_MAP["/system/memory/state/used"] == "memory_used_bytes"
+        assert FIELD_MAP["/system/memory/state/free"] == "memory_free_bytes"

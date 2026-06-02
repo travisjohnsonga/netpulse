@@ -27,6 +27,7 @@ _PLATFORM_FAMILY = {
     "nxos": "cisco_xe", "asa": "cisco_xe",
     "junos": "juniper_junos", "eos": "arista_eos",
     "fortios": "fortinet_fortios",
+    "aos_cx": "aruba_aoscx",
 }
 
 # Some platforms share most templates with cisco_xe but need their own syslog
@@ -53,6 +54,9 @@ _FAMILY_SECTIONS = {
     "juniper_junos": ["snmp", "syslog"],
     "arista_eos": ["snmp", "syslog"],
     "fortinet_fortios": ["snmp", "syslog", "netflow"],  # no gNMI on FortiOS
+    # AOS-CX: gNMI is generated in Python (dial-in); the "netflow" slot carries
+    # sFlow config (AOS-CX has no NetFlow).
+    "aruba_aoscx": ["snmp", "syslog", "netflow"],
 }
 
 SECTIONS = ["snmp", "syslog", "gnmi", "netflow"]
@@ -104,6 +108,7 @@ _AUTH_CLI = {
                       "sha256": "authentication-sha256", "sha384": "authentication-sha256", "sha512": "authentication-sha256"},
     "arista_eos":    {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
     "fortinet_fortios": {"md5": "md5", "sha": "sha1", "sha224": "sha224", "sha256": "sha256", "sha384": "sha384", "sha512": "sha512"},
+    "aruba_aoscx":   {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
 }
 _PRIV_CLI = {
     "cisco_xe":      {"des": "des", "3des": "3des", "aes128": "aes 128", "aes192": "aes 192", "aes256": "aes 256"},
@@ -112,6 +117,7 @@ _PRIV_CLI = {
                       "aes192": "privacy-aes128", "aes256": "privacy-aes128"},
     "arista_eos":    {"des": "des", "3des": "des", "aes128": "aes", "aes192": "aes192", "aes256": "aes256"},
     "fortinet_fortios": {"des": "des", "3des": "des", "aes128": "aes", "aes192": "aes", "aes256": "aes256"},
+    "aruba_aoscx":   {"des": "des", "3des": "des", "aes128": "aes", "aes192": "aes", "aes256": "aes"},
 }
 
 

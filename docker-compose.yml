@@ -284,7 +284,8 @@ services:
     command: python -m ingest.grpc_server
     env_file: .env
     ports:
-      - "${GRPC_PORT:-57400}:57400"
+      - "${GRPC_PORT:-57400}:57400"          # Cisco MDT gNMI dial-out
+      - "${AOS_CX_GNMI_PORT:-8443}:8443"     # AOS-CX gNMI dial-in (ingest-grpc connects to device)
     networks:
       - netpulse-net
     depends_on:

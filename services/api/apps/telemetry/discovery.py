@@ -76,20 +76,82 @@ def discover_interfaces(device) -> list[dict]:
     host = str(device.management_ip or device.ip_address)
     collection_method = "gnmi" if profile.gnmi_enabled else "snmp"
 
-    if profile.snmpv2c_enabled or profile.snmpv3_enabled:
-        from apps.credentials.snmp_auth import build_snmp_auth
-        auth = build_snmp_auth(profile, creds)
-        port = (profile.snmpv3_port if profile.snmpv3_enabled else profile.snmpv2c_port) or 161
-        raw = _discover_via_snmp(host, port, auth)
-    elif profile.ssh_enabled:
-        raw = _discover_via_ssh(device, profile, creds)
-    else:
-        raise DiscoveryError("profile has neither SNMP nor SSH enabled")
+    # AOS-CX: REST API first (one call returns interfaces + LLDP, much faster
+    # than walking ifTable). Fall back to SNMP/SSH if REST is unavailable.
+    raw = None
+    if (device.platform or "").lower() == "aos_cx":
+        try:
+            raw = _discover_via_aos_cx_rest(device, profile, creds)
+            collection_method = "rest"
+        except Exception as exc:  # noqa: BLE001 — fall back to SNMP/SSH
+            logger.warning("AOS-CX REST interface discovery failed for %s; "
+                           "falling back to SNMP/SSH: %s", host, exc)
+
+    if raw is None:
+        if profile.snmpv2c_enabled or profile.snmpv3_enabled:
+            from apps.credentials.snmp_auth import build_snmp_auth
+            auth = build_snmp_auth(profile, creds)
+            port = (profile.snmpv3_port if profile.snmpv3_enabled else profile.snmpv2c_port) or 161
+            raw = _discover_via_snmp(host, port, auth)
+        elif profile.ssh_enabled:
+            raw = _discover_via_ssh(device, profile, creds)
+        else:
+            raise DiscoveryError("profile has neither SNMP nor SSH enabled")
 
     for r in raw:
         r["auto_select"] = should_auto_select(r)
         r["collection_method"] = collection_method
     return raw
+
+
+# ── AOS-CX REST ─────────────────────────────────────────────────────────────────
+
+def _discover_via_aos_cx_rest(device, profile, creds: dict) -> list[dict]:
+    """
+    Discover AOS-CX interfaces + LLDP neighbours via the REST API in a single
+    session, returning rows in the standard discovery shape (LLDP neighbour info
+    merged per local port so topology link discovery reuses this scan).
+    Reuses the device's SSH credentials. Raises DiscoveryError if REST is
+    unusable so the caller can fall back to SNMP/SSH.
+    """
+    from apps.devices.aos_cx_client import AOSCXClient
+
+    username = profile.ssh_username or creds.get("ssh_username", "")
+    password = creds.get("ssh_password", "")
+    if not (username and password):
+        raise DiscoveryError("AOS-CX REST: no SSH credentials to reuse")
+
+    host = str(device.management_ip or device.ip_address)
+    try:
+        with AOSCXClient(host) as client:
+            client.login(username, password)
+            ifaces = client.get_interfaces()
+            neighbors = client.get_lldp_neighbors()
+    except Exception as exc:  # noqa: BLE001
+        raise DiscoveryError(f"AOS-CX REST discovery failed: {exc}") from exc
+
+    if not ifaces:
+        raise DiscoveryError("AOS-CX REST returned no interfaces")
+
+    lldp_by_port = {n["local_port"]: n for n in neighbors if n.get("local_port")}
+    rows = []
+    for i in ifaces:
+        name = i.get("name", "")
+        nb = lldp_by_port.get(name, {})
+        rows.append({
+            "if_index": None,
+            "if_name": name,
+            "if_description": i.get("description", "") or "",
+            "if_speed_mbps": i.get("speed_mbps"),
+            "if_type": i.get("type", "") or "",
+            "oper_status": "up" if (i.get("link_state") or "").lower() == "up" else "down",
+            "admin_status": "up" if (i.get("admin_state") or "").lower() == "up" else "down",
+            "lldp_neighbor_hostname": nb.get("neighbor_hostname") or None,
+            "lldp_neighbor_port": nb.get("neighbor_port") or None,
+            "lldp_neighbor_desc": nb.get("neighbor_port") or None,
+            "lldp_neighbor_mgmt_ip": nb.get("neighbor_mgmt_ip") or None,
+        })
+    return rows
 
 
 # ── SNMP ──────────────────────────────────────────────────────────────────────

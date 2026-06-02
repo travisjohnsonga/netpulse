@@ -35,6 +35,9 @@ SYSOBJID_MODELS = {
 
 _VERSION_RE = re.compile(r"Version\s+([\d.]+[\w.()-]*)", re.IGNORECASE)
 _MODEL_RE = re.compile(r"\b(C\d{4}V|ASR\d{3,4}|ISR\d{3,4}|WS-C\S+|N\d{4}|C\d{3,4})\b", re.IGNORECASE)
+# AOS-CX sysDescr lexicon (e.g. "ArubaOS-CX 10.10.1010 ... Aruba6300M ...").
+_AOS_CX_VERSION_RE = re.compile(r"ArubaOS-CX\s+([\d.]+)", re.IGNORECASE)
+_AOS_CX_MODEL_RE = re.compile(r"(Aruba[\w-]+\d+[A-Z]?)")
 # SNMP "no value" sentinels that must not be saved.
 _SNMP_NULLS = {"", "no such instance", "no such object", "nosuchinstance",
                "nosuchobject", "none", "null"}
@@ -83,7 +86,9 @@ def _parse_snmp(res: dict, updates: dict) -> None:
     serial = _clean(res.get(_OID_ENT_SERIAL))
 
     if descr:
-        m = _VERSION_RE.search(descr)
+        # AOS-CX names its version differently ("ArubaOS-CX 10.10.1010"); try it
+        # first, then fall back to the generic "Version X.Y" form.
+        m = _AOS_CX_VERSION_RE.search(descr) or _VERSION_RE.search(descr)
         if m:
             updates["os_version"] = m.group(1)
         plat = _platform_from_descr(descr)
@@ -93,7 +98,7 @@ def _parse_snmp(res: dict, updates: dict) -> None:
         if ven:
             updates["vendor"] = ven
         if not model:
-            mm = _MODEL_RE.search(descr)
+            mm = _MODEL_RE.search(descr) or _AOS_CX_MODEL_RE.search(descr)
             if mm:
                 model = mm.group(1)
     if not model and objid:
@@ -126,6 +131,50 @@ def _merge_ssh(det: dict, updates: dict) -> None:
         val = _clean(det.get(src))
         if val and field not in updates:
             updates[field] = val
+
+
+# ── AOS-CX REST API (preferred for aos_cx) ──────────────────────────────────────
+
+def _aos_cx_collect(ip: str, profile, secrets) -> dict:
+    """
+    Collect AOS-CX system info over the REST API. Reuses the SSH credentials
+    (same username/password works for REST on AOS-CX). Returns the normalized
+    ``get_system()`` dict, or ``{}`` on any failure (caller falls back to SNMP).
+    """
+    username = profile.ssh_username or secrets.get("ssh_username", "")
+    password = secrets.get("ssh_password", "")
+    if not (username and password):
+        logger.info("AOS-CX REST enrichment for %s: no SSH credentials to reuse", ip)
+        return {}
+    try:
+        from .aos_cx_client import AOSCXClient
+        with AOSCXClient(ip) as client:
+            client.login(username, password)
+            return client.get_system()
+    except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+        logger.warning("AOS-CX REST enrichment failed for %s: %s", ip, exc)
+        return {}
+
+
+def _parse_aos_cx(info: dict, updates: dict) -> None:
+    """Map a normalized AOS-CX ``get_system()`` dict onto device-field updates."""
+    if not info:
+        return
+    hostname = _clean(info.get("hostname"))
+    version = _clean(info.get("version"))
+    model = _clean(info.get("model"))
+    serial = _clean(info.get("serial"))
+    if hostname:
+        updates["hostname"] = hostname
+    if version:
+        updates["os_version"] = version
+    if model:
+        updates["model"] = model
+    if serial:
+        updates["serial_number"] = serial
+    # Platform/vendor are known once we've reached an AOS-CX device.
+    updates.setdefault("platform", "aos_cx")
+    updates.setdefault("vendor", "aruba")
 
 
 # ── orchestration ─────────────────────────────────────────────────────────────
@@ -222,9 +271,18 @@ def enrich_device(device_id: int) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich %s: could not read secrets: %s", device.hostname, exc)
 
-    # ── Step 1: SNMP/SSH device-info enrichment ───────────────────────────────
+    # ── Step 1: device-info enrichment (REST → SNMP → SSH) ─────────────────────
     updates: dict = {}
-    _parse_snmp(_snmp_collect(ip, profile, secrets), updates)
+
+    # AOS-CX: try the REST API first (most accurate). SNMP only runs as a
+    # fallback when REST returns nothing, so it can't clobber REST values.
+    aos_info: dict = {}
+    if device.platform == "aos_cx":
+        aos_info = _aos_cx_collect(ip, profile, secrets)
+        _parse_aos_cx(aos_info, updates)
+
+    if device.platform != "aos_cx" or not aos_info:
+        _parse_snmp(_snmp_collect(ip, profile, secrets), updates)
 
     def missing(field):
         return field not in updates and not getattr(device, field, "")

@@ -1,0 +1,5 @@
+! AOS-CX supports sFlow (not NetFlow).
+sflow {{ collector_ip }} vrf mgmt
+sflow sampling 512
+sflow polling 30
+sflow enable
