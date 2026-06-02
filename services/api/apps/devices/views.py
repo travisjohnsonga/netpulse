@@ -570,9 +570,12 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         if Device.objects.filter(hostname=hostname).exists():
             hostname = f"{hostname}-{dd.source_ip}"
         # Platform: an explicit override from the request (used when discovery
-        # couldn't identify it), else the discovered platform, else "other".
+        # couldn't identify it), else the discovered platform, else the known
+        # vendor's default (fortinet → fortios, etc.), else "other".
+        from .management.commands.run_discovery import default_platform_for_vendor
         platform = request.data.get("platform") or dd.discovered_platform
-        platform = platform if platform in _PLATFORM_VALUES else Device.Platform.OTHER
+        if platform not in _PLATFORM_VALUES:
+            platform = default_platform_for_vendor(dd.discovered_vendor) or Device.Platform.OTHER
 
         # Credentials to attach to the new device: explicit choice in the request,
         # else the job's credential profile (the creds used to discover it).

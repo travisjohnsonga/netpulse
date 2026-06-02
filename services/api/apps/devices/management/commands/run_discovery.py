@@ -62,23 +62,25 @@ def _vendor_from_sysobjid(oid: str) -> str:
     enterprise = oid[len(prefix):].split(".", 1)[0]
     return _ENTERPRISE_VENDORS.get(enterprise, "")
 
-# Vendor fingerprint patterns in sysDescr
+# Vendor → fingerprint substrings in sysDescr (matched case-insensitively).
+# FortiGate sysDescr reads "FortiGate-…"/"FortiOS …" and rarely the literal
+# "fortinet", so all three spellings map to fortinet.
 _VENDOR_PATTERNS = [
-    ("cisco",   "Cisco"),
-    ("juniper", "Juniper"),
-    ("arista",  "Arista"),
-    ("aruba",   "Aruba"),
-    ("fortinet","FortiOS"),
-    ("paloalto","Palo Alto"),
-    ("mikrotik","MikroTik"),
-    ("huawei",  "Huawei"),
+    ("cisco",    ("cisco",)),
+    ("juniper",  ("juniper", "junos")),
+    ("arista",   ("arista",)),
+    ("aruba",    ("aruba",)),
+    ("fortinet", ("fortios", "fortigate", "fortinet")),
+    ("paloalto", ("palo alto", "pan-os")),
+    ("mikrotik", ("mikrotik", "routeros")),
+    ("huawei",   ("huawei",)),
 ]
 
 
 def _vendor_from_descr(descr: str) -> str:
     low = descr.lower()
-    for vendor, _ in _VENDOR_PATTERNS:
-        if vendor in low:
+    for vendor, patterns in _VENDOR_PATTERNS:
+        if any(p in low for p in patterns):
             return vendor
     return ""
 
@@ -116,7 +118,7 @@ def _platform_from_descr(descr: str) -> str:
         return "ios_xe"
     if "cisco ios" in low or "ios software" in low or "ios (tm)" in low:
         return "ios"
-    if "fortios" in low or "fortigate" in low:
+    if "fortios" in low or "fortigate" in low or "fortinet" in low:
         return "fortios"
     if "pan-os" in low or "palo alto" in low:
         return "panos"
@@ -125,6 +127,24 @@ def _platform_from_descr(descr: str) -> str:
     if "arista" in low or " eos" in low:
         return "eos"
     return ""
+
+
+# Vendor → default NetPulse platform, used when the vendor is known but the
+# platform couldn't be parsed from sysDescr/SSH. Only single-platform vendors
+# are listed; multi-platform vendors (e.g. cisco → ios/ios_xe/ios_xr/nxos) are
+# intentionally absent so the operator picks one.
+_VENDOR_DEFAULT_PLATFORM = {
+    "fortinet": "fortios",
+    "paloalto": "panos",
+    "arista":   "eos",
+    "juniper":  "junos",
+    "mikrotik": "routeros",
+}
+
+
+def default_platform_for_vendor(vendor: str) -> str:
+    """Default platform for an unambiguous vendor; '' when it needs a choice."""
+    return _VENDOR_DEFAULT_PLATFORM.get((vendor or "").lower(), "")
 
 
 def _vendor_from_services(services: dict[int, dict]) -> str:
@@ -615,6 +635,12 @@ class DiscoveryRunner:
                 if "ssh_login" not in methods:
                     methods.append("ssh_login")
                 confidence = max(confidence, 80)
+
+        # Known vendor but platform still unidentified → fall back to the
+        # vendor's default platform (fortinet → fortios, etc.). Multi-platform
+        # vendors (cisco) stay blank for the operator to pick at approval.
+        if vendor and not platform:
+            platform = default_platform_for_vendor(vendor)
 
         await self._save_discovered(ip, {
             "detection_methods": methods,

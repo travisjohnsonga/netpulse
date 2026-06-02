@@ -135,6 +135,25 @@ class TestDiscoveredDeviceApproval:
         assert resp.status_code == 201
         assert Device.objects.get(ip_address="10.1.0.8").platform == "other"
 
+    def test_approve_unknown_platform_known_vendor_uses_vendor_default(self, auth_client, job):
+        # Fortinet device with no platform parsed → approve resolves to fortios
+        # from the vendor default (no explicit platform supplied).
+        dd = DiscoveredDevice.objects.create(
+            job=job, source_ip="10.1.0.18", discovered_vendor="fortinet",
+            discovered_platform="")
+        resp = auth_client.post(f"/api/devices/discovery/discovered/{dd.pk}/approve/")
+        assert resp.status_code == 201
+        assert Device.objects.get(ip_address="10.1.0.18").platform == "fortios"
+
+    def test_approve_unknown_platform_cisco_needs_choice(self, auth_client, job):
+        # Cisco is multi-platform → no vendor default; falls back to "other"
+        # unless the operator supplies a platform.
+        dd = DiscoveredDevice.objects.create(
+            job=job, source_ip="10.1.0.19", discovered_vendor="cisco", discovered_platform="")
+        resp = auth_client.post(f"/api/devices/discovery/discovered/{dd.pk}/approve/")
+        assert resp.status_code == 201
+        assert Device.objects.get(ip_address="10.1.0.19").platform == "other"
+
     def test_approve_platform_override(self, auth_client, job):
         # Unknown-platform device: caller supplies the platform on approve.
         dd = DiscoveredDevice.objects.create(job=job, source_ip="10.1.0.9")
@@ -483,6 +502,25 @@ class TestVendorMapping:
         assert _vendor_from_services({22: {"product": "Cisco SSH", "extrainfo": ""}}) == "cisco"
         assert _vendor_from_services({443: {"product": "nginx", "extrainfo": ""}}) == ""
 
+    def test_vendor_from_descr(self):
+        from apps.devices.management.commands.run_discovery import _vendor_from_descr
+        # FortiGate sysDescr rarely contains the literal "fortinet" — match the
+        # FortiOS / FortiGate spellings too.
+        assert _vendor_from_descr("FortiGate-60F v7.2.5") == "fortinet"
+        assert _vendor_from_descr("FortiOS v7.4.1 build2463") == "fortinet"
+        assert _vendor_from_descr("Fortinet FortiGate") == "fortinet"
+        assert _vendor_from_descr("Cisco IOS Software") == "cisco"
+        assert _vendor_from_descr("Juniper Networks, Inc.") == "juniper"
+        assert _vendor_from_descr("Some unknown box") == ""
+
+    def test_default_platform_for_vendor(self):
+        from apps.devices.management.commands.run_discovery import default_platform_for_vendor
+        assert default_platform_for_vendor("fortinet") == "fortios"
+        assert default_platform_for_vendor("Fortinet") == "fortios"
+        assert default_platform_for_vendor("paloalto") == "panos"
+        assert default_platform_for_vendor("cisco") == ""   # multi-platform → operator picks
+        assert default_platform_for_vendor("") == ""
+
 
 class TestPlatformDetection:
     def test_platform_from_banner(self):
@@ -501,6 +539,7 @@ class TestPlatformDetection:
         assert _platform_from_descr("Cisco NX-OS(tm)") == "nxos"
         assert _platform_from_descr("Cisco IOS XR Software") == "ios_xr"
         assert _platform_from_descr("FortiGate-60F FortiOS v7.2") == "fortios"
+        assert _platform_from_descr("Fortinet appliance") == "fortios"  # bare "Fortinet"
 
 
 class TestRunnerCancellation:

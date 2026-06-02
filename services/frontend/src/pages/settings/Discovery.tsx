@@ -39,6 +39,17 @@ const PLATFORMS = [
   'fortios', 'panos', 'vyos', 'linux', 'other',
 ]
 
+// Default platform for an unambiguous vendor (mirrors the backend
+// default_platform_for_vendor). '' for multi-platform vendors like cisco, which
+// need an explicit choice. Used to pre-fill the bulk-approve platform selector.
+const VENDOR_DEFAULT_PLATFORM: Record<string, string> = {
+  fortinet: 'fortios', paloalto: 'panos', arista: 'eos',
+  juniper: 'junos', mikrotik: 'routeros',
+}
+function vendorDefaultPlatform(vendor: string | undefined): string {
+  return VENDOR_DEFAULT_PLATFORM[(vendor || '').toLowerCase()] || ''
+}
+
 // Link badge shown instead of Approve/Reject when a discovered device already
 // matches an inventory device.
 function InventoryBadge({ deviceId }: { deviceId: number }) {
@@ -50,10 +61,13 @@ function InventoryBadge({ deviceId }: { deviceId: number }) {
   )
 }
 
-// A discovered device is bulk-approvable only when it's still pending, not
-// already in inventory, and discovery identified its platform.
+// A discovered device is bulk-approvable when it's still pending, not already
+// in inventory, and we can resolve a platform for it: either discovery
+// identified one, or the vendor is known (its default platform is used, or the
+// operator picks one in the bulk platform prompt for multi-platform vendors).
 function isApprovable(d: DiscoveredDevice): boolean {
-  return d.status === 'pending' && !d.already_exists && !!d.discovered_platform
+  return d.status === 'pending' && !d.already_exists
+    && (!!d.discovered_platform || !!d.discovered_vendor)
 }
 
 interface BulkSummary { ok: number; skipped: number; failed: number }
@@ -67,6 +81,10 @@ function useBulkApprove(devices: DiscoveredDevice[], onComplete: (s: BulkSummary
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [approving, setApproving] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
+  // Devices in the current selection whose platform must be chosen before the
+  // bulk approve can run (unknown platform), plus the per-device choices.
+  const [platformPrompt, setPlatformPrompt] = useState<DiscoveredDevice[] | null>(null)
+  const [platformChoices, setPlatformChoices] = useState<Record<number, string>>({})
   const headerRef = useRef<HTMLInputElement>(null)
 
   const eligibleIds = devices.filter(isApprovable).map((d) => d.id)
@@ -92,25 +110,55 @@ function useBulkApprove(devices: DiscoveredDevice[], onComplete: (s: BulkSummary
     setSelected(allChecked ? new Set() : new Set(eligibleIds))
   const clear = () => setSelected(new Set())
 
-  const approveSelected = async () => {
+  // Run the approvals. Each device uses its discovered platform, else the
+  // operator's choice from the prompt, else (for vendor-default cases) the
+  // vendor default — so the approve call always carries a resolved platform.
+  const runApproval = async (chosen: Record<number, string>) => {
     const ids = [...selected]
     if (!ids.length) return
+    const byId = new Map(devices.map((d) => [d.id, d]))
     setApproving(true)
     const summary: BulkSummary = { ok: 0, skipped: 0, failed: 0 }
     for (let i = 0; i < ids.length; i++) {
       setProgress(`Approving ${i + 1}/${ids.length}...`)
+      const d = byId.get(ids[i])
+      const platform = d?.discovered_platform || chosen[ids[i]] || vendorDefaultPlatform(d?.discovered_vendor)
       try {
-        const res = await approveDiscoveredDevice(ids[i], {})
+        const res = await approveDiscoveredDevice(ids[i], platform ? { platform } : {})
         if (res.already_exists) summary.skipped++; else summary.ok++
       } catch { summary.failed++ }
     }
     setApproving(false); setProgress(null); setSelected(new Set())
+    setPlatformPrompt(null); setPlatformChoices({})
     onComplete(summary)
   }
+
+  // Entry point for the "Approve Selected" button. If any selected device has
+  // no discovered platform, prompt for one (pre-filled with the vendor default);
+  // otherwise approve straight away.
+  const approveSelected = () => {
+    const byId = new Map(devices.map((d) => [d.id, d]))
+    const sel = [...selected].map((id) => byId.get(id)).filter(Boolean) as DiscoveredDevice[]
+    const needPlatform = sel.filter((d) => !d.discovered_platform)
+    if (needPlatform.length) {
+      const init: Record<number, string> = {}
+      for (const d of needPlatform) init[d.id] = vendorDefaultPlatform(d.discovered_vendor)
+      setPlatformChoices(init)
+      setPlatformPrompt(needPlatform)
+    } else {
+      runApproval({})
+    }
+  }
+
+  const setPlatformChoice = (id: number, value: string) =>
+    setPlatformChoices((p) => ({ ...p, [id]: value }))
+  const cancelPrompt = () => { setPlatformPrompt(null); setPlatformChoices({}) }
 
   return {
     selected, headerRef, allChecked, eligibleCount: eligibleIds.length,
     approving, progress, toggle, toggleAll, clear, approveSelected,
+    platformPrompt, platformChoices, setPlatformChoice, cancelPrompt,
+    confirmPrompt: () => runApproval(platformChoices),
   }
 }
 
@@ -128,10 +176,60 @@ function RowCheckbox({ d, checked, onToggle }: {
   if (!isApprovable(d)) {
     return (
       <input type="checkbox" disabled className="opacity-40 cursor-not-allowed"
-        title={d.already_exists ? 'Already in inventory' : 'Select platform before bulk approve'} />
+        title={d.already_exists ? 'Already in inventory'
+          : 'Unknown vendor — approve individually and pick a platform'} />
     )
   }
   return <input type="checkbox" checked={checked} onChange={onToggle} className="cursor-pointer" />
+}
+
+// Bulk-approve platform picker: shown when the selection includes devices whose
+// platform discovery couldn't identify. Each is pre-filled with the vendor
+// default (e.g. fortinet → fortios); multi-platform vendors start blank.
+function BulkPlatformModal({ devices, choices, busy, onChoose, onCancel, onConfirm }: {
+  devices: DiscoveredDevice[]
+  choices: Record<number, string>
+  busy: boolean
+  onChoose: (id: number, value: string) => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const allChosen = devices.every((d) => !!choices[d.id])
+  return (
+    <Modal
+      title="Select platform"
+      onClose={onCancel}
+      footer={
+        <>
+          <button onClick={onCancel} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={onConfirm} disabled={busy || !allChosen}
+            className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{busy ? 'Approving…' : 'Approve All'}</button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          {devices.length} device{devices.length === 1 ? '' : 's'} {devices.length === 1 ? 'has' : 'have'} an
+          unknown platform. Select one for each before approving:
+        </p>
+        <div className="space-y-2">
+          {devices.map((d) => (
+            <div key={d.id} className="flex items-center gap-2">
+              <span className="flex-1 min-w-0 truncate text-sm text-gray-700 dark:text-gray-300">
+                <span className="font-mono">{d.discovered_hostname || d.source_ip}</span>
+                {d.discovered_vendor && <span className="text-gray-400"> · {d.discovered_vendor}</span>}
+              </span>
+              <select className={clsx(inputCls, 'w-40')} value={choices[d.id] || ''}
+                onChange={(e) => onChoose(d.id, e.target.value)}>
+                <option value="">— Select —</option>
+                {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  )
 }
 
 function BulkBar({ count, approving, progress, onApprove, onClear }: {
@@ -354,6 +452,16 @@ export default function Discovery() {
           busy={busyId === approving.id}
           onClose={() => setApproving(null)}
           onConfirm={(cid, platform) => confirmApprove(approving, cid, platform)}
+        />
+      )}
+      {bulk.platformPrompt && (
+        <BulkPlatformModal
+          devices={bulk.platformPrompt}
+          choices={bulk.platformChoices}
+          busy={bulk.approving}
+          onChoose={bulk.setPlatformChoice}
+          onCancel={bulk.cancelPrompt}
+          onConfirm={bulk.confirmPrompt}
         />
       )}
     </div>
@@ -602,6 +710,16 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
             </div>
           )}
         </div>
+      )}
+      {bulk.platformPrompt && (
+        <BulkPlatformModal
+          devices={bulk.platformPrompt}
+          choices={bulk.platformChoices}
+          busy={bulk.approving}
+          onChoose={bulk.setPlatformChoice}
+          onCancel={bulk.cancelPrompt}
+          onConfirm={bulk.confirmPrompt}
+        />
       )}
     </div>
   )
