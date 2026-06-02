@@ -894,6 +894,8 @@ export interface UserPreferences {
   timezone: string
   date_format: 'iso' | 'us' | 'eu'
   email_alerts: boolean
+  slack_user_id: string
+  discord_user_id: string
 }
 
 export interface Me {
@@ -1649,6 +1651,43 @@ export async function saveTeam(payload: Partial<AlertTeam> & { name: string }, i
   return data
 }
 export async function deleteTeam(id: number): Promise<void> { await api.delete(`/alerting/teams/${id}/`) }
+
+export interface TeamMember {
+  id: number
+  team: number
+  user: number
+  username: string
+  email: string
+  full_name: string
+  role: 'member' | 'lead' | 'manager'
+  notify_email: boolean
+  notify_sms: boolean
+  notify_slack: boolean
+  notify_discord: boolean
+}
+
+export type TeamMemberPatch = Partial<Pick<TeamMember,
+  'role' | 'notify_email' | 'notify_slack' | 'notify_discord'>>
+
+export async function fetchTeamMembers(teamId: number): Promise<TeamMember[]> {
+  const { data } = await api.get<TeamMember[]>(`/alerting/teams/${teamId}/members/`)
+  return Array.isArray(data) ? data : []
+}
+export async function addTeamMember(
+  teamId: number, body: { user: number; role: string } & TeamMemberPatch,
+): Promise<TeamMember> {
+  const { data } = await api.post(`/alerting/teams/${teamId}/members/`, body)
+  return data
+}
+export async function updateTeamMember(
+  teamId: number, userId: number, patch: TeamMemberPatch,
+): Promise<TeamMember> {
+  const { data } = await api.patch(`/alerting/teams/${teamId}/members/${userId}/`, patch)
+  return data
+}
+export async function removeTeamMember(teamId: number, userId: number): Promise<void> {
+  await api.delete(`/alerting/teams/${teamId}/members/${userId}/`)
+}
 export async function testTeamDiscord(id: number): Promise<{ ok: boolean; error: string }> {
   const { data } = await api.post(`/alerting/teams/${id}/test-discord/`)
   return data

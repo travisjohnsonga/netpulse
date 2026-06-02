@@ -132,7 +132,34 @@ export default function Profile() {
             onChange={(e) => patchPrefs({ email_alerts: e.target.checked }).catch(() => setError('Save failed.'))} />
           Email me alert notifications
         </label>
+
+        {/* Chat handles — used to DM / @mention you when your alerting team is
+            notified via Slack/Discord (set "Notify via" on the team membership). */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <ChatHandle label="Slack member ID" placeholder="U01234ABCDE" value={p.slack_user_id}
+            help="Slack → your profile → ⋮ → Copy member ID"
+            onSave={(v) => patchPrefs({ slack_user_id: v }).catch(() => setError('Save failed.'))} />
+          <ChatHandle label="Discord user ID" placeholder="123456789012345678" value={p.discord_user_id}
+            help="Discord → Settings → Advanced → Developer Mode → right-click your name → Copy User ID"
+            onSave={(v) => patchPrefs({ discord_user_id: v }).catch(() => setError('Save failed.'))} />
+        </div>
       </div>
+    </div>
+  )
+}
+
+function ChatHandle({ label: lbl, value, placeholder, help, onSave }: {
+  label: string; value: string; placeholder: string; help: string; onSave: (v: string) => void
+}) {
+  const [v, setV] = useState(value)
+  useEffect(() => { setV(value) }, [value])
+  return (
+    <div>
+      <label className={label}>{lbl}</label>
+      <input className={input} value={v} placeholder={placeholder}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => { if (v !== value) onSave(v.trim()) }} />
+      <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{help}</p>
     </div>
   )
 }

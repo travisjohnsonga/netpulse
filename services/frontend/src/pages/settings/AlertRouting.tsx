@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import Modal from '../../components/Modal'
 import {
   fetchTeams, saveTeam, deleteTeam, testTeamDiscord, fetchPolicies, savePolicy,
   fetchRoutes, saveRoute, deleteRoute, testRoute,
   fetchMaintenanceWindows, saveMaintenanceWindow, deleteMaintenanceWindow, endMaintenanceNow, fetchDevices,
-  type AlertTeam, type EscalationPolicy, type AlertRoute,
+  fetchTeamMembers, addTeamMember, updateTeamMember, removeTeamMember, fetchUsers,
+  type AlertTeam, type EscalationPolicy, type AlertRoute, type TeamMember, type AdminUser,
   type MaintenanceWindow, type MaintenanceWindowPayload, type Device,
 } from '../../api/client'
 
@@ -22,6 +23,7 @@ export default function AlertRouting() {
   const [routes, setRoutes] = useState<AlertRoute[]>([])
   const [windows, setWindows] = useState<MaintenanceWindow[]>([])
   const [modal, setModal] = useState<null | 'team' | 'policy' | 'route' | 'maint'>(null)
+  const [membersTeam, setMembersTeam] = useState<AlertTeam | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const load = () => {
@@ -53,6 +55,7 @@ export default function AlertRouting() {
                 <span className="text-gray-500 dark:text-gray-400">{t.member_count} member{t.member_count === 1 ? '' : 's'}</span>
                 {t.discord_webhook_url && <span title="Discord webhook configured">💬</span>}
                 <span className="ml-auto flex gap-3">
+                  <button onClick={() => setMembersTeam(t)} className="text-xs text-blue-600 hover:text-blue-800">Members</button>
                   {t.discord_webhook_url && (
                     <button onClick={() => testTeamDiscord(t.id).then((r) => alert(r.ok ? 'Discord test sent ✅' : `Failed: ${r.error}`))}
                       className="text-xs text-indigo-600 hover:text-indigo-800">Test Discord</button>
@@ -145,7 +148,109 @@ export default function AlertRouting() {
       {modal === 'policy' && <PolicyModal teams={teams} onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
       {modal === 'route' && <RouteModal policies={policies} onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
       {modal === 'maint' && <MaintenanceModal onClose={() => setModal(null)} onSaved={() => { setModal(null); load() }} />}
+      {membersTeam && <MembersModal team={membersTeam} onClose={() => { setMembersTeam(null); load() }} />}
     </div>
+  )
+}
+
+const ROLES: TeamMember['role'][] = ['member', 'lead', 'manager']
+
+function MembersModal({ team, onClose }: { team: AlertTeam; onClose: () => void }) {
+  const [members, setMembers] = useState<TeamMember[]>([])
+  const [users, setUsers] = useState<AdminUser[]>([])
+  const [search, setSearch] = useState('')
+  const [addUserId, setAddUserId] = useState<number | ''>('')
+  const [addRole, setAddRole] = useState<TeamMember['role']>('member')
+  const [busy, setBusy] = useState(false)
+
+  const reload = () => fetchTeamMembers(team.id).then(setMembers).catch(() => setMembers([]))
+  useEffect(() => {
+    reload()
+    fetchUsers().then(setUsers).catch(() => setUsers([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team.id])
+
+  const memberUserIds = new Set(members.map((m) => m.user))
+  const candidates = users
+    .filter((u) => !memberUserIds.has(u.id))
+    .filter((u) => {
+      const q = search.toLowerCase()
+      return !q || u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
+        || `${u.first_name} ${u.last_name}`.toLowerCase().includes(q)
+    })
+
+  const add = async () => {
+    if (!addUserId) return
+    setBusy(true)
+    try { await addTeamMember(team.id, { user: addUserId, role: addRole }); setAddUserId(''); setSearch(''); await reload() }
+    finally { setBusy(false) }
+  }
+  const patch = async (m: TeamMember, p: Partial<TeamMember>) => {
+    setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, ...p } : x)))  // optimistic
+    try { await updateTeamMember(team.id, m.user, p) } catch { reload() }
+  }
+  const remove = async (m: TeamMember) => { await removeTeamMember(team.id, m.user); reload() }
+
+  const Toggle = ({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) => (
+    <button onClick={onClick}
+      className={clsx('px-2 py-0.5 text-xs rounded-md border',
+        on ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+           : 'border-gray-200 dark:border-gray-700 text-gray-400')}>{children}</button>
+  )
+
+  return (
+    <Modal title={`Members — ${team.name}`} onClose={onClose} footer={
+      <button onClick={onClose} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg">Done</button>
+    }>
+      <div className="space-y-3">
+        {members.length === 0 && <p className="text-sm text-gray-400">No members yet.</p>}
+        {members.map((m) => (
+          <div key={m.id} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <span className="flex-1 min-w-0 truncate text-sm text-gray-800 dark:text-gray-100">
+                👤 {m.full_name || m.username} <span className="text-gray-400">({m.email || 'no email'})</span>
+              </span>
+              <select className="text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 px-1 py-0.5"
+                value={m.role} onChange={(e) => patch(m, { role: e.target.value as TeamMember['role'] })}>
+                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <button onClick={() => remove(m)} className="text-xs text-red-600 hover:text-red-800">Remove</button>
+            </div>
+            <div className="flex gap-1.5 mt-2">
+              <span className="text-xs text-gray-400 mr-1">Notify via:</span>
+              <Toggle on={m.notify_email} onClick={() => patch(m, { notify_email: !m.notify_email })}>✉ Email</Toggle>
+              <Toggle on={m.notify_slack} onClick={() => patch(m, { notify_slack: !m.notify_slack })}>💬 Slack</Toggle>
+              <Toggle on={m.notify_discord} onClick={() => patch(m, { notify_discord: !m.notify_discord })}>🎮 Discord</Toggle>
+            </div>
+          </div>
+        ))}
+
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
+          <label className={label}>Add member</label>
+          <input className={clsx(input, 'mb-2')} placeholder="Search users by name or email…"
+            value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="flex gap-2">
+            <select className={input} value={addUserId} onChange={(e) => setAddUserId(e.target.value ? Number(e.target.value) : '')}>
+              <option value="">— Select user —</option>
+              {candidates.slice(0, 50).map((u) => (
+                <option key={u.id} value={u.id}>{u.username}{u.email ? ` (${u.email})` : ''}</option>
+              ))}
+            </select>
+            <select className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 px-2"
+              value={addRole} onChange={(e) => setAddRole(e.target.value as TeamMember['role'])}>
+              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <button onClick={add} disabled={busy || !addUserId}
+              className="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg whitespace-nowrap">Add</button>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-3 text-xs text-gray-500 dark:text-gray-400">
+          Team channels: {team.slack_webhook_url ? 'Slack ✓' : 'Slack —'} · {team.discord_webhook_url ? 'Discord ✓' : 'Discord —'}.
+          Slack/Discord per-member alerts also need the user's handle set in their profile.
+        </div>
+      </div>
+    </Modal>
   )
 }
 
