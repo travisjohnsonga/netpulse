@@ -1365,6 +1365,14 @@ export async function createDevice(payload: DeviceCreatePayload): Promise<Device
   return data
 }
 
+export interface PlatformOption { value: string; label: string }
+// Supported device platforms, sourced from the backend (Device.Platform) so new
+// platforms appear in dropdowns without a frontend change.
+export async function fetchDevicePlatforms(): Promise<PlatformOption[]> {
+  const { data } = await api.get<PlatformOption[]>('/devices/platforms/')
+  return Array.isArray(data) ? data : []
+}
+
 export async function setDeviceCollector(id: number, collector: number | null): Promise<DeviceDetail> {
   const { data } = await api.patch<DeviceDetail>(`/devices/${id}/`, { collector })
   return data

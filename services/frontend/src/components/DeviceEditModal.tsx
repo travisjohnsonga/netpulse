@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react'
 import Modal from './Modal'
-import { fetchSites, updateDevice, type DeviceDetail, type Site } from '../api/client'
+import { fetchSites, updateDevice, fetchDevicePlatforms, type DeviceDetail, type Site, type PlatformOption } from '../api/client'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:text-gray-100'
 
-const PLATFORMS = [
-  ['ios', 'Cisco IOS'], ['ios_xe', 'Cisco IOS-XE'], ['ios_xr', 'Cisco IOS-XR'],
-  ['nxos', 'Cisco NX-OS'], ['asa', 'Cisco ASA'], ['eos', 'Arista EOS'],
-  ['junos', 'Juniper JunOS'], ['fortios', 'FortiOS'], ['panos', 'PAN-OS'],
-  ['vyos', 'VyOS'], ['sonic', 'SONiC'], ['linux', 'Linux'], ['other', 'Other'],
+// Fallback list (covers the model's platforms incl. SonicWall/AOS-CX/Aruba)
+// used until the dynamic /devices/platforms/ list loads or if it fails.
+const PLATFORMS_FALLBACK: PlatformOption[] = [
+  { value: 'ios', label: 'Cisco IOS' }, { value: 'ios_xe', label: 'Cisco IOS-XE' },
+  { value: 'ios_xr', label: 'Cisco IOS-XR' }, { value: 'nxos', label: 'Cisco NX-OS' },
+  { value: 'eos', label: 'Arista EOS' }, { value: 'junos', label: 'Juniper JunOS' },
+  { value: 'fortios', label: 'Fortinet FortiOS' }, { value: 'panos', label: 'Palo Alto PAN-OS' },
+  { value: 'sonicwall', label: 'SonicWall SonicOS' }, { value: 'aos_cx', label: 'HPE AOS-CX' },
+  { value: 'aruba', label: 'Aruba AOS' }, { value: 'sonic', label: 'SONiC' },
+  { value: 'other', label: 'Other' },
 ]
 const ROLES = ['', 'access', 'distribution', 'core', 'wan-edge', 'firewall']
 
@@ -57,10 +62,14 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
   const [tagInput, setTagInput] = useState('')
   const [notes, setNotes] = useState(parsed.rest)
   const [sites, setSites] = useState<Site[]>([])
+  const [platforms, setPlatforms] = useState<PlatformOption[]>(PLATFORMS_FALLBACK)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => { fetchSites().then(setSites).catch(() => {}) }, [])
+  useEffect(() => {
+    fetchDevicePlatforms().then((p) => { if (p.length) setPlatforms(p) }).catch(() => {})
+  }, [])
 
   const addTag = () => {
     const t = tagInput.trim()
@@ -118,7 +127,7 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
           <Field label="Vendor"><input className={inputCls} value={vendor} onChange={(e) => setVendor(e.target.value)} /></Field>
           <Field label="Platform">
             <select className={inputCls} value={platform} onChange={(e) => setPlatform(e.target.value)}>
-              {PLATFORMS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {platforms.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </Field>
         </Row>
