@@ -51,3 +51,7 @@ OPENBAO_DISABLED = True
 REST_FRAMEWORK = {**REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": None}}  # noqa: F405
 
 LOGGING = {"version": 1, "disable_existing_loggers": True}
+
+# Ensure STATIC_ROOT exists so WhiteNoise doesn't warn ("No directory at:
+# /app/staticfiles/") when its middleware initialises during tests.
+os.makedirs(STATIC_ROOT, exist_ok=True)  # noqa: F405

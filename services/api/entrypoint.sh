@@ -17,6 +17,13 @@ fi
 echo "[entrypoint] running database migrations..."
 python manage.py migrate --noinput
 
+# Collect static assets (admin + DRF browsable API) for WhiteNoise to serve.
+# Only the api service serves HTTP to users; other api-image services skip it.
+if [ "$SEED_SUPERUSER" = "1" ]; then
+    echo "[entrypoint] collecting static files..."
+    python manage.py collectstatic --noinput || echo "[entrypoint] collectstatic had issues (continuing)"
+fi
+
 echo "[entrypoint] seeding role groups..."
 python manage.py create_roles
 

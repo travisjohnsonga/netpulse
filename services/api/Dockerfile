@@ -24,6 +24,11 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
+# STATIC_ROOT must exist or WhiteNoise logs "No directory at: /app/staticfiles/"
+# on every middleware init (including the test suite). collectstatic populates
+# it at runtime (entrypoint); creating it here keeps the image quiet by default.
+RUN mkdir -p /app/staticfiles
+
 # Bake the version (git isn't present in the image). Supplied by the build —
 # see docker-compose api build.args / netpulse.sh; empty in plain builds.
 ARG GIT_COMMIT=""
