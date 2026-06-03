@@ -35,7 +35,7 @@ def platforms_to_sync() -> list[str]:
         .values_list("platform", flat=True)
         .distinct()
     )
-    return [p for p in present if p in nvd.PLATFORM_KEYWORDS]
+    return [p for p in present if p in nvd.PLATFORM_CPE_PREFIXES]
 
 
 def upsert_cve(parsed: dict) -> CVE:
@@ -167,13 +167,14 @@ def run_sync(*, page_sleep: float | None = None) -> dict:
         touched: dict[str, CVE] = {}
         if settings_obj.nvd_enabled:
             for platform in platforms:
-                keywords = nvd.PLATFORM_KEYWORDS.get(platform, [])
-                logger.info("Fetching CVEs for %s (%s)...", platform, ", ".join(keywords))
-                for raw in nvd.iter_cves(keywords, page_sleep=page_sleep):
+                logger.info("Fetching CVEs for %s (%s)...",
+                            platform, nvd.PLATFORM_CPE_PREFIXES.get(platform))
+                for raw in nvd.fetch_platform(platform, page_sleep=page_sleep):
                     parsed = nvd.parse_cve(raw)
                     if not parsed["cve_id"]:
                         continue
-                    # record the searched platform as a keyword association
+                    # The virtualMatchString query guarantees this platform's CPE
+                    # is present; record it explicitly in case the CPE parse missed it.
                     if platform not in parsed["affected_platforms"]:
                         parsed["affected_platforms"] = sorted(
                             set(parsed["affected_platforms"]) | {platform},

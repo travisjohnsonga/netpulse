@@ -78,6 +78,84 @@ class TestParsing:
         assert p["severity"] == "medium" and p["cvss_score"] == 5.0
 
 
+# ── NVD fetch (HTTP) ──────────────────────────────────────────────────────────
+
+class _Resp:
+    def __init__(self, status, payload=None, text=""):
+        self.status_code = status
+        self._payload = payload or {}
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+
+class _Session:
+    """Fake requests.Session returning queued responses per .get() call."""
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+        self.headers_seen = []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        self.calls.append(params)
+        self.headers_seen.append(headers or {})
+        return self._responses.pop(0)
+
+
+class TestNvdFetch:
+    @pytest.fixture(autouse=True)
+    def _key(self, monkeypatch):
+        # Default: a valid key is configured. Individual tests override.
+        monkeypatch.setattr(nvd, "_resolve_api_key", lambda: "valid-key")
+
+    def test_uses_virtual_match_string(self):
+        page = {"vulnerabilities": [{"cve": nvd_cve("CVE-2024-1")}], "totalResults": 1}
+        sess = _Session([_Resp(200, page)])
+        out = list(nvd.fetch_platform("ios_xe", session=sess, page_sleep=0))
+        assert len(out) == 1
+        assert sess.calls[0]["virtualMatchString"] == "cpe:2.3:o:cisco:ios_xe"
+
+    def test_pagination(self):
+        p1 = {"vulnerabilities": [{"cve": nvd_cve("CVE-2024-1")}], "totalResults": 2}
+        p2 = {"vulnerabilities": [{"cve": nvd_cve("CVE-2024-2")}], "totalResults": 2}
+        sess = _Session([_Resp(200, p1), _Resp(200, p2)])
+        out = list(nvd.fetch_platform("ios_xe", session=sess, page_sleep=0))
+        assert {c["id"] for c in out} == {"CVE-2024-1", "CVE-2024-2"}
+
+    def test_404_with_key_falls_back_to_keyless(self):
+        # 404 while a key is sent → invalid key → retry the page keyless (200).
+        page = {"vulnerabilities": [{"cve": nvd_cve("CVE-2024-1")}], "totalResults": 1}
+        sess = _Session([_Resp(404), _Resp(200, page)])
+        out = list(nvd.fetch_platform("fortios", session=sess, page_sleep=0))
+        assert len(out) == 1
+        assert "apiKey" in sess.headers_seen[0] and "apiKey" not in sess.headers_seen[1]
+
+    def test_404_keyless_skips_platform(self, monkeypatch):
+        monkeypatch.setattr(nvd, "_resolve_api_key", lambda: "")
+        sess = _Session([_Resp(404, text="not found")])
+        assert list(nvd.fetch_platform("fortios", session=sess, page_sleep=0)) == []
+
+    def test_403_raises_auth_error(self):
+        sess = _Session([_Resp(403, text="forbidden")])
+        with pytest.raises(nvd.NvdAuthError):
+            list(nvd.fetch_platform("ios_xe", session=sess, page_sleep=0))
+
+    def test_503_skips_platform(self):
+        sess = _Session([_Resp(503, text="down")])
+        assert list(nvd.fetch_platform("ios", session=sess, page_sleep=0)) == []
+
+    def test_429_retries_then_succeeds(self, monkeypatch):
+        monkeypatch.setattr("apps.cve.nvd.time.sleep", lambda *_: None)
+        page = {"vulnerabilities": [{"cve": nvd_cve("CVE-2024-1")}], "totalResults": 1}
+        sess = _Session([_Resp(429), _Resp(200, page)])
+        out = list(nvd.fetch_platform("ios_xe", session=sess, page_sleep=0))
+        assert len(out) == 1
+
+    def test_unknown_platform_yields_nothing(self):
+        assert list(nvd.fetch_platform("not_a_platform", page_sleep=0)) == []
+
+
 # ── Version matching ──────────────────────────────────────────────────────────
 
 class TestVersionMatching:
@@ -191,11 +269,11 @@ class TestRunSync:
         Device.objects.create(hostname="r1", ip_address="10.0.0.1",
                               platform="ios_xe", os_version="17.3.1")
 
-        def fake_iter(keywords, **kw):
+        def fake_fetch(platform, **kw):
             yield nvd_cve("CVE-2024-20001")
             yield nvd_cve("CVE-2024-20002", end_excl="17.4.0")
 
-        monkeypatch.setattr(nvd, "iter_cves", fake_iter)
+        monkeypatch.setattr(nvd, "fetch_platform", fake_fetch)
         # disable optional feeds for a deterministic run
         s = CVEFeedSettings.load()
         s.cisa_kev_enabled = False
@@ -217,7 +295,7 @@ class TestRunSync:
         # Device on a platform with no NVD keyword mapping → nothing fetched.
         Device.objects.create(hostname="x", ip_address="10.9.9.9", platform="other")
         called = []
-        monkeypatch.setattr(nvd, "iter_cves", lambda kw, **k: called.append(kw) or iter(()))
+        monkeypatch.setattr(nvd, "fetch_platform", lambda platform, **k: called.append(platform) or iter(()))
         monkeypatch.setattr("apps.cve.psirt.fetch_advisories", lambda p, **k: iter(()))
         s = CVEFeedSettings.load(); s.cisa_kev_enabled = False; s.save()
         summary = sync.run_sync(page_sleep=0)

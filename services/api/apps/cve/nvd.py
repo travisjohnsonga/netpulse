@@ -1,19 +1,29 @@
 """
 NVD (National Vulnerability Database) API 2.0 client + parsing helpers.
 
-Fetches CVEs by keyword, normalises the NVD JSON into the fields NetPulse stores
-on the ``CVE`` model, extracts CPE version constraints for version matching, and
-maps NVD products to NetPulse platform keys.
+Fetches CVEs per platform via the ``virtualMatchString`` CPE parameter,
+normalises the NVD JSON into the fields NetPulse stores on the ``CVE`` model,
+extracts CPE version constraints for version matching, and maps NVD products to
+NetPulse platform keys.
 
-Network I/O is isolated in ``iter_cves``/``fetch_keyword`` so the parsing and
-version-matching helpers are pure and unit-testable without hitting NVD.
+Why ``virtualMatchString`` and not ``cpeName``/``keywordSearch``:
+- ``cpeName`` requires a dictionary-exact CPE; a wildcard like
+  ``cpe:2.3:o:cisco:ios_xe:*`` returns HTTP 404.
+- ``keywordSearch`` is free-text, imprecise (returns CVEs that merely mention
+  the words, often without the relevant CPE), and has been observed to 404.
+- ``virtualMatchString`` does prefix/partial CPE matching, so every CVE returned
+  actually carries the platform's CPE — which is exactly what version matching
+  needs.
+
+Network I/O is isolated in ``fetch_platform`` so the parsing and version-matching
+helpers are pure and unit-testable without hitting NVD.
 """
 from __future__ import annotations
 
 import logging
 import re
 import time
-from typing import Iterable, Iterator
+from typing import Iterator
 
 import requests
 from django.conf import settings
@@ -22,20 +32,27 @@ logger = logging.getLogger(__name__)
 
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
-# NetPulse platform key → NVD keywordSearch terms. Only platforms present in the
-# device inventory are actually fetched (see sync.platforms_to_sync).
-PLATFORM_KEYWORDS: dict[str, list[str]] = {
-    "ios": ["Cisco IOS"],
-    "ios_xe": ["Cisco IOS XE"],
-    "ios_xr": ["Cisco IOS XR"],
-    "nxos": ["Cisco NX-OS"],
-    "fortios": ["Fortinet FortiOS"],
-    "panos": ["Palo Alto PAN-OS"],
-    "junos": ["Juniper Junos"],
-    "eos": ["Arista EOS"],
-    "aos_cx": ["Aruba AOS-CX"],
-    "aruba": ["Aruba ArubaOS"],
-    "sonicwall": ["SonicWall SonicOS"],
+
+class NvdAuthError(Exception):
+    """NVD rejected the API key (HTTP 403) — abort the sync rather than loop."""
+
+
+# NetPulse platform key → NVD CPE prefix (vendor:product), queried with the
+# ``virtualMatchString`` parameter. Only platforms present in the device
+# inventory are fetched (see sync.platforms_to_sync). Verified live: each prefix
+# returns HTTP 200 (aos_cx currently has 0 CVEs in NVD, which is fine).
+PLATFORM_CPE_PREFIXES: dict[str, str] = {
+    "ios": "cpe:2.3:o:cisco:ios",
+    "ios_xe": "cpe:2.3:o:cisco:ios_xe",
+    "ios_xr": "cpe:2.3:o:cisco:ios_xr",
+    "nxos": "cpe:2.3:o:cisco:nx-os",
+    "fortios": "cpe:2.3:o:fortinet:fortios",
+    "panos": "cpe:2.3:o:paloaltonetworks:pan-os",
+    "junos": "cpe:2.3:o:juniper:junos",
+    "eos": "cpe:2.3:o:arista:eos",
+    "aos_cx": "cpe:2.3:o:arubanetworks:arubaos-cx",
+    "aruba": "cpe:2.3:o:arubanetworks:arubaos",
+    "sonicwall": "cpe:2.3:o:sonicwall:sonicos",
 }
 
 # CPE 2.3 product token → NetPulse platform key. Used to decide which CPE match
@@ -309,14 +326,70 @@ def _resolve_api_key() -> str:
     return getattr(settings, "NVD_API_KEY", "") or ""
 
 
-def fetch_keyword(keyword: str, *, session: requests.Session | None = None,
-                  page_sleep: float | None = None) -> Iterator[dict]:
+# _get_page outcomes other than a parsed page (dict):
+_SKIP = "skip"        # service error / odd status → skip this platform
+_BAD_KEY = "badkey"   # 404 while sending a key → the key is invalid (NVD quirk)
+
+
+def _get_page(session: requests.Session, headers: dict, params: dict,
+              platform: str):
     """
-    Yield raw NVD ``cve`` objects for ``keyword``, paginating to completion.
+    Fetch one NVD page with status-code handling.
+
+    Returns the parsed JSON (dict), or a sentinel: ``_BAD_KEY`` when NVD 404s
+    while an apiKey is being sent (NVD returns 404 — not 401/403 — for an
+    invalid key; the caller retries keyless), or ``_SKIP`` to skip the platform
+    (genuine 404 / service error). Retries on 429. Raises NvdAuthError on 403.
+    """
+    has_key = "apiKey" in headers
+    for _attempt in range(3):
+        resp = session.get(NVD_URL, headers=headers, params=params, timeout=60)
+        code = resp.status_code
+        if code == 200:
+            return resp.json()
+        if code == 404:
+            if has_key:
+                # A valid query returns 200 (even with 0 results); a 404 with a
+                # key present means NVD rejected the key. Fall back to keyless.
+                logger.warning(
+                    "NVD 404 with API key for %s — the configured NVD API key is "
+                    "likely invalid; retrying without it (lower rate limit). Fix "
+                    "the key in Settings → Data Sources.", platform,
+                )
+                return _BAD_KEY
+            logger.warning("NVD 404 (keyless) for %s (%s) — skipping platform",
+                           platform, params.get("virtualMatchString"))
+            return _SKIP
+        if code == 403:
+            raise NvdAuthError("NVD returned 403 — API key invalid or forbidden")
+        if code == 429:
+            logger.warning("NVD rate limited (429) for %s — sleeping 30s, retrying", platform)
+            time.sleep(30)
+            continue
+        if code in (500, 503):
+            logger.warning("NVD %s (service unavailable) for %s — skipping platform", code, platform)
+            return _SKIP
+        logger.warning("NVD %s for %s — skipping platform: %s", code, platform, resp.text[:200])
+        return _SKIP
+    logger.warning("NVD still rate-limited after retries for %s — skipping", platform)
+    return _SKIP
+
+
+def fetch_platform(platform: str, *, session: requests.Session | None = None,
+                   page_sleep: float | None = None) -> Iterator[dict]:
+    """
+    Yield raw NVD ``cve`` objects affecting ``platform``, paginating to
+    completion via ``virtualMatchString``. If a configured API key is rejected
+    (404), transparently falls back to keyless requests (NVD works without a key
+    at a lower rate). Skips the platform on genuine 404/service errors; raises
+    NvdAuthError on a 403.
 
     Rate-limited per NVD guidance: 50 req/30s with an API key, 5 req/30s
     without — we sleep ~0.7s / ~6.5s between pages accordingly.
     """
+    prefix = PLATFORM_CPE_PREFIXES.get(platform)
+    if not prefix:
+        return
     sess = session or requests.Session()
     api_key = _resolve_api_key()
     headers = {"apiKey": api_key} if api_key else {}
@@ -324,16 +397,21 @@ def fetch_keyword(keyword: str, *, session: requests.Session | None = None,
     page_size = min(int(getattr(settings, "NVD_RESULTS_PER_PAGE", 2000)), 2000)
 
     start = 0
-    total = None
     while True:
         params = {
-            "keywordSearch": keyword,
+            "virtualMatchString": prefix,
             "resultsPerPage": page_size,
             "startIndex": start,
         }
-        resp = sess.get(NVD_URL, headers=headers, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _get_page(sess, headers, params, platform)
+        if data == _BAD_KEY:
+            # Drop the bad key and retry this page (and the rest) keyless.
+            headers = {}
+            if page_sleep is None:
+                sleep = 6.5
+            data = _get_page(sess, headers, params, platform)
+        if not isinstance(data, dict):
+            return
         vulns = data.get("vulnerabilities", []) or []
         for v in vulns:
             cve = v.get("cve")
@@ -346,15 +424,3 @@ def fetch_keyword(keyword: str, *, session: requests.Session | None = None,
             break
         start += page_size
         time.sleep(sleep)
-
-
-def iter_cves(keywords: Iterable[str], **kwargs) -> Iterator[dict]:
-    """Yield NVD cve objects across several keywords, de-duplicated by CVE id."""
-    seen: set[str] = set()
-    for kw in keywords:
-        logger.info("NVD: fetching CVEs for keyword %r", kw)
-        for cve in fetch_keyword(kw, **kwargs):
-            cid = cve.get("id")
-            if cid and cid not in seen:
-                seen.add(cid)
-                yield cve
