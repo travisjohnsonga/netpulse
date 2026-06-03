@@ -2342,6 +2342,19 @@ After audit, produce:
 Do NOT run this audit until explicitly requested.
 This is a pre-production gate, not a development task.
 
+## Pre-release / Production Checklist
+Before public v1.0 announcement:
+- [ ] Remove or restrict show_credentials management command
+      (apps/credentials/management/commands/show_credentials.py —
+      shows credential info; gated only by being a server-side command)
+- [ ] Remove scripts/check_keys.py if still present
+- [ ] Audit all management commands for security-sensitive output
+- [ ] Review DEBUG settings in production
+- [ ] Ensure SECRET_KEY rotation documented
+- [ ] Review ALLOWED_HOSTS configuration
+- [ ] SSL/TLS certificate setup docs
+- [ ] Remove any hardcoded test credentials from documentation/examples
+
 ## PINNED — ChatOps User Identity & Profile Integration
 
 ### Problem:

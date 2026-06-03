@@ -74,8 +74,13 @@ case "$1" in
     # Full post-setup health verification against the running infrastructure.
     docker compose exec api python manage.py run_health_checks "${@:2}"
     ;;
+  credentials)
+    # Inspect credential profiles. Safe by default (lengths/status only).
+    # Pass --show-secrets to reveal values, --profile-id N for one profile.
+    docker compose exec api python manage.py show_credentials "${@:2}"
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|status|health|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|status|health|credentials|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
@@ -86,6 +91,7 @@ case "$1" in
     echo "  rebuild-frontend   Rebuild and recreate the frontend (--no-deps)"
     echo "  status             Show service status and health"
     echo "  health             Run full post-setup health checks (add --json/--fail-fast)"
+    echo "  credentials        Show credential profile status (add --show-secrets to reveal values)"
     echo "  logs [service]     Follow logs (default: api)"
     exit 1
     ;;
