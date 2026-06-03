@@ -391,6 +391,11 @@ SOCIAL_AUTH_LOGIN_ERROR_URL = "/api/sso/jwt/"
 SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get("SOCIAL_AUTH_GOOGLE_OAUTH2_KEY", "")
 SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get("SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET", "")
 
+# Azure AD uses the v2.0 endpoints (see DynamicAzureADTenantOAuth2). The v2
+# default scope omits "email", which the domain-allowlist + profile-sync
+# pipeline needs — request it explicitly (added to the backend's default scope).
+SOCIAL_AUTH_AZUREAD_TENANT_OAUTH2_SCOPE = ["openid", "email", "profile"]
+
 SOCIAL_AUTH_PIPELINE = (
     "social_core.pipeline.social_auth.social_details",
     "social_core.pipeline.social_auth.social_uid",

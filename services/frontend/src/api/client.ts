@@ -1983,3 +1983,19 @@ export async function testSSOProvider(id: number): Promise<SSOTestResult> {
   const { data } = await api.post<SSOTestResult>(`/sso/providers/${id}/test/`, {})
   return data
 }
+
+// ── Onboarding (Get Started wizard) ─────────────────────────────────────────────
+
+export interface OnboardingStatus {
+  show_onboarding: boolean
+  reasons: { has_devices: boolean; user_completed: boolean }
+}
+
+export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
+  const { data } = await api.get<OnboardingStatus>('/onboarding/status/')
+  return data
+}
+
+export async function completeOnboarding(): Promise<void> {
+  await api.post('/onboarding/complete/', {})
+}

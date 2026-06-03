@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Layout from './components/Layout'
 import SetupRequired, { OpenBaoDegradedBanner } from './pages/SetupRequired'
-import { fetchSetupStatus, type SetupStatus } from './api/client'
+import { fetchSetupStatus, fetchOnboardingStatus, completeOnboarding, type SetupStatus } from './api/client'
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/Devices'
 import Profile from './pages/Profile'
@@ -46,15 +46,36 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 function AppRoutes() {
-  const onboarded = localStorage.getItem('netpulse_onboarded')
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  // Onboarding visibility is decided by the backend (no devices AND this user
+  // hasn't dismissed it) — not a localStorage flag, which made the wizard
+  // reappear on every new browser/session even on a configured system.
+  const [onboarding, setOnboarding] = useState<'loading' | 'show' | 'skip'>('loading')
 
-  if (isAuthenticated && !onboarded) {
+  useEffect(() => {
+    if (!isAuthenticated) { setOnboarding('skip'); return }
+    setOnboarding('loading')
+    fetchOnboardingStatus()
+      .then((s) => setOnboarding(s.show_onboarding ? 'show' : 'skip'))
+      .catch(() => setOnboarding('skip'))   // fail open → straight to the app
+  }, [isAuthenticated])
+
+  if (isAuthenticated && onboarding === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (isAuthenticated && onboarding === 'show') {
     return (
       <OnboardingWizard
         onComplete={() => {
-          localStorage.setItem('netpulse_onboarded', '1')
-          window.location.replace('/dashboard')
+          completeOnboarding().finally(() => {
+            setOnboarding('skip')
+            window.location.replace('/dashboard')
+          })
         }}
       />
     )

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from social_core.backends.azuread_tenant import AzureADTenantOAuth2
+from social_core.backends.azuread_tenant import AzureADV2TenantOAuth2
 from social_core.backends.github import GithubOAuth2
 from social_core.backends.google import GoogleOAuth2
 from social_core.backends.okta import OktaOAuth2
@@ -69,6 +69,16 @@ class _DBCredentialsMixin:
     def setting(self, name, default=None):
         provider = self._provider()
         if provider is not None:
+            # Route KEY/SECRET to the DB+OpenBao too (not just via
+            # get_key_and_secret) — social-core reads self.setting("KEY")
+            # directly when validating the id_token audience, so a UI-only
+            # provider (no static env var) must still resolve it here.
+            if name == "KEY" and provider.client_id:
+                return provider.client_id
+            if name == "SECRET":
+                secret = self._db_secret(provider)
+                if secret:
+                    return secret
             val = self._db_extra(name, provider)
             if val:
                 return val
@@ -79,8 +89,17 @@ class DynamicGoogleOAuth2(_DBCredentialsMixin, GoogleOAuth2):
     """Google OAuth2 — client_id/secret from DB + OpenBao. name='google-oauth2'."""
 
 
-class DynamicAzureADTenantOAuth2(_DBCredentialsMixin, AzureADTenantOAuth2):
-    """Azure AD (tenant) OAuth2 — adds TENANT_ID from the DB. name='azuread-tenant-oauth2'."""
+class DynamicAzureADTenantOAuth2(_DBCredentialsMixin, AzureADV2TenantOAuth2):
+    """
+    Azure AD (tenant) OAuth2 on the v2.0 endpoints (oauth2/v2.0/authorize +
+    token). Keeps name='azuread-tenant-oauth2' so existing providers, the
+    /auth/login/azuread-tenant-oauth2/ URL, and the env seed are unchanged.
+
+    Why v2: v1 tokens (/oauth2/token) set aud = the resource URI, which fails
+    social-core's id_token audience check (audience = client_id). v2 id_tokens
+    set aud = the client_id, so validation passes. Adds TENANT_ID from the DB.
+    """
+    name = "azuread-tenant-oauth2"
 
     def _db_extra(self, name, provider):
         if name == "TENANT_ID" and provider.tenant_id:

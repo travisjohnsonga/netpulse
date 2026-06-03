@@ -128,6 +128,11 @@ class UserPreferences(TimestampedModel):
     slack_user_id = models.CharField(max_length=64, blank=True)
     discord_user_id = models.CharField(max_length=64, blank=True)
 
+    # Onboarding: set once the user dismisses/finishes the Get Started wizard so
+    # it isn't shown again. (The wizard is also hidden system-wide once any
+    # device exists — see the onboarding-status endpoint.)
+    onboarding_completed = models.BooleanField(default=False)
+
     class Meta:
         verbose_name = "user preferences"
         verbose_name_plural = "user preferences"

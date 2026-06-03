@@ -242,6 +242,63 @@ class MyPreferencesView(generics.RetrieveUpdateAPIView):
         return UserPreferences.for_user(self.request.user)
 
 
+class OnboardingStatusView(APIView):
+    """
+    Whether to show the Get Started wizard for the current user.
+
+    Shown only when the system is genuinely empty AND this user hasn't dismissed
+    it: ``not Device.objects.exists() and not prefs.onboarding_completed``. Once
+    any device exists, the wizard is hidden for everyone.
+    """
+
+    @extend_schema(
+        summary="Onboarding status for the current user",
+        responses=inline_serializer(
+            "OnboardingStatus",
+            {
+                "show_onboarding": serializers.BooleanField(),
+                "reasons": inline_serializer(
+                    "OnboardingReasons",
+                    {
+                        "has_devices": serializers.BooleanField(),
+                        "user_completed": serializers.BooleanField(),
+                    },
+                ),
+            },
+        ),
+    )
+    def get(self, request):
+        from apps.devices.models import Device
+
+        has_devices = Device.objects.exists()
+        prefs = UserPreferences.for_user(request.user)
+        user_completed = prefs.onboarding_completed
+        return Response(
+            {
+                "show_onboarding": not has_devices and not user_completed,
+                "reasons": {"has_devices": has_devices, "user_completed": user_completed},
+            }
+        )
+
+
+class OnboardingCompleteView(APIView):
+    """Mark the current user's onboarding as complete (dismiss the wizard)."""
+
+    @extend_schema(
+        summary="Mark onboarding complete for the current user",
+        request=None,
+        responses=inline_serializer(
+            "OnboardingComplete", {"onboarding_completed": serializers.BooleanField()}
+        ),
+    )
+    def post(self, request):
+        prefs = UserPreferences.for_user(request.user)
+        if not prefs.onboarding_completed:
+            prefs.onboarding_completed = True
+            prefs.save(update_fields=["onboarding_completed", "updated_at"])
+        return Response({"onboarding_completed": True})
+
+
 class SystemSettingsView(APIView):
     """
     Platform-level system settings the frontend needs at runtime.

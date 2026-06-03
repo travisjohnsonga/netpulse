@@ -78,6 +78,15 @@ export default function OnboardingWizard({ onComplete }: Props) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
+        {/* Skip — dismiss the wizard for good (marks onboarding complete). */}
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={onComplete}
+            className="text-xs text-gray-400 hover:text-gray-200 font-medium"
+          >
+            Skip setup — go to dashboard →
+          </button>
+        </div>
         {/* Progress bar */}
         <div className="mb-6">
           <div className="flex justify-between text-xs text-gray-400 mb-2">
