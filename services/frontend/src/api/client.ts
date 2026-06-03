@@ -91,15 +91,17 @@ export interface Device {
   created_at: string
 }
 
-// Reachability state derived from is_reachable + last_seen recency.
+// Reachability state from the authoritative status + is_reachable fields the
+// reachability monitor maintains (and pushes live over /ws/devices/). It is NOT
+// derived from last_seen age: last_seen tracks the last telemetry/poll write,
+// which legitimately lags the poll interval, so age-based coloring wrongly
+// shows healthy active devices as degraded/unreachable.
 export type Reachability = 'reachable' | 'degraded' | 'unreachable'
-export function reachabilityOf(d: { is_reachable?: boolean; last_seen?: string | null }): Reachability {
-  if (d.is_reachable === false) return 'unreachable'
-  if (!d.last_seen) return 'unreachable'
-  const age = (Date.now() - new Date(d.last_seen).getTime()) / 1000
-  if (age > 300) return 'unreachable'
-  if (age > 60) return 'degraded'
-  return 'reachable'
+export function reachabilityOf(d: { is_reachable?: boolean; status?: string; last_seen?: string | null }): Reachability {
+  if (d.status === 'unreachable' || d.is_reachable === false) return 'unreachable'
+  if (d.is_reachable === true || d.status === 'active') return 'reachable'
+  // pending / inactive / unknown — not confirmed reachable.
+  return 'degraded'
 }
 
 function _ageStr(iso: string): string {
@@ -110,26 +112,21 @@ function _ageStr(iso: string): string {
   return `${Math.round(s / 86400)}d`
 }
 
-// Human explanation of the derived reachability state — used as the badge
-// tooltip. The list-level state is derived purely from is_reachable + last_seen
-// recency, so the reason reflects that (telemetry staleness / outage duration),
-// not per-metric causes which the list doesn't load.
+// Human explanation of the reachability state — used as the badge tooltip.
+// Reflects the authoritative status + is_reachable (see reachabilityOf); last
+// seen is shown as supporting context only, never as the cause.
 export function reachabilityReason(d: {
-  is_reachable?: boolean; last_seen?: string | null
+  is_reachable?: boolean; status?: string; last_seen?: string | null
   unreachable_since?: string | null; consecutive_failures?: number
 }): string {
   const reach = reachabilityOf(d)
   if (reach === 'unreachable') {
     if (d.unreachable_since) return `Unreachable — down for ${_ageStr(d.unreachable_since)}`
-    if (d.is_reachable === false) {
-      const f = d.consecutive_failures ? ` (${d.consecutive_failures} failed checks)` : ''
-      return `Unreachable — last reachability check failed${f}`
-    }
-    if (!d.last_seen) return 'Unreachable — no successful contact yet'
-    return `Unreachable — no telemetry for ${_ageStr(d.last_seen)}`
+    const f = d.consecutive_failures ? ` (${d.consecutive_failures} failed checks)` : ''
+    return `Unreachable — last reachability check failed${f}`
   }
   if (reach === 'degraded') {
-    return `Degraded — telemetry stale, last seen ${d.last_seen ? _ageStr(d.last_seen) : '?'} ago (expected within 1m)`
+    return `${d.status === 'pending' ? 'Pending approval' : d.status === 'inactive' ? 'Inactive' : 'Not confirmed reachable'} — not actively monitored`
   }
   return d.last_seen ? `Reachable — last seen ${_ageStr(d.last_seen)} ago` : 'Reachable'
 }
