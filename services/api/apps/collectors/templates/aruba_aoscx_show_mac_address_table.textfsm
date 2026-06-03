@@ -1,0 +1,10 @@
+Value MAC_ADDRESS ([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})
+Value VLAN (\d+)
+Value TYPE (\w+)
+Value INTERFACE (\S+)
+
+Start
+  ^MAC\s+Address\s+VLAN.*$$ -> Next
+  ^${MAC_ADDRESS}\s+${VLAN}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

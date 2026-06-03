@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "apps.checks",
     "apps.alerting",
     "apps.mibs",
+    "apps.arp_mac",
     "apps.sso",
 ]
 

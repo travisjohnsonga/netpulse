@@ -30,6 +30,9 @@ urlpatterns = [
     path("api/", include("apps.core.urls")),
 
     # ── Domain apps ───────────────────────────────────────────────────────────
+    # ARP/MAC before the devices router so /api/devices/<id>/arp/ etc. resolve
+    # to the explicit views rather than the DeviceViewSet detail routes.
+    path("api/", include("apps.arp_mac.urls")),
     path("api/devices/",     include("apps.devices.urls")),
     path("api/sites/",       include((_sites_router.urls, "sites"))),
     path("api/credentials/", include("apps.credentials.urls")),
