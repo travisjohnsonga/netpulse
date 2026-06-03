@@ -54,7 +54,7 @@ def test_essential_oids_polled_when_gnmi_active():
 
     seen = {}
 
-    async def _ok_snmp(device, oids, creds):
+    async def _ok_snmp(device, oids, creds, engine):
         seen["oids"] = oids
         return {"1.3.6.1.2.1.1.3.0": {"value": "123", "type": "TimeTicks", "name": "sysUpTime.0"}}
 
@@ -73,7 +73,7 @@ def test_poll_runs_when_gnmi_inactive():
     poller = _poller(_FakeActivity(False), pub)
     dev = _device()
 
-    async def _ok_snmp(device, oids, creds):
+    async def _ok_snmp(device, oids, creds, engine):
         return {"1.3.6.1.2.1.1.3.0": {"value": "123", "type": "TimeTicks", "name": "sysUpTime.0"}}
 
     poller._snmp_get = _ok_snmp
@@ -86,13 +86,46 @@ def test_poll_runs_when_gnmi_inactive():
     assert poller._suppressed["7"] is False
 
 
+def test_fresh_engine_per_poll_is_closed():
+    # Each poll builds a new SnmpEngine and closes its dispatcher afterwards,
+    # so stale SNMPv3 engineBoots/engineTime can't wedge subsequent polls.
+    pub = _FakePublisher()
+    poller = _poller(None, pub)
+    dev = _device()
+    engines = []
+
+    class _FakeEngine:
+        def __init__(self):
+            self.closed = False
+
+        def closeDispatcher(self):
+            self.closed = True
+
+    def _fake_new_engine():
+        e = _FakeEngine()
+        engines.append(e)
+        return e
+
+    async def _ok_snmp(device, oids, creds, engine):
+        assert engine is engines[-1]   # the fresh engine is threaded through
+        return {"1.3.6.1.2.1.1.3.0": {"value": "1", "type": "TimeTicks", "name": "sysUpTime.0"}}
+
+    poller._new_engine = _fake_new_engine
+    poller._snmp_get = _ok_snmp
+    asyncio.run(poller._poll(dev, dev.poll_profiles[0]))
+    asyncio.run(poller._poll(dev, dev.poll_profiles[0]))
+
+    assert len(engines) == 2                  # a fresh engine each poll
+    assert all(e.closed for e in engines)     # all closed
+
+
 def test_no_activity_checker_always_polls():
     # gnmi_activity=None disables adaptive polling entirely.
     pub = _FakePublisher()
     poller = _poller(None, pub)
     dev = _device()
 
-    async def _ok_snmp(device, oids, creds):
+    async def _ok_snmp(device, oids, creds, engine):
         return {"x": {"value": "1", "type": "Integer", "name": "x"}}
 
     poller._snmp_get = _ok_snmp

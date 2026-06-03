@@ -61,19 +61,31 @@ class SNMPPoller:
         self._timeout = poll_timeout
         self._retries = poll_retries
         self._tasks: dict[str, list[asyncio.Task]] = {}
-        # One shared SNMP engine for all polls (pysnmp is not thread-safe but is coro-safe)
-        self._engine = None
         # Optional GNMIActivity — when a device is actively streaming gNMI we
         # suppress its (redundant) SNMP poll. None disables adaptive polling.
         self._gnmi = gnmi_activity
         # device_id → currently-suppressed? (so we only log on transitions).
         self._suppressed: dict[str, bool] = {}
 
-    def _get_engine(self):
-        if self._engine is None:
-            from pysnmp.hlapi.asyncio import SnmpEngine
-            self._engine = SnmpEngine()
-        return self._engine
+    @staticmethod
+    def _new_engine():
+        """A fresh SnmpEngine per poll cycle.
+
+        A long-lived shared engine caches the per-device SNMPv3
+        engineBoots/engineTime; when a device's authoritative engine resets or
+        drifts, the stale cache makes every subsequent request fail with
+        "Wrong SNMP PDU digest" (seen on AOS-CX). A new engine re-runs discovery
+        each poll — slightly more overhead, no digest flapping.
+        """
+        from pysnmp.hlapi.asyncio import SnmpEngine
+        return SnmpEngine()
+
+    @staticmethod
+    def _close_engine(engine) -> None:
+        try:
+            engine.closeDispatcher()
+        except Exception:
+            pass  # dispatcher may never have started; nothing to close
 
     # ── Device lifecycle ──────────────────────────────────────────────────────
 
@@ -156,19 +168,22 @@ class SNMPPoller:
             return
 
         t0 = time.monotonic()
-        try:
-            metrics = await self._snmp_get(device, oids, creds)
-        except Exception as exc:
-            logger.warning("SNMP GET failed for %s (%s): %s", device.device_id, device.ip, exc)
-            return
-
+        engine = self._new_engine()
         walk: dict[str, str] = {}
-        if walk_bases:
+        try:
             try:
-                walk = await self._snmp_walk(device, walk_bases, creds)
+                metrics = await self._snmp_get(device, oids, creds, engine)
             except Exception as exc:
-                # Walk is best-effort — the GET metrics still publish.
-                logger.warning("SNMP walk failed for %s (%s): %s", device.device_id, device.ip, exc)
+                logger.warning("SNMP GET failed for %s (%s): %s", device.device_id, device.ip, exc)
+                return
+            if walk_bases:
+                try:
+                    walk = await self._snmp_walk(device, walk_bases, creds, engine)
+                except Exception as exc:
+                    # Walk is best-effort — the GET metrics still publish.
+                    logger.warning("SNMP walk failed for %s (%s): %s", device.device_id, device.ip, exc)
+        finally:
+            self._close_engine(engine)
 
         duration_ms = round((time.monotonic() - t0) * 1000)
         # Aid diagnosis: log the resolved field names returned by this poll.
@@ -199,6 +214,7 @@ class SNMPPoller:
         device: Device,
         oids: list[str],
         creds: dict[str, Any],
+        engine,
     ) -> dict[str, Any]:
         from pysnmp.hlapi.asyncio import (
             ContextData,
@@ -208,7 +224,6 @@ class SNMPPoller:
             getCmd,
         )
 
-        engine = self._get_engine()
         auth = (
             build_usm_data(_map_snmp_creds(creds, device)) if device.version == 3
             else build_community_data(device.version, creds)
@@ -256,6 +271,7 @@ class SNMPPoller:
         device: Device,
         base_oids: list[str],
         creds: dict[str, Any],
+        engine,
     ) -> dict[str, str]:
         """
         Walk each table-base OID and return a flat ``{full_oid: value}`` map.
@@ -273,7 +289,6 @@ class SNMPPoller:
             walkCmd,
         )
 
-        engine = self._get_engine()
         auth = (
             build_usm_data(_map_snmp_creds(creds, device)) if device.version == 3
             else build_community_data(device.version, creds)
