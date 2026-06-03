@@ -43,26 +43,17 @@ export default function Login() {
 
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/dashboard'
 
-  // Capture JWTs handed back by the SSO flow. The backend redirects to
-  // `/#token=<access>&refresh=<refresh>` (SOCIAL_AUTH_LOGIN_REDIRECT_URL →
-  // /api/sso/jwt/), or `?sso_error=...` on failure. Store via the auth store
-  // (same as local login), then scrub the URL.
+  // The successful SSO token (`/#token=…&refresh=…`) is captured in main.tsx
+  // before React renders (otherwise the "/" → "/login" redirect drops the hash
+  // first). Here we only surface the failure case: the backend redirects to
+  // `/login?sso_error=…` when auth fails.
   useEffect(() => {
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-    const query = new URLSearchParams(window.location.search)
-    const token = hash.get('token') || query.get('token')
-    const refresh = hash.get('refresh') || query.get('refresh')
-    const ssoError = hash.get('sso_error') || query.get('sso_error')
-
-    if (token) {
-      setTokens(token, refresh ?? '')
-      window.history.replaceState({}, '', '/')
-      navigate('/dashboard', { replace: true })
-    } else if (ssoError) {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('sso_error')) {
       setError('SSO sign-in failed. Try again, or sign in with a username below.')
       window.history.replaceState({}, '', '/login')
     }
-  }, [navigate, setTokens])
+  }, [])
 
   // Load enabled SSO providers for the buttons (public endpoint; best-effort).
   useEffect(() => {
