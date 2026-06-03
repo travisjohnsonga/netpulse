@@ -981,3 +981,33 @@ Status").
   `scripts/download_mibs.sh`; Settings → MIB Files.
 - **Platforms** — added SonicWall SonicOS, HPE AOS-CX, Aruba AOS (OIDs, field
   mapping, sysDescr/banner detection).
+- **HPE AOS-CX environment telemetry (SNMP-only)** — validated against a real
+  AOS-CX 6100 (wco2-idf5-asw-01). AOS-CX exposes environment metrics at
+  vendor-specific indexes, so the poller gained table **WALK** support
+  (`walk_oids` in the device payload) alongside the existing GETs:
+  - CPU: `hrProcessorLoad` (1.3.6.1.2.1.25.3.3.1.2) lives at vendor indexes
+    (196608/196609), not `.1` — walked and averaged.
+  - Memory: `hrStorage` index 1 ("Physical memory") via GET → `memory_used_pct`
+    + bytes.
+  - Temperature: ENTITY-SENSOR-MIB (1.3.6.1.2.1.99.1.1.1.*); celsius =
+    value × 10^scale × 10^-precision (28875 milli → 28.875 °C).
+  - Fan/PSU: presence/count from ENTITY-MIB `entPhysicalClass` (fan=7, psu=6).
+  Derivation lives in `apps/telemetry/snmp_environment.py` (pure, unit-tested);
+  the stream-processor merges scalars (`cpu_pct`, `memory_used_pct`,
+  `memory_*_bytes`, `temp_max_c`, `fan_count`, `psu_count`) into the `telemetry`
+  measurement and writes one **`device_environment`** point per temperature
+  sensor (tags `device_id`, `sensor_name`, `sensor_type`; fields `temperature_c`,
+  `status_ok`). Temperature alert rules are seeded: **High Temperature Warning**
+  (medium, ≥75 °C), **High Temperature Critical** (critical, ≥85 °C),
+  **Temperature Sensor Failed** (high).
+  - **6100 limitations**: per-unit fan RPM is unavailable (rpm sensors read -1)
+    and there is no standard per-unit fan/PSU oper-status (the entPhysical `.8`
+    column is `entPhysicalHardwareRev`, not status) — so fan/PSU is reported as
+    presence/count only. The 6100 also does **not** support the AOS-CX REST API
+    (login 400/401); higher-end models (8xxx) may. SSH banner is generic OpenSSH.
+  - **SNMPv3 reliability**: the poller creates a fresh `SnmpEngine` per poll
+    (avoids stale engineBoots/engineTime — general robustness). The "Wrong SNMP
+    PDU digest" observed in the lab was a **wrong stored SNMPv3 key**, not the
+    engine: the credential profile's auth/priv passphrase in OpenBao did not
+    match the device. With the correct key both pysnmp 6.3 (ingest) and 7.1
+    (api) succeed; fix is to update the credential in Settings → Credentials.

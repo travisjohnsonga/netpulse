@@ -912,14 +912,63 @@ Full architecture in docs/ARCHITECTURE.md.
   validate_mib/list_mibs commands; Settings → MIB Files; scripts/download_mibs.sh ✅
 - Platforms: added sonicwall (SonicOS), aos_cx (HPE AOS-CX), aruba (Aruba AOS) —
   PLATFORM_DEVICE_OIDS, FIELD_MAP, sysDescr/banner detection, choices migration ✅
+- AOS-CX detection: SSHDetect aruba_aoscx→aos_cx; sysDescr "HPE ANW"/"HPE Aruba"
+  →aos_cx (not just "ArubaOS-CX"); sysObjectID enterprise 47196→aruba/aos_cx ✅
+- AOS-CX SNMP enrichment: model from sysDescr ("HPE ANW R9Y04A 6100 … Sw" →
+  "R9Y04A 6100 48G CL4 4SFP+ Sw"), os_version from trailing firmware token
+  (PL.x), serial via entPhysicalSerialNum WALK (chassis at vendor index, not .1) ✅
+- AOS-CX environment telemetry (SNMP-only; REST not on 6100): walk-based CPU
+  (hrProcessorLoad avg), memory % (hrStorage idx 1), temperature (ENTITY-SENSOR
+  with scale/precision), fan/PSU presence (entPhysicalClass). New InfluxDB
+  measurement device_environment + telemetry scalars (cpu_pct, memory_used_pct,
+  memory_*_bytes, temp_max_c, fan_count, psu_count). Poller WALK support
+  (walk_oids in device payload). Temperature alert rules seeded (warning ≥75°C,
+  critical ≥85°C, sensor-failed) ✅
+- SNMPv3 reliability: poller now uses a fresh SnmpEngine per poll (avoids any
+  stale engineBoots/engineTime on a long-lived shared engine — general
+  robustness). NOTE: the AOS-CX "Wrong SNMP PDU digest" seen in the lab was NOT
+  the engine — it was traced to a WRONG SNMPv3 auth/priv key stored in OpenBao
+  for the credential profile (the device uses a different passphrase). Correct
+  keys → both pysnmp 6.3 and 7.1 succeed. Fix = update the credential's SNMPv3
+  keys in Settings → Credentials ✅
 - manage.py test now delegates to pytest (config/test_runner.py) ✅
-- Backend tests: 795 passing (services/api); ingest-snmp 51; ingest-grpc 32 ✅
+- Backend tests: 960 passing (services/api); ingest-snmp 52; ingest-grpc 32 ✅
 
 ## Lab devices (current)
-- router2: id=1, 192.168.98.152, ios_xe (SNMPv3 "Unknown USM user" device-side —
-  uptime/CPU need router2's SNMP engine configured for the profile's v3 user)
-- router1: id=2, 192.168.98.100, ios_xe (gNMI streaming; SNMP suppressed)
-- fortinet1: id=3, 192.168.98.154, fortios (SNMP CPU/mem/uptime)
+Remote lab host: `azadmin@wco2lnxnetmon01`. (Credentials live in `.env`/OpenBao —
+never documented here per the security rules.)
+- wco2-idf5-asw-01: id=2, 10.150.0.21, aos_cx (HPE AOS-CX 6100). SNMPv3 user
+  `fpsrw`, authPriv SHA/AES (keys in OpenBao). Aruba Central-managed
+  (device-prod-d2.central.arubanetworks.com). Verified: model "R9Y04A 6100 48G
+  CL4 4SFP+ Sw", os_version PL.10.16.1030, serial TW45LHP009 (entPhysicalSerialNum
+  index 112001). CPU ~22%, memory ~29%, 1 temp sensor ~29°C, 4 fans, 1 PSU.
+- wco2-idf6-asw-01: 10.150.0.25, aos_cx (same model/credentials) — not yet in
+  inventory.
+
+### AOS-CX (HPE 6100) — verified SNMP findings
+- sysDescr: `HPE ANW {model} {firmware}` e.g. "HPE ANW R9Y04A 6100 48G CL4 4SFP+
+  Sw PL.10.16.1030"; sysObjectID `1.3.6.1.4.1.47196.4.1.1.1.260` (enterprise 47196
+  = HPE Networking).
+- CPU: `hrProcessorLoad` (1.3.6.1.2.1.25.3.3.1.2) at vendor indexes (196608/…),
+  NOT .1 — must WALK and average.
+- Memory: `hrStorage` index 1 = "Physical memory" (GET .5.1/.6.1/.4.1 works).
+- Temperature: ENTITY-SENSOR-MIB (1.3.6.1.2.1.99.1.1.1.*) — one celsius sensor
+  (type=8); value×10^scale×10^-precision (e.g. 28875 milli → 28.875°C).
+- Fan/PSU LIMITS on the 6100: per-unit RPM is unavailable (rpm sensors read -1)
+  and there is no standard per-unit oper-status (the entPhysical `.8` column is
+  entPhysicalHardwareRev, NOT a status). We report fan/PSU PRESENCE/COUNT via
+  entPhysicalClass (fan=7, psu=6) + names; reliable status only for sensors
+  (entPhySensorOperStatus). Higher-end models (8xxx) may expose more.
+- REST API: NOT supported on the 6100 (login 400/401) — SNMP only. Higher-end
+  models may support it.
+- SSH banner is generic OpenSSH (no platform hint) — detection relies on
+  SSHDetect / sysDescr / sysObjectID.
+- SNMPv3 "Wrong PDU digest": root cause is a wrong SNMPv3 auth/priv key stored
+  in OpenBao for the credential profile (device uses a different passphrase),
+  NOT pysnmp/engine — confirmed by api (7.1) + ingest (6.3) both failing on the
+  stored key and both succeeding on the correct key. Fix in Settings →
+  Credentials. (The poller also moved to a fresh engine per poll for general
+  robustness.)
 
 ## In Progress
 - SSO authentication — Stage 1 (Google OAuth2 backend; apps/sso + SSOProvider).

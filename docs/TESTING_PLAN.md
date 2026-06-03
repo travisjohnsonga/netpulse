@@ -266,6 +266,63 @@ curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}:3000/
 
 ---
 
+## 16. AOS-CX (HPE) Testing
+
+Reference device: wco2-idf5-asw-01 (10.150.0.21, AOS-CX 6100, SNMPv3 `fpsrw`).
+
+### 16.1 Discovery & Detection
+- [ ] Active scan finds the AOS-CX switch
+- [ ] Platform detected as `aos_cx` (not `other`/unknown) — sysDescr "HPE ANW …"
+      → aos_cx; sysObjectID 47196.* → aruba/aos_cx
+- [ ] Approve → enrichment runs
+- [ ] model populated from sysDescr ("R9Y04A 6100 48G CL4 4SFP+ Sw")
+- [ ] os_version populated from sysDescr firmware token ("PL.10.16.1030")
+- [ ] serial populated via SNMP walk (entPhysicalSerialNum at non-standard index)
+
+### 16.2 SNMP Verification (from the api container)
+```bash
+docker compose exec api python3 - <<'PY'
+import asyncio
+from pysnmp.hlapi.v3arch.asyncio import *
+async def t():
+    e=SnmpEngine(); u=UsmUserData('fpsrw', <auth_key>, <priv_key>,
+        authProtocol=usmHMACSHAAuthProtocol, privProtocol=usmAesCfb128Protocol)
+    tgt=await UdpTransportTarget.create(('10.150.0.21',161),timeout=4)
+    ei,es,_,vb=await get_cmd(e,u,tgt,ContextData(),
+        ObjectType(ObjectIdentity('1.3.6.1.2.1.1.1.0')))   # sysDescr
+    print(ei or [str(v[1]) for v in vb]); e.close_dispatcher()
+asyncio.run(t())
+PY
+```
+- [ ] sysDescr returns the "HPE ANW …" format
+- [ ] sysObjectID returns 47196.*
+- [ ] entPhysicalSerialNum walk (1.3.6.1.2.1.47.1.1.1.1.11) returns the serial
+
+### 16.3 Environment Telemetry (SNMP only — no gNMI on the 6100)
+- [ ] SNMP polling active
+- [ ] `telemetry` measurement has cpu_pct (hrProcessorLoad avg)
+- [ ] `telemetry` has memory_used_pct / memory_total_bytes (hrStorage idx 1)
+- [ ] `telemetry` has temp_max_c, fan_count, psu_count
+- [ ] `device_environment` has a temperature_c point per sensor (tag sensor_name)
+- [ ] uptime collecting; interface traffic collecting
+- [ ] No REST API errors in the logs (REST is not used for aos_cx)
+
+### 16.4 Temperature Alerts
+- [ ] "High Temperature Warning" / "Critical" / "Sensor Failed" rules seeded
+      (Settings → Alerting), is_system, toggleable
+- [ ] Crossing thresholds fires an AlertEvent (warn ≥75°C, crit ≥85°C)
+
+### 16.5 Known Limitations (6100)
+- REST API not supported (login 400/401) — SNMP only
+- Per-unit fan RPM unavailable (rpm sensors read -1); fan/PSU is presence/count
+  only (no standard per-unit oper-status; entPhysical `.8` is HardwareRev)
+- SSH banner is generic OpenSSH (no platform hint)
+- "Wrong SNMP PDU digest" means the stored SNMPv3 auth/priv key doesn't match
+  the device — fix the credential in Settings → Credentials (not a code bug).
+  The poller uses a fresh engine per poll for general robustness.
+
+---
+
 ## Test Results Log
 
 | Date | Tester | Version | Pass | Fail | Notes |
@@ -281,6 +338,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}:3000/
 - Email alerts require SMTP config in .env
 - A device that blocks SSH from the collector is still marked reachable via the
   TCP/443 fallback (reachability monitor)
+- AOS-CX 6100: SNMP only (no REST, no gNMI); fan/PSU reported as presence/count
+  (no per-unit RPM or oper-status on this model)
 
 ---
 
