@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from . import fortios
+from . import aos_cx, fortios
 
 # ── Lookup tables ─────────────────────────────────────────────────────────────
 
@@ -126,6 +126,9 @@ def parse(
     # rewrite to a clean message + correct severity/program. raw stays original.
     if fortios.is_fortios_log(result["message"]):
         fortios.normalize(result, SEVERITIES)
+    # AOS-CX emits a pipe-delimited "Event|id|LOG_…|module|-|msg" format.
+    elif aos_cx.is_aos_cx_log(result["message"]):
+        aos_cx.normalize(result, SEVERITIES)
     return result
 
 
