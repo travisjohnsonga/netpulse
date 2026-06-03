@@ -78,6 +78,28 @@ def test_read_secret_scrubs_placeholders(live_vault):
     assert got == {"ssh_password": "RealPw-9f3a"}  # placeholder dropped
 
 
+def test_write_secret_refuses_test_fixtures(live_vault):
+    # The real-looking integration fixtures must never persist either, even
+    # though they are intentionally NOT placeholders for the public contract
+    # (is_placeholder stays False for them — see test_is_placeholder).
+    for val in ("Sup3rRealPw-2f9a", "RealAuthKey-8chr", "RealPrivKey-8chr"):
+        with pytest.raises(ValueError):
+            vault.write_secret("netpulse/credentials/1", {"ssh_password": val})
+    assert "netpulse/credentials/1" not in live_vault  # nothing written
+
+
+def test_read_secret_scrubs_test_fixtures(live_vault):
+    # A stale fixture leak (from a pre-isolation run) must be dropped on read so
+    # a real profile reusing the pk never inherits it.
+    live_vault["netpulse/credentials/9"] = {
+        "ssh_password": "RealPw-9f3a",
+        "snmpv3_auth_key": "RealAuthKey-8chr",
+        "snmpv3_priv_key": "RealPrivKey-8chr",
+    }
+    got = vault.read_secret("netpulse/credentials/9")
+    assert got == {"ssh_password": "RealPw-9f3a"}  # fixtures dropped
+
+
 def test_serializer_rejects_placeholder_secret(auth_client):
     resp = auth_client.post("/api/credentials/", {
         "name": "BadPlaceholder", "ssh_enabled": True, "ssh_username": "u",

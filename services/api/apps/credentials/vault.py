@@ -43,11 +43,45 @@ PLACEHOLDER_SECRETS = frozenset({
     "secret",
 })
 
+# The integration/credential suites deliberately use *real-looking* fixture
+# secrets (so they exercise the non-placeholder code path — see
+# tests/test_vault_placeholders.py asserting is_placeholder("RealAuthKey-8chr")
+# is False). That means they are NOT caught by is_placeholder, so if the suite
+# ever runs against a live OpenBao they leak into netpulse/credentials/{pk} and,
+# via pk reuse, get read back by a newly-created real profile — credentials
+# "revert" to these values after a rebuild. These strings must therefore still
+# be refused on write and scrubbed on read, even though they are not
+# placeholders for the public API-validation contract. Keep in sync with the
+# fixtures in tests/test_credentials.py and tests/integration/test_02_credentials.py.
+TEST_FIXTURE_SECRETS = frozenset({
+    "Sup3rRealPw-2f9a",
+    "RealAuthKey-8chr",
+    "RealPrivKey-8chr",
+})
+
 
 def is_placeholder(value) -> bool:
     """True if ``value`` is a known placeholder/test sentinel that must never be
-    stored in (or trusted from) a real vault."""
+    stored in (or trusted from) a real vault.
+
+    Public contract used by the credential serializer to reject obviously-fake
+    secrets with a 400. Intentionally does NOT include the "real-looking" test
+    fixtures (those exercise the legitimate-value path); the vault layer guards
+    those separately via _is_unstorable / TEST_FIXTURE_SECRETS."""
     return isinstance(value, str) and value in PLACEHOLDER_SECRETS
+
+
+def _is_unstorable(value) -> bool:
+    """True if ``value`` must never be persisted to / trusted from a real vault.
+
+    Superset of is_placeholder that also covers the real-looking integration
+    fixtures. This is the vault-layer choke-point check (write refusal + read
+    self-heal); it is deliberately broader than the public is_placeholder so
+    leaked test fixtures cannot survive a round-trip even if some path stored
+    them before this guard existed."""
+    return is_placeholder(value) or (
+        isinstance(value, str) and value in TEST_FIXTURE_SECRETS
+    )
 
 
 import json
@@ -115,7 +149,7 @@ def write_secret(path: str, data: dict) -> None:
     # placeholder values" bug impossible regardless of which settings module is
     # loaded — a leaked fixture write fails loudly instead of corrupting the
     # vault. See PLACEHOLDER_SECRETS above for the full root-cause explanation.
-    offending = sorted(k for k, v in data.items() if is_placeholder(v))
+    offending = sorted(k for k, v in data.items() if _is_unstorable(v))
     if offending:
         raise ValueError(
             f"Refusing to write placeholder credential value(s) for "
@@ -144,13 +178,13 @@ def read_secret(path: str) -> dict:
     # (e.g. left behind by an integration-test run + pk reuse), drop it rather
     # than handing it to a poller/probe or merging it back on the next update.
     # Treated as "not configured" so it doesn't masquerade as a real secret.
-    stale = sorted(k for k, v in data.items() if is_placeholder(v))
+    stale = sorted(k for k, v in data.items() if _is_unstorable(v))
     if stale:
         logger.warning(
             "ignoring %d placeholder secret field(s) at %r: %s — re-enter the "
             "real credential to overwrite", len(stale), path, ", ".join(stale),
         )
-        data = {k: v for k, v in data.items() if not is_placeholder(v)}
+        data = {k: v for k, v in data.items() if not _is_unstorable(v)}
     return data
 
 
