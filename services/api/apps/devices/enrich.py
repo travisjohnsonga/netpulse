@@ -22,9 +22,17 @@ logger = logging.getLogger(__name__)
 _OID_SYS_DESCR = "1.3.6.1.2.1.1.1.0"
 _OID_SYS_OBJID = "1.3.6.1.2.1.1.2.0"
 _OID_SYS_NAME = "1.3.6.1.2.1.1.5.0"
-_OID_ENT_MODEL = "1.3.6.1.2.1.47.1.1.1.1.13.1"   # entPhysicalModelName
-_OID_ENT_SERIAL = "1.3.6.1.2.1.47.1.1.1.1.11.1"  # entPhysicalSerialNum
+_OID_ENT_MODEL = "1.3.6.1.2.1.47.1.1.1.1.13.1"   # entPhysicalModelName.1
+_OID_ENT_SERIAL = "1.3.6.1.2.1.47.1.1.1.1.11.1"  # entPhysicalSerialNum.1
 _ENRICH_OIDS = [_OID_SYS_DESCR, _OID_SYS_OBJID, _OID_SYS_NAME, _OID_ENT_MODEL, _OID_ENT_SERIAL]
+
+# entPhysicalTable column bases (for walks). The chassis row is at index .1 on
+# Cisco, but AOS-CX puts it at a vendor index (e.g. 112001) — so the scalar
+# .1 GET above comes back empty and we fall back to walking the column and
+# taking the first real value.
+_OID_ENT_MODEL_TBL = "1.3.6.1.2.1.47.1.1.1.1.13"   # entPhysicalModelName
+_OID_ENT_SERIAL_TBL = "1.3.6.1.2.1.47.1.1.1.1.11"  # entPhysicalSerialNum
+_OID_ENT_DESCR_TBL = "1.3.6.1.2.1.47.1.1.1.1.2"    # entPhysicalDescr
 
 # sysObjectID → model fallback when sysDescr can't name the model.
 SYSOBJID_MODELS = {
@@ -38,6 +46,24 @@ _MODEL_RE = re.compile(r"\b(C\d{4}V|ASR\d{3,4}|ISR\d{3,4}|WS-C\S+|N\d{4}|C\d{3,4
 # AOS-CX sysDescr lexicon (e.g. "ArubaOS-CX 10.10.1010 ... Aruba6300M ...").
 _AOS_CX_VERSION_RE = re.compile(r"ArubaOS-CX\s+([\d.]+)", re.IGNORECASE)
 _AOS_CX_MODEL_RE = re.compile(r"(Aruba[\w-]+\d+[A-Z]?)")
+# AOS-CX firmware token, e.g. "... Sw PL.10.16.1030" / "FL.10.10.1010".
+_AOS_CX_FW_RE = re.compile(r"\b([A-Z]{2}\.\d[\d.]+)")
+# Drops the trailing firmware token from a sysDescr ("… Sw PL.10.16.1030").
+_AOS_CX_FW_SPLIT_RE = re.compile(r"\s+[A-Z]{2}\.\d")
+
+
+def _model_from_aos_cx_descr(descr: str) -> str:
+    """
+    Extract the model from the HPE/ANW-prefixed AOS-CX sysDescr form, e.g.
+    'HPE ANW R9Y04A 6100 48G CL4 4SFP+ Sw PL.10.16.1030'
+        → 'R9Y04A 6100 48G CL4 4SFP+ Sw'
+    Returns '' for any other sysDescr (so it never touches Cisco/Aruba-mobility).
+    """
+    if not re.search(r"\bHPE\b|\bANW\b", descr, re.IGNORECASE):
+        return ""
+    head = _AOS_CX_FW_SPLIT_RE.split(descr, 1)[0]          # drop firmware suffix
+    head = re.sub(r"^\s*HPE\s+(?:ANW\s+)?", "", head, flags=re.IGNORECASE)
+    return head.strip()
 # SNMP "no value" sentinels that must not be saved.
 _SNMP_NULLS = {"", "no such instance", "no such object", "nosuchinstance",
                "nosuchobject", "none", "null"}
@@ -64,14 +90,51 @@ async def _snmp_get(ip: str, oids: list[str], auth_data) -> dict:
     return {str(vb[0]): str(vb[1]) for vb in var_binds}
 
 
+async def _snmp_walk_first(ip: str, base_oid: str, auth_data) -> str:
+    """Walk an entPhysicalTable column and return its first real value ('' if none).
+
+    A fresh SnmpEngine per walk so SNMPv3 engine-ID discovery runs cleanly.
+    """
+    from pysnmp.hlapi.v3arch.asyncio import (
+        ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, walk_cmd,
+    )
+    target = await UdpTransportTarget.create((ip, 161), timeout=2.5, retries=1)
+    async for err_ind, err_stat, _idx, var_binds in walk_cmd(
+        SnmpEngine(), auth_data, target, ContextData(),
+        ObjectType(ObjectIdentity(base_oid)),
+        lexicographicMode=False,   # stop at the end of this subtree
+    ):
+        if err_ind or err_stat:
+            break
+        for vb in var_binds:
+            val = _clean(str(vb[1]))
+            if val:
+                return val
+    return ""
+
+
 def _snmp_collect(ip: str, profile, secrets) -> dict:
-    """Run the SNMP GET (sync wrapper). Returns {oid: value} or {}."""
+    """Run the SNMP GET (sync wrapper). Returns {oid: value} or {}.
+
+    Falls back to walking the entPhysical model/serial columns when the scalar
+    ``.1`` GET is empty — AOS-CX indexes the chassis at e.g. 112001, not .1.
+    """
     if not (profile.snmpv3_enabled or profile.snmpv2c_enabled):
         return {}
     try:
         from apps.credentials.snmp_auth import build_snmp_auth
-        auth = build_snmp_auth(profile, secrets)
-        return asyncio.run(_snmp_get(ip, _ENRICH_OIDS, auth))
+        res = asyncio.run(_snmp_get(ip, _ENRICH_OIDS, build_snmp_auth(profile, secrets)))
+        if _clean(res.get(_OID_ENT_SERIAL)) == "":
+            serial = asyncio.run(_snmp_walk_first(ip, _OID_ENT_SERIAL_TBL, build_snmp_auth(profile, secrets)))
+            if serial:
+                res[_OID_ENT_SERIAL] = serial
+        if _clean(res.get(_OID_ENT_MODEL)) == "":
+            model = asyncio.run(_snmp_walk_first(ip, _OID_ENT_MODEL_TBL, build_snmp_auth(profile, secrets)))
+            if not model:  # last resort: entPhysicalDescr of the first real entry
+                model = asyncio.run(_snmp_walk_first(ip, _OID_ENT_DESCR_TBL, build_snmp_auth(profile, secrets)))
+            if model:
+                res[_OID_ENT_MODEL] = model
+        return res
     except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
         logger.warning("SNMP enrichment failed for %s: %s", ip, exc)
         return {}
@@ -86,9 +149,15 @@ def _parse_snmp(res: dict, updates: dict) -> None:
     serial = _clean(res.get(_OID_ENT_SERIAL))
 
     if descr:
-        # AOS-CX names its version differently ("ArubaOS-CX 10.10.1010"); try it
-        # first, then fall back to the generic "Version X.Y" form.
-        m = _AOS_CX_VERSION_RE.search(descr) or _VERSION_RE.search(descr)
+        # The HPE/ANW AOS-CX sysDescr carries the most descriptive model
+        # ("HPE ANW R9Y04A 6100 …"); prefer it over the entPhysical column.
+        descr_model = _model_from_aos_cx_descr(descr)
+        if descr_model:
+            model = descr_model
+        # AOS-CX names its version differently: "ArubaOS-CX 10.10.1010" or, on
+        # the 6100/6300, only a trailing firmware token ("… Sw PL.10.16.1030").
+        m = (_AOS_CX_VERSION_RE.search(descr) or _VERSION_RE.search(descr)
+             or _AOS_CX_FW_RE.search(descr))
         if m:
             updates["os_version"] = m.group(1)
         plat = _platform_from_descr(descr)

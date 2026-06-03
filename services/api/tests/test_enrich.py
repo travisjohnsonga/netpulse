@@ -72,6 +72,54 @@ class TestEnrichDevice:
         assert device.model == "C8000V"
         assert device.serial_number == "XYZ9"
 
+    def test_aos_cx_snmp_model_serial_version(self, device, monkeypatch):
+        # Real HPE AOS-CX 6100 SNMP data: model lives in sysDescr, serial at a
+        # non-.1 entPhysical index, version is a trailing "PL.x" firmware token.
+        _no_network(monkeypatch)
+        snmp = {
+            enrich._OID_SYS_DESCR: "HPE ANW R9Y04A 6100 48G CL4 4SFP+ Sw PL.10.16.1030",
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.47196.4.1.1.1.260",
+            enrich._OID_ENT_MODEL: "",            # .1 GET empty on AOS-CX
+            enrich._OID_ENT_SERIAL: "TW45LHP009",  # supplied by the walk fallback
+        }
+        monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: snmp)
+        enrich.enrich_device(device.id)
+        device.refresh_from_db()
+        assert device.model == "R9Y04A 6100 48G CL4 4SFP+ Sw"
+        assert device.serial_number == "TW45LHP009"
+        assert device.os_version == "PL.10.16.1030"
+        assert device.vendor == "aruba"
+
+    def test_aos_cx_serial_model_walk_fallback(self, monkeypatch):
+        # _snmp_collect walks the entPhysical columns when the scalar .1 GET is
+        # empty, and _parse_snmp prefers the descriptive sysDescr model.
+        class FakeProfile:
+            snmpv3_enabled = False
+            snmpv2c_enabled = True
+
+        async def fake_get(ip, oids, auth):
+            return {
+                enrich._OID_SYS_DESCR: "HPE ANW R9Y04A 6100 48G CL4 4SFP+ Sw PL.10.16.1030",
+                enrich._OID_SYS_OBJID: "1.3.6.1.4.1.47196.4.1.1.1.260",
+                enrich._OID_ENT_MODEL: "", enrich._OID_ENT_SERIAL: "",
+            }
+
+        async def fake_walk(ip, base, auth):
+            return "TW45LHP009" if base == enrich._OID_ENT_SERIAL_TBL else "R9Y04A"
+
+        monkeypatch.setattr(enrich, "_snmp_get", fake_get)
+        monkeypatch.setattr(enrich, "_snmp_walk_first", fake_walk)
+        monkeypatch.setattr("apps.credentials.snmp_auth.build_snmp_auth", lambda p, s: object())
+
+        res = enrich._snmp_collect("10.0.0.2", FakeProfile(), {})
+        assert res[enrich._OID_ENT_SERIAL] == "TW45LHP009"   # filled from the walk
+        updates = {}
+        enrich._parse_snmp(res, updates)
+        assert updates["serial_number"] == "TW45LHP009"
+        assert updates["model"] == "R9Y04A 6100 48G CL4 4SFP+ Sw"  # sysDescr beats walk
+        assert updates["os_version"] == "PL.10.16.1030"
+        assert updates["vendor"] == "aruba"
+
     def test_misclassified_other_runs_rest_in_one_pass(self, device, monkeypatch):
         # Device was added as "other" (SSH-detect bug). SNMP reveals AOS-CX, so a
         # single re-run should also fire the preferred REST collector for detail.

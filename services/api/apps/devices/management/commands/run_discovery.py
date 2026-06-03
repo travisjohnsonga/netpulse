@@ -51,6 +51,7 @@ _ENTERPRISE_VENDORS = {
     "14988": "mikrotik",
     "2011":  "huawei",
     "14823": "aruba",
+    "47196": "aruba",   # HPE Networking (Aruba AOS-CX, e.g. 6100/6300)
 }
 
 

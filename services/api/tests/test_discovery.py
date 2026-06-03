@@ -495,6 +495,8 @@ class TestVendorMapping:
         assert _vendor_from_sysobjid("1.3.6.1.4.1.9.1.222") == "cisco"
         assert _vendor_from_sysobjid("1.3.6.1.4.1.12356.101.1") == "fortinet"
         assert _vendor_from_sysobjid("1.3.6.1.4.1.2636.1.1.1") == "juniper"
+        # HPE Networking enterprise OID (Aruba AOS-CX 6100/6300).
+        assert _vendor_from_sysobjid("1.3.6.1.4.1.47196.4.1.1.1.260") == "aruba"
         assert _vendor_from_sysobjid("1.3.6.1.2.1.1.1.0") == ""
 
     def test_vendor_from_services(self):
