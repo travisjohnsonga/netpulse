@@ -453,7 +453,7 @@ export interface PingSummary {
   avg_ms: number | null
   max_ms: number | null
   uptime_pct: number | null
-  sparkline: (number | null)[]   // ~24 points over 24h; null = unreachable/no data
+  sparkline: (number | null)[]   // ~24 points over 1h (2m30s buckets); null = unreachable/no data
 }
 
 export async function fetchPingSummary(): Promise<PingSummary[]> {

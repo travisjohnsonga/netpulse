@@ -432,9 +432,11 @@ from(bucket: "{bucket}")
 def query_ping_summary() -> list:
     """
     Per-device ping stats for the device-list sparklines: current/avg/max RTT,
-    24h uptime %, and a ~24-point sparkline (1h windows over 24h; null where the
-    device was unreachable). One windowed query for all devices plus a cheap
-    last() for the live value. The view caches this for 60s (shared by all users).
+    1h uptime %, and a ~24-point sparkline (2m30s windows over the last hour;
+    null where the device was unreachable). One windowed query for all devices
+    plus a cheap last() for the live value. 1h / 2m30s buckets give a smooth
+    recent-latency curve rather than a jagged 24h view. The view caches this for
+    60s (shared by all users).
     """
     from collections import defaultdict
     bucket = getattr(settings, "INFLUXDB_BUCKET", "metrics")
@@ -448,9 +450,9 @@ def query_ping_summary() -> list:
         qa = client.query_api()
         series_flux = f'''
 from(bucket: "{bucket}")
-  |> range(start: -24h)
+  |> range(start: -1h)
   |> filter(fn: (r) => r._measurement == "device_reachability" and (r._field == "rtt_ms" or r._field == "is_reachable"))
-  |> aggregateWindow(every: 1h, fn: mean, createEmpty: true)
+  |> aggregateWindow(every: 2m30s, fn: mean, createEmpty: false)
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
 '''
         per_dev = defaultdict(list)   # device_id -> [(time, rtt, reach)]

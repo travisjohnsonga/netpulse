@@ -1,4 +1,4 @@
-// Tiny inline SVG sparkline for 24h ping latency — no axes/labels, just the
+// Tiny inline SVG sparkline for 1h ping latency — no axes/labels, just the
 // shape. null values render as gaps (device was unreachable / no data).
 export default function PingSparkline({
   data, width = 80, height = 24, color = '#10b981',
