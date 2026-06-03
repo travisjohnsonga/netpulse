@@ -446,6 +446,21 @@ export async function enrichDevice(deviceId: number): Promise<{ status: string; 
   return data
 }
 
+// ── Ping summary (device-list sparklines) ─────────────────────────────────────
+export interface PingSummary {
+  device_id: number
+  current_ms: number | null
+  avg_ms: number | null
+  max_ms: number | null
+  uptime_pct: number | null
+  sparkline: (number | null)[]   // ~24 points over 24h; null = unreachable/no data
+}
+
+export async function fetchPingSummary(): Promise<PingSummary[]> {
+  const { data } = await api.get<PingSummary[]>('/devices/ping-summary/')
+  return data
+}
+
 // ── ARP / MAC tables ──────────────────────────────────────────────────────────
 export interface ArpEntry {
   id: number

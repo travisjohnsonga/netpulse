@@ -4,7 +4,7 @@ import EmptyState from '../components/EmptyState'
 import NetworkSearch from '../components/NetworkSearch'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
-import { fetchDevices, fetchCredentials, fetchSites, type Device, type Site } from '../api/client'
+import { fetchDevices, fetchCredentials, fetchSites, fetchPingSummary, type Device, type Site, type PingSummary } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
@@ -45,12 +45,27 @@ export default function Devices() {
   const [showDiscoveryModal, setShowDiscoveryModal] = useState(false)
   const [columnKeys, setColumnKeys] = useState<string[]>(loadColumnKeys)
   const [credNames, setCredNames] = useState<Record<number, string>>({})
+  const [pingMap, setPingMap] = useState<Record<number, PingSummary>>({})
 
   useEffect(() => {
     fetchCredentials()
       .then((profiles) => setCredNames(Object.fromEntries(profiles.map((p) => [p.id, p.name]))))
       .catch(() => {})
     fetchSites().then(setSites).catch(() => {})
+  }, [])
+
+  // Ping sparklines: fetched in the background (doesn't block the list render)
+  // and refreshed on the 60s cache cadence. Failures are non-fatal.
+  useEffect(() => {
+    let active = true
+    const loadPing = () => {
+      fetchPingSummary()
+        .then((rows) => { if (active) setPingMap(Object.fromEntries(rows.map((r) => [r.device_id, r]))) })
+        .catch(() => {})
+    }
+    loadPing()
+    const t = setInterval(loadPing, 60000)
+    return () => { active = false; clearInterval(t) }
   }, [])
 
   // Live reachability updates: patch the matching row when the monitor pushes.
@@ -89,7 +104,7 @@ export default function Devices() {
     () => columnKeys.map((k) => DEVICE_COLUMNS.find((c) => c.key === k)).filter(Boolean) as typeof DEVICE_COLUMNS,
     [columnKeys],
   )
-  const colCtx: ColCtx = { credNames }
+  const colCtx: ColCtx = { credNames, ping: pingMap }
 
   const load = useCallback(() => {
     setLoading(true)

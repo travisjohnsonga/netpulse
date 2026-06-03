@@ -214,6 +214,18 @@ class DeviceViewSet(viewsets.ModelViewSet):
         return Response(metrics_influx.query_reachability_summary(
             request.query_params.get("period", "1h")))
 
+    @action(detail=False, methods=["get"], url_path="ping-summary")
+    def ping_summary(self, request):
+        """Per-device ping current/avg/max/uptime + 24h sparkline for the device
+        list. Cached 60s (same data for every user; the InfluxDB query is shared)."""
+        from django.core.cache import cache
+        from . import metrics_influx
+        data = cache.get("ping_summary")
+        if data is None:
+            data = metrics_influx.query_ping_summary()
+            cache.set("ping_summary", data, 60)
+        return Response(data)
+
     @action(detail=False, methods=["get"], url_path="platforms")
     def platforms(self, request):
         """

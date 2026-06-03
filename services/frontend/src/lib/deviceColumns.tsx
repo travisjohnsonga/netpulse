@@ -1,7 +1,8 @@
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
-import { type Device, reachabilityOf, reachabilityReason } from '../api/client'
+import { type Device, type PingSummary, reachabilityOf, reachabilityReason } from '../api/client'
 import { sshUrl, sshTooltip } from './ssh'
+import PingSparkline, { pingColor } from '../components/PingSparkline'
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
@@ -18,6 +19,8 @@ const REACH_DOT: Record<string, string> = {
 
 export interface ColCtx {
   credNames: Record<number, string>
+  // Per-device ping summary, fetched in the background after the list renders.
+  ping?: Record<number, PingSummary>
 }
 
 export interface DeviceColumn {
@@ -93,6 +96,25 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
     },
   },
   { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600">{d.ip_address}</span> },
+  {
+    key: 'ping', label: 'Ping', default: true,
+    render: (d, ctx) => {
+      const p = ctx.ping?.[d.id]
+      const ms = p?.current_ms ?? null
+      const color = pingColor(ms)
+      return (
+        <span className="inline-flex items-center gap-2">
+          <span className="text-xs tabular-nums w-12" style={ms != null ? { color } : undefined}>
+            {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-600">—</span>}
+          </span>
+          {/* Sparkline hidden on small screens; ms value always shown. */}
+          {p?.sparkline?.length ? (
+            <span className="hidden sm:inline-block"><PingSparkline data={p.sparkline} color={color} /></span>
+          ) : null}
+        </span>
+      )
+    },
+  },
   { key: 'vendor', label: 'Vendor', default: true, sortKey: 'vendor', render: (d) => <span className="text-gray-600">{dash(d.vendor)}</span> },
   { key: 'platform', label: 'Platform', default: true, sortKey: 'platform', render: (d) => <span className="text-gray-600">{dash(d.platform)}</span> },
   { key: 'site', label: 'Site', default: true, sortKey: 'site__name', render: (d) => <span className="text-gray-600">{dash(d.site_name)}</span> },

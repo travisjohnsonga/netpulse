@@ -261,3 +261,27 @@ class TestEnvironmentDetail:
         from apps.devices.metrics_influx import _environment_detail
         out = _environment_detail(_FakeQueryApi([]), "metrics", "1", "1h")
         assert out == {"sensors": [], "fans": [], "psus": [], "poe": None}
+
+
+class TestPingSummary:
+    def test_requires_auth(self, api_client):
+        assert api_client.get("/api/devices/ping-summary/").status_code == 401
+
+    def test_returns_and_caches(self, auth_client, monkeypatch):
+        from django.core.cache import cache
+        from apps.devices import metrics_influx
+        cache.delete("ping_summary")
+        calls = {"n": 0}
+
+        def fake():
+            calls["n"] += 1
+            return [{"device_id": 1, "current_ms": 0.9, "avg_ms": 1.1, "max_ms": 2.5,
+                     "uptime_pct": 100.0, "sparkline": [0.9, 1.1, None, 0.8]}]
+        monkeypatch.setattr(metrics_influx, "query_ping_summary", fake)
+
+        r1 = auth_client.get("/api/devices/ping-summary/")
+        assert r1.status_code == 200 and r1.data[0]["current_ms"] == 0.9
+        assert r1.data[0]["sparkline"] == [0.9, 1.1, None, 0.8]
+        auth_client.get("/api/devices/ping-summary/")        # second hit
+        assert calls["n"] == 1                                # served from 60s cache
+        cache.delete("ping_summary")

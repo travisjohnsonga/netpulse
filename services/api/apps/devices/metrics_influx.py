@@ -429,6 +429,86 @@ from(bucket: "{bucket}")
     return out
 
 
+def query_ping_summary() -> list:
+    """
+    Per-device ping stats for the device-list sparklines: current/avg/max RTT,
+    24h uptime %, and a ~24-point sparkline (1h windows over 24h; null where the
+    device was unreachable). One windowed query for all devices plus a cheap
+    last() for the live value. The view caches this for 60s (shared by all users).
+    """
+    from collections import defaultdict
+    bucket = getattr(settings, "INFLUXDB_BUCKET", "metrics")
+    out: list = []
+    try:
+        client = _client()
+    except Exception as exc:
+        logger.warning("InfluxDB client unavailable: %s", exc)
+        return out
+    try:
+        qa = client.query_api()
+        series_flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "device_reachability" and (r._field == "rtt_ms" or r._field == "is_reachable"))
+  |> aggregateWindow(every: 1h, fn: mean, createEmpty: true)
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+'''
+        per_dev = defaultdict(list)   # device_id -> [(time, rtt, reach)]
+        for table in qa.query(series_flux):
+            for rec in table.records:
+                did = rec.values.get("device_id")
+                if did is None:
+                    continue
+                per_dev[did].append((rec.get_time(), rec.values.get("rtt_ms"), rec.values.get("is_reachable")))
+
+        current = {}
+        last_flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "device_reachability" and r._field == "rtt_ms")
+  |> last()
+'''
+        for table in qa.query(last_flux):
+            for rec in table.records:
+                did = rec.values.get("device_id")
+                if did is not None:
+                    current[did] = rec.get_value()
+
+        for did, rows in per_dev.items():
+            rows.sort(key=lambda x: x[0])
+            spark, rtts, reach_flags = [], [], []
+            for _t, rtt, reach in rows[-24:]:
+                reachable = reach >= 0.5 if isinstance(reach, (int, float)) else None
+                if reachable is not None:
+                    reach_flags.append(reachable)
+                if isinstance(rtt, (int, float)) and reachable is not False:
+                    spark.append(round(rtt, 2)); rtts.append(rtt)
+                else:
+                    spark.append(None)            # gap where down / no data
+            cur = current.get(did)
+            cur = round(cur, 2) if isinstance(cur, (int, float)) else (round(rtts[-1], 2) if rtts else None)
+            try:
+                did_val = int(did)
+            except (TypeError, ValueError):
+                did_val = did
+            out.append({
+                "device_id": did_val,
+                "current_ms": cur,
+                "avg_ms": round(sum(rtts) / len(rtts), 2) if rtts else None,
+                "max_ms": round(max(rtts), 2) if rtts else None,
+                "uptime_pct": round(sum(reach_flags) / len(reach_flags) * 100, 1) if reach_flags else None,
+                "sparkline": spark,
+            })
+    except Exception as exc:
+        logger.warning("ping summary query failed: %s", exc)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    return out
+
+
 def _reachability(query_api, bucket, device_id, period) -> dict:
     """
     rtt_ms + is_reachable from the device_reachability measurement: current
