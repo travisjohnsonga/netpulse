@@ -24,6 +24,7 @@ def _no_network(monkeypatch):
     """Stub all probe/IO so enrich_device runs offline."""
     monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: {})
     monkeypatch.setattr(enrich, "_ssh_collect", lambda ip, p, s: {})
+    monkeypatch.setattr(enrich, "_aos_cx_collect", lambda ip, p, s: {})
     monkeypatch.setattr(enrich, "_discover_interfaces", lambda d: ([], 0, 0))
     monkeypatch.setattr(enrich, "_discover_lldp", lambda d, i=None: 0)
     monkeypatch.setattr(enrich, "_publish_topology_updated", lambda did: None)
@@ -89,6 +90,7 @@ class TestEnrichDevice:
         assert device.serial_number == "TW45LHP009"
         assert device.os_version == "PL.10.16.1030"
         assert device.vendor == "aruba"
+        assert device.platform == "aos_cx"   # HPE ANW sysDescr → aos_cx
 
     def test_aos_cx_serial_model_walk_fallback(self, monkeypatch):
         # _snmp_collect walks the entPhysical columns when the scalar .1 GET is
@@ -119,6 +121,7 @@ class TestEnrichDevice:
         assert updates["model"] == "R9Y04A 6100 48G CL4 4SFP+ Sw"  # sysDescr beats walk
         assert updates["os_version"] == "PL.10.16.1030"
         assert updates["vendor"] == "aruba"
+        assert updates["platform"] == "aos_cx"
 
     def test_misclassified_other_runs_rest_in_one_pass(self, device, monkeypatch):
         # Device was added as "other" (SSH-detect bug). SNMP reveals AOS-CX, so a

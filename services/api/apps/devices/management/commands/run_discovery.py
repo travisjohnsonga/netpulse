@@ -63,6 +63,22 @@ def _vendor_from_sysobjid(oid: str) -> str:
     enterprise = oid[len(prefix):].split(".", 1)[0]
     return _ENTERPRISE_VENDORS.get(enterprise, "")
 
+
+# sysObjectID enterprise prefix → NetPulse platform, when the enterprise OID
+# pins the platform unambiguously (used as a fallback when sysDescr can't).
+_ENTERPRISE_PLATFORMS = {
+    "47196": "aos_cx",   # HPE Networking — Aruba AOS-CX (6100/6300/…)
+}
+
+
+def _platform_from_sysobjid(oid: str) -> str:
+    """Map a sysObjectID enterprise prefix to a NetPulse platform ('' if none)."""
+    prefix = "1.3.6.1.4.1."
+    if not oid.startswith(prefix):
+        return ""
+    enterprise = oid[len(prefix):].split(".", 1)[0]
+    return _ENTERPRISE_PLATFORMS.get(enterprise, "")
+
 # Vendor → fingerprint substrings in sysDescr (matched case-insensitively).
 # FortiGate sysDescr reads "FortiGate-…"/"FortiOS …" and rarely the literal
 # "fortinet", so all three spellings map to fortinet.
@@ -71,7 +87,8 @@ _VENDOR_PATTERNS = [
     ("juniper",   ("juniper", "junos")),
     ("arista",    ("arista",)),
     ("sonicwall", ("sonicwall", "sonicos")),
-    ("aruba",     ("aruba", "arubaos")),
+    # AOS-CX switches brand either as "Aruba…" or "HPE ANW/HPE Aruba …".
+    ("aruba",     ("aruba", "arubaos", "hpe anw", "hpe aruba")),
     ("fortinet",  ("fortios", "fortigate", "fortinet")),
     ("paloalto",  ("palo alto", "pan-os")),
     ("mikrotik",  ("mikrotik", "routeros")),
@@ -128,7 +145,10 @@ def _platform_from_descr(descr: str) -> str:
     if "sonicos" in low or "sonicwall" in low:
         return "sonicwall"
     # AOS-CX must be matched before generic ArubaOS (its sysDescr contains both).
-    if "aos-cx" in low or "arubaos-cx" in low:
+    # Some AOS-CX switches brand as "HPE ANW …"/"HPE Aruba …" with no AOS-CX
+    # token (e.g. "HPE ANW R9Y04A 6100 … PL.10.16.1030").
+    if ("aos-cx" in low or "arubaos-cx" in low
+            or "hpe anw" in low or "hpe aruba" in low):
         return "aos_cx"
     if "arubaos" in low or "aruba networks" in low or "aruba" in low:
         return "aruba"

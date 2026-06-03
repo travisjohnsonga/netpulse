@@ -499,6 +499,19 @@ class TestVendorMapping:
         assert _vendor_from_sysobjid("1.3.6.1.4.1.47196.4.1.1.1.260") == "aruba"
         assert _vendor_from_sysobjid("1.3.6.1.2.1.1.1.0") == ""
 
+    def test_hpe_branded_aos_cx_detection(self):
+        # AOS-CX switches that brand as "HPE ANW …" (no AOS-CX token in sysDescr).
+        from apps.devices.management.commands.run_discovery import (
+            _platform_from_descr, _platform_from_sysobjid, _vendor_from_descr,
+        )
+        descr = "HPE ANW R9Y04A 6100 48G CL4 4SFP+ Sw PL.10.16.1030"
+        assert _platform_from_descr(descr) == "aos_cx"
+        assert _vendor_from_descr(descr) == "aruba"
+        assert _platform_from_sysobjid("1.3.6.1.4.1.47196.4.1.1.1.260") == "aos_cx"
+        assert _platform_from_sysobjid("1.3.6.1.4.1.9.1.222") == ""   # cisco → no platform pin
+        # The "ArubaOS-CX" spelling must still resolve.
+        assert _platform_from_descr("ArubaOS-CX 10.10.1010, Aruba6300M") == "aos_cx"
+
     def test_vendor_from_services(self):
         from apps.devices.management.commands.run_discovery import _vendor_from_services
         assert _vendor_from_services({22: {"product": "Cisco SSH", "extrainfo": ""}}) == "cisco"

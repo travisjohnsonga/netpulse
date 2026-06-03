@@ -15,6 +15,11 @@ MIB_DIRS = [
     "/app/mibs/vendor/juniper",
     "/app/mibs/vendor/fortinet",
     "/app/mibs/vendor/arista",
+    "/app/mibs/vendor/aruba",
+    "/app/mibs/vendor/aos-cx",
+    "/app/mibs/vendor/sonicwall",
+    "/app/mibs/vendor/paloalto",
+    "/app/mibs/vendor/mikrotik",
     "/app/mibs/vendor/community",
     "/app/mibs/custom",
 ]

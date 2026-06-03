@@ -109,8 +109,19 @@ async def _snmp_walk_first(ip: str, base_oid: str, auth_data) -> str:
         for vb in var_binds:
             val = _clean(str(vb[1]))
             if val:
+                logger.info("SNMP walk matched %s = %s", _oid_display_name(str(vb[0])), val)
                 return val
     return ""
+
+
+def _oid_display_name(oid: str) -> str:
+    """Human-readable MIB name for a numeric OID ("entPhysicalSerialNum.101001"),
+    via the apps.mibs index. Falls back to the raw OID. Display/logging only."""
+    try:
+        from apps.mibs.index import resolve_oid
+        return resolve_oid(oid).get("name") or oid
+    except Exception:  # noqa: BLE001 — resolution is cosmetic, never break enrichment
+        return oid
 
 
 def _snmp_collect(ip: str, profile, secrets) -> dict:
@@ -141,7 +152,9 @@ def _snmp_collect(ip: str, profile, secrets) -> dict:
 
 
 def _parse_snmp(res: dict, updates: dict) -> None:
-    from .management.commands.run_discovery import _platform_from_descr, _vendor_from_descr, _vendor_from_sysobjid
+    from .management.commands.run_discovery import (
+        _platform_from_descr, _platform_from_sysobjid, _vendor_from_descr, _vendor_from_sysobjid,
+    )
 
     descr = _clean(res.get(_OID_SYS_DESCR))
     objid = _clean(res.get(_OID_SYS_OBJID))
@@ -160,7 +173,7 @@ def _parse_snmp(res: dict, updates: dict) -> None:
              or _AOS_CX_FW_RE.search(descr))
         if m:
             updates["os_version"] = m.group(1)
-        plat = _platform_from_descr(descr)
+        plat = _platform_from_descr(descr) or _platform_from_sysobjid(objid)
         if plat:
             updates["platform"] = plat
         ven = _vendor_from_sysobjid(objid) or _vendor_from_descr(descr)
