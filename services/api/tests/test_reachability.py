@@ -64,6 +64,40 @@ class TestReachabilityApply:
         assert trans and trans[0][0] == "info" and "reachable again" in trans[0][3]
 
 
+class TestFirstCycleBroadcast:
+    def test_first_cycle_pushes_all_devices_then_stops(self, monkeypatch):
+        # After a restart the first cycle must push every device's state (so
+        # stale UIs refresh), even with no status transition; later cycles only
+        # push real transitions. _apply_all/_fetch_devices are mocked so no DB
+        # I/O crosses the asyncio boundary (which would taint the test
+        # connection); the broadcast logic itself is what's under test.
+        import asyncio
+        cmd = _cmd()
+        cmd._influx = None
+        cmd._lat_state = {}
+        cmd._first_cycle = True
+        row = {"id": 7, "hostname": "r1", "management_ip": None,
+               "ip_address": "10.0.0.1", "status": "active", "consecutive_failures": 0}
+        pushes = []
+
+        async def fake_push(payload): pushes.append(payload)
+        async def fake_alert(*a, **k): pass
+        async def fake_check(d, timeout): return (d, True, "tcp", 2.0)
+        monkeypatch.setattr(cmd, "_push_ws", fake_push)
+        monkeypatch.setattr(cmd, "_publish_alert", fake_alert)
+        monkeypatch.setattr(cmd, "_check", fake_check)
+        monkeypatch.setattr(cmd, "_fetch_devices", lambda: [row])
+        monkeypatch.setattr(cmd, "_apply_all", lambda results: [])  # reachable, no transition
+
+        asyncio.run(cmd._cycle(1.0))   # first cycle → broadcast even without transition
+        assert len(pushes) == 1
+        assert pushes[0]["device_id"] == 7 and pushes[0]["is_reachable"] is True
+
+        pushes.clear()
+        asyncio.run(cmd._cycle(1.0))   # steady state: no transition → no push
+        assert pushes == []
+
+
 class TestCheck:
     def test_falls_back_to_443_when_ssh_blocked(self, device, monkeypatch):
         import asyncio

@@ -78,6 +78,11 @@ class Command(BaseCommand):
 
     async def _run(self, interval: int, timeout: float, once: bool):
         logger.info("reachability-monitor starting (interval=%ds, timeout=%ss)", interval, timeout)
+        # On the first cycle after (re)start, broadcast every device's current
+        # reachability — not just transitions — so UIs that loaded a stale
+        # last_seen/status while the monitor was down refresh immediately
+        # instead of showing "unreachable" until the next real transition.
+        self._first_cycle = True
         while True:
             try:
                 await self._cycle(timeout)
@@ -144,6 +149,20 @@ class Command(BaseCommand):
                 "status": "active" if sev == "info" else "unreachable",
                 "message": msg,
             })
+        # First cycle after startup: push current state for every device that
+        # didn't already transition, so stale UIs (showing a pre-restart
+        # last_seen) refresh without waiting for a status change.
+        if self._first_cycle:
+            self._first_cycle = False
+            transitioned = {device_id for _, _, device_id, _ in transitions}
+            for d, ok, _method, _rtt in results:
+                if d["id"] in transitioned:
+                    continue
+                await self._push_ws({
+                    "device_id": d["id"], "hostname": d.get("hostname"),
+                    "is_reachable": ok,
+                    "status": "active" if ok else d.get("status", "unreachable"),
+                })
         # Latency-spike alerts (separate from up/down — a device can be reachable
         # but slow). Emitted on escalation only; respects maintenance windows.
         for sev, hostname, device_id, rule, msg in await sync_to_async(self._latency_alerts)(results):
