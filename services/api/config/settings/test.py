@@ -41,9 +41,12 @@ DEVICE_AUTO_ENRICH = False
 # Never touch a real OpenBao from the test suite. The api container mounts the
 # openbao-data volume, so the vault helper would otherwise resolve the live root
 # token from /openbao/data/.init_keys and the integration tests would leak their
-# fixture secrets (e.g. "sup3r-secret-pw") into the real vault at
-# netpulse/credentials/{pk}. Those survive a soft factory reset and get read
-# back by a newly-created profile that reuses the same pk.
+# fixture secrets into the real vault at netpulse/credentials/{pk}. Those survive
+# a soft factory reset and get read back by a newly-created profile that reuses
+# the same pk — which made real credentials appear to "revert" to placeholder
+# values. As defense-in-depth, apps.credentials.vault now also refuses to write
+# (and ignores on read) the known placeholder sentinels even if this flag is
+# misconfigured; this setting remains the first line of isolation.
 OPENBAO_DISABLED = True
 
 # Disable the auth throttle by default so the suite is deterministic; the

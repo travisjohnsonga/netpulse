@@ -42,6 +42,24 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from django.apps import apps as django_apps
 
+        # Delete each credential profile's OpenBao secret BEFORE the bulk row
+        # delete below. The ORM ``.delete()`` bypasses the API's perform_destroy
+        # (which calls vault.delete_secret), so without this the secrets would be
+        # orphaned in OpenBao. Because vault_path is keyed on a reusable pk, a
+        # newly-created profile would then read the stale secret back — the root
+        # cause of "credentials revert to placeholder values" after a reset.
+        try:
+            from apps.credentials import vault
+            from apps.credentials.models import CredentialProfile
+
+            for cp in CredentialProfile.objects.exclude(vault_path="").only("vault_path"):
+                try:
+                    vault.delete_secret(cp.vault_path)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.stderr.write(f"  skip vault cleanup for {cp.vault_path}: {exc}")
+        except Exception as exc:  # pragma: no cover - defensive
+            self.stderr.write(f"  credential vault cleanup skipped: {exc}")
+
         total = 0
         for app_label, model_name in _TARGETS:
             try:

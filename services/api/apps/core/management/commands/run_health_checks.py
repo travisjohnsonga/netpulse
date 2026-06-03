@@ -73,6 +73,7 @@ class HealthCheckRunner:
         ("OpenSearch", "_check_opensearch"),
         ("Django", "_check_django"),
         ("Credentials Flow", "_check_credentials_flow"),
+        ("Credential Secrets", "_check_credential_placeholders"),
         ("Ingest Services", "_check_ingest_heartbeats"),
         ("Network", "_check_network"),
         ("MIBs", "_check_mibs"),
@@ -406,6 +407,44 @@ class HealthCheckRunner:
             out.append(fail(cat, "Write to OpenBao", "round-trip secret", str(exc),
                             "verify the OpenBao token has write access to secret/"))
         return out
+
+    def _check_credential_placeholders(self) -> list[CheckResult]:
+        """Warn if any credential profile's OpenBao secret still holds a known
+        placeholder/test sentinel — the signature of leaked test fixtures (see
+        apps.credentials.vault.PLACEHOLDER_SECRETS)."""
+        cat = "Credential Secrets"
+        from apps.credentials import vault
+        if not vault.vault_enabled():
+            return [warn(cat, "Placeholder scan", "OpenBao not configured — skipping")]
+        try:
+            from apps.credentials.models import CredentialProfile
+            profiles = list(
+                CredentialProfile.objects.exclude(vault_path="").only("name", "vault_path")
+            )
+        except Exception as exc:
+            return [warn(cat, "Placeholder scan", str(exc))]
+
+        offenders = []
+        for cp in profiles:
+            # read_secret() scrubs placeholders, so go to the raw vault here.
+            try:
+                raw = vault._client().secrets.kv.v2.read_secret_version(
+                    path=cp.vault_path, mount_point=vault._MOUNT_POINT,
+                    raise_on_deleted_version=True,
+                )["data"]["data"]
+            except Exception:
+                continue
+            bad = sorted(k for k, v in raw.items() if vault.is_placeholder(v))
+            if bad:
+                offenders.append(f"{cp.name} ({', '.join(bad)})")
+
+        if offenders:
+            return [fail(
+                cat, "No placeholder secrets",
+                "real credentials", f"{len(offenders)} profile(s): " + "; ".join(offenders),
+                "re-enter the real credential in Settings → Credentials to overwrite",
+            )]
+        return [ok(cat, "No placeholder secrets")]
 
     def _check_ingest_heartbeats(self) -> list[CheckResult]:
         cat = "Ingest Services"

@@ -38,8 +38,8 @@ class TestCredentialProfileCrud:
             "ssh_password": "s3cret",
             "snmpv3_enabled": True,
             "snmpv3_username": "snmpuser",
-            "snmpv3_auth_key": "authkey123",
-            "snmpv3_priv_key": "privkey123",
+            "snmpv3_auth_key": "RealAuthKey-8chr",
+            "snmpv3_priv_key": "RealPrivKey-8chr",
         }, format="json")
         assert resp.status_code == 201, resp.content
         body = resp.json()

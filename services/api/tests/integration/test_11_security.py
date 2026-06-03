@@ -29,7 +29,7 @@ class TestAnonymousRejection:
 
 class TestNoSecretLeakage:
     def test_password_not_logged_on_credential_create(self, auth_client, caplog):
-        secret = "do-not-log-this-pw-9876"
+        secret = "Zx9q-Wm7r-Le4t-Rn2v"  # realistic fake; not a placeholder sentinel
         with caplog.at_level(logging.DEBUG):
             resp = auth_client.post(
                 "/api/credentials/",

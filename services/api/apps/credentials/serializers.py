@@ -87,6 +87,14 @@ class CredentialProfileSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     field: f"SNMPv3 passphrase must be {SNMPV3_KEY_MIN}-{SNMPV3_KEY_MAX} characters."
                 })
+        # Reject placeholder/test-sentinel secrets up front with a clear 400 (the
+        # vault layer also refuses these, but that would surface as a 500).
+        for field in SECRET_FIELDS:
+            if vault.is_placeholder(attrs.get(field)):
+                raise serializers.ValidationError({
+                    field: "Value looks like a placeholder/test secret; "
+                           "use the real credential."
+                })
         return attrs
 
     def _pop_secrets(self, validated_data: dict) -> dict:

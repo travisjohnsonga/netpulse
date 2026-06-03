@@ -15,11 +15,11 @@ class TestCredentialLifecycle:
                 "ssh_enabled": True,
                 "ssh_username": "netadmin",
                 "ssh_auth_method": "password",
-                "ssh_password": "sup3r-secret-pw",
+                "ssh_password": "Sup3rRealPw-2f9a",
                 "snmpv3_enabled": True,
                 "snmpv3_username": "snmpuser",
-                "snmpv3_auth_key": "auth-key-secret",
-                "snmpv3_priv_key": "priv-key-secret",
+                "snmpv3_auth_key": "RealAuthKey-8chr",
+                "snmpv3_priv_key": "RealPrivKey-8chr",
             },
             format="json",
         )
@@ -30,7 +30,7 @@ class TestCredentialLifecycle:
             assert secret_field not in body, f"{secret_field} leaked in response"
         # And the secret string itself must not appear anywhere in the payload.
         blob = str(body)
-        for secret_val in ("sup3r-secret-pw", "auth-key-secret", "priv-key-secret"):
+        for secret_val in ("Sup3rRealPw-2f9a", "RealAuthKey-8chr", "RealPrivKey-8chr"):
             assert secret_val not in blob
         assert set(body["enabled_protocols"]) == {"ssh", "snmpv3"}
         # vault_path points at OpenBao, not a plaintext credential.

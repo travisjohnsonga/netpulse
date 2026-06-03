@@ -21,6 +21,34 @@ logger = logging.getLogger(__name__)
 # OpenBao KV v2 mount point. Matches the ingest services' convention.
 _MOUNT_POINT = "secret"
 
+# Sentinel/placeholder secret values that must NEVER reach a real vault. These
+# are the fixture strings used by the test suite (see tests/test_credentials.py,
+# tests/integration/test_02_credentials.py, tests/integration/test_11_security.py)
+# plus a few obviously-fake passwords. Historically the integration suite, if run
+# against a live OpenBao (the api container mounts openbao-data and can resolve
+# the root token), wrote these to ``netpulse/credentials/{pk}``. Because the
+# vault path is keyed on a *reusable* primary key, the leaked fixtures survived a
+# Postgres reset and were read back by a newly-created real profile reusing the
+# same pk — making credentials appear to "revert" to placeholder values after a
+# rebuild/restart. ``OPENBAO_DISABLED`` in the test settings is one guard; this
+# set is the defense-in-depth that holds even if the settings are misconfigured.
+PLACEHOLDER_SECRETS = frozenset({
+    "sup3r-secret-pw",
+    "authkey123",
+    "privkey123",
+    "auth-key-secret",
+    "priv-key-secret",
+    "do-not-log-this-pw-9876",
+    "password",
+    "secret",
+})
+
+
+def is_placeholder(value) -> bool:
+    """True if ``value`` is a known placeholder/test sentinel that must never be
+    stored in (or trusted from) a real vault."""
+    return isinstance(value, str) and value in PLACEHOLDER_SECRETS
+
 
 import json
 import os
@@ -82,6 +110,18 @@ def write_secret(path: str, data: dict) -> None:
             len(data), path,
         )
         return
+    # Defense-in-depth: refuse to persist placeholder/test sentinels to a real
+    # vault. This is the choke point that makes the "credentials revert to
+    # placeholder values" bug impossible regardless of which settings module is
+    # loaded — a leaked fixture write fails loudly instead of corrupting the
+    # vault. See PLACEHOLDER_SECRETS above for the full root-cause explanation.
+    offending = sorted(k for k, v in data.items() if is_placeholder(v))
+    if offending:
+        raise ValueError(
+            f"Refusing to write placeholder credential value(s) for "
+            f"{', '.join(offending)} to {path!r}. These look like test/fixture "
+            f"secrets and must never be stored in OpenBao."
+        )
     _client().secrets.kv.v2.create_or_update_secret(
         path=path, secret=data, mount_point=_MOUNT_POINT,
     )
@@ -96,10 +136,22 @@ def read_secret(path: str) -> dict:
         resp = _client().secrets.kv.v2.read_secret_version(
             path=path, mount_point=_MOUNT_POINT, raise_on_deleted_version=True,
         )
-        return resp["data"]["data"]
+        data = resp["data"]["data"]
     except Exception as exc:  # hvac.exceptions.InvalidPath, etc.
         logger.warning("could not read secret %r: %s", path, exc)
         return {}
+    # Self-heal: if a stale placeholder/test sentinel is sitting at this path
+    # (e.g. left behind by an integration-test run + pk reuse), drop it rather
+    # than handing it to a poller/probe or merging it back on the next update.
+    # Treated as "not configured" so it doesn't masquerade as a real secret.
+    stale = sorted(k for k, v in data.items() if is_placeholder(v))
+    if stale:
+        logger.warning(
+            "ignoring %d placeholder secret field(s) at %r: %s — re-enter the "
+            "real credential to overwrite", len(stale), path, ", ".join(stale),
+        )
+        data = {k: v for k, v in data.items() if not is_placeholder(v)}
+    return data
 
 
 def delete_secret(path: str) -> None:
