@@ -24,6 +24,10 @@ NETMIKO_TO_NETPULSE = {
     "arista_eos": {"vendor": "arista", "platform": "eos"},
     "fortinet": {"vendor": "fortinet", "platform": "fortios"},
     "paloalto_panos": {"vendor": "paloalto", "platform": "panos"},
+    "aruba_aoscx": {"vendor": "aruba", "platform": "aos_cx"},
+    "aruba_os": {"vendor": "aruba", "platform": "aruba"},
+    "aruba_osswitch": {"vendor": "aruba", "platform": "aruba"},
+    "aruba_procurve": {"vendor": "aruba", "platform": "aruba"},
     "linux": {"vendor": "linux", "platform": "linux"},
     "vyos": {"vendor": "vyos", "platform": "vyos"},
 }
@@ -36,6 +40,7 @@ VERSION_COMMANDS = {
     "cisco_nxos": "show version",
     "juniper_junos": "show version",
     "arista_eos": "show version",
+    "aruba_aoscx": "show version",
 }
 
 
@@ -116,6 +121,8 @@ _BANNER_PLATFORM_HINTS = [
     ("fortinet", "fortinet", "fortios"),
     ("palo alto", "paloalto", "panos"),
     ("pan-os", "paloalto", "panos"),
+    ("arubaos-cx", "aruba", "aos_cx"),
+    ("aos-cx", "aruba", "aos_cx"),
 ]
 
 

@@ -72,6 +72,26 @@ class TestEnrichDevice:
         assert device.model == "C8000V"
         assert device.serial_number == "XYZ9"
 
+    def test_misclassified_other_runs_rest_in_one_pass(self, device, monkeypatch):
+        # Device was added as "other" (SSH-detect bug). SNMP reveals AOS-CX, so a
+        # single re-run should also fire the preferred REST collector for detail.
+        device.platform = "other"
+        device.save()
+        _no_network(monkeypatch)
+        snmp = {enrich._OID_SYS_DESCR: "ArubaOS-CX 10.10.1010, Aruba6300M"}
+        monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: snmp)
+        rest_calls = []
+        def fake_rest(ip, p, s):
+            rest_calls.append(ip)
+            return {"hostname": "core-sw-1", "version": "FL.10.10.1010",
+                    "model": "6300M", "serial": "SG12345"}
+        monkeypatch.setattr(enrich, "_aos_cx_collect", fake_rest)
+        enrich.enrich_device(device.id)
+        device.refresh_from_db()
+        assert device.platform == "aos_cx" and device.vendor == "aruba"
+        assert device.model == "6300M" and device.serial_number == "SG12345"
+        assert rest_calls, "REST collector should run once SNMP reveals AOS-CX"
+
     def test_does_not_blank_existing_fields(self, device, monkeypatch):
         device.model = "KEEP-ME"
         device.os_version = "1.0"

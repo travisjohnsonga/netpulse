@@ -284,6 +284,13 @@ def enrich_device(device_id: int) -> dict:
     if device.platform != "aos_cx" or not aos_info:
         _parse_snmp(_snmp_collect(ip, profile, secrets), updates)
 
+    # If SNMP just revealed this is an AOS-CX box that was misclassified on add
+    # (e.g. stored as "other"), run the REST collector now so a single re-run —
+    # not two — fills model/version/serial from the preferred source.
+    if device.platform != "aos_cx" and updates.get("platform") == "aos_cx" and not aos_info:
+        aos_info = _aos_cx_collect(ip, profile, secrets)
+        _parse_aos_cx(aos_info, updates)
+
     def missing(field):
         return field not in updates and not getattr(device, field, "")
     if missing("model") or missing("os_version") or missing("serial_number"):

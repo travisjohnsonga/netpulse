@@ -460,6 +460,30 @@ class TestDetectPlatformEndpoint:
         assert resp.json()["detected"] is False
         assert resp.json()["error"] == "unknown"
 
+    def test_aos_cx_detection(self, auth_client, ssh_profile, monkeypatch):
+        # Netmiko fingerprints AOS-CX as "aruba_aoscx" → maps to vendor aruba / platform aos_cx.
+        from apps.devices import detect
+        monkeypatch.setattr(detect, "_ssh_detect", lambda *a, **k: ("aruba_aoscx", {"aruba_aoscx": 99}))
+        monkeypatch.setattr(detect, "_collect_version", lambda *a, **k: {
+            "os_version": "FL.10.10.1010", "model": "6300M", "serial": "SG12345", "hostname": "core-sw-1"})
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.2", "credential_profile_id": ssh_profile.id}, format="json")
+        body = resp.json()
+        assert body["detected"] is True
+        assert body["device_type"] == "aruba_aoscx"
+        assert body["vendor"] == "aruba" and body["platform"] == "aos_cx"
+
+    def test_aos_cx_banner_fallback(self, auth_client, ssh_profile, monkeypatch):
+        # SSHDetect can't fingerprint → fall back to the SSH banner carrying "ArubaOS-CX".
+        from apps.devices import detect, fingerprint
+        monkeypatch.setattr(detect, "_ssh_detect", lambda *a, **k: (None, {}))
+        monkeypatch.setattr(fingerprint, "_ssh_banner", lambda *a, **k: "SSH-2.0-ArubaOS-CX")
+        resp = auth_client.post("/api/devices/detect-platform/",
+                                {"ip": "10.0.0.2", "credential_profile_id": ssh_profile.id}, format="json")
+        body = resp.json()
+        assert body["detected"] is True
+        assert body["vendor"] == "aruba" and body["platform"] == "aos_cx"
+
     def test_fortios_banner_fallback(self, auth_client, ssh_profile, monkeypatch):
         # SSHDetect can't fingerprint FortiOS → fall back to the SSH banner.
         from apps.devices import detect, fingerprint
