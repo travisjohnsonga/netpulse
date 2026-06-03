@@ -1000,6 +1000,57 @@ export async function fetchCVEFeedSettings(): Promise<CVEFeedSettings> {
   return data
 }
 
+// ── CVE catalog ───────────────────────────────────────────────────────────────
+export interface CVECatalogEntry {
+  id: number
+  cve_id: string
+  description: string
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'none'
+  cvss_score: string | null
+  source: string
+  cisa_kev: boolean
+  affected_platforms: string[]
+  affected_device_count: number
+  published_at: string | null
+  source_url: string
+}
+
+export interface CVESummary {
+  total: number
+  critical: number
+  high: number
+  medium: number
+  low: number
+  kev_count: number
+  affected_devices: number
+  patched: number
+  last_synced_at: string | null
+  last_sync_status: string
+  last_sync_summary: Record<string, unknown>
+}
+
+export async function fetchCVEs(params: { severity?: string; search?: string; ordering?: string } = {}): Promise<CVECatalogEntry[]> {
+  const { data } = await api.get<CVECatalogEntry[] | Paginated<CVECatalogEntry>>('/cve/cves/', {
+    params: { ordering: '-cvss_score', page_size: 200, ...params },
+  })
+  return unwrap(data)
+}
+
+export async function fetchCVESummary(): Promise<CVESummary> {
+  const { data } = await api.get<CVESummary>('/cve/cves/summary/')
+  return data
+}
+
+export async function triggerCVESync(): Promise<{ status: string }> {
+  const { data } = await api.post<{ status: string }>('/cve/cves/sync/')
+  return data
+}
+
+export async function setDeviceCvePatched(id: number, isPatched: boolean): Promise<DeviceCVE> {
+  const { data } = await api.patch<DeviceCVE>(`/cve/device-cves/${id}/`, { is_patched: isPatched })
+  return data
+}
+
 export async function saveCVEFeedSettings(payload: CVEFeedSettingsWrite): Promise<CVEFeedSettings> {
   const { data } = await api.put<CVEFeedSettings>('/cve/feed-settings/', payload)
   return data
@@ -1610,6 +1661,12 @@ export interface DeviceCVE {
   cve_id: string
   severity: 'critical' | 'high' | 'medium' | 'low' | 'none'
   cvss_score: string | null
+  cve_description?: string
+  source_url?: string
+  cisa_kev?: boolean
+  match_type?: 'exact_version' | 'version_range' | 'keyword' | 'unverified'
+  match_detail?: string
+  published_at?: string | null
   is_patched: boolean
   patched_at: string | null
   created_at: string

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
-import { fetchDeviceCVEs, type DeviceDetail, type DeviceCVE } from '../../api/client'
+import { fetchDeviceCVEs, setDeviceCvePatched, type DeviceDetail, type DeviceCVE } from '../../api/client'
 import EmptyState from '../../components/EmptyState'
 
 const SEVERITY_BADGE: Record<string, string> = {
@@ -45,6 +45,19 @@ export default function CVE({ device }: { device: DeviceDetail }) {
     [cves, severity],
   )
 
+  const [busyId, setBusyId] = useState<number | null>(null)
+  const togglePatched = async (c: DeviceCVE) => {
+    setBusyId(c.id)
+    try {
+      const updated = await setDeviceCvePatched(c.id, !c.is_patched)
+      setCves((prev) => prev.map((x) => (x.id === c.id ? { ...x, ...updated } : x)))
+    } catch {
+      setError('Failed to update CVE status.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   if (loading) return <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
   if (error) return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400">{error}</div>
   if (cves.length === 0) {
@@ -77,6 +90,7 @@ export default function CVE({ device }: { device: DeviceDetail }) {
                 <th className="px-5 py-3 font-medium">Severity</th>
                 <th className="px-5 py-3 font-medium">CVSS</th>
                 <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -84,10 +98,21 @@ export default function CVE({ device }: { device: DeviceDetail }) {
                 const st = statusOf(c)
                 return (
                   <tr key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                    <td className="px-5 py-3 font-mono text-xs text-gray-800 dark:text-gray-100">{c.cve_id}</td>
+                    <td className="px-5 py-3">
+                      <a href={c.source_url || `https://nvd.nist.gov/vuln/detail/${c.cve_id}`} target="_blank" rel="noreferrer"
+                        className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline">{c.cve_id}</a>
+                      {c.cisa_kev && <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-600 text-white">KEV</span>}
+                      {c.match_detail && <div className="text-[11px] text-gray-400 dark:text-gray-500">{c.match_detail}</div>}
+                    </td>
                     <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', SEVERITY_BADGE[c.severity])}>{c.severity}</span></td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{c.cvss_score ?? '—'}</td>
                     <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium', st.cls)}>{st.label}</span></td>
+                    <td className="px-5 py-3 text-right">
+                      <button onClick={() => togglePatched(c)} disabled={busyId === c.id}
+                        className="px-2.5 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50">
+                        {busyId === c.id ? '…' : c.is_patched ? 'Mark unpatched' : 'Mark patched'}
+                      </button>
+                    </td>
                   </tr>
                 )
               })}

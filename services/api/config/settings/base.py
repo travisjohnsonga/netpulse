@@ -187,6 +187,16 @@ EMAIL_BACKEND = os.environ.get(
 OPENBAO_ADDR = os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
 OPENBAO_TOKEN = os.environ.get("OPENBAO_TOKEN", "")
 
+# ── CVE intelligence feeds (apps.cve) ─────────────────────────────────────────
+# NVD/PSIRT keys default to env; the Settings → Data Sources UI can override the
+# NVD key via OpenBao (CVEFeedSettings). PSIRT is optional — skipped when unset.
+NVD_API_KEY = os.environ.get("NVD_API_KEY", "")
+CISCO_PSIRT_CLIENT_ID = os.environ.get("CISCO_PSIRT_CLIENT_ID", "")
+CISCO_PSIRT_CLIENT_SECRET = os.environ.get("CISCO_PSIRT_CLIENT_SECRET", "")
+# How often the cve-engine re-syncs (hours) and the NVD page size (max 2000).
+CVE_SYNC_INTERVAL_HOURS = int(os.environ.get("CVE_SYNC_INTERVAL_HOURS", "24"))
+NVD_RESULTS_PER_PAGE = int(os.environ.get("NVD_RESULTS_PER_PAGE", "2000"))
+
 # ── TLS ───────────────────────────────────────────────────────────────────────
 # Directory holding NetPulse's OWN HTTPS server cert/key (not device certs).
 # Shared with the nginx container via the ssl-certs volume. The private key

@@ -21,15 +21,40 @@ class CVE(TimestampedModel):
     modified_at = models.DateTimeField(null=True)
     source_url = models.URLField(blank=True)
 
+    # Source feed this CVE was ingested from (nvd / cisco_psirt / community).
+    source = models.CharField(max_length=20, default="nvd", db_index=True)
+    # On the CISA Known-Exploited-Vulnerabilities list — highest priority.
+    cisa_kev = models.BooleanField(default=False, db_index=True)
+    # NetPulse platform keys this CVE is known to affect (e.g. ["ios_xe"]).
+    affected_platforms = models.JSONField(default=list, blank=True)
+    # Extracted CPE match criteria used for version matching. Each entry:
+    # {platform, product, version_start_including, version_start_excluding,
+    #  version_end_including, version_end_excluding, exact_version}.
+    cpe_configs = models.JSONField(default=list, blank=True)
+    # Trimmed raw NVD/PSIRT record for audit/debugging.
+    raw_data = models.JSONField(default=dict, blank=True)
+
     def __str__(self):
         return self.cve_id
 
 
 class DeviceCVE(TimestampedModel):
+    class MatchType(models.TextChoices):
+        EXACT_VERSION = "exact_version", "Exact version"
+        VERSION_RANGE = "version_range", "Version range"
+        KEYWORD = "keyword", "Keyword / platform"
+        UNVERIFIED = "unverified", "Unverified (version unknown)"
+
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="cves")
     cve = models.ForeignKey(CVE, on_delete=models.CASCADE, related_name="affected_devices")
     is_patched = models.BooleanField(default=False, db_index=True)
     patched_at = models.DateTimeField(null=True, blank=True)
+    # How confidently this CVE was correlated to the device.
+    match_type = models.CharField(
+        max_length=16, choices=MatchType.choices, default=MatchType.KEYWORD, db_index=True,
+    )
+    match_detail = models.CharField(max_length=255, blank=True)
+    notes = models.TextField(blank=True)
 
     class Meta(TimestampedModel.Meta):
         unique_together = [("device", "cve")]
@@ -56,6 +81,11 @@ class CVEFeedSettings(TimestampedModel):
     nvd_api_key_vault_path = models.CharField(max_length=255, blank=True)
     cisco_psirt_client_id_vault_path = models.CharField(max_length=255, blank=True)
     paloalto_api_key_vault_path = models.CharField(max_length=255, blank=True)
+
+    # Last-sync telemetry (surfaced on the CVE page; never secret).
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_sync_status = models.CharField(max_length=20, blank=True)  # ok / error / running
+    last_sync_summary = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = "CVE feed settings"

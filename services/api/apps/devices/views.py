@@ -275,6 +275,15 @@ class DeviceViewSet(viewsets.ModelViewSet):
         device = self.get_object()
         return Response(cs.build_collection_status(device))
 
+    @action(detail=True, methods=["get"], url_path="cve")
+    def cve(self, request, pk=None):
+        """CVE exposure for this device (same shape as /api/cve/device-cves/)."""
+        from apps.cve.models import DeviceCVE
+        from apps.cve.serializers import DeviceCVESerializer
+        device = self.get_object()
+        qs = DeviceCVE.objects.select_related("cve").filter(device=device)
+        return Response(DeviceCVESerializer(qs, many=True).data)
+
     @extend_schema(summary="Re-run SNMP/SSH enrichment + interface/LLDP discovery", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="enrich")
     def enrich(self, request, pk=None):
