@@ -297,7 +297,7 @@ All components are open source with permissive licenses. Zero licensing landmine
 | `api` | Django REST Framework API | services/api |
 | `websocket` | Django Channels live updates | services/api |
 | `frontend` | React SPA | services/frontend |
-| `scheduler` | Cron jobs and report generation | services/api |
+| `scheduler` | Authoritative periodic-task loop (`run_scheduler`): alert purge (daily), ARP/MAC collection (6h), MAC-vendor OUI refresh (weekly) + startup seeding. Celery is unused. | services/api |
 | `check-engine` | Agentless service-check runner (HTTP/HTTPS/TCP) | services/api |
 | `reachability-monitor` | TCP/22 device liveness + status transitions | services/api |
 | `collector` | On-prem → cloud telemetry forwarder (planned) | services/collector |
@@ -593,9 +593,6 @@ Designed but with no models/endpoints/services yet — do not treat as current:
 - **BGP looking glass** — passive, read-only BGP route collector (e.g. ExaBGP);
   session state + routing table + prefix-change alerting. Planned models
   BGPSession/BGPPrefix, service `bgp-monitor`, endpoints `/api/bgp/`.
-- **Endpoint discovery** — MAC address-table + ARP-table ingestion (SSH/SNMP),
-  OUI vendor lookup, find-device-by-IP/MAC. Planned models MACEntry/ARPEntry,
-  endpoint `/api/endpoints/`.
 - **Alert routing beyond Stage 1** — on-call schedules, acknowledgement/snooze,
   Slack/PagerDuty/Webhook/SMS channels, escalation/on-call UI.
 - **Adaptive polling** — skip SNMP for metrics a device already streams via gNMI.

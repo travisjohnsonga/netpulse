@@ -932,7 +932,35 @@ Full architecture in docs/ARCHITECTURE.md.
   keys → both pysnmp 6.3 and 7.1 succeed. Fix = update the credential's SNMPv3
   keys in Settings → Credentials ✅
 - manage.py test now delegates to pytest (config/test_runner.py) ✅
-- Backend tests: 960 passing (services/api); ingest-snmp 52; ingest-grpc 32 ✅
+- Environment detail: per-fan RPM + per-PSU watts/status (ENTITY-SENSOR
+  entPhySensorOperStatus — the 6100 DOES expose per-unit status; RPM reads -1 =
+  unavailable, PSU watts 0) + PoE budget/usage (POWER-ETHERNET-MIB
+  pethMainPseTable WALK; raw OIDs, MIB not in collection; AOS-CX reports budget
+  at 2× = half-watts, 740→370W; 56W used ≈15%). Stored per-unit in
+  device_environment; /api/devices/{id}/metrics/ returns fans/psus/poe; UI shows
+  status dots + PoE bar (green<50/amber50-80/red>80) ✅
+- ARP/MAC collection: apps/arp_mac collects ARP + MAC tables over SSH (Netmiko +
+  ntc-templates 9.1.0, which already ships aruba_aoscx templates; FortiOS
+  ARP-only). Models ARPEntry/MACEntry/MACVendor (relational). Endpoints
+  /api/devices/{id}/arp/|/mac/|/arp-mac/collect/, /api/network/search/ (find
+  host by IP/MAC), /api/network/mac-vendor/{mac}/. UI: device ARP/MAC tab +
+  global IP/MAC search on Devices page ✅
+- Ping latency on device list: GET /api/devices/ping-summary/ (per-device
+  current/avg/max RTT + 24h uptime% + ~24-pt sparkline from device_reachability,
+  cached 60s); Ping column with colored ms + inline SVG sparkline, fetched in
+  background ✅
+- Reachability stale-UI fix: monitor broadcasts every device's state on its
+  first cycle after restart (not just transitions), so open UIs refresh ✅
+- OpenBao token resolution is lazy in ingest-snmp (re-read on demand + self-heal
+  on auth failure) — fixes "secrets empty after restart" reboot race ✅
+- Scheduler: run_scheduler is the SINGLE/authoritative scheduler (Celery is in
+  requirements but UNUSED — no tasks/beat schedule). Compose `scheduler` service
+  runs `python manage.py run_scheduler` + mounts openbao-data:ro (for SSH creds).
+  Startup (idempotent): seed alert rules, unseal OpenBao, load OUI registry if
+  empty. Periodic: alert purge (daily), ARP/MAC collection (every 6h,
+  ARP_MAC_COLLECT_INTERVAL_S), MAC-vendor OUI refresh (weekly,
+  MAC_VENDOR_UPDATE_INTERVAL_S) — 6h/weekly first fire one interval after start ✅
+- Backend tests: 996 passing (services/api); ingest-snmp 58; ingest-grpc 32 ✅
 
 ## Lab devices (current)
 Remote lab host: `azadmin@wco2lnxnetmon01`. (Credentials live in `.env`/OpenBao —
@@ -1024,6 +1052,10 @@ Model names below reflect what is actually defined in each app's models.py.
   acknowledgement are Stage 2)
 - sso: SSOProvider (external-IdP login config; client_secret in OpenBao, not the
   DB). Stage 1 = Google OAuth2. See "SSO / Single Sign-On" below.
+- arp_mac: ARPEntry, MACEntry, MACVendor — ARP/MAC tables collected over SSH
+  (Netmiko + ntc-templates), OUI vendor lookup, find-device-by-IP/MAC. Collected
+  every 6h by run_scheduler; manual via collect_arp_mac or the per-device
+  arp-mac/collect endpoint.
 
 ## Service Check Types & Libraries (apps/checks/runner.py)
 - http/https → aiohttp; tcp → asyncio.open_connection; icmp → icmplib
@@ -1144,6 +1176,12 @@ DeviceCredential (through model):
 /api/alerting/notifications/    — notification delivery history (read-only)
 /api/cve/                       — CVE data
 /api/lifecycle/                 — EOL data
+/api/devices/ping-summary/      — per-device ping current/avg/max/uptime + 24h sparkline (cached 60s)
+/api/devices/{id}/arp/          — device ARP table (?search)
+/api/devices/{id}/mac/          — device MAC table (?vlan&interface&search)
+/api/devices/{id}/arp-mac/collect/ — POST: collect ARP/MAC now over SSH
+/api/network/search/?q=         — find which device sees an IP/MAC
+/api/network/mac-vendor/{mac}/  — OUI → vendor lookup
 /ws/telemetry/                  — WebSocket live metrics
 /ws/alerts/                     — WebSocket live alerts
 /ws/devices/                    — WebSocket device reachability updates
@@ -1156,10 +1194,31 @@ python manage.py run_security_engine
 python manage.py run_cve_engine
 python manage.py run_lifecycle_engine
 python manage.py run_discovery
-python manage.py run_scheduler
+python manage.py run_scheduler             # AUTHORITATIVE periodic scheduler (see below)
 python manage.py run_check_engine          # service checks (HTTP/HTTPS/TCP)
 python manage.py run_reachability_monitor  # TCP/22 device liveness + status
+python manage.py collect_arp_mac --all     # ARP/MAC tables over SSH (scheduled every 6h)
+python manage.py update_mac_vendors        # load IEEE OUI registry (scheduled weekly)
 python manage.py reset_test_data           # dev: clear app data, keep auth users
+
+## Scheduler Architecture
+There is ONE scheduling system: the `run_scheduler` management-command loop (the
+same management-command-loop pattern as run_config_manager / reachability-monitor
+/ check-engine). Celery + django-celery-beat are present in requirements.txt but
+are NOT used — no @shared_task or CELERY_BEAT_SCHEDULE is defined. Do NOT add a
+second scheduling system; add periodic work to run_scheduler.
+
+The compose `scheduler` service runs `python manage.py run_scheduler` and mounts
+openbao-data:ro (so ARP/MAC collection can read each device's SSH credentials
+from OpenBao). run_scheduler:
+- Startup one-shots (idempotent): seed default/system alert rules (incl.
+  temperature rules), unseal OpenBao / refresh the readable token, load the
+  MAC-vendor OUI registry if the table is empty.
+- Periodic (tick = --tick, default 300s): resolved-alert purge (daily), ARP/MAC
+  collection (every 6h, ARP_MAC_COLLECT_INTERVAL_S), MAC-vendor OUI refresh
+  (weekly, MAC_VENDOR_UPDATE_INTERVAL_S). The 6h/weekly tasks first fire one
+  interval after startup so a restart doesn't stampede SSH or re-download the OUI
+  CSV.
 
 ## Docker Compose Services
 Infrastructure: postgres, influxdb, opensearch, valkey, nats, openbao
