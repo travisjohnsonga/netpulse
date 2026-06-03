@@ -823,47 +823,61 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
         })()}
       </div>
 
-      {/* Section 1b — Ping Latency */}
-      <div className={clsx(liveCard, 'p-4')}>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Ping Latency</h3>
-        </div>
-        <PingLatencyChart reach={metrics?.reachability} />
-      </div>
-
-      {/* Section 1c — Environment (per-sensor temps, fan/PSU, 24h history) */}
+      {/* Sections 1b + 1c — Ping Latency and Environment, side by side at half
+          width on lg+; stacked on small screens. Environment only renders when
+          the device reports sensors/history, so Ping Latency keeps full width
+          on devices without physical sensors (e.g. virtual platforms). */}
       {(() => {
         const env = metrics?.environment
         const hasSensors = !!env?.sensors?.length
         const hasHistory = !!env?.temperature_history?.length
-        if (!env || (!hasSensors && !hasHistory)) return null
-        return (
+        const hasEnv = !!env && (hasSensors || hasHistory)
+
+        const pingCard = (
+          <div className={clsx(liveCard, 'p-4')}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Ping Latency</h3>
+            </div>
+            <PingLatencyChart reach={metrics?.reachability} />
+          </div>
+        )
+
+        if (!hasEnv) return pingCard
+
+        const envCard = (
           <div className={clsx(liveCard, 'p-4')}>
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Environment</h3>
             {hasSensors && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-                {env.sensors!.map((s) => (
+                {env!.sensors!.map((s) => (
                   <HealthCard key={s.sensor_name}
                     label={s.sensor_name}
                     value={s.temperature_c != null ? `${s.temperature_c}°C` : '—'}
                     subtitle={s.status_ok ? '● OK' : '● Fault'} />
                 ))}
-                {(env.fan_count != null) && (
-                  <HealthCard label="Fans" value={`${env.fan_count}`}
-                    subtitle={`${env.fan_count === 1 ? 'fan' : 'fans'} present`} />
+                {(env!.fan_count != null) && (
+                  <HealthCard label="Fans" value={`${env!.fan_count}`}
+                    subtitle={`${env!.fan_count === 1 ? 'fan' : 'fans'} present`} />
                 )}
-                {(env.psu_count != null) && (
-                  <HealthCard label="PSU" value={`${env.psu_count}`}
-                    subtitle={`${env.psu_count === 1 ? 'supply' : 'supplies'} present`} />
+                {(env!.psu_count != null) && (
+                  <HealthCard label="PSU" value={`${env!.psu_count}`}
+                    subtitle={`${env!.psu_count === 1 ? 'supply' : 'supplies'} present`} />
                 )}
               </div>
             )}
             {hasHistory && (
               <div>
                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Temperature — last 24h (device max)</p>
-                <TemperatureHistoryChart series={env.temperature_history} />
+                <TemperatureHistoryChart series={env!.temperature_history} />
               </div>
             )}
+          </div>
+        )
+
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+            {pingCard}
+            {envCard}
           </div>
         )
       })()}
