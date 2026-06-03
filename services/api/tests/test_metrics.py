@@ -193,3 +193,71 @@ class TestMetricsModule:
                 "cpu_pct": 22.5, "GigabitEthernet1/in_octets": 99}
         env = _environment(snap)
         assert env == {"temperature_c": 28.9, "fan_count": 4, "psu_count": 1}
+
+
+class _FakeRec:
+    def __init__(self, values):
+        self.values = values
+
+
+class _FakeTable:
+    def __init__(self, records):
+        self.records = records
+
+
+class _FakeQueryApi:
+    """Minimal influxdb_client query_api stand-in: one table of pivoted rows."""
+    def __init__(self, rows):
+        self._rows = rows
+
+    def query(self, flux):
+        return [_FakeTable([_FakeRec(r) for r in self._rows])]
+
+
+class TestStatusOkFromText:
+    def test_truthy_states(self):
+        from apps.devices.metrics_influx import _status_ok_from_text
+        assert _status_ok_from_text("ok") is True
+        assert _status_ok_from_text("online") is True
+
+    def test_falsy_states(self):
+        from apps.devices.metrics_influx import _status_ok_from_text
+        assert _status_ok_from_text("fault") is False
+        assert _status_ok_from_text("offline") is False
+
+    def test_unknown_is_none(self):
+        from apps.devices.metrics_influx import _status_ok_from_text
+        assert _status_ok_from_text("unknown") is None
+        assert _status_ok_from_text(None) is None
+
+
+class TestEnvironmentDetail:
+    def test_buckets_temperature_fans_psus_and_poe(self):
+        from apps.devices.metrics_influx import _environment_detail
+        rows = [
+            {"sensor_name": "Temp Sensor", "sensor_type": "temperature",
+             "temperature_c": 26.8, "status_ok": 1},
+            {"sensor_name": "System-1/1/1", "sensor_type": "fan",
+             "fan_rpm": -1.0, "status": "ok"},
+            {"sensor_name": "System-1/1/2", "sensor_type": "fan",
+             "fan_rpm": 4500.0, "status": "ok"},
+            {"sensor_name": "1/1", "sensor_type": "psu",
+             "watts": 0.0, "status": "online"},
+            {"sensor_name": "poe", "sensor_type": "poe",
+             "poe_budget_watts": 740.0, "poe_used_watts": 56.0, "poe_status": "on"},
+        ]
+        out = _environment_detail(_FakeQueryApi(rows), "metrics", "1", "1h")
+        assert out["sensors"][0]["temperature_c"] == 26.8
+        fans = {f["name"]: f for f in out["fans"]}
+        assert fans["System-1/1/1"]["rpm"] is None        # -1 → unavailable
+        assert fans["System-1/1/2"]["rpm"] == 4500
+        assert all(f["status_ok"] is True for f in out["fans"])
+        assert out["psus"][0] == {"name": "1/1", "watts": 0.0, "status_ok": True}
+        assert out["poe"]["budget_watts"] == 740.0
+        assert out["poe"]["used_pct"] == 7.6              # derived 56/740
+        assert out["poe"]["status"] == "on"
+
+    def test_no_environment_rows(self):
+        from apps.devices.metrics_influx import _environment_detail
+        out = _environment_detail(_FakeQueryApi([]), "metrics", "1", "1h")
+        assert out == {"sensors": [], "fans": [], "psus": [], "poe": None}

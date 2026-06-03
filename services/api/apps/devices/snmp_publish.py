@@ -62,7 +62,7 @@ PLATFORM_DEVICE_OIDS = {
                   "1.3.6.1.4.1.8741.1.3.2.1.0",   # sonicCpuUtil (%)
                   "1.3.6.1.4.1.8741.1.3.2.2.0",   # sonicRamUtil (%)
                   "1.3.6.1.4.1.8741.1.3.2.3.0"],  # sonicRamTotal (KB)
-    # HPE AOS-CX: uptime + memory via GET; CPU/temp/fan/PSU via walk (below).
+    # HPE AOS-CX: uptime + memory via GET; CPU/temp/fan/PSU/PoE via walk (below).
     "aos_cx":  [SYSUPTIME, AOSCX_MEM_SIZE, AOSCX_MEM_USED, AOSCX_MEM_ALLOC],
     # Aruba AOS mobility controllers (ARUBA enterprise 14823).
     "aruba":   [SYSUPTIME,

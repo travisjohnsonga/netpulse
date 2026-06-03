@@ -24,10 +24,19 @@ done
 # ── Standard RFC MIBs (net-snmp — public) ─────────────────────────────────────
 BASE="https://raw.githubusercontent.com/net-snmp/net-snmp/master/mibs"
 for mib in SNMPv2-SMI SNMPv2-TC SNMPv2-MIB RFC1213-MIB IF-MIB IP-MIB \
-           TCP-MIB UDP-MIB HOST-RESOURCES-MIB ENTITY-MIB DISMAN-EVENT-MIB; do
+           TCP-MIB UDP-MIB HOST-RESOURCES-MIB ENTITY-MIB ENTITY-SENSOR-MIB \
+           POWER-ETHERNET-MIB DISMAN-EVENT-MIB; do
   curl -sf "$BASE/$mib.txt" -o "mibs/standard/$mib.my" 2>/dev/null \
     || echo "  WARNING: standard $mib not found"
 done
+# POWER-ETHERNET-MIB (RFC 3621, PoE) — for reference only; NetPulse reads the
+# pethMainPse OIDs raw (the MIB isn't required for collection). net-snmp may not
+# carry it, so fall back to circitor's archive.
+if [ ! -s "mibs/standard/POWER-ETHERNET-MIB.my" ]; then
+  curl -sf "https://www.circitor.fr/Mibs/Files/P/POWER-ETHERNET-MIB.mib" \
+    -o "mibs/standard/POWER-ETHERNET-MIB.mib" 2>/dev/null \
+    || echo "  WARNING: POWER-ETHERNET-MIB not found (PoE still works — read raw)"
+fi
 echo "  standard: $(find mibs/standard -type f \( -name '*.my' -o -name '*.mib' \) | wc -l) MIBs"
 
 # ── Cisco MIBs (github.com/cisco/cisco-mibs — public) ─────────────────────────

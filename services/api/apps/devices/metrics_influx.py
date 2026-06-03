@@ -158,30 +158,74 @@ def _environment(snapshot: dict) -> dict:
     return env
 
 
-def _environment_sensors(query_api, bucket, device_id, period) -> list:
-    """Latest per-sensor temperature from the device_environment measurement."""
+def _status_ok_from_text(text):
+    """Stored unit status string → tri-state. unknown/missing → None (gray)."""
+    if text in ("ok", "online", "on", "normal"):
+        return True
+    if text in ("fault", "offline", "off", "faulty", "critical"):
+        return False
+    return None
+
+
+def _environment_detail(query_api, bucket, device_id, period) -> dict:
+    """
+    Latest per-unit environment from the device_environment measurement, split
+    by sensor_type into temperature sensors, fans, PSUs, and a PoE summary.
+    """
     flux = f'''
 from(bucket: "{bucket}")
   |> range(start: -{period})
   |> filter(fn: (r) => r._measurement == "device_environment" and r.device_id == "{device_id}")
   |> last()
-  |> pivot(rowKey: ["sensor_name"], columnKey: ["_field"], valueColumn: "_value")
+  |> pivot(rowKey: ["sensor_name", "sensor_type"], columnKey: ["_field"], valueColumn: "_value")
 '''
-    out = []
+    temps, fans, psus, poe = [], [], [], None
     for table in query_api.query(flux):
         for rec in table.records:
-            name = rec.values.get("sensor_name")
+            v = rec.values
+            name = v.get("sensor_name")
+            stype = v.get("sensor_type") or "temperature"
             if not name:
                 continue
-            t = rec.values.get("temperature_c")
-            s = rec.values.get("status_ok")
-            out.append({
-                "sensor_name": name,
-                "temperature_c": round(t, 1) if isinstance(t, (int, float)) else None,
-                "status_ok": True if s is None else bool(s),
-            })
-    out.sort(key=lambda r: r["sensor_name"])
-    return out
+            if stype == "temperature":
+                t = v.get("temperature_c")
+                s = v.get("status_ok")
+                temps.append({
+                    "sensor_name": name,
+                    "temperature_c": round(t, 1) if isinstance(t, (int, float)) else None,
+                    "status_ok": True if s is None else bool(s),
+                })
+            elif stype == "fan":
+                rpm = v.get("fan_rpm")
+                fans.append({
+                    "name": name,
+                    "rpm": round(rpm) if isinstance(rpm, (int, float)) and rpm >= 0 else None,
+                    "status_ok": _status_ok_from_text(v.get("status")),
+                })
+            elif stype == "psu":
+                w = v.get("watts")
+                psus.append({
+                    "name": name,
+                    "watts": round(w, 1) if isinstance(w, (int, float)) and w >= 0 else None,
+                    "status_ok": _status_ok_from_text(v.get("status")),
+                })
+            elif stype == "poe":
+                budget = v.get("poe_budget_watts")
+                used = v.get("poe_used_watts")
+                pct = v.get("poe_used_pct")
+                if not isinstance(pct, (int, float)) and isinstance(used, (int, float)) \
+                        and isinstance(budget, (int, float)) and budget > 0:
+                    pct = used / budget * 100
+                poe = {
+                    "budget_watts": round(budget, 1) if isinstance(budget, (int, float)) else None,
+                    "used_watts": round(used, 1) if isinstance(used, (int, float)) else None,
+                    "used_pct": round(pct, 1) if isinstance(pct, (int, float)) else None,
+                    "status": v.get("poe_status") or "unknown",
+                }
+    temps.sort(key=lambda r: r["sensor_name"])
+    fans.sort(key=lambda r: r["name"])
+    psus.sort(key=lambda r: r["name"])
+    return {"sensors": temps, "fans": fans, "psus": psus, "poe": poe}
 
 
 def _temperature_history(query_api, bucket, device_id) -> list:
@@ -275,12 +319,19 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
         "poll_duration_ms": snapshot.get("poll_duration_ms"),
     }
     result["environment"] = _environment(snapshot)
-    # Per-sensor temperatures + 24h history (device_environment measurement).
+    # Per-unit detail (temperature / fans / PSUs / PoE) + 24h temp history,
+    # from the device_environment measurement.
     if metric in ("all", "environment"):
         try:
-            sensors = _environment_sensors(query_api, bucket, device_id, period)
-            if sensors:
-                result["environment"]["sensors"] = sensors
+            detail = _environment_detail(query_api, bucket, device_id, period)
+            if detail["sensors"]:
+                result["environment"]["sensors"] = detail["sensors"]
+            if detail["fans"]:
+                result["environment"]["fans"] = detail["fans"]
+            if detail["psus"]:
+                result["environment"]["psus"] = detail["psus"]
+            if detail["poe"]:
+                result["environment"]["poe"] = detail["poe"]
             history = _temperature_history(query_api, bucket, device_id)
             if history:
                 result["environment"]["temperature_history"] = history

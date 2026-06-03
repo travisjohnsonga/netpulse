@@ -36,6 +36,16 @@ from django.core.management.base import BaseCommand
 
 logger = logging.getLogger(__name__)
 
+
+def _unit_status_text(status_ok, ok_text: str, bad_text: str) -> str:
+    """Map a tri-state status_ok (True/False/None) to a stored status string.
+    None → 'unknown' so a unit with no per-unit sensor is distinguishable from a
+    healthy one when read back."""
+    if status_ok is None:
+        return "unknown"
+    return ok_text if status_ok else bad_text
+
+
 # ---------------------------------------------------------------------------
 # Configuration (read once at startup from env / Django settings)
 # ---------------------------------------------------------------------------
@@ -956,19 +966,59 @@ class Command(BaseCommand):
         return derive_environment(get_values, payload.get("walk") or {})
 
     async def _write_environment(self, device_id: str, env: dict, timestamp):
-        """Write one device_environment point per temperature sensor."""
+        """Write device_environment points: per temperature sensor, per fan, per
+        PSU, and one PoE summary. Status is stored as a string so 'unknown'
+        (no per-unit sensor) round-trips distinctly from ok/fault."""
         for sensor in env.get("temperature", []):
             await self._write_influx(
                 measurement="device_environment",
-                tags={
-                    "device_id": device_id,
-                    "sensor_name": sensor["name"],
-                    "sensor_type": "temperature",
-                },
+                tags={"device_id": device_id, "sensor_name": sensor["name"],
+                      "sensor_type": "temperature"},
                 fields={
                     "temperature_c": sensor["celsius"],
                     "status_ok": 1 if sensor["status_ok"] else 0,
                 },
+                timestamp=timestamp,
+            )
+
+        for fan in env.get("fans", []):
+            await self._write_influx(
+                measurement="device_environment",
+                tags={"device_id": device_id, "sensor_name": fan["name"],
+                      "sensor_type": "fan"},
+                fields={
+                    "fan_rpm": float(fan["rpm"]) if fan.get("rpm") is not None else -1.0,
+                    "status": _unit_status_text(fan.get("status_ok"), "ok", "fault"),
+                },
+                timestamp=timestamp,
+            )
+
+        for psu in env.get("psus", []):
+            await self._write_influx(
+                measurement="device_environment",
+                tags={"device_id": device_id, "sensor_name": psu["name"],
+                      "sensor_type": "psu"},
+                fields={
+                    "watts": float(psu["watts"]) if psu.get("watts") is not None else -1.0,
+                    "status": _unit_status_text(psu.get("status_ok"), "online", "offline"),
+                },
+                timestamp=timestamp,
+            )
+
+        poe = env.get("poe")
+        if poe:
+            fields = {
+                "poe_budget_watts": float(poe.get("budget_watts") or 0),
+                "poe_used_watts": float(poe.get("used_watts") or 0),
+                "poe_status": poe.get("status") or "unknown",
+            }
+            if poe.get("used_pct") is not None:
+                fields["poe_used_pct"] = float(poe["used_pct"])
+            await self._write_influx(
+                measurement="device_environment",
+                tags={"device_id": device_id, "sensor_name": "poe",
+                      "sensor_type": "poe"},
+                fields=fields,
                 timestamp=timestamp,
             )
 
