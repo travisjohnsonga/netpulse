@@ -38,6 +38,14 @@ DISCOVERY_AUTORUN = False
 # Don't spawn a real enrichment probe when a device is approved in tests.
 DEVICE_AUTO_ENRICH = False
 
+# Never touch a real OpenBao from the test suite. The api container mounts the
+# openbao-data volume, so the vault helper would otherwise resolve the live root
+# token from /openbao/data/.init_keys and the integration tests would leak their
+# fixture secrets (e.g. "sup3r-secret-pw") into the real vault at
+# netpulse/credentials/{pk}. Those survive a soft factory reset and get read
+# back by a newly-created profile that reuses the same pk.
+OPENBAO_DISABLED = True
+
 # Disable the auth throttle by default so the suite is deterministic; the
 # throttle test re-enables a tiny rate via override_settings.
 REST_FRAMEWORK = {**REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": None}}  # noqa: F405

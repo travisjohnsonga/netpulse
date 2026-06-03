@@ -46,7 +46,14 @@ def _resolve_token() -> str:
 
 
 def vault_enabled() -> bool:
-    """True only when a token is resolvable — otherwise we run secret-less."""
+    """True only when a token is resolvable — otherwise we run secret-less.
+
+    Honors the ``OPENBAO_DISABLED`` setting so the test suite never touches a
+    real OpenBao, even when run inside the api container (which mounts the
+    openbao-data volume and so exposes the root token via the keys file).
+    """
+    if getattr(settings, "OPENBAO_DISABLED", False):
+        return False
     return bool(_resolve_token())
 
 
