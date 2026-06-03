@@ -1,30 +1,42 @@
 """
-run_scheduler — periodic maintenance tasks, each on its own cadence.
+run_scheduler — the authoritative periodic-task scheduler.
 
-Wakes every --tick seconds and runs any task whose interval has elapsed:
-  - resolved-alert purge — daily (run on startup)
-  - ARP/MAC table collection — every 6h (first run one interval after startup,
-    so a scheduler restart doesn't SSH the whole fleet immediately)
+This is the single scheduling system for NetPulse (the management-command-loop
+pattern used by run_config_manager / reachability-monitor / check-engine).
+Celery is NOT used for periodic work — no beat schedule or tasks are defined.
 
-ARP/MAC cadence is overridable via ARP_MAC_COLLECT_INTERVAL_S.
+Startup (run once on boot, best-effort/idempotent):
+  - seed default/system alert rules (incl. the temperature rules)
+  - ensure OpenBao is unsealed + the token is readable (so credential reads work)
+  - populate the MAC-vendor OUI table if it is empty
+
+Periodic (each on its own cadence; the loop wakes every --tick seconds):
+  - resolved-alert purge      — daily   (runs on startup)
+  - ARP/MAC table collection  — every 6h (ARP_MAC_COLLECT_INTERVAL_S)
+  - MAC-vendor OUI refresh     — weekly  (MAC_VENDOR_UPDATE_INTERVAL_S)
+
+The 6h/weekly tasks first fire one interval after startup so a restart doesn't
+stampede the fleet (SSH) or re-download the OUI registry every boot.
 """
 import logging
 import os
 import signal
 import time
 
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
 logger = logging.getLogger(__name__)
 
 ALERT_RETENTION_DAYS = 90
-ALERT_PURGE_INTERVAL_S = 24 * 3600  # daily
+ALERT_PURGE_INTERVAL_S = 24 * 3600                                  # daily
 ARP_MAC_INTERVAL_S = int(os.environ.get("ARP_MAC_COLLECT_INTERVAL_S", str(6 * 3600)))
+MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7 * 24 * 3600)))
 DEFAULT_TICK_S = 300
 
 
 class Command(BaseCommand):
-    help = "Run periodic maintenance tasks (alert purge, ARP/MAC collection, ...)."
+    help = "Run periodic maintenance tasks (alert purge, ARP/MAC collection, OUI refresh)."
 
     def add_arguments(self, parser):
         # --interval kept for backwards compatibility (alert-purge cadence).
@@ -43,19 +55,21 @@ class Command(BaseCommand):
             except ValueError:
                 pass
 
-        # (name, interval_s, fn, run_on_start) — last_run in monotonic seconds.
+        self._run_startup_tasks()
+
+        # (name, interval_s, fn, run_on_start) — last_run filled below.
         tasks = [
             ["alert_purge", options["interval"], self._purge_alerts, True, None],
             ["arp_mac", ARP_MAC_INTERVAL_S, self._collect_arp_mac, False, None],
+            ["mac_vendors", MAC_VENDOR_INTERVAL_S, self._update_mac_vendors, False, None],
         ]
         now = time.monotonic()
         for t in tasks:
-            # run_on_start=False → schedule the first run one interval out.
-            t[4] = None if t[3] else now
+            t[4] = None if t[3] else now   # run_on_start=False → first run one interval out
 
         tick = max(5, options["tick"])
-        logger.info("scheduler started (tick=%ss, alert_purge=%ss, arp_mac=%ss)",
-                    tick, options["interval"], ARP_MAC_INTERVAL_S)
+        logger.info("scheduler started (tick=%ss; alert_purge=%ss, arp_mac=%ss, mac_vendors=%ss)",
+                    tick, options["interval"], ARP_MAC_INTERVAL_S, MAC_VENDOR_INTERVAL_S)
         while not stop["flag"]:
             now = time.monotonic()
             for t in tasks:
@@ -74,6 +88,31 @@ class Command(BaseCommand):
                 slept += 5
         logger.info("scheduler stopped")
 
+    # ── startup one-shots (best-effort; never block the loop) ────────────────
+    def _run_startup_tasks(self):
+        for name, fn in (("seed_alert_rules", self._seed_alert_rules),
+                         ("openbao_refresh", self._openbao_refresh),
+                         ("seed_mac_vendors", self._seed_mac_vendors_if_empty)):
+            try:
+                fn()
+            except Exception as exc:
+                logger.error("scheduler: startup task %s failed: %s", name, exc)
+
+    def _seed_alert_rules(self):
+        call_command("seed_alert_rules")
+
+    def _openbao_refresh(self):
+        # Idempotent: unseals if sealed, refreshes the readable token; no-op if
+        # already unsealed. Lets the scheduler read SSH creds for ARP/MAC.
+        call_command("init_openbao")
+
+    def _seed_mac_vendors_if_empty(self):
+        from apps.arp_mac.models import MACVendor
+        if not MACVendor.objects.exists():
+            logger.info("scheduler: MAC-vendor table empty — loading OUI registry")
+            call_command("update_mac_vendors")
+
+    # ── periodic tasks ───────────────────────────────────────────────────────
     def _purge_alerts(self):
         from apps.alerts.management.commands.purge_resolved_alerts import purge_resolved_alerts
         n = purge_resolved_alerts(ALERT_RETENTION_DAYS)
@@ -81,6 +120,9 @@ class Command(BaseCommand):
             logger.info("scheduler: purged %d resolved alerts (>%dd)", n, ALERT_RETENTION_DAYS)
 
     def _collect_arp_mac(self):
-        from django.core.management import call_command
         logger.info("scheduler: collecting ARP/MAC tables")
         call_command("collect_arp_mac", all=True)
+
+    def _update_mac_vendors(self):
+        logger.info("scheduler: refreshing MAC-vendor OUI registry")
+        call_command("update_mac_vendors")

@@ -534,12 +534,20 @@ services:
   scheduler:
     build: ./services/api
     restart: unless-stopped
-    # Celery Beat for periodic tasks; requires django-celery-beat and a running
-    # Celery worker (add a separate worker service when needed).
-    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    # Authoritative periodic-task scheduler (management-command loop, the pattern
+    # used across NetPulse). Runs: resolved-alert purge (daily), ARP/MAC
+    # collection (6h), MAC-vendor OUI refresh (weekly), plus startup seeding.
+    # NOTE: Celery is present in requirements but unused — no tasks/beat schedule
+    # are defined; run_scheduler is the single scheduling system.
+    command: python manage.py run_scheduler
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+    volumes:
+      # Read the OpenBao root token from the shared keys file so ARP/MAC
+      # collection can fetch each device's SSH credentials (same as
+      # config-manager). Read-only — the scheduler never writes secrets.
+      - openbao-data:/openbao/data:ro
     networks:
       - netpulse-net
     depends_on:
@@ -548,6 +556,8 @@ services:
       valkey:
         condition: service_healthy
       nats:
+        condition: service_healthy
+      openbao:
         condition: service_healthy
 
 # ─────────────────────────────────────────────────────────────────────────────
