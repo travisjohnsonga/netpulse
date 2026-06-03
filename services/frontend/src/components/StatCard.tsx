@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 
@@ -7,6 +8,8 @@ interface Props {
   subtitle?: string
   color?: 'blue' | 'green' | 'red' | 'yellow'
   action?: { label: string; href: string }
+  // Extra content rendered below the subtitle (e.g. a reachability breakdown).
+  footer?: ReactNode
 }
 
 const borderColors: Record<NonNullable<Props['color']>, string> = {
@@ -29,6 +32,7 @@ export default function StatCard({
   subtitle,
   color = 'blue',
   action,
+  footer,
 }: Props) {
   return (
     <div
@@ -46,6 +50,7 @@ export default function StatCard({
       {subtitle && (
         <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subtitle}</span>
       )}
+      {footer}
       {action && (
         <Link
           to={action.href}

@@ -1,6 +1,7 @@
 import datetime
 import os
 import socket
+import time
 import urllib.request
 import urllib.error
 
@@ -167,27 +168,72 @@ def setup_status(request):
 
 
 def _tcp_ok(host: str, port: int, timeout: float = 2.0) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+    return _tcp_probe(host, port, timeout)[0]
 
 
 def _http_ok(url: str, timeout: float = 2.0) -> bool:
+    return _http_probe(url, timeout)[0]
+
+
+def _tcp_probe(host: str, port: int, timeout: float = 2.0):
+    """(reachable, response_ms). response_ms is None when unreachable."""
+    start = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True, round((time.monotonic() - start) * 1000, 1)
+    except OSError:
+        return False, None
+
+
+def _http_probe(url: str, timeout: float = 2.0):
+    """(ok, response_ms). ok = the endpoint answered below 500."""
+    start = time.monotonic()
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return resp.status < 500
+            return resp.status < 500, round((time.monotonic() - start) * 1000, 1)
+    except urllib.error.HTTPError as exc:
+        return exc.code < 500, round((time.monotonic() - start) * 1000, 1)
     except Exception:
-        return False
+        return False, None
+
+
+def _openbao_probe(timeout: float = 2.0):
+    """(healthy, response_ms) for OpenBao /v1/sys/health (see _openbao_healthy)."""
+    from django.conf import settings as dj_settings
+
+    addr = getattr(dj_settings, "OPENBAO_ADDR", "") or os.environ.get(
+        "OPENBAO_ADDR", "http://openbao:8200"
+    )
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(f"{addr.rstrip('/')}/v1/sys/health", timeout=timeout) as resp:
+            return resp.status == 200, round((time.monotonic() - start) * 1000, 1)
+    except urllib.error.HTTPError as exc:
+        # 429 = unsealed standby (still usable).
+        return exc.code == 429, round((time.monotonic() - start) * 1000, 1)
+    except Exception:
+        return False, None
 
 
 @extend_schema(
     summary="Infrastructure service health",
-    description="Per-service reachability for postgres, valkey, nats, influxdb and opensearch.",
+    description="Per-service status + response time for postgres, valkey, nats, "
+                "influxdb, opensearch and openbao, plus the platform version.",
     responses=inline_serializer(
         "InfrastructureHealth",
-        {"services": serializers.DictField(child=serializers.BooleanField())},
+        {
+            "checked_at": serializers.CharField(),
+            "version": serializers.CharField(),
+            "services": serializers.DictField(
+                child=inline_serializer(
+                    "InfraServiceStatus",
+                    {
+                        "ok": serializers.BooleanField(),
+                        "response_ms": serializers.FloatField(allow_null=True),
+                    },
+                ),
+            ),
+        },
     ),
 )
 @api_view(["GET"])
@@ -200,23 +246,35 @@ def infrastructure_health(request):
     opensearch_host = os.environ.get("OPENSEARCH_HOST", "opensearch")
     opensearch_port = int(os.environ.get("OPENSEARCH_PORT", "9200"))
 
+    start = time.monotonic()
     try:
         connection.ensure_connection()
-        postgres_ok = True
+        postgres = {"ok": True, "response_ms": round((time.monotonic() - start) * 1000, 1)}
     except OperationalError:
-        postgres_ok = False
+        postgres = {"ok": False, "response_ms": None}
+
+    def _svc(probe):
+        ok, ms = probe
+        return {"ok": ok, "response_ms": ms}
 
     services = {
-        "postgres": postgres_ok,
-        "valkey": _tcp_ok(valkey_host, valkey_port),
-        "nats": _tcp_ok(nats_host, 4222),
-        "influxdb": _http_ok(f"{influxdb_url}/health"),
-        "opensearch": _http_ok(
-            f"http://{opensearch_host}:{opensearch_port}/_cluster/health"
+        "postgres": postgres,
+        "valkey": _svc(_tcp_probe(valkey_host, valkey_port)),
+        "nats": _svc(_tcp_probe(nats_host, 4222)),
+        "influxdb": _svc(_http_probe(f"{influxdb_url}/health")),
+        "opensearch": _svc(
+            _http_probe(f"http://{opensearch_host}:{opensearch_port}/_cluster/health")
         ),
+        "openbao": _svc(_openbao_probe()),
     }
 
-    return Response({"services": services})
+    return Response(
+        {
+            "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "version": _netpulse_version(),
+            "services": services,
+        }
+    )
 
 
 # ── user profile & preferences ───────────────────────────────────────────────

@@ -22,6 +22,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'mibs',         label: 'MIB Files',      icon: '📚' },
   { to: 'certificates', label: 'Certificates',   icon: '🔒' },
   { to: 'sso',          label: 'SSO / Login',    icon: '🔐' },
+  { to: 'platform-status', label: 'Platform Status', icon: '🩺' },
   { to: 'system',       label: 'System',         icon: '🖥' },
 ]
 

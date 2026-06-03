@@ -21,12 +21,17 @@ class TestHealth:
     def test_infrastructure_health_shape(self, api_client):
         resp = api_client.get("/api/health/infrastructure/")
         assert resp.status_code == 200
-        services = resp.json()["services"]
+        body = resp.json()
+        assert "checked_at" in body and "version" in body
+        services = body["services"]
         # Backends are unreachable in the test env, but the keys must exist.
-        for svc in ("postgres", "valkey", "nats", "influxdb", "opensearch"):
+        # OpenBao is included as critical infrastructure.
+        for svc in ("postgres", "valkey", "nats", "influxdb", "opensearch", "openbao"):
             assert svc in services
-        # Postgres maps to the in-memory DB connection → reachable.
-        assert services["postgres"] is True
+            assert "ok" in services[svc] and "response_ms" in services[svc]
+        # Postgres maps to the in-memory DB connection → reachable, with timing.
+        assert services["postgres"]["ok"] is True
+        assert services["postgres"]["response_ms"] is not None
 
 
 class TestAuth:

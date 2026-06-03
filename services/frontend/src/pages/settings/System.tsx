@@ -45,19 +45,22 @@ export default function System() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <InfoCard label="Version" value="0.1.0-dev" />
           <InfoCard label="Last backup" value="—" />
-          <InfoCard label="Services" value={infra ? `${Object.values(infra.services).filter(Boolean).length}/${Object.keys(infra.services).length} up` : '…'} />
+          <InfoCard label="Services" value={infra ? `${Object.values(infra.services).filter((s) => s.ok).length}/${Object.keys(infra.services).length} up` : '…'} />
           <InfoCard label="Environment" value="Development" />
         </div>
         {infra && (
           <div className="flex flex-wrap gap-2 mt-3">
-            {Object.entries(infra.services).map(([svc, up]) => (
-              <span key={svc} className={clsx('inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md', up ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400')}>
-                <span className={clsx('w-1.5 h-1.5 rounded-full', up ? 'bg-green-500' : 'bg-red-500')} />
+            {Object.entries(infra.services).map(([svc, s]) => (
+              <span key={svc} className={clsx('inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md', s.ok ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400')}>
+                <span className={clsx('w-1.5 h-1.5 rounded-full', s.ok ? 'bg-green-500' : 'bg-red-500')} />
                 {svc}
               </span>
             ))}
           </div>
         )}
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
+          Full service health with response times: <a href="/settings/platform-status" className="text-blue-600 hover:text-blue-800">Platform Status →</a>
+        </p>
       </section>
 
       {/* Data retention */}

@@ -56,13 +56,21 @@ export interface HealthStatus {
   ssl_cert_days_remaining?: number | null
 }
 
+export interface InfraServiceHealth {
+  ok: boolean
+  response_ms: number | null
+}
+
 export interface InfraHealth {
+  checked_at?: string
+  version?: string
   services: {
-    postgres: boolean
-    valkey: boolean
-    nats: boolean
-    influxdb: boolean
-    opensearch: boolean
+    postgres: InfraServiceHealth
+    valkey: InfraServiceHealth
+    nats: InfraServiceHealth
+    influxdb: InfraServiceHealth
+    opensearch: InfraServiceHealth
+    openbao: InfraServiceHealth
   }
 }
 

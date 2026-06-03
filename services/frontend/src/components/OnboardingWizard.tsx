@@ -165,7 +165,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
               )}
               <div className="space-y-3 mb-8">
                 {INFRA_SERVICES.map((svc) => {
-                  const up = infra ? infra[svc.key] : null
+                  const up = infra ? (infra[svc.key]?.ok ?? null) : null
                   const dotCls = up == null ? 'bg-yellow-400' : up ? 'bg-green-500' : 'bg-red-500'
                   const labelCls = up == null ? 'text-yellow-600' : up ? 'text-green-600' : 'text-red-600'
                   const label = infraLoading && infra == null ? 'checking…' : up == null ? 'unknown' : up ? 'healthy' : 'down'

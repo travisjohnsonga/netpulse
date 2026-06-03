@@ -11,12 +11,9 @@ import {
   fetchChecks,
   fetchDeviceReachability,
   fetchReachabilitySummary,
-  checkHealth,
-  checkInfraHealth,
   reachabilityOf,
   type Device,
   type Alert,
-  type InfraHealth,
   type CheckSummary,
   type ServiceCheck,
   type DeviceReachability,
@@ -84,67 +81,12 @@ const topTalkersChartOption: EChartsOption = {
   ],
 }
 
-// ── Infrastructure Health Card ────────────────────────────────────────────────
-
-const INFRA_LABELS: Record<keyof InfraHealth['services'], string> = {
-  postgres: 'PostgreSQL',
-  valkey: 'Valkey',
-  nats: 'NATS',
-  influxdb: 'InfluxDB',
-  opensearch: 'OpenSearch',
-}
-
-function InfraHealthSection({ health }: { health: InfraHealth | null; loading: boolean }) {
-  const services = health?.services
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-5">
-      <h2 className="font-semibold text-gray-800 dark:text-gray-100 mb-4">Infrastructure</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {(Object.keys(INFRA_LABELS) as Array<keyof InfraHealth['services']>).map((key) => {
-          const ok = services?.[key]
-          return (
-            <div
-              key={key}
-              className={clsx(
-                'flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center',
-                ok === undefined
-                  ? 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50'
-                  : ok
-                    ? 'border-green-200 bg-green-50'
-                    : 'border-red-200 bg-red-50',
-              )}
-            >
-              <span
-                className={clsx(
-                  'w-2.5 h-2.5 rounded-full',
-                  ok === undefined ? 'bg-gray-300' : ok ? 'bg-green-500' : 'bg-red-500',
-                )}
-              />
-              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{INFRA_LABELS[key]}</span>
-              <span
-                className={clsx(
-                  'text-xs',
-                  ok === undefined ? 'text-gray-400' : ok ? 'text-green-600' : 'text-red-600',
-                )}
-              >
-                {ok === undefined ? '…' : ok ? 'OK' : 'Down'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [devices, setDevices] = useState<Device[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
-  const [infraHealth, setInfraHealth] = useState<InfraHealth | null>(null)
-  const [infraLoading, setInfraLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState<string | null>(null)
   const [checkSummary, setCheckSummary] = useState<CheckSummary | null>(null)
@@ -206,19 +148,6 @@ export default function Dashboard() {
     return () => { cancelled = true }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    setInfraLoading(true)
-    Promise.allSettled([checkHealth(), checkInfraHealth()])
-      .then(([, infraResult]) => {
-        if (cancelled) return
-        if (infraResult.status === 'fulfilled') setInfraHealth(infraResult.value)
-        setInfraLoading(false)
-      })
-      .catch(() => { if (!cancelled) setInfraLoading(false) })
-    return () => { cancelled = true }
-  }, [])
-
   // Ensure these are always arrays before calling array methods
   const safeDevices = Array.isArray(devices) ? devices : []
   const safeAlerts = Array.isArray(alerts) ? alerts : []
@@ -262,27 +191,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Infrastructure health */}
-      <InfraHealthSection health={infraHealth} loading={infraLoading} />
-
-      {/* Device reachability summary */}
-      {safeDevices.length > 0 && (() => {
-        const reach = safeDevices.map(reachabilityOf)
-        const up = reach.filter((r) => r === 'reachable').length
-        const degraded = reach.filter((r) => r === 'degraded').length
-        const down = reach.filter((r) => r === 'unreachable').length
-        return (
-          <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 text-sm">
-            <span className="font-medium text-gray-700 dark:text-gray-200">{safeDevices.length} devices</span>
-            <span className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400"><span className="w-2 h-2 rounded-full bg-green-500" />{up} reachable</span>
-            {degraded > 0 && <span className="inline-flex items-center gap-1.5 text-yellow-600 dark:text-yellow-500"><span className="w-2 h-2 rounded-full bg-yellow-500" />{degraded} degraded</span>}
-            <span className={clsx('inline-flex items-center gap-1.5', down > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500')}>
-              <span className={clsx('w-2 h-2 rounded-full', down > 0 ? 'bg-red-500' : 'bg-gray-300')} />{down} unreachable {down > 0 ? '⚠️' : ''}
-            </span>
-          </div>
-        )
-      })()}
-
       {/* Stat cards — always visible even with no devices */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -291,6 +199,29 @@ export default function Dashboard() {
           subtitle={safeDevices.length === 0 ? 'none managed yet' : 'managed devices'}
           color="blue"
           action={safeDevices.length === 0 ? { label: 'Add a device', href: '/devices' } : undefined}
+          footer={safeDevices.length > 0 ? (() => {
+            const reach = safeDevices.map(reachabilityOf)
+            const up = reach.filter((r) => r === 'reachable').length
+            const degraded = reach.filter((r) => r === 'degraded').length
+            const down = reach.filter((r) => r === 'unreachable').length
+            return (
+              <div className="mt-3 space-y-1 text-xs">
+                <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />{up} reachable
+                </span>
+                {degraded > 0 && (
+                  <span className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-500">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500" />{degraded} degraded
+                  </span>
+                )}
+                {down > 0 && (
+                  <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                    <span className="w-2 h-2 rounded-full bg-red-500" />{down} unreachable
+                  </span>
+                )}
+              </div>
+            )
+          })() : undefined}
         />
         <StatCard
           title="Active Alerts"

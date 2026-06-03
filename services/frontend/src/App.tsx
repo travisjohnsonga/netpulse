@@ -30,6 +30,7 @@ import Mibs from './pages/settings/Mibs'
 import Certificates from './pages/settings/Certificates'
 import SSO from './pages/settings/SSO'
 import System from './pages/settings/System'
+import PlatformStatus from './pages/settings/PlatformStatus'
 import Topology from './pages/Topology'
 import NetworkLookup from './pages/NetworkLookup'
 import ApiDocs from './pages/ApiDocs'
@@ -124,6 +125,7 @@ function AppRoutes() {
                   <Route path="certificates" element={<Certificates />} />
                   <Route path="sso" element={<SSO />} />
                   <Route path="system" element={<System />} />
+                  <Route path="platform-status" element={<PlatformStatus />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
