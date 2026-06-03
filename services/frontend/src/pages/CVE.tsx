@@ -32,6 +32,8 @@ export default function CVE() {
   const [loading, setLoading] = useState(true)
   const [severity, setSeverity] = useState('All')
   const [search, setSearch] = useState('')
+  const [platform, setPlatform] = useState('All')
+  const [showAll, setShowAll] = useState(false) // false = inventory platforms only
   const [syncing, setSyncing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -39,15 +41,20 @@ export default function CVE() {
     setLoading(true)
     try {
       const [s, list] = await Promise.all([
-        fetchCVESummary(),
-        fetchCVEs({ severity: severity === 'All' ? undefined : severity, search: search || undefined }),
+        fetchCVESummary(!showAll),
+        fetchCVEs({
+          severity: severity === 'All' ? undefined : severity,
+          search: search || undefined,
+          platform: platform === 'All' ? undefined : platform,
+          inventory_only: !showAll,
+        }),
       ])
       setSummary(s)
       setRows(list)
     } finally {
       setLoading(false)
     }
-  }, [severity, search])
+  }, [severity, search, platform, showAll])
 
   useEffect(() => { void load() }, [load])
 
@@ -67,6 +74,13 @@ export default function CVE() {
 
   const synced = summary?.last_synced_at ?? null
   const empty = !loading && rows.length === 0 && (summary?.total ?? 0) === 0
+  const invSet = new Set(summary?.inventory_platforms ?? [])
+  // When scoped to inventory, the Platforms column shows only the inventory
+  // platforms this CVE affects (not every platform NVD lists for it).
+  const platformsLabel = (row: CVECatalogEntry): string => {
+    const shown = showAll ? row.affected_platforms : row.affected_platforms.filter((p) => invSet.has(p))
+    return shown.join(', ') || '—'
+  }
 
   return (
     <div className="space-y-6">
@@ -115,6 +129,16 @@ export default function CVE() {
           className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-100">
           {SEVERITIES.map((s) => <option key={s} value={s}>{s === 'All' ? 'All severities' : s}</option>)}
         </select>
+        <select value={platform} onChange={(e) => setPlatform(e.target.value)}
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-100">
+          <option value="All">All platforms</option>
+          {(summary?.inventory_platforms ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <label className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 select-none">
+          <input type="checkbox" checked={showAll} onChange={(e) => { setShowAll(e.target.checked); setPlatform('All') }}
+            className="rounded border-gray-300 dark:border-gray-600" />
+          Show all platforms
+        </label>
       </div>
 
       {/* Table */}
@@ -161,7 +185,7 @@ export default function CVE() {
                     <td className="px-5 py-3">
                       <span className={clsx('text-xs font-medium px-2 py-1 rounded-md capitalize', SEVERITY_BADGE[row.severity])}>{row.severity}</span>
                     </td>
-                    <td className="px-5 py-3 text-xs text-gray-600 dark:text-gray-400">{row.affected_platforms.join(', ') || '—'}</td>
+                    <td className="px-5 py-3 text-xs text-gray-600 dark:text-gray-400">{platformsLabel(row)}</td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">
                       {row.affected_device_count} {row.affected_device_count === 1 ? 'device' : 'devices'}
                     </td>

@@ -367,6 +367,39 @@ class TestCVEEngineEndpoints:
         link.refresh_from_db()
         assert link.is_patched is True and link.patched_at is not None
 
+    def test_inventory_filter_default_and_show_all(self, auth_client):
+        Device.objects.create(hostname="r", ip_address="10.0.0.1", platform="ios_xe")
+        CVE.objects.create(cve_id="CVE-2024-AA", description="x", severity="high", affected_platforms=["ios_xe"])
+        CVE.objects.create(cve_id="CVE-2024-BB", description="x", severity="high", affected_platforms=["eos"])
+        CVE.objects.create(cve_id="CVE-2024-CC", description="x", severity="low", affected_platforms=[])
+        # Default: inventory only → only the ios_xe CVE.
+        ids = [r["cve_id"] for r in auth_client.get("/api/cve/cves/").json()["results"]]
+        assert "CVE-2024-AA" in ids
+        assert "CVE-2024-BB" not in ids and "CVE-2024-CC" not in ids
+        # Show all → everything.
+        ids_all = [r["cve_id"] for r in auth_client.get("/api/cve/cves/?inventory_only=false").json()["results"]]
+        assert {"CVE-2024-AA", "CVE-2024-BB", "CVE-2024-CC"} <= set(ids_all)
+
+    def test_platform_filter(self, auth_client):
+        Device.objects.create(hostname="r", ip_address="10.0.0.1", platform="ios_xe")
+        CVE.objects.create(cve_id="CVE-2024-AA", description="x", severity="high", affected_platforms=["ios_xe"])
+        CVE.objects.create(cve_id="CVE-2024-BB", description="x", severity="high", affected_platforms=["eos", "ios"])
+        ids = [r["cve_id"] for r in auth_client.get("/api/cve/cves/?platform=eos").json()["results"]]
+        assert ids == ["CVE-2024-BB"]
+        # "ios" must not match "ios_xe" (quoted exact token).
+        ios_ids = [r["cve_id"] for r in auth_client.get("/api/cve/cves/?platform=ios").json()["results"]]
+        assert ios_ids == ["CVE-2024-BB"]
+
+    def test_summary_scoped_to_inventory(self, auth_client):
+        Device.objects.create(hostname="r", ip_address="10.0.0.1", platform="ios_xe")
+        CVE.objects.create(cve_id="CVE-2024-AA", description="x", severity="critical", affected_platforms=["ios_xe"])
+        CVE.objects.create(cve_id="CVE-2024-BB", description="x", severity="critical", affected_platforms=["eos"])
+        b = auth_client.get("/api/cve/cves/summary/").json()
+        assert b["total"] == 1 and b["critical"] == 1
+        assert b["inventory_platforms"] == ["ios_xe"]
+        b_all = auth_client.get("/api/cve/cves/summary/?inventory_only=false").json()
+        assert b_all["total"] == 2 and b_all["critical"] == 2
+
     def test_device_cve_endpoint(self, auth_client):
         dev = Device.objects.create(hostname="r", ip_address="10.0.0.1", platform="ios_xe")
         cve = CVE.objects.create(cve_id="CVE-2024-5", description="x", severity="critical", source_url="https://nvd.nist.gov/vuln/detail/CVE-2024-5")

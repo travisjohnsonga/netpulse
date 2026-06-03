@@ -1021,20 +1021,23 @@ export interface CVESummary {
   kev_count: number
   affected_devices: number
   patched: number
+  inventory_platforms: string[]
   last_synced_at: string | null
   last_sync_status: string
   last_sync_summary: Record<string, unknown>
 }
 
-export async function fetchCVEs(params: { severity?: string; search?: string; ordering?: string } = {}): Promise<CVECatalogEntry[]> {
+export async function fetchCVEs(
+  params: { severity?: string; search?: string; ordering?: string; platform?: string; inventory_only?: boolean } = {},
+): Promise<CVECatalogEntry[]> {
   const { data } = await api.get<CVECatalogEntry[] | Paginated<CVECatalogEntry>>('/cve/cves/', {
     params: { ordering: '-cvss_score', page_size: 200, ...params },
   })
   return unwrap(data)
 }
 
-export async function fetchCVESummary(): Promise<CVESummary> {
-  const { data } = await api.get<CVESummary>('/cve/cves/summary/')
+export async function fetchCVESummary(inventoryOnly = true): Promise<CVESummary> {
+  const { data } = await api.get<CVESummary>('/cve/cves/summary/', { params: { inventory_only: inventoryOnly } })
   return data
 }
 
