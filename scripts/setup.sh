@@ -356,6 +356,14 @@ if yesno "Pull and start NetPulse now?" Y; then
   ok "NetPulse is starting!"
   echo "   Web UI:   https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)  (HTTP :$(env_get FRONTEND_PORT || echo 3000) redirects here)"
   echo "   API docs: http://${url_host}:$(env_get API_PORT || echo 8000)/api/docs/"
+  echo
+  info "Waiting for services to come up, then running health checks…"
+  sleep 30
+  if (cd "$ROOT_DIR" && docker compose exec -T api python manage.py run_health_checks); then
+    ok "All health checks passed."
+  else
+    warn "Some health checks failed (see report above). Re-run later with: ./netpulse.sh health"
+  fi
 else
   info "skipped startup. When ready:  docker compose up -d"
   echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)"

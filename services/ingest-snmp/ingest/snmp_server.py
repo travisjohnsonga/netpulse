@@ -126,9 +126,14 @@ async def serve() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
 
+    # Liveness heartbeat for run_health_checks.
+    from .heartbeat import heartbeat_loop
+    hb_task = asyncio.create_task(heartbeat_loop(cfg.valkey_url, "ingest-snmp", stop_event))
+
     await stop_event.wait()
 
     logger.info("shutdown signal received")
+    hb_task.cancel()
     poller.stop_all()
     trap_transport.close()
     if gnmi_activity is not None:

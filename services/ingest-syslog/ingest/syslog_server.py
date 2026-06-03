@@ -76,9 +76,14 @@ async def serve() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
 
+    # Liveness heartbeat for run_health_checks.
+    from .heartbeat import heartbeat_loop
+    hb_task = asyncio.create_task(heartbeat_loop(cfg.valkey_url, "ingest-syslog", stop_event))
+
     await stop_event.wait()
 
     logger.info("shutdown signal received — draining...")
+    hb_task.cancel()
     udp_transport.close()
     tcp_server.close()
     await tcp_server.wait_closed()

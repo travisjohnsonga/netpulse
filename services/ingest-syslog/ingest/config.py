@@ -1,5 +1,15 @@
 import os
 from dataclasses import dataclass, field
+from urllib.parse import quote
+
+
+def _valkey_url() -> str:
+    url = os.environ.get("VALKEY_URL")
+    if url:
+        return url
+    pw = os.environ.get("VALKEY_PASSWORD", "")
+    auth = f":{quote(pw, safe='')}@" if pw else ""
+    return f"redis://{auth}{os.environ.get('VALKEY_HOST', 'valkey')}:{os.environ.get('VALKEY_PORT', '6379')}/0"
 
 
 @dataclass
@@ -24,6 +34,8 @@ class Config:
     )
 
     log_level: str = field(default_factory=lambda: os.environ.get("LOG_LEVEL", "INFO").upper())
+
+    valkey_url: str = field(default_factory=_valkey_url)
 
 
 cfg = Config()

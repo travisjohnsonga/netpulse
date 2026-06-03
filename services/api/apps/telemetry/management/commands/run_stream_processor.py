@@ -205,6 +205,8 @@ class Command(BaseCommand):
 
         # --- background flush task --------------------------------------------
         flush_task = asyncio.create_task(self._os_flush_loop(stop_event))
+        # --- liveness heartbeat for run_health_checks -------------------------
+        hb_task = asyncio.create_task(self._heartbeat_loop(stop_event))
 
         logger.info("stream-processor: ready — consuming messages")
 
@@ -212,12 +214,14 @@ class Command(BaseCommand):
         await stop_event.wait()
         logger.info("stream-processor: draining…")
 
-        # cancel flush loop and do a final flush
+        # cancel flush + heartbeat loops and do a final flush
         flush_task.cancel()
-        try:
-            await flush_task
-        except asyncio.CancelledError:
-            pass
+        hb_task.cancel()
+        for t in (flush_task, hb_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
         await self._os_flush_now()
 
         # flush InfluxDB
@@ -742,6 +746,38 @@ class Command(BaseCommand):
             self._os_buffer.append((index, doc))
             if len(self._os_buffer) >= _BATCH_SIZE:
                 await self._flush_locked()
+
+    async def _heartbeat_loop(self, stop_event: asyncio.Event):
+        """Write service:heartbeat:stream-processor to Valkey every 60s (TTL 300s)
+        so run_health_checks can see this service is alive."""
+        from urllib.parse import quote
+        url = os.environ.get("VALKEY_URL")
+        if not url:
+            pw = os.environ.get("VALKEY_PASSWORD", "")
+            auth = f":{quote(pw, safe='')}@" if pw else ""
+            url = f"redis://{auth}{os.environ.get('VALKEY_HOST', 'valkey')}:{os.environ.get('VALKEY_PORT', '6379')}/0"
+        try:
+            import redis.asyncio as redis
+        except Exception as exc:
+            logger.warning("stream-processor: heartbeat disabled (%s)", exc)
+            return
+        client = redis.from_url(url)
+        try:
+            while not stop_event.is_set():
+                try:
+                    await client.set("service:heartbeat:stream-processor",
+                                     datetime.now(timezone.utc).isoformat(), ex=300)
+                except Exception as exc:
+                    logger.debug("stream-processor: heartbeat write failed: %s", exc)
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=60)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
     async def _os_flush_loop(self, stop_event: asyncio.Event):
         """Background task: flush OpenSearch buffer every BATCH_TIMEOUT seconds."""
