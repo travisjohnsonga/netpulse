@@ -31,6 +31,7 @@ import Certificates from './pages/settings/Certificates'
 import SSO from './pages/settings/SSO'
 import System from './pages/settings/System'
 import Topology from './pages/Topology'
+import NetworkLookup from './pages/NetworkLookup'
 import ApiDocs from './pages/ApiDocs'
 import Login from './pages/Login'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -103,6 +104,8 @@ function AppRoutes() {
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/checks" element={<Checks />} />
+                <Route path="/network/lookup" element={<NetworkLookup />} />
+                <Route path="/lookup" element={<Navigate to="/network/lookup" replace />} />
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />
                 <Route path="/settings" element={<Settings />}>

@@ -7,11 +7,13 @@ import { useThemeStore } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
 import ErrorBoundary from './ErrorBoundary'
 import VersionBadge from './VersionBadge'
+import HeaderSearch from './HeaderSearch'
 
 interface NavItem {
   label: string
   href: string
   icon: string
+  divider?: boolean // render a section divider above this item
 }
 
 const navItems: NavItem[] = [
@@ -20,12 +22,13 @@ const navItems: NavItem[] = [
   { label: 'Sites', href: '/sites', icon: '🏢' },
   { label: 'Compare', href: '/configs/compare', icon: '🔀' },
   { label: 'Topology', href: '/topology', icon: '🌐' },
-  { label: 'Alerts', href: '/alerts', icon: '⚠' },
+  { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true },
   { label: 'Logs', href: '/logs', icon: '🧾' },
   { label: 'Checks', href: '/checks', icon: '✓' },
+  { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍', divider: true },
   { label: 'CVE', href: '/cve', icon: '🛡' },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
-  { label: 'API Docs', href: '/api-docs', icon: '📖' },
+  { label: 'API Docs', href: '/api-docs', icon: '📖', divider: true },
   { label: 'Settings', href: '/settings', icon: '⚙' },
 ]
 
@@ -83,24 +86,26 @@ export default function Layout({ children }: Props) {
         {/* Nav */}
         <nav className="flex-1 py-4 overflow-y-auto">
           {navItems.map((item) => (
-            <NavLink
-              key={item.href}
-              to={item.href}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                clsx(
-                  'flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white',
-                )
-              }
-            >
-              <span className="text-base w-5 text-center" aria-hidden>
-                {item.icon}
-              </span>
-              {item.label}
-            </NavLink>
+            <div key={item.href}>
+              {item.divider && <div className="my-2 mx-5 border-t border-gray-800" aria-hidden />}
+              <NavLink
+                to={item.href}
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  clsx(
+                    'flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-300 hover:bg-gray-800 hover:text-white',
+                  )
+                }
+              >
+                <span className="text-base w-5 text-center" aria-hidden>
+                  {item.icon}
+                </span>
+                {item.label}
+              </NavLink>
+            </div>
           ))}
         </nav>
 
@@ -153,11 +158,11 @@ export default function Layout({ children }: Props) {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top bar (mobile) */}
-        <header className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 shadow-sm">
+        {/* Top bar — page title (mobile menu toggle) + IP/MAC quick-search */}
+        <header className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 shadow-sm">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="lg:hidden p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
             aria-label="Open menu"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,15 +170,18 @@ export default function Layout({ children }: Props) {
             </svg>
           </button>
           <span className="font-semibold text-gray-800 dark:text-gray-100">{currentPage}</span>
-          <div className="ml-auto flex items-center gap-2 text-xs">
-            <span
-              className={clsx(
-                'w-2 h-2 rounded-full',
-                connected ? 'bg-green-400 animate-pulse' : 'bg-gray-400',
-              )}
-            />
-            <span className={connected ? 'text-green-600' : 'text-gray-400'}>
-              {connected ? 'Live' : 'Offline'}
+          <div className="ml-auto flex items-center gap-3 text-xs">
+            <HeaderSearch />
+            <span className="lg:hidden flex items-center gap-2">
+              <span
+                className={clsx(
+                  'w-2 h-2 rounded-full',
+                  connected ? 'bg-green-400 animate-pulse' : 'bg-gray-400',
+                )}
+              />
+              <span className={connected ? 'text-green-600' : 'text-gray-400'}>
+                {connected ? 'Live' : 'Offline'}
+              </span>
             </span>
           </div>
         </header>
