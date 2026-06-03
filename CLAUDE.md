@@ -2370,6 +2370,22 @@ Before public v1.0 announcement:
 - [ ] SSL/TLS certificate setup docs
 - [ ] Remove any hardcoded test credentials from documentation/examples
 
+Collector deployment (post v1.0):
+- [ ] Create docker-compose.collector.yml
+- [ ] Add role selection to setup.sh (Full Stack vs Collector)
+- [ ] Build collector-agent forwarding service (mTLS, local buffer, replay)
+- [ ] collector registers with central via Collector model (already built)
+- [ ] Test multi-collector deployment
+- [ ] Document collector setup
+
+## PINNED — Monorepo + multiple compose files
+- One repo (travisjohnsonga/netpulse)
+- docker-compose.yml = full stack (default)
+- docker-compose.collector.yml = future collector
+- setup.sh will ask deployment role
+- Shared ingest service images, no sync issues
+- Decision made: 2026-06-03
+
 ## PINNED — ChatOps User Identity & Profile Integration
 
 ### Problem:

@@ -245,6 +245,82 @@ Enterprise authentication via external identity providers. Local admin login is
 
 ---
 
+## Deployment Modes
+
+NetPulse uses a monorepo with multiple Docker Compose profiles for different
+deployment scenarios.
+
+### Mode 1: Full Stack (default)
+
+Complete NetPulse installation with all services including UI, API, and all
+engines.
+
+```bash
+docker compose up -d
+# or
+./setup.sh → select "Full Stack"
+```
+
+- **Services:** all 24 services
+- **Use case:** Primary NetPulse server
+
+### Mode 2: Collector Only (future)
+
+Lightweight collector that forwards telemetry to a central NetPulse server. No
+UI, no DB, no processing engines.
+
+```bash
+docker compose -f docker-compose.collector.yml up -d
+# or
+./setup.sh → select "Collector"
+```
+
+- **Services:** ingest-snmp, ingest-syslog, ingest-flow, ingest-grpc,
+  collector-agent, valkey (buffer only)
+- **Use case:** Remote sites forwarding to central
+
+### Mode 3: Cloud Hosted (future)
+
+Central server receives from multiple collectors. Multi-tenant capable.
+
+```bash
+docker compose -f docker-compose.cloud.yml up -d
+```
+
+### Setup.sh role selection (future)
+
+When collector mode is implemented, `setup.sh` will ask:
+
+```
+Select deployment role:
+1) Full Stack — complete NetPulse server
+   (UI, API, all engines, local storage)
+2) Collector — lightweight telemetry forwarder
+   (no UI, forwards to central server)
+3) Custom — choose individual components
+```
+
+### Shared code strategy
+
+Monorepo approach — all services in one repo. The collector uses the same ingest
+service images as the full stack. No sync issues.
+
+Collector-specific config:
+
+```
+NETPULSE_MODE=collector
+NETPULSE_SERVER=https://central.example.com
+NETPULSE_API_KEY=collector-api-key
+COLLECTOR_SITE=dc-west
+```
+
+### Collector architecture (future)
+
+See the **NetPulse Collector** section above. Implementation planned post v1.0
+release.
+
+---
+
 ## Technology Stack
 
 All components are open source with permissive licenses. Zero licensing landmines.
