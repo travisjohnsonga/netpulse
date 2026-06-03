@@ -13,6 +13,9 @@ SYSTEM_RULE_NAMES = {
     "flow-threshold-exceeded",
     "latency-threshold-exceeded",
     "log-anomaly-detected",
+    "High Temperature Warning",
+    "High Temperature Critical",
+    "Temperature Sensor Failed",
 }
 
 
@@ -21,6 +24,13 @@ class TestSeedAlertRules:
         call_command("seed_alert_rules")
         seeded = set(AlertRule.objects.filter(is_system=True).values_list("name", flat=True))
         assert SYSTEM_RULE_NAMES <= seeded
+
+    def test_temperature_rules_seeded_with_severities(self):
+        call_command("seed_alert_rules")
+        rules = {r.name: r for r in AlertRule.objects.filter(is_system=True)}
+        assert rules["High Temperature Warning"].severity == "medium"
+        assert rules["High Temperature Critical"].severity == "critical"
+        assert rules["Temperature Sensor Failed"].severity == "high"
 
     def test_seed_is_idempotent(self):
         call_command("seed_alert_rules")

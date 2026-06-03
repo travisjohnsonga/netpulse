@@ -52,6 +52,9 @@ class Device:
     snmp_auth_protocol: str = "SHA"   # auth protocol string
     snmp_priv_protocol: str = "AES"   # priv protocol string
     poll_profiles: list[PollProfile] = field(default_factory=list)
+    # Table-base OIDs to WALK each poll (env metrics at vendor indexes, e.g.
+    # AOS-CX CPU/temperature/fan/PSU). Empty for most devices.
+    walk_oids: list[str] = field(default_factory=list)
 
     # ── Derived / convenience ──────────────────────────────────────────────
 
@@ -84,6 +87,7 @@ class Device:
             snmp_auth_protocol=d.get("snmp_auth_protocol", "SHA"),
             snmp_priv_protocol=d.get("snmp_priv_protocol", "AES"),
             poll_profiles=profiles,
+            walk_oids=list(d.get("walk_oids", []) or []),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,6 +102,7 @@ class Device:
                 {"name": p.name, "oids": p.oids, "interval_seconds": p.interval_seconds}
                 for p in self.poll_profiles
             ],
+            "walk_oids": self.walk_oids,
         }
 
 

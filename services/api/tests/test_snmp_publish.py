@@ -117,6 +117,24 @@ class TestPlatformOIDs:
         assert SYSUPTIME in oids and HRPROCLOAD in oids
         assert "1.3.6.1.4.1.9.9.48.1.1.1.5.1" not in oids
 
+    def test_aos_cx_gets_memory_get_oids_and_walk_bases(self):
+        from apps.devices.snmp_publish import (
+            build_device_payload, SYSUPTIME, AOSCX_MEM_SIZE, AOSCX_MEM_USED, HRPROCLOAD,
+        )
+        from apps.telemetry.snmp_environment import HR_PROCESSOR_LOAD, ENT_SENSOR_VALUE
+        payload = build_device_payload(self._dev("aos_cx"))
+        oids = payload["poll_oids"]
+        # Memory comes from hrStorage GET; CPU is NOT a fixed GET (.1 is empty).
+        assert SYSUPTIME in oids and AOSCX_MEM_SIZE in oids and AOSCX_MEM_USED in oids
+        assert HRPROCLOAD not in oids
+        # CPU + sensor tables are walked instead.
+        assert HR_PROCESSOR_LOAD in payload["walk_oids"]
+        assert ENT_SENSOR_VALUE in payload["walk_oids"]
+
+    def test_non_aos_cx_has_no_walk_oids(self):
+        from apps.devices.snmp_publish import build_device_payload
+        assert build_device_payload(self._dev("ios_xe"))["walk_oids"] == []
+
 
 class TestPollNow:
     def test_poll_now_triggers_publish(self, auth_client, snmp_v3_device, monkeypatch):

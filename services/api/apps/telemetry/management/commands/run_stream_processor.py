@@ -44,6 +44,8 @@ _BATCH_SIZE = int(os.environ.get("STREAM_PROCESSOR_BATCH_SIZE", "100"))
 _BATCH_TIMEOUT = float(os.environ.get("STREAM_PROCESSOR_BATCH_TIMEOUT_SECONDS", "5"))
 _FLOW_THRESHOLD_MBPS = float(os.environ.get("ANOMALY_FLOW_THRESHOLD_MBPS", "1000"))
 _LATENCY_THRESHOLD_MS = float(os.environ.get("ANOMALY_LATENCY_THRESHOLD_MS", "500"))
+_TEMP_WARNING_C = float(os.environ.get("TEMP_WARNING_C", "75"))
+_TEMP_CRITICAL_C = float(os.environ.get("TEMP_CRITICAL_C", "85"))
 _ALERT_COOLDOWN_SECS = 300  # 5 minutes per device/condition
 
 # ---------------------------------------------------------------------------
@@ -328,14 +330,23 @@ class Command(BaseCommand):
 
             if msg_type == "metrics":
                 fields = self._extract_fields(payload)
+                ts = payload.get("timestamp")
+                # Derive environment metrics (CPU avg / memory % / temperature /
+                # fan+PSU counts) from the GET + table-walk results. Scalars are
+                # merged into the telemetry point; per-sensor temps get their own
+                # device_environment measurement.
+                env = self._derive_environment(payload)
+                fields.update(env["scalars"])
                 await self._write_influx(
                     measurement="telemetry",
                     tags={"device_id": device_id, "protocol": payload.get("protocol", "unknown")},
                     fields=fields,
-                    timestamp=payload.get("timestamp"),
+                    timestamp=ts,
                 )
+                await self._write_environment(device_id, env, ts)
+                await self._check_temperature(device_id, payload.get("hostname"), env)
                 # Derive per-interface bps/pps/error/util rates from the counters.
-                await self._interface_stats(device_id, fields, payload.get("timestamp"))
+                await self._interface_stats(device_id, fields, ts)
             elif msg_type == "trap":
                 doc = {"device_id": device_id, **payload, "@timestamp": _utcnow_iso()}
                 await self._buffer_opensearch(_index("netpulse-traps"), doc)
@@ -927,6 +938,71 @@ class Command(BaseCommand):
             )
         except Exception as exc:
             logger.error("stream-processor: failed to publish alert: %s", exc)
+
+    # -----------------------------------------------------------------------
+    # Environment (CPU / memory / temperature / fan / PSU)
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _derive_environment(payload: dict) -> dict:
+        """Turn raw SNMP GET + walk results into normalized environment metrics."""
+        from apps.telemetry.snmp_environment import derive_environment
+
+        get_values = {
+            oid: m.get("value")
+            for oid, m in (payload.get("metrics") or {}).items()
+            if isinstance(m, dict)
+        }
+        return derive_environment(get_values, payload.get("walk") or {})
+
+    async def _write_environment(self, device_id: str, env: dict, timestamp):
+        """Write one device_environment point per temperature sensor."""
+        for sensor in env.get("temperature", []):
+            await self._write_influx(
+                measurement="device_environment",
+                tags={
+                    "device_id": device_id,
+                    "sensor_name": sensor["name"],
+                    "sensor_type": "temperature",
+                },
+                fields={
+                    "temperature_c": sensor["celsius"],
+                    "status_ok": 1 if sensor["status_ok"] else 0,
+                },
+                timestamp=timestamp,
+            )
+
+    async def _check_temperature(self, device_id: str, hostname, env: dict):
+        """Fire temperature alerts (warning / critical / sensor-failed)."""
+        for sensor in env.get("temperature", []):
+            name = sensor["name"]
+            key = f"{device_id}:{sensor['index']}"
+            labels = {"device_id": device_id, "hostname": hostname or "",
+                      "sensor_name": name, "metric": "temperature_c"}
+            if not sensor["status_ok"]:
+                if _can_fire_alert(key, "temp_sensor_failed"):
+                    await self._publish_alert("high", {
+                        "rule_name": "Temperature Sensor Failed",
+                        "description": f"Temperature sensor {name} is non-operational",
+                        "labels": labels,
+                        "annotations": {"summary": f"Sensor {name} failed on {hostname or device_id}"},
+                    })
+                continue
+            celsius = sensor["celsius"]
+            if celsius >= _TEMP_CRITICAL_C and _can_fire_alert(key, "temp_critical"):
+                await self._publish_alert("critical", {
+                    "rule_name": "High Temperature Critical",
+                    "description": f"{name} at {celsius:.1f}°C ≥ {_TEMP_CRITICAL_C:.0f}°C",
+                    "labels": {**labels, "temperature_c": str(celsius)},
+                    "annotations": {"summary": f"Critical temperature on {hostname or device_id}"},
+                })
+            elif celsius >= _TEMP_WARNING_C and _can_fire_alert(key, "temp_warning"):
+                await self._publish_alert("medium", {
+                    "rule_name": "High Temperature Warning",
+                    "description": f"{name} at {celsius:.1f}°C ≥ {_TEMP_WARNING_C:.0f}°C",
+                    "labels": {**labels, "temperature_c": str(celsius)},
+                    "annotations": {"summary": f"High temperature on {hostname or device_id}"},
+                })
 
     # -----------------------------------------------------------------------
     # Utility helpers

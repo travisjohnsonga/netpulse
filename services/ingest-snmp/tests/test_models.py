@@ -26,6 +26,13 @@ class TestDevice:
         assert d.version == 2
         assert d.cred_path == ""
         assert d.poll_profiles == []
+        assert d.walk_oids == []
+
+    def test_walk_oids_round_trip(self):
+        bases = ["1.3.6.1.2.1.25.3.3.1.2", "1.3.6.1.2.1.99.1.1.1.4"]
+        d = Device.from_dict({**self._MINIMAL, "walk_oids": bases})
+        assert d.walk_oids == bases
+        assert d.to_dict()["walk_oids"] == bases
 
     def test_hostname_defaults_to_ip(self):
         d = Device.from_dict(self._MINIMAL)

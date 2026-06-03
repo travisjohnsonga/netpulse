@@ -19,6 +19,9 @@ seeded row and the emitted event share one AlertRule:
   - "flow-threshold-exceeded"    stream-processor NetFlow/sFlow volume
   - "latency-threshold-exceeded" stream-processor path latency
   - "log-anomaly-detected"       stream-processor syslog/trap keywords
+  - "High Temperature Warning"   stream-processor ENTITY-SENSOR temp ≥ warn
+  - "High Temperature Critical"  stream-processor ENTITY-SENSOR temp ≥ crit
+  - "Temperature Sensor Failed"  stream-processor sensor oper-status not ok
 
 Usage:
     python manage.py seed_alert_rules
@@ -74,6 +77,21 @@ DEFAULT_RULES = [
         "Config Changed", "medium",
         "A scheduled config collection detected a running-config change.",
         {"source": "config_manager", "metric": "config_diff"}, 0,
+    ),
+    (
+        "High Temperature Warning", "medium",
+        "A device temperature sensor exceeded the warning threshold (default ≥75°C).",
+        {"source": "stream-processor", "metric": "temperature_c"}, 30,
+    ),
+    (
+        "High Temperature Critical", "critical",
+        "A device temperature sensor exceeded the critical threshold (default ≥85°C).",
+        {"source": "stream-processor", "metric": "temperature_c"}, 15,
+    ),
+    (
+        "Temperature Sensor Failed", "high",
+        "A device temperature sensor reported a non-operational status.",
+        {"source": "stream-processor", "metric": "sensor_status"}, 60,
     ),
 ]
 

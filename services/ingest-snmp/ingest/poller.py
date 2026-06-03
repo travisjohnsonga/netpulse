@@ -142,12 +142,12 @@ class SNMPPoller:
         # system OIDs (sysUpTime/Descr/Name/Location) — gNMI carries CPU/memory/
         # interfaces but not uptime, so this keeps uptime flowing at minimal
         # device load (4 OIDs vs the full poll). Otherwise do the full poll.
-        if self._gnmi is not None and await self._gnmi.is_active(device.device_id):
-            self._note_suppression(device.device_id, True)
-            oids = list(ALWAYS_POLL_OIDS.values())
-        else:
-            self._note_suppression(device.device_id, False)
-            oids = profile.oids
+        suppressed = self._gnmi is not None and await self._gnmi.is_active(device.device_id)
+        self._note_suppression(device.device_id, suppressed)
+        oids = list(ALWAYS_POLL_OIDS.values()) if suppressed else profile.oids
+        # Walk env tables (CPU/temp/fan/PSU at vendor indexes) only on the full
+        # poll — skip them while gNMI is the source of truth.
+        walk_bases = [] if suppressed else (device.walk_oids or [])
 
         try:
             creds = await self._creds.get(device.cred_path) if device.cred_path else {}
@@ -161,6 +161,14 @@ class SNMPPoller:
         except Exception as exc:
             logger.warning("SNMP GET failed for %s (%s): %s", device.device_id, device.ip, exc)
             return
+
+        walk: dict[str, str] = {}
+        if walk_bases:
+            try:
+                walk = await self._snmp_walk(device, walk_bases, creds)
+            except Exception as exc:
+                # Walk is best-effort — the GET metrics still publish.
+                logger.warning("SNMP walk failed for %s (%s): %s", device.device_id, device.ip, exc)
 
         duration_ms = round((time.monotonic() - t0) * 1000)
         # Aid diagnosis: log the resolved field names returned by this poll.
@@ -176,6 +184,7 @@ class SNMPPoller:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "poll_duration_ms": duration_ms,
             "metrics": metrics,
+            "walk": walk,
         }
         await self._pub.publish_metrics(device.device_id, payload)
         logger.debug(
@@ -241,3 +250,59 @@ class SNMPPoller:
                 "type": type_name,
             }
         return metrics
+
+    async def _snmp_walk(
+        self,
+        device: Device,
+        base_oids: list[str],
+        creds: dict[str, Any],
+    ) -> dict[str, str]:
+        """
+        Walk each table-base OID and return a flat ``{full_oid: value}`` map.
+
+        Used for environment metrics (CPU/temperature/fan/PSU) whose instance
+        index isn't fixed. Bounded to each base's subtree (lexicographicMode
+        off). A per-base failure is logged and skipped; the rest still return.
+        """
+        from pysnmp.hlapi.asyncio import (
+            ContextData,
+            ObjectIdentity,
+            ObjectType,
+            UdpTransportTarget,
+            bulkWalkCmd,
+            walkCmd,
+        )
+
+        engine = self._get_engine()
+        auth = (
+            build_usm_data(_map_snmp_creds(creds, device)) if device.version == 3
+            else build_community_data(device.version, creds)
+        )
+        target = UdpTransportTarget(
+            (device.ip, device.port),
+            timeout=self._timeout,
+            retries=self._retries,
+        )
+
+        results: dict[str, str] = {}
+        for base in base_oids:
+            obj = ObjectType(ObjectIdentity(base))
+            # GETBULK for v2c/v3; GETNEXT walk for v1 (no bulk support).
+            if device.version == 1:
+                walker = walkCmd(engine, auth, target, ContextData(), obj,
+                                 lexicographicMode=False)
+            else:
+                walker = bulkWalkCmd(engine, auth, target, ContextData(), 0, 25, obj,
+                                     lexicographicMode=False)
+            try:
+                async for error_indication, error_status, _idx, var_binds in walker:
+                    if error_indication or error_status:
+                        break
+                    for vb in var_binds:
+                        try:
+                            results[str(vb[0])] = vb[1].prettyPrint()
+                        except Exception:
+                            results[str(vb[0])] = str(vb[1])
+            except Exception as exc:
+                logger.debug("walk of %s failed for %s: %s", base, device.device_id, exc)
+        return results

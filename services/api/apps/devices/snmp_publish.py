@@ -38,6 +38,12 @@ CISCO_CPU_5MIN = "1.3.6.1.4.1.9.9.109.1.1.1.1.8.1"
 FG_CPU_USAGE = "1.3.6.1.4.1.12356.101.4.1.3.0"    # fgSysCpuUsage (%)
 FG_MEM_USAGE = "1.3.6.1.4.1.12356.101.4.1.4.0"    # fgSysMemUsage (%)
 FG_MEM_CAPACITY = "1.3.6.1.4.1.12356.101.4.1.5.0"  # fgSysMemCapacity (KB)
+# AOS-CX memory via HOST-RESOURCES hrStorage index 1 ("Physical memory").
+# CPU (hrProcessorLoad) and the ENTITY-SENSOR temp/fan/PSU tables live at
+# vendor indexes, so they are WALKED (PLATFORM_WALK_OIDS), not GET here.
+AOSCX_MEM_SIZE = "1.3.6.1.2.1.25.2.3.1.5.1"   # hrStorageSize.1
+AOSCX_MEM_USED = "1.3.6.1.2.1.25.2.3.1.6.1"   # hrStorageUsed.1
+AOSCX_MEM_ALLOC = "1.3.6.1.2.1.25.2.3.1.4.1"  # hrStorageAllocationUnits.1
 
 PLATFORM_DEVICE_OIDS = {
     "ios_xe": [SYSUPTIME, HRPROCLOAD, CISCO_MEM_USED, CISCO_MEM_FREE],
@@ -56,8 +62,8 @@ PLATFORM_DEVICE_OIDS = {
                   "1.3.6.1.4.1.8741.1.3.2.1.0",   # sonicCpuUtil (%)
                   "1.3.6.1.4.1.8741.1.3.2.2.0",   # sonicRamUtil (%)
                   "1.3.6.1.4.1.8741.1.3.2.3.0"],  # sonicRamTotal (KB)
-    # HPE AOS-CX exposes CPU/memory via standard HOST-RESOURCES-MIB.
-    "aos_cx":  [SYSUPTIME, HRPROCLOAD],
+    # HPE AOS-CX: uptime + memory via GET; CPU/temp/fan/PSU via walk (below).
+    "aos_cx":  [SYSUPTIME, AOSCX_MEM_SIZE, AOSCX_MEM_USED, AOSCX_MEM_ALLOC],
     # Aruba AOS mobility controllers (ARUBA enterprise 14823).
     "aruba":   [SYSUPTIME,
                 "1.3.6.1.4.1.14823.2.2.1.1.1.11.0",  # wlsxSysXCpuUtilization (%)
@@ -69,6 +75,24 @@ PLATFORM_DEVICE_OIDS = {
 
 def _device_oids(platform: str) -> list[str]:
     return list(PLATFORM_DEVICE_OIDS.get(platform or "", PLATFORM_DEVICE_OIDS["_default"]))
+
+
+# Table-base OIDs the poller should WALK (vs GET) per platform — for metrics
+# whose instance index isn't fixed (AOS-CX CPU/temperature/fan/PSU). The
+# stream-processor correlates the walked columns into environment metrics
+# (apps.telemetry.snmp_environment).
+def _aos_cx_walk_bases() -> list[str]:
+    from apps.telemetry.snmp_environment import WALK_BASES
+    return list(WALK_BASES)
+
+
+PLATFORM_WALK_OIDS = {
+    "aos_cx": _aos_cx_walk_bases(),
+}
+
+
+def _walk_oids(platform: str) -> list[str]:
+    return list(PLATFORM_WALK_OIDS.get(platform or "", []))
 # Per-interface OID prefixes (suffixed with the interface ifIndex).
 IFACE_OID_PREFIXES = {
     "status": ["1.3.6.1.2.1.2.2.1.8"],                        # ifOperStatus
@@ -153,6 +177,7 @@ def build_device_payload(device) -> dict | None:
         "snmp_security_level": profile.snmpv3_security_level or "",
         "poll_interval": _poll_interval(device),
         "poll_oids": oids,
+        "walk_oids": _walk_oids(device.platform),
         "interfaces": interfaces,
     }
 
