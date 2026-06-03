@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
@@ -8,6 +8,7 @@ import {
   fetchDeviceMetrics, pollDeviceNow,
   type DeviceDetail, type TelemetryConfig, type GeneratedConfig, type ConfigPushRecord,
   type MonitoredInterface, type DeviceMetrics, type MetricPoint, type DeviceReachability,
+  type DeviceEnvironmentPoe,
 } from '../../api/client'
 import Modal from '../../components/Modal'
 import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
@@ -830,8 +831,11 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
       {(() => {
         const env = metrics?.environment
         const hasSensors = !!env?.sensors?.length
+        const hasFans = !!env?.fans?.length
+        const hasPsus = !!env?.psus?.length
+        const hasPoe = !!env?.poe && (env.poe.budget_watts ?? 0) > 0
         const hasHistory = !!env?.temperature_history?.length
-        const hasEnv = !!env && (hasSensors || hasHistory)
+        const hasEnv = !!env && (hasSensors || hasFans || hasPsus || hasPoe || hasHistory)
 
         const pingCard = (
           <div className={clsx(liveCard, 'p-4')}>
@@ -847,26 +851,43 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
         const envCard = (
           <div className={clsx(liveCard, 'p-4')}>
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Environment</h3>
+
             {hasSensors && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              <EnvSection title="Temperature">
                 {env!.sensors!.map((s) => (
-                  <HealthCard key={s.sensor_name}
-                    label={s.sensor_name}
+                  <EnvRow key={s.sensor_name} icon="🌡" name={s.sensor_name}
                     value={s.temperature_c != null ? `${s.temperature_c}°C` : '—'}
-                    subtitle={s.status_ok ? '● OK' : '● Fault'} />
+                    statusOk={s.status_ok} statusText={s.status_ok ? 'OK' : 'Fault'} />
                 ))}
-                {(env!.fan_count != null) && (
-                  <HealthCard label="Fans" value={`${env!.fan_count}`}
-                    subtitle={`${env!.fan_count === 1 ? 'fan' : 'fans'} present`} />
-                )}
-                {(env!.psu_count != null) && (
-                  <HealthCard label="PSU" value={`${env!.psu_count}`}
-                    subtitle={`${env!.psu_count === 1 ? 'supply' : 'supplies'} present`} />
-                )}
-              </div>
+              </EnvSection>
             )}
+
+            {hasFans && (
+              <EnvSection title="Fans">
+                {env!.fans!.map((f) => (
+                  <EnvRow key={f.name} icon="🌀" name={f.name}
+                    value={f.rpm != null ? `${f.rpm} RPM` : '—'}
+                    statusOk={f.status_ok}
+                    statusText={f.status_ok == null ? 'Unknown' : f.status_ok ? 'OK' : 'Fault'} />
+                ))}
+              </EnvSection>
+            )}
+
+            {hasPsus && (
+              <EnvSection title="Power Supplies">
+                {env!.psus!.map((p) => (
+                  <EnvRow key={p.name} icon="⚡" name={p.name}
+                    value={p.watts != null ? `${p.watts} W` : '—'}
+                    statusOk={p.status_ok}
+                    statusText={p.status_ok == null ? 'Unknown' : p.status_ok ? 'Online' : 'Offline'} />
+                ))}
+              </EnvSection>
+            )}
+
+            {hasPoe && <PoeBar poe={env!.poe!} />}
+
             {hasHistory && (
-              <div>
+              <div className="mt-3">
                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Temperature — last 24h (device max)</p>
                 <TemperatureHistoryChart series={env!.temperature_history} />
               </div>
@@ -1047,6 +1068,69 @@ function HealthCard({ label, value, series, color = '#3b82f6', subtitle }: {
           ? <MiniSpark series={series} color={color} />
           : <p className="text-[10px] text-gray-300 dark:text-gray-600">{hasData ? '' : 'no data'}</p>}
     </div>
+  )
+}
+
+// ── Environment detail: per-unit fan/PSU/temperature rows + PoE bar ──────────
+// Status dot: green ok/online · red fault/offline · gray unknown (no sensor).
+function StatusDot({ ok }: { ok: boolean | null }) {
+  const color = ok == null ? 'text-gray-400 dark:text-gray-600'
+    : ok ? 'text-green-500' : 'text-red-500'
+  return <span className={color}>●</span>
+}
+
+function EnvSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="border-t border-gray-100 dark:border-gray-800 pt-2 mt-2 first:border-t-0 first:pt-0 first:mt-0">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-1">{title}</p>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  )
+}
+
+function EnvRow({ icon, name, value, statusOk, statusText }: {
+  icon: string; name: string; value: string; statusOk: boolean | null; statusText: string
+}) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300 min-w-0">
+        <span className="shrink-0">{icon}</span>
+        <span className="truncate">{name}</span>
+      </span>
+      <span className="flex items-center gap-3 shrink-0">
+        <span className="tabular-nums text-gray-500 dark:text-gray-400">{value}</span>
+        <span className="flex items-center gap-1 w-16 justify-end">
+          <StatusDot ok={statusOk} />
+          <span className="text-gray-500 dark:text-gray-400">{statusText}</span>
+        </span>
+      </span>
+    </div>
+  )
+}
+
+// PoE budget bar: green <50% · amber 50-80% · red >80% (approaching budget).
+function PoeBar({ poe }: { poe: DeviceEnvironmentPoe }) {
+  const budget = poe.budget_watts ?? 0
+  const used = poe.used_watts ?? 0
+  const pct = poe.used_pct ?? (budget > 0 ? (used / budget) * 100 : 0)
+  const clamped = Math.max(0, Math.min(100, pct))
+  const barColor = pct > 80 ? 'bg-red-500' : pct >= 50 ? 'bg-amber-500' : 'bg-green-500'
+  const active = poe.status === 'on'
+  return (
+    <EnvSection title="PoE Budget">
+      <div className="h-2.5 w-full rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+        <div className={clsx('h-full rounded-full transition-all', barColor)} style={{ width: `${clamped}%` }} />
+      </div>
+      <div className="flex items-center justify-between text-xs mt-1">
+        <span className="text-gray-500 dark:text-gray-400 tabular-nums">
+          {used} W / {budget} W ({Math.round(pct)}%)
+        </span>
+        <span className="flex items-center gap-1">
+          <StatusDot ok={active ? true : poe.status === 'faulty' ? false : null} />
+          <span className="text-gray-500 dark:text-gray-400 capitalize">{active ? 'Active' : poe.status}</span>
+        </span>
+      </div>
+    </EnvSection>
   )
 }
 

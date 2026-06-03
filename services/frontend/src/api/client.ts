@@ -362,6 +362,27 @@ export interface DeviceEnvironmentSensor {
   status_ok: boolean
 }
 
+// Per-fan / per-PSU detail. reading (rpm/watts) is null when the device reports
+// it as unavailable; status_ok is null when no per-unit sensor exists (unknown).
+export interface DeviceEnvironmentFan {
+  name: string
+  rpm: number | null
+  status_ok: boolean | null
+}
+
+export interface DeviceEnvironmentPsu {
+  name: string
+  watts: number | null
+  status_ok: boolean | null
+}
+
+export interface DeviceEnvironmentPoe {
+  budget_watts: number | null
+  used_watts: number | null
+  used_pct: number | null
+  status: string // on / off / faulty / unknown
+}
+
 // Physical-sensor summary; empty {} for devices that report none (e.g. virtual).
 export interface DeviceEnvironment {
   temperature_c?: number
@@ -371,8 +392,11 @@ export interface DeviceEnvironment {
   // Explicit counts from ENTITY-SENSOR devices (AOS-CX).
   fan_count?: number
   psu_count?: number
-  // Per-sensor temperatures (device_environment measurement) + 24h history.
+  // Per-unit detail (device_environment measurement) + 24h temperature history.
   sensors?: DeviceEnvironmentSensor[]
+  fans?: DeviceEnvironmentFan[]
+  psus?: DeviceEnvironmentPsu[]
+  poe?: DeviceEnvironmentPoe
   temperature_history?: MetricPoint[]
 }
 
