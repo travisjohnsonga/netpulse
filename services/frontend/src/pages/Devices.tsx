@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
+import NetworkSearch from '../components/NetworkSearch'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
 import { fetchDevices, fetchCredentials, fetchSites, type Device, type Site } from '../api/client'
@@ -148,6 +149,9 @@ export default function Devices() {
           </button>
         </div>
       </div>
+
+      {/* Global "where is this host?" IP/MAC lookup across all devices. */}
+      <NetworkSearch />
 
       {/* Error */}
       {error && (

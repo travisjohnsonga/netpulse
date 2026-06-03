@@ -7,6 +7,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import Overview from './device/Overview'
 import Telemetry, { TelemetryConfigPanel } from './device/Telemetry'
 import Logs from './device/Logs'
+import ArpMac from './device/ArpMac'
 import Configuration from './device/Configuration'
 import Compliance from './device/Compliance'
 import CVE from './device/CVE'
@@ -20,6 +21,7 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'telemetry', label: 'Telemetry' },
   { id: 'logs', label: 'Logs' },
+  { id: 'arpmac', label: 'ARP / MAC' },
   { id: 'configuration', label: 'Configuration' },
   { id: 'compliance', label: 'Compliance' },
   { id: 'cve', label: 'CVE' },
@@ -194,6 +196,7 @@ export default function DeviceDetail() {
       {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} onManageCredentials={() => setManagingCreds(true)} />}
       {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} refreshSignal={telemetryRefresh} />}
       {tab === 'logs' && <Logs device={device} />}
+      {tab === 'arpmac' && <ArpMac device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}
       {tab === 'compliance' && <Compliance device={device} />}
       {tab === 'cve' && <CVE device={device} />}

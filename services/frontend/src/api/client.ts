@@ -446,6 +446,60 @@ export async function enrichDevice(deviceId: number): Promise<{ status: string; 
   return data
 }
 
+// ── ARP / MAC tables ──────────────────────────────────────────────────────────
+export interface ArpEntry {
+  id: number
+  ip_address: string
+  mac_address: string
+  vendor: string
+  interface: string
+  vlan: number | null
+  protocol: string
+  age_minutes: number | null
+  collected_at: string
+}
+
+export interface MacEntry {
+  id: number
+  mac_address: string
+  vendor: string
+  vlan: number | null
+  interface: string
+  entry_type: string
+  collected_at: string
+}
+
+export interface ArpResponse { count: number; last_collected: string | null; results: ArpEntry[] }
+export interface MacResponse { count: number; last_collected: string | null; results: MacEntry[] }
+
+export async function fetchDeviceArp(deviceId: number, search = ''): Promise<ArpResponse> {
+  const { data } = await api.get<ArpResponse>(`/devices/${deviceId}/arp/`, { params: search ? { search } : {} })
+  return data
+}
+
+export async function fetchDeviceMac(
+  deviceId: number, opts: { search?: string; vlan?: string; interface?: string } = {},
+): Promise<MacResponse> {
+  const { data } = await api.get<MacResponse>(`/devices/${deviceId}/mac/`, { params: opts })
+  return data
+}
+
+export async function collectDeviceArpMac(deviceId: number): Promise<{ arp: number; mac: number }> {
+  const { data } = await api.post(`/devices/${deviceId}/arp-mac/collect/`)
+  return data
+}
+
+export interface NetworkSearchResult {
+  query: string
+  arp: (ArpEntry & { device_id: number; device_hostname: string })[]
+  mac: (MacEntry & { device_id: number; device_hostname: string })[]
+}
+
+export async function networkSearch(q: string): Promise<NetworkSearchResult> {
+  const { data } = await api.get<NetworkSearchResult>('/network/search/', { params: { q } })
+  return data
+}
+
 // How a device's telemetry is currently being collected (gNMI / SNMP).
 export interface CollectionStatus {
   device_id: string
