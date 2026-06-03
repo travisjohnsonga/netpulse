@@ -105,20 +105,41 @@ def _empty_reachability() -> dict:
     }
 
 
+# Explicit environment scalars the stream-processor derives (apps.telemetry.
+# snmp_environment). Excluded from the token-scan fallback so the count fields
+# aren't themselves mistaken for sensors.
+_EXPLICIT_ENV_KEYS = {"temp_max_c", "fan_count", "psu_count"}
+
+
 def _environment(snapshot: dict) -> dict:
     """
-    Surface temperature / fan / power-supply sensors from the latest telemetry
-    snapshot, when the device reports any. Generic by design: it matches the
-    sensor token in the field name (works for SNMP entPhysical sensors and gNMI
-    environment paths alike) rather than hard-coding a vendor schema.
+    Surface temperature / fan / power-supply summary from the latest telemetry
+    snapshot.
+
+    Prefers the explicit scalars (`temp_max_c`, `fan_count`, `psu_count`) the
+    stream-processor derives for ENTITY-SENSOR devices (AOS-CX). Falls back to
+    token-scanning field names for gNMI environment paths that don't use them.
 
     Returns {} when no environment data is present — virtual platforms (e.g.
     Cisco C8000V) have no physical sensors and correctly report nothing, so the
     UI shows no fan/power/temperature tiles for them.
     """
+    env: dict = {}
+    temp_max = snapshot.get("temp_max_c")
+    fan_count = snapshot.get("fan_count")
+    psu_count = snapshot.get("psu_count")
+    if any(isinstance(v, (int, float)) for v in (temp_max, fan_count, psu_count)):
+        if isinstance(temp_max, (int, float)):
+            env["temperature_c"] = round(temp_max, 1)
+        if isinstance(fan_count, (int, float)):
+            env["fan_count"] = int(fan_count)
+        if isinstance(psu_count, (int, float)):
+            env["psu_count"] = int(psu_count)
+        return env
+
     temps, fans, powers = [], [], []
     for key, val in snapshot.items():
-        if not isinstance(val, (int, float)):
+        if key in _EXPLICIT_ENV_KEYS or not isinstance(val, (int, float)):
             continue
         leaf = key.lower().rsplit("/", 1)[-1]
         if "temp" in leaf:
@@ -127,7 +148,6 @@ def _environment(snapshot: dict) -> dict:
             fans.append(val)
         elif "power" in leaf or "psu" in leaf:
             powers.append(val)
-    env: dict = {}
     if temps:
         env["temperature_c"] = round(max(temps), 1)
         env["temperature_sensors"] = len(temps)
@@ -136,6 +156,53 @@ def _environment(snapshot: dict) -> dict:
     if powers:
         env["power_sensors"] = len(powers)
     return env
+
+
+def _environment_sensors(query_api, bucket, device_id, period) -> list:
+    """Latest per-sensor temperature from the device_environment measurement."""
+    flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -{period})
+  |> filter(fn: (r) => r._measurement == "device_environment" and r.device_id == "{device_id}")
+  |> last()
+  |> pivot(rowKey: ["sensor_name"], columnKey: ["_field"], valueColumn: "_value")
+'''
+    out = []
+    for table in query_api.query(flux):
+        for rec in table.records:
+            name = rec.values.get("sensor_name")
+            if not name:
+                continue
+            t = rec.values.get("temperature_c")
+            s = rec.values.get("status_ok")
+            out.append({
+                "sensor_name": name,
+                "temperature_c": round(t, 1) if isinstance(t, (int, float)) else None,
+                "status_ok": True if s is None else bool(s),
+            })
+    out.sort(key=lambda r: r["sensor_name"])
+    return out
+
+
+def _temperature_history(query_api, bucket, device_id) -> list:
+    """Device max temperature per window over the last 24h (for the chart)."""
+    window = _WINDOW.get("24h", "15m")
+    flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "device_environment" and r.device_id == "{device_id}" and r._field == "temperature_c")
+  |> group()
+  |> aggregateWindow(every: {window}, fn: max, createEmpty: false)
+'''
+    out = []
+    for table in query_api.query(flux):
+        for rec in table.records:
+            v = rec.get_value()
+            if isinstance(v, (int, float)):
+                out.append({"time": rec.get_time().isoformat().replace("+00:00", "Z"),
+                            "value": round(v, 1)})
+    out.sort(key=lambda p: p["time"])
+    return out
 
 
 def _pct_used(used, free):
@@ -208,6 +275,17 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
         "poll_duration_ms": snapshot.get("poll_duration_ms"),
     }
     result["environment"] = _environment(snapshot)
+    # Per-sensor temperatures + 24h history (device_environment measurement).
+    if metric in ("all", "environment"):
+        try:
+            sensors = _environment_sensors(query_api, bucket, device_id, period)
+            if sensors:
+                result["environment"]["sensors"] = sensors
+            history = _temperature_history(query_api, bucket, device_id)
+            if history:
+                result["environment"]["temperature_history"] = history
+        except Exception as exc:
+            logger.warning("environment sensor query failed for device %s: %s", device_id, exc)
 
     # ── per-interface derived stats (bps/pps/util/errors) ─────────────────────
     if metric in ("all", "interfaces"):

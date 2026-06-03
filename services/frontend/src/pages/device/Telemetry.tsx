@@ -802,18 +802,21 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
             shows here for them. */}
         {(() => {
           const env = metrics?.environment
-          if (!env || (env.temperature_c == null && !env.fan_sensors && !env.power_sensors)) return null
+          const fans = env?.fan_count ?? env?.fan_sensors
+          const psus = env?.psu_count ?? env?.power_sensors
+          if (!env || (env.temperature_c == null && !fans && !psus)) return null
+          const tempSensors = env.sensors?.length ?? env.temperature_sensors ?? 1
           return (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
               {env.temperature_c != null && (
                 <HealthCard label="Temperature" value={`${env.temperature_c}°C`}
-                  subtitle={`${env.temperature_sensors ?? 1} sensor${(env.temperature_sensors ?? 1) === 1 ? '' : 's'}`} />
+                  subtitle={`${tempSensors} sensor${tempSensors === 1 ? '' : 's'}`} />
               )}
-              {!!env.fan_sensors && (
-                <HealthCard label="Fans" value="✅ Normal" subtitle={`${env.fan_sensors} reporting`} />
+              {!!fans && (
+                <HealthCard label="Fans" value={`${fans}`} subtitle={`${fans === 1 ? 'fan' : 'fans'} present`} />
               )}
-              {!!env.power_sensors && (
-                <HealthCard label="Power" value="✅ Normal" subtitle={`${env.power_sensors} supplies`} />
+              {!!psus && (
+                <HealthCard label="Power" value={`${psus}`} subtitle={`${psus === 1 ? 'supply' : 'supplies'} present`} />
               )}
             </div>
           )
@@ -827,6 +830,43 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
         </div>
         <PingLatencyChart reach={metrics?.reachability} />
       </div>
+
+      {/* Section 1c — Environment (per-sensor temps, fan/PSU, 24h history) */}
+      {(() => {
+        const env = metrics?.environment
+        const hasSensors = !!env?.sensors?.length
+        const hasHistory = !!env?.temperature_history?.length
+        if (!env || (!hasSensors && !hasHistory)) return null
+        return (
+          <div className={clsx(liveCard, 'p-4')}>
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Environment</h3>
+            {hasSensors && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                {env.sensors!.map((s) => (
+                  <HealthCard key={s.sensor_name}
+                    label={s.sensor_name}
+                    value={s.temperature_c != null ? `${s.temperature_c}°C` : '—'}
+                    subtitle={s.status_ok ? '● OK' : '● Fault'} />
+                ))}
+                {(env.fan_count != null) && (
+                  <HealthCard label="Fans" value={`${env.fan_count}`}
+                    subtitle={`${env.fan_count === 1 ? 'fan' : 'fans'} present`} />
+                )}
+                {(env.psu_count != null) && (
+                  <HealthCard label="PSU" value={`${env.psu_count}`}
+                    subtitle={`${env.psu_count === 1 ? 'supply' : 'supplies'} present`} />
+                )}
+              </div>
+            )}
+            {hasHistory && (
+              <div>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Temperature — last 24h (device max)</p>
+                <TemperatureHistoryChart series={env.temperature_history} />
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Section 2 — Interface Traffic */}
       <div className={liveCard}>
@@ -1052,6 +1092,61 @@ function PingLatencyChart({ reach }: { reach?: DeviceReachability }) {
         {' · '}Max: <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(reach?.max_rtt_ms)}</span>
         {reach?.uptime_pct_24h != null && <>{' · '}Uptime: <span className="font-medium text-gray-700 dark:text-gray-300">{reach.uptime_pct_24h.toFixed(1)}% (24h)</span></>}
       </p>
+    </div>
+  )
+}
+
+// Device max temperature over 24h, colored by zone (<60 green · 60-75 yellow ·
+// 75-85 orange · >85 red) with a warning (75°C) and critical (85°C) line.
+function TemperatureHistoryChart({ series }: { series?: MetricPoint[] }) {
+  const data = series ?? []
+  const hasData = data.length > 1
+
+  const option: EChartsOption = {
+    grid: { left: 40, right: 14, top: 14, bottom: 26 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        const v = Array.isArray(p.value) ? p.value[1] : p.value
+        const t = new Date(Array.isArray(p.value) ? p.value[0] : p.axisValue).toLocaleString()
+        return v == null ? `${t}<br/>no data` : `${t}<br/>${Number(v).toFixed(1)}°C`
+      },
+    },
+    xAxis: { type: 'time', axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: '°C', nameTextStyle: { fontSize: 10 }, scale: true, axisLabel: { fontSize: 10 } },
+    visualMap: {
+      show: false, dimension: 1, seriesIndex: 0,
+      pieces: [
+        { lte: 60, color: '#22c55e' },
+        { gt: 60, lte: 75, color: '#eab308' },
+        { gt: 75, lte: 85, color: '#f97316' },
+        { gt: 85, color: '#ef4444' },
+      ],
+      outOfRange: { color: '#ef4444' },
+    },
+    series: [{
+      type: 'line', showSymbol: false, smooth: true, connectNulls: false,
+      data: data.map((p) => [p.time, p.value]),
+      lineStyle: { width: 1.5 },
+      areaStyle: { opacity: 0.08 },
+      markLine: {
+        silent: true, symbol: 'none',
+        data: [
+          { yAxis: 75, lineStyle: { color: '#eab308', type: 'dashed', width: 1 },
+            label: { formatter: 'warn 75°C', fontSize: 9, color: '#eab308', position: 'insideEndTop' } },
+          { yAxis: 85, lineStyle: { color: '#ef4444', type: 'dashed', width: 1 },
+            label: { formatter: 'crit 85°C', fontSize: 9, color: '#ef4444', position: 'insideEndTop' } },
+        ],
+      },
+    }],
+  }
+
+  return (
+    <div>
+      {hasData
+        ? <ReactECharts option={option} style={{ height: 180 }} opts={{ renderer: 'svg' }} notMerge />
+        : <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">No temperature history yet</div>}
     </div>
   )
 }

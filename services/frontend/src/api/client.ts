@@ -356,12 +356,24 @@ export interface DeviceReachability {
   data: ReachabilityPoint[]
 }
 
+export interface DeviceEnvironmentSensor {
+  sensor_name: string
+  temperature_c: number | null
+  status_ok: boolean
+}
+
 // Physical-sensor summary; empty {} for devices that report none (e.g. virtual).
 export interface DeviceEnvironment {
   temperature_c?: number
   temperature_sensors?: number
   fan_sensors?: number
   power_sensors?: number
+  // Explicit counts from ENTITY-SENSOR devices (AOS-CX).
+  fan_count?: number
+  psu_count?: number
+  // Per-sensor temperatures (device_environment measurement) + 24h history.
+  sensors?: DeviceEnvironmentSensor[]
+  temperature_history?: MetricPoint[]
 }
 
 export interface LldpNeighbor {

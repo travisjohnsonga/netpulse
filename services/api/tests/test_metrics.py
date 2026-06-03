@@ -184,3 +184,12 @@ class TestMetricsModule:
         assert env["temperature_c"] == 41.5 and env["temperature_sensors"] == 2
         assert env["fan_sensors"] == 1
         assert env["power_sensors"] == 1
+
+    def test_environment_prefers_explicit_scalars(self):
+        # AOS-CX: stream-processor derives temp_max_c/fan_count/psu_count — these
+        # win over token-scanning (which would mis-count the *_count fields).
+        from apps.devices.metrics_influx import _environment
+        snap = {"temp_max_c": 28.88, "fan_count": 4, "psu_count": 1,
+                "cpu_pct": 22.5, "GigabitEthernet1/in_octets": 99}
+        env = _environment(snap)
+        assert env == {"temperature_c": 28.9, "fan_count": 4, "psu_count": 1}
