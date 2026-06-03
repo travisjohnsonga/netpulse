@@ -534,6 +534,10 @@ class DiscoveryRunner:
         try:
             if self._job.method == DiscoveryJob.Method.SCAN:
                 await self._active_scan()
+            elif self._job.method == DiscoveryJob.Method.PING_SNMP:
+                await self._ping_scan(with_snmp=True)
+            elif self._job.method == DiscoveryJob.Method.PING:
+                await self._ping_scan(with_snmp=False)
             elif self._job.method == DiscoveryJob.Method.TOPOLOGY:
                 seed_ip = self._job.subnets[0] if self._job.subnets else None
                 if not seed_ip and self._job.seed_device:
@@ -618,6 +622,137 @@ class DiscoveryRunner:
             await asyncio.sleep(self._delay)
         await self._set_progress(
             current=scanned, total=total, ips=scanned, message="Processing results...")
+
+    # ── ping-based scans (production-safe: ICMP only, no nmap/port scan) ────────
+
+    @staticmethod
+    def _expand_hosts(subnet: str) -> list[str]:
+        """Usable host IPs in a CIDR (the whole range for /31 and /32)."""
+        try:
+            net = ipaddress.ip_network(subnet, strict=False)
+        except ValueError:
+            return []
+        if net.prefixlen >= net.max_prefixlen - 1:  # /31, /32 (+ v6 equivalents)
+            return [str(h) for h in net]
+        return [str(h) for h in net.hosts()]
+
+    async def _ping_scan(self, with_snmp: bool) -> None:
+        """
+        Production-safe discovery: ICMP ping sweep of the job's subnets, then —
+        for ``ping_snmp`` only — SNMP fingerprinting + an SSH banner read of each
+        live host. No nmap, no port scanning, no service detection, so it won't
+        trip IDS/firewall rules the way the active (nmap) scan can.
+
+        ``with_snmp=False`` is the ``ping`` method: liveness only, devices land
+        with platform unknown for manual selection at approval.
+        """
+        candidates = [ip for sub in self._job.subnets for ip in self._expand_hosts(sub)]
+        candidates = [ip for ip in candidates if self._is_allowed(ip)]
+        total = len(candidates) or 1
+        mode = "Ping + SNMP" if with_snmp else "Ping"
+        await self._set_progress(
+            total=total, current=0, ips=0,
+            message=f"{mode} sweep of {total} address{'es' if total != 1 else ''}...")
+
+        scanned = 0
+        for ip in candidates:
+            if self._found >= self._job.max_devices:
+                logger.warning("max_devices %d reached", self._job.max_devices)
+                await self._set_progress(
+                    current=scanned, ips=scanned,
+                    message=f"Stopped at max_devices ({self._job.max_devices})")
+                return
+            scanned += 1
+            if scanned % 10 == 0 and await self._check_cancel():
+                self._cancelled = True
+                return
+            if total <= 64 or scanned % 10 == 0:
+                await self._set_progress(
+                    current=scanned, ips=scanned,
+                    message=f"Pinging {ip}... ({scanned}/{total})")
+            if await self._ping_host(ip):
+                await self._probe_ping(ip, with_snmp=with_snmp)
+            await asyncio.sleep(self._delay)  # rate_limit_pps
+        await self._set_progress(
+            current=scanned, total=total, ips=scanned, message="Processing results...")
+
+    async def _ping_host(self, ip: str) -> bool:
+        """
+        ICMP liveness via the system ``ping`` (one echo, 2s wait) — no nmap, no
+        port scan. Falls back to icmplib when the ``ping`` binary is absent.
+        """
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ping", "-c", "1", "-W", "2", str(ip),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.communicate(), timeout=3)
+            return proc.returncode == 0
+        except FileNotFoundError:
+            return await self._icmp_ping(ip)
+        except Exception:
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            return False
+
+    async def _probe_ping(self, ip: str, with_snmp: bool) -> None:
+        """
+        Persist a live host found by the ping sweep. For ``ping_snmp`` also tries
+        SNMP (sysDescr/sysName/sysObjectID → vendor/platform) and a non-intrusive
+        SSH banner read; for ``ping`` it records ICMP-only (platform unknown).
+        """
+        self._seen.add(ip)
+        methods: list[str] = ["icmp"]
+        responds_to: dict = {"icmp": True}
+        vendor = hostname = descr = platform = os_version = model = ""
+        confidence = 10
+        snmp = None
+        category = DiscoveredDevice.Category.UNKNOWN
+
+        if with_snmp:
+            snmp = await self._snmp_probe(ip)
+            if snmp:
+                descr, hostname, sysobjid = snmp
+                vendor = _vendor_from_sysobjid(sysobjid) or _vendor_from_descr(descr) or ""
+                platform = _platform_from_descr(descr) or ""
+                methods.append("snmp"); responds_to["snmp"] = True
+                confidence = max(confidence, 60)
+            banner = await self._ssh_banner(ip)
+            if banner:
+                methods.append("ssh"); responds_to["ssh"] = True
+                vendor = vendor or _vendor_from_banner(banner)
+                platform = platform or _platform_from_banner(banner)
+                confidence = max(confidence, 40 if vendor else 30)
+                if not descr:
+                    descr = banner
+            # Known vendor but no platform → vendor default (cisco stays blank
+            # for the operator to pick at approval).
+            if vendor and not platform:
+                platform = default_platform_for_vendor(vendor)
+            category, _conf = classify_device({}, [], snmp)
+
+        await self._save_discovered(ip, {
+            "detection_methods": methods,
+            "responds_to": responds_to,
+            "confidence_score": confidence,
+            "discovered_hostname": hostname,
+            "discovered_vendor": vendor,
+            "discovered_platform": platform,
+            "discovered_os": os_version,
+            "discovered_model": model,
+            "raw_fingerprint": descr[:500],
+            "device_category": category,
+        })
+        self._found += 1
+        await self._update_count(self._found)
+        logger.info(
+            "found (ping%s): %s  score=%d  vendor=%s  platform=%s  name=%s",
+            "+snmp" if with_snmp else "", ip, confidence, vendor or "?",
+            platform or "?", hostname or "?",
+        )
 
     async def _nmap_live_hosts(self, subnet: str) -> list[str] | None:
         """

@@ -751,3 +751,126 @@ class TestRunnerCancellation:
         rec = self._run_with_stubs(job, cancel_returns=lambda n: False)
         assert rec["scanned"] is True
         assert rec["statuses"] == ["running", "completed"]
+
+
+class TestPingDiscovery:
+    """Ping + SNMP (production-safe) and Ping Only discovery methods."""
+
+    def test_expand_hosts(self):
+        from apps.devices.management.commands.run_discovery import DiscoveryRunner
+        assert DiscoveryRunner._expand_hosts("10.55.0.0/30") == [
+            "10.55.0.1", "10.55.0.2"]
+        assert DiscoveryRunner._expand_hosts("10.55.0.7/32") == ["10.55.0.7"]
+        assert DiscoveryRunner._expand_hosts("nonsense") == []
+
+    def test_create_ping_snmp_job(self, auth_client):
+        resp = auth_client.post("/api/devices/discovery/jobs/", {
+            "name": "prod ping+snmp", "method": "ping_snmp",
+            "subnets": ["10.55.0.0/30"], "allowed_subnets": ["10.0.0.0/8"],
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        assert resp.json()["method"] == "ping_snmp"
+
+    def test_create_ping_job(self, auth_client):
+        resp = auth_client.post("/api/devices/discovery/jobs/", {
+            "name": "ping only", "method": "ping", "subnets": ["10.55.0.0/30"],
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        assert resp.json()["method"] == "ping"
+
+    @pytest.mark.parametrize("method", ["ping_snmp", "ping"])
+    def test_run_allows_ping_methods(self, auth_client, method):
+        # The run gate must accept the new methods (was scan/topology only).
+        job = DiscoveryJob.objects.create(
+            name=method, method=method, subnets=["10.55.0.0/30"], status="completed")
+        resp = auth_client.post(f"/api/devices/discovery/jobs/{job.id}/run/")
+        assert resp.status_code == 200, resp.content
+        job.refresh_from_db()
+        assert job.status == "pending"
+
+    @pytest.mark.parametrize("method", ["ping_snmp", "ping"])
+    def test_start_discovery_schedules_ping_methods(self, monkeypatch, settings, method):
+        from apps.devices.views import DiscoveryJobViewSet
+        settings.DISCOVERY_AUTORUN = True
+        scheduled = []
+        monkeypatch.setattr("django.db.transaction.on_commit", lambda cb: scheduled.append(cb))
+        job = DiscoveryJob.objects.create(name=method, method=method, subnets=["10.55.0.0/30"])
+        DiscoveryJobViewSet._start_discovery(job)
+        assert len(scheduled) == 1
+
+    def _run_ping_scan(self, job, *, with_snmp, ping_ok, snmp=None, banner=""):
+        """Run _ping_scan with DB/network methods stubbed; return discovered payloads."""
+        import asyncio
+        from apps.devices.management.commands.run_discovery import DiscoveryRunner
+
+        saved = []
+
+        async def _go():
+            runner = DiscoveryRunner(job=job, community="public", rate_pps=1000)
+
+            async def fake_ping(ip):
+                return ping_ok(ip)
+
+            async def fake_snmp(ip):
+                return snmp
+
+            async def fake_banner(ip):
+                return banner
+
+            async def fake_save(ip, data):
+                saved.append((ip, data))
+
+            async def fake_progress(**kw):
+                pass
+
+            async def fake_count(n):
+                pass
+
+            async def fake_cancel():
+                return False
+
+            runner._ping_host = fake_ping
+            runner._snmp_probe = fake_snmp
+            runner._ssh_banner = fake_banner
+            runner._save_discovered = fake_save
+            runner._set_progress = fake_progress
+            runner._update_count = fake_count
+            runner._check_cancel = fake_cancel
+            await runner._ping_scan(with_snmp=with_snmp)
+
+        asyncio.run(_go())
+        return saved
+
+    def test_ping_snmp_scan_fingerprints_live_host(self, db):
+        job = DiscoveryJob.objects.create(
+            name="ps", method="ping_snmp", subnets=["10.55.0.0/30"])
+        saved = self._run_ping_scan(
+            job, with_snmp=True,
+            ping_ok=lambda ip: ip == "10.55.0.1",
+            snmp=("Cisco IOS XE Software, Version 17.9", "rtr1",
+                  "1.3.6.1.4.1.9.1.2218"))
+        assert len(saved) == 1
+        ip, data = saved[0]
+        assert ip == "10.55.0.1"
+        assert "icmp" in data["detection_methods"]
+        assert "snmp" in data["detection_methods"]
+        assert data["discovered_vendor"] == "cisco"
+        assert data["confidence_score"] >= 60
+
+    def test_ping_only_scan_records_unknown_platform(self, db):
+        job = DiscoveryJob.objects.create(
+            name="po", method="ping", subnets=["10.55.0.0/30"])
+        saved = self._run_ping_scan(job, with_snmp=False, ping_ok=lambda ip: True)
+        # Both hosts in the /30 respond; none fingerprinted (icmp only).
+        assert len(saved) == 2
+        for _ip, data in saved:
+            assert data["detection_methods"] == ["icmp"]
+            assert data["discovered_platform"] == ""
+            assert data["discovered_vendor"] == ""
+            assert data["confidence_score"] == 10
+
+    def test_ping_scan_skips_dead_hosts(self, db):
+        job = DiscoveryJob.objects.create(
+            name="dead", method="ping", subnets=["10.55.0.0/30"])
+        saved = self._run_ping_scan(job, with_snmp=False, ping_ok=lambda ip: False)
+        assert saved == []

@@ -1274,6 +1274,21 @@ Route table walking preferred over ping — ICMP often blocked.
 OT/ICS WARNING: never auto-probe industrial control networks.
 Safety: allowed_subnets, excluded_subnets, rate_limit_pps=10
 
+### Discovery methods (DiscoveryJob.Method)
+ping_snmp / topology / passive / scan / ping / import. The engine
+(run_discovery) executes ping_snmp, ping, scan and topology; passive/import
+have no engine run.
+- ping_snmp (Ping + SNMP) — DEFAULT, production-safe: ICMP ping sweep (system
+  `ping`, no nmap) → SNMP fingerprint (sysDescr/sysName/sysObjectID) + a
+  non-intrusive SSH banner read of live hosts. No port scanning.
+- ping (Ping Only) — ICMP sweep only; devices land platform-unknown for manual
+  selection at approval.
+- scan (Active Scan) — nmap host discovery + `-sV -O` service/OS detection.
+
+⚠️ Active Scan (nmap) triggered a firewall block in the wco2 remote lab.
+Always use Ping + SNMP as the default for production environments; reserve
+Active Scan for lab/test networks. The New Job modal defaults to ping_snmp.
+
 ## API-Based Integrations
 Service: ingest-api-poller
 Vendors: Meraki, Mist/Aruba, UniFi, DNA Center, FortiCloud, Panorama

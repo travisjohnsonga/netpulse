@@ -25,7 +25,21 @@ const STATUS_BADGE: Record<string, string> = {
 }
 
 const METHOD_LABEL: Record<DiscoveryMethod, string> = {
-  passive: 'Passive', topology: 'Topology Walk', scan: 'Active Scan', import: 'Import',
+  ping_snmp: 'Ping + SNMP', topology: 'Topology Walk', passive: 'Passive',
+  scan: 'Active Scan', ping: 'Ping Only', import: 'Import',
+}
+
+// Order shown in the New Job modal — safest (production-friendly) first.
+const METHOD_ORDER: DiscoveryMethod[] = ['ping_snmp', 'topology', 'passive', 'scan', 'ping', 'import']
+
+// Per-method guidance shown below the Method dropdown.
+const METHOD_DESC: Record<DiscoveryMethod, string> = {
+  ping_snmp: '✅ Safe for production. ICMP ping sweep + SNMP fingerprinting (and a non-intrusive SSH banner read) only. No port scanning — won’t trigger IDS/firewall rules.',
+  topology: 'Walks LLDP/CDP neighbors from a seed device. Requires SNMP credentials on the seed.',
+  passive: 'Listen-only mode. No active probing — devices appear as their traffic is seen by the ingest layer.',
+  scan: '⚠️ Uses nmap port scanning. May trigger IDS/firewall alerts. Recommended for lab/test environments only.',
+  ping: 'ICMP ping sweep only. No fingerprinting — platform will be unknown and require manual selection on approval.',
+  import: 'Import devices from a NetBox/CSV source rather than probing the network.',
 }
 
 function apiError(err: unknown, fallback: string): string {
@@ -647,7 +661,7 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
         {isRunning && elapsed > 0 && <span className="text-xs text-gray-400 dark:text-gray-500">{fmtSecs(elapsed)}</span>}
         <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full capitalize', STATUS_BADGE[status])}>{STATUS_ICON[status]} {status}</span>
         {(() => {
-          const canStart = job.method === 'scan' || job.method === 'topology'
+          const canStart = job.method === 'scan' || job.method === 'topology' || job.method === 'ping_snmp' || job.method === 'ping'
           const startLabel = status === 'completed' ? '▶ Run Again' : status === 'failed' ? '▶ Retry' : '▶ Run'
           const btn = 'px-2.5 py-1 text-xs border rounded-md disabled:opacity-50'
           const plain = 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300'
@@ -841,7 +855,9 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
 function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; profiles: CredentialProfileListItem[]; onClose: () => void; onSaved: (edited: boolean) => void }) {
   const editing = !!job
   const [name, setName] = useState(job?.name ?? '')
-  const [method, setMethod] = useState<DiscoveryMethod>(job?.method ?? 'scan')
+  // Default to the production-safe Ping + SNMP (Active Scan's nmap probing
+  // tripped a firewall block in the wco2 lab — see CLAUDE.md).
+  const [method, setMethod] = useState<DiscoveryMethod>(job?.method ?? 'ping_snmp')
   const [subnets, setSubnets] = useState(job?.subnets.join('\n') ?? '')
   const [allowed, setAllowed] = useState(job ? job.allowed_subnets.join('\n') : '10.0.0.0/8')
   const [excluded, setExcluded] = useState(job?.excluded_subnets.join('\n') ?? '')
@@ -856,9 +872,14 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
   // "Allowed" still at its empty/default catch-all → safe to suggest narrowing.
   const allowedIsDefault = allowed.trim() === '' || allowed.trim() === '10.0.0.0/8'
 
-  // Credentials are needed to actually connect: SNMP (community/v3) for scan
-  // fingerprinting, SSH for LLDP/topology walks.
-  const needsCreds = method === 'scan' || method === 'topology'
+  // Credentials are needed to actually connect: SNMP (community/v3) for
+  // scan/ping+SNMP fingerprinting, SSH for LLDP/topology walks. (Ping Only does
+  // no fingerprinting, so it needs none.)
+  const needsCreds = method === 'scan' || method === 'topology' || method === 'ping_snmp'
+
+  // Subnet-based methods sweep ranges; topology seeds from a device, passive/
+  // import don't probe ranges at all.
+  const needsSubnets = method === 'scan' || method === 'ping_snmp' || method === 'ping'
 
   const submit = async () => {
     if (!name.trim()) { setErr('Name is required.'); return }
@@ -901,10 +922,13 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Method</label>
           <select className={inputCls} value={method} onChange={(e) => setMethod(e.target.value as DiscoveryMethod)}>
-            {(['passive', 'topology', 'scan', 'import'] as DiscoveryMethod[]).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
+            {METHOD_ORDER.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
           </select>
+          <p className={clsx('text-xs mt-1', method === 'scan' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')}>
+            {METHOD_DESC[method]}
+          </p>
         </div>
-        {method === 'scan' && (
+        {needsSubnets && (
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subnets to scan</label>
             <textarea className={`${inputCls} font-mono text-xs h-16`} value={subnets} onChange={(e) => setSubnets(e.target.value)} placeholder="10.1.0.0/24&#10;10.2.0.0/24" />
@@ -933,7 +957,7 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed subnets</label>
           <textarea className={`${inputCls} font-mono text-xs h-14`} value={allowed} onChange={(e) => setAllowed(e.target.value)} placeholder="10.0.0.0/8" />
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Discovery never probes outside these ranges.</p>
-          {method === 'scan' && parse(subnets).length > 0 && (
+          {needsSubnets && parse(subnets).length > 0 && (
             <button type="button" onClick={() => setAllowed(subnets)}
               className="text-xs text-blue-500 hover:text-blue-400 cursor-pointer mt-1">
               ↑ Copy from subnets to scan

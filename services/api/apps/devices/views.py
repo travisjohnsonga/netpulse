@@ -407,10 +407,19 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
 _PLATFORM_VALUES = {p.value for p in Device.Platform}
 
+# Methods the discovery engine actually executes (passive/import have no run).
+_RUNNABLE_METHODS = (
+    DiscoveryJob.Method.SCAN,
+    DiscoveryJob.Method.PING_SNMP,
+    DiscoveryJob.Method.PING,
+    DiscoveryJob.Method.TOPOLOGY,
+)
+
 
 class DiscoveryJobViewSet(viewsets.ModelViewSet):
     """
-    Manage device discovery jobs (passive / topology / active scan / import).
+    Manage device discovery jobs (ping+SNMP / ping / topology / active scan /
+    passive / import).
 
     Creating a job stores it in PENDING; the discovery engine (`run_discovery`)
     executes it and records DiscoveredDevice rows. Discovered devices always land
@@ -442,8 +451,8 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
         if job.status == DiscoveryJob.Status.RUNNING:
             return Response({"error": "Job is already running."},
                             status=status.HTTP_400_BAD_REQUEST)
-        if job.method not in (DiscoveryJob.Method.SCAN, DiscoveryJob.Method.TOPOLOGY):
-            return Response({"error": "Only scan and topology jobs can be run."},
+        if job.method not in _RUNNABLE_METHODS:
+            return Response({"error": "Only scan, ping_snmp, ping and topology jobs can be run."},
                             status=status.HTTP_400_BAD_REQUEST)
         job.status = DiscoveryJob.Status.PENDING
         job.progress_current = job.progress_total = job.ips_scanned = job.devices_found = 0
@@ -502,7 +511,7 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
 
         if not getattr(dj_settings, "DISCOVERY_AUTORUN", True):
             return
-        if job.method not in (DiscoveryJob.Method.SCAN, DiscoveryJob.Method.TOPOLOGY):
+        if job.method not in _RUNNABLE_METHODS:
             return
         from threading import Thread
 

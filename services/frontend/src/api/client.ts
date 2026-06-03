@@ -1151,7 +1151,7 @@ export async function deleteUser(id: number): Promise<void> {
 
 // ── Device discovery (Settings → Discovery) ──────────────────────────────────
 
-export type DiscoveryMethod = 'passive' | 'topology' | 'scan' | 'import'
+export type DiscoveryMethod = 'ping_snmp' | 'ping' | 'passive' | 'topology' | 'scan' | 'import'
 export type DiscoveryStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export interface DiscoveryJob {

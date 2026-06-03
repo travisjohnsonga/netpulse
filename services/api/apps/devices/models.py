@@ -151,9 +151,11 @@ class Device(TimestampedModel):
 
 class DiscoveryJob(TimestampedModel):
     class Method(models.TextChoices):
-        PASSIVE   = "passive",   "Passive (ingest source IPs)"
+        PING_SNMP = "ping_snmp", "Ping + SNMP (production-safe)"
         TOPOLOGY  = "topology",  "Topology Walk (CDP/LLDP/route table)"
+        PASSIVE   = "passive",   "Passive (ingest source IPs)"
         SCAN      = "scan",      "Active Scan (SNMP/SSH probe)"
+        PING      = "ping",      "Ping Only (no fingerprinting)"
         IMPORT    = "import",    "Import (NetBox/CSV)"
 
     class Status(models.TextChoices):
