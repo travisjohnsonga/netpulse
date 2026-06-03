@@ -173,6 +173,24 @@ class TestDeviceEndpoints:
         assert resp.status_code == 200
         assert resp.json()["status"] == "maintenance"
 
+    def test_assign_device_to_site(self, auth_client, device):
+        # Site detail "Add to site" PATCHes the device's site FK.
+        other = Site.objects.create(name="Branch-9")
+        resp = auth_client.patch(f"/api/devices/{device.pk}/", {"site": other.pk})
+        assert resp.status_code == 200
+        device.refresh_from_db()
+        assert device.site_id == other.pk
+
+    def test_unassign_device_from_site(self, auth_client, device):
+        # "Remove" clears the site FK (device kept, not deleted). JSON-encoded
+        # because the multipart test client can't represent a null value.
+        resp = auth_client.patch(
+            f"/api/devices/{device.pk}/", {"site": None}, format="json"
+        )
+        assert resp.status_code == 200
+        device.refresh_from_db()
+        assert device.site_id is None
+
     def test_delete_device(self, auth_client, device):
         resp = auth_client.delete(f"/api/devices/{device.pk}/")
         assert resp.status_code == 204

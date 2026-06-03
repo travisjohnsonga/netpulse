@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { fetchSite, fetchSiteDevices, saveSite, fetchCollectors, type Site, type Device, type Collector } from '../api/client'
+import {
+  fetchSite, fetchSiteDevices, saveSite, fetchSites, fetchDevices, setDeviceSite,
+  fetchCollectors, type Site, type Device, type Collector,
+} from '../api/client'
+import SiteFormModal from '../components/SiteFormModal'
 
 const TYPE_ICON: Record<string, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
@@ -22,6 +26,8 @@ export default function SiteDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<string>('Overview')
+  const [editing, setEditing] = useState(false)
+  const [allSites, setAllSites] = useState<Site[]>([])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -31,6 +37,8 @@ export default function SiteDetail() {
       .finally(() => setLoading(false))
   }, [siteId])
   useEffect(() => { load() }, [load])
+  // All sites — only needed to populate the edit modal's parent-site dropdown.
+  useEffect(() => { fetchSites().then(setAllSites).catch(() => {}) }, [])
 
   if (loading) return <div className="flex items-center justify-center py-24"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
   if (error || !site) {
@@ -50,11 +58,27 @@ export default function SiteDetail() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{TYPE_ICON[site.site_type]} {site.name}</h1>
           <span className="px-2 py-0.5 rounded-full text-xs font-medium capitalize bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">{site.site_type}</span>
           {site.parent_site_name && <span className="text-sm text-gray-400 dark:text-gray-500">in {site.parent_site_name}</span>}
+          <button
+            onClick={() => setEditing(true)}
+            className="ml-auto px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50"
+          >
+            Edit
+          </button>
         </div>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           {[site.city, site.state, site.country].filter(Boolean).join(', ') || 'No location set'}
         </p>
       </div>
+
+      {editing && (
+        <SiteFormModal
+          site={site}
+          sites={allSites}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); load() }}
+          onDeleted={() => navigate('/sites', { state: { toast: `Site "${site.name}" deleted` } })}
+        />
+      )}
 
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
         {TABS.map((t) => (
@@ -63,7 +87,7 @@ export default function SiteDetail() {
       </div>
 
       {tab === 'Overview' && <Overview site={site} />}
-      {tab === 'Devices' && <Devices siteId={site.id} onOpen={(d) => navigate(`/devices/${d}`)} />}
+      {tab === 'Devices' && <Devices siteId={site.id} onOpen={(d) => navigate(`/devices/${d}`)} onChanged={load} />}
       {tab === 'Availability' && <Placeholder text="Site-level uptime summary appears once availability records are computed." icon="📈" />}
       {tab === 'WAN Circuits' && <Placeholder text="WAN circuits connecting this site will appear here (circuit overrides backend pending)." icon="🔌" />}
     </div>
@@ -117,36 +141,102 @@ function Overview({ site }: { site: Site }) {
   )
 }
 
-function Devices({ siteId, onOpen }: { siteId: number; onOpen: (id: number) => void }) {
+function Devices({ siteId, onOpen, onChanged }: { siteId: number; onOpen: (id: number) => void; onChanged?: () => void }) {
   const [devices, setDevices] = useState<Device[]>([])
+  const [allDevices, setAllDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(true)
-  useEffect(() => { fetchSiteDevices(siteId).then(setDevices).catch(() => setDevices([])).finally(() => setLoading(false)) }, [siteId])
+  const [addId, setAddId] = useState<number | ''>('')
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(() => {
+    return Promise.all([
+      fetchSiteDevices(siteId),
+      fetchDevices({ page_size: '1000' }).then((r) => r.results).catch(() => [] as Device[]),
+    ]).then(([here, all]) => { setDevices(here); setAllDevices(all) })
+      .catch(() => setDevices([]))
+      .finally(() => setLoading(false))
+  }, [siteId])
+  useEffect(() => { refresh() }, [refresh])
+
+  const assignedIds = new Set(devices.map((d) => d.id))
+  const available = allDevices.filter((d) => !assignedIds.has(d.id))
+
+  const assign = async (deviceId: number) => {
+    setBusy(true)
+    try { await setDeviceSite(deviceId, siteId); setAddId(''); await refresh(); onChanged?.() }
+    finally { setBusy(false) }
+  }
+  const unassign = async (deviceId: number) => {
+    setBusy(true)
+    try { await setDeviceSite(deviceId, null); await refresh(); onChanged?.() }
+    finally { setBusy(false) }
+  }
 
   if (loading) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
-  if (devices.length === 0) return <Placeholder text="No devices are located at this site yet." icon="📡" />
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
-            <th className="px-5 py-3 font-medium">Hostname</th>
-            <th className="px-5 py-3 font-medium">IP</th>
-            <th className="px-5 py-3 font-medium">Platform</th>
-            <th className="px-5 py-3 font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-          {devices.map((d) => (
-            <tr key={d.id} onClick={() => onOpen(d.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-              <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{d.hostname}</td>
-              <td className="px-5 py-3 text-gray-600 dark:text-gray-400 font-mono text-xs">{d.ip_address}</td>
-              <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{d.platform}</td>
-              <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400')}>{d.status}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-4">
+      {/* Assign a device to this site */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Add a device to this site</label>
+          <select
+            className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+            value={addId}
+            disabled={busy || available.length === 0}
+            onChange={(e) => setAddId(e.target.value ? Number(e.target.value) : '')}
+          >
+            <option value="">{available.length === 0 ? 'No unassigned devices available' : '— Select a device —'}</option>
+            {available.map((d) => (
+              <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address}){d.site_name ? ` — currently ${d.site_name}` : ''}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          onClick={() => addId && assign(addId)}
+          disabled={busy || !addId}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium"
+        >
+          Add to site
+        </button>
+      </div>
+
+      {devices.length === 0 ? (
+        <Placeholder text="No devices are located at this site yet. Use the selector above to assign one." icon="📡" />
+      ) : (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+                <th className="px-5 py-3 font-medium">Hostname</th>
+                <th className="px-5 py-3 font-medium">IP</th>
+                <th className="px-5 py-3 font-medium">Platform</th>
+                <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+              {devices.map((d) => (
+                <tr key={d.id} onClick={() => onOpen(d.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                  <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{d.hostname}</td>
+                  <td className="px-5 py-3 text-gray-600 dark:text-gray-400 font-mono text-xs">{d.ip_address}</td>
+                  <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{d.platform}</td>
+                  <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400')}>{d.status}</span></td>
+                  <td className="px-5 py-3 text-right">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); unassign(d.id) }}
+                      disabled={busy}
+                      className="text-red-600 hover:text-red-800 dark:text-red-400 text-sm font-medium disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

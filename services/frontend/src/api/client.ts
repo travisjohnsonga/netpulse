@@ -1573,6 +1573,12 @@ export async function setDeviceCollector(id: number, collector: number | null): 
   return data
 }
 
+// Assign (or, with null, unassign) a device to a site.
+export async function setDeviceSite(id: number, site: number | null): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(`/devices/${id}/`, { site })
+  return data
+}
+
 // Full-resource update (PUT). Send all writable fields so none are reset.
 export async function updateDevice(
   id: number, payload: DeviceCreatePayload & { groups?: number[] },
