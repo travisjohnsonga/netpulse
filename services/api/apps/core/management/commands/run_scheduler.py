@@ -32,6 +32,9 @@ ALERT_RETENTION_DAYS = 90
 ALERT_PURGE_INTERVAL_S = 24 * 3600                                  # daily
 ARP_MAC_INTERVAL_S = int(os.environ.get("ARP_MAC_COLLECT_INTERVAL_S", str(6 * 3600)))
 MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7 * 24 * 3600)))
+# Heartbeat the local collector frequently; with the default 300s tick it
+# effectively fires every tick (well under the 600s health window).
+COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
 DEFAULT_TICK_S = 300
 
 
@@ -62,6 +65,7 @@ class Command(BaseCommand):
             ["alert_purge", options["interval"], self._purge_alerts, True, None],
             ["arp_mac", ARP_MAC_INTERVAL_S, self._collect_arp_mac, False, None],
             ["mac_vendors", MAC_VENDOR_INTERVAL_S, self._update_mac_vendors, False, None],
+            ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -92,6 +96,7 @@ class Command(BaseCommand):
     def _run_startup_tasks(self):
         for name, fn in (("seed_alert_rules", self._seed_alert_rules),
                          ("openbao_refresh", self._openbao_refresh),
+                         ("register_local_collector", self._register_local_collector),
                          ("seed_mac_vendors", self._seed_mac_vendors_if_empty)):
             try:
                 fn()
@@ -100,6 +105,12 @@ class Command(BaseCommand):
 
     def _seed_alert_rules(self):
         call_command("seed_alert_rules")
+
+    def _register_local_collector(self):
+        from apps.collectors.management.commands.register_local_collector import (
+            register_local_collector,
+        )
+        register_local_collector()
 
     def _openbao_refresh(self):
         # Idempotent: unseals if sealed, refreshes the readable token; no-op if
@@ -126,3 +137,11 @@ class Command(BaseCommand):
     def _update_mac_vendors(self):
         logger.info("scheduler: refreshing MAC-vendor OUI registry")
         call_command("update_mac_vendors")
+
+    def _collector_heartbeat(self):
+        # Refresh the local collector's last_seen_at so its health reflects a
+        # live engine fleet. Also (re)registers it if the row is missing.
+        from apps.collectors.management.commands.register_local_collector import (
+            register_local_collector,
+        )
+        register_local_collector()

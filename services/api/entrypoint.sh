@@ -43,6 +43,11 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] seeding SSO providers from env..."
     python manage.py seed_sso_providers || echo "[entrypoint] SSO provider seed had issues (continuing)"
 
+    # Register this server as the local collector (idempotent); the scheduler
+    # keeps its heartbeat fresh thereafter.
+    echo "[entrypoint] registering local collector..."
+    python manage.py register_local_collector || echo "[entrypoint] local-collector registration had issues (continuing)"
+
     # Seed the ingest-snmp poller with the current device inventory (api only).
     # Best-effort: a NATS hiccup must not block startup.
     echo "[entrypoint] publishing device configs to NATS..."

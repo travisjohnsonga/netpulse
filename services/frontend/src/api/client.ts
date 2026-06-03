@@ -715,14 +715,21 @@ export async function fetchAlertChannels(): Promise<AlertChannel[]> {
 
 // ── Collectors ───────────────────────────────────────────────────────────────
 
+export type CollectorType = 'local' | 'remote'
+
 export interface Collector {
   id: number
   name: string
+  collector_type: CollectorType
+  hostname: string
+  location: string
+  capabilities: Record<string, boolean>
   collector_ip: string | null
   site: number | null
   site_name?: string | null
   is_default: boolean
   device_count?: number
+  is_healthy?: boolean
   status: 'pending' | 'active' | 'offline' | 'revoked'
   version: string
   remote_ip: string | null
@@ -735,6 +742,11 @@ export interface Collector {
 export async function fetchCollectors(): Promise<Collector[]> {
   const { data } = await api.get<Collector[] | Paginated<Collector>>('/collectors/')
   return unwrap(data)
+}
+
+export async function updateCollector(id: number, payload: Partial<Collector>): Promise<Collector> {
+  const { data } = await api.patch<Collector>(`/collectors/${id}/`, payload)
+  return data
 }
 
 // ── NetBox import ────────────────────────────────────────────────────────────

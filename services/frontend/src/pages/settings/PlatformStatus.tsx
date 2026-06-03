@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { SectionHeader } from '../Settings'
-import { checkInfraHealth, type InfraHealth, type InfraServiceHealth } from '../../api/client'
+import { checkInfraHealth, fetchCollectors, type InfraHealth, type InfraServiceHealth, type Collector } from '../../api/client'
 
 // Human label per infrastructure service key, in display order.
 const SERVICES: { key: keyof InfraHealth['services']; label: string }[] = [
@@ -40,6 +40,7 @@ function StatusBadge({ svc }: { svc?: InfraServiceHealth }) {
 
 export default function PlatformStatus() {
   const [health, setHealth] = useState<InfraHealth | null>(null)
+  const [localCollector, setLocalCollector] = useState<Collector | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   // Re-render so the "X ago" column ticks between fetches.
@@ -47,9 +48,14 @@ export default function PlatformStatus() {
 
   useEffect(() => {
     let cancelled = false
-    const load = () => checkInfraHealth()
-      .then((d) => { if (!cancelled) { setHealth(d); setError(null); setLoading(false) } })
-      .catch(() => { if (!cancelled) { setError('Could not reach the API.'); setLoading(false) } })
+    const load = () => {
+      checkInfraHealth()
+        .then((d) => { if (!cancelled) { setHealth(d); setError(null); setLoading(false) } })
+        .catch(() => { if (!cancelled) { setError('Could not reach the API.'); setLoading(false) } })
+      fetchCollectors()
+        .then((cs) => { if (!cancelled) setLocalCollector(cs.find((c) => c.collector_type === 'local') ?? null) })
+        .catch(() => {})
+    }
     load()
     const refresh = setInterval(load, REFRESH_MS)
     const ticker = setInterval(() => setTick((t) => t + 1), 1000)
@@ -100,6 +106,24 @@ export default function PlatformStatus() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Local collector — this server's own telemetry collector */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 px-5 py-4 mt-4 flex items-center gap-3 text-sm">
+        <span className="font-medium text-gray-700 dark:text-gray-200">Local Collector:</span>
+        {localCollector ? (
+          <span className={clsx('inline-flex items-center gap-1.5 font-medium',
+            localCollector.is_healthy ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400')}>
+            <span className={clsx('w-2 h-2 rounded-full', localCollector.is_healthy ? 'bg-green-500' : 'bg-gray-400')} />
+            {localCollector.is_healthy ? 'Healthy' : 'No heartbeat'}
+            <span className="text-gray-400 dark:text-gray-500 font-normal">
+              · last seen {agoStr(localCollector.last_seen_at ?? undefined)}
+            </span>
+          </span>
+        ) : (
+          <span className="text-gray-400 dark:text-gray-500">not registered yet</span>
+        )}
+        <a href="/settings/collectors" className="ml-auto text-blue-600 hover:text-blue-800 text-xs">Manage →</a>
       </div>
 
       <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">

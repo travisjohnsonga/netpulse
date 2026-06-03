@@ -187,3 +187,83 @@ class TestCollectorResolution:
         row = resp.json()["results"][0]
         for key in ("collector_ip", "site", "site_name", "status", "last_seen_at", "device_count", "is_default"):
             assert key in row
+
+    def test_serializer_exposes_type_and_capabilities(self, auth_client, collector):
+        resp = auth_client.get("/api/collectors/")
+        row = resp.json()["results"][0]
+        for key in ("collector_type", "hostname", "location", "capabilities", "is_healthy"):
+            assert key in row
+
+
+class TestLocalCollectorRegistration:
+    def test_register_creates_local_collector(self):
+        from apps.collectors.management.commands.register_local_collector import (
+            register_local_collector,
+        )
+        c = register_local_collector()
+        assert c.collector_type == Collector.CollectorType.LOCAL
+        assert c.status == Collector.Status.ACTIVE
+        assert c.capabilities.get("snmp") is True
+        assert c.last_seen_at is not None
+        assert c.is_healthy is True
+        # First collector → becomes the global default.
+        assert c.is_default is True
+
+    def test_register_is_idempotent(self):
+        from apps.collectors.management.commands.register_local_collector import (
+            register_local_collector,
+        )
+        first = register_local_collector()
+        second = register_local_collector()
+        assert first.pk == second.pk
+        assert Collector.objects.filter(
+            collector_type=Collector.CollectorType.LOCAL,
+        ).count() == 1
+
+    def test_register_does_not_steal_existing_default(self):
+        from apps.collectors.management.commands.register_local_collector import (
+            register_local_collector,
+        )
+        Collector.objects.create(
+            name="Existing default", api_key_hash="existing-default-hash",
+            is_default=True,
+        )
+        c = register_local_collector()
+        assert c.is_default is False  # an explicit default already exists
+
+
+class TestCollectorHealth:
+    def test_is_healthy_recent_heartbeat(self):
+        from django.utils import timezone
+        c = Collector.objects.create(
+            name="Fresh", api_key_hash="fresh-hash", status="active",
+            last_seen_at=timezone.now(),
+        )
+        assert c.is_healthy is True
+
+    def test_is_unhealthy_when_stale(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        c = Collector.objects.create(
+            name="Stale", api_key_hash="stale-hash", status="active",
+            last_seen_at=timezone.now() - timedelta(hours=1),
+        )
+        assert c.is_healthy is False
+
+    def test_is_unhealthy_when_never_seen(self, collector):
+        # The fixture collector has no last_seen_at.
+        assert collector.is_healthy is False
+
+
+class TestCollectorDevicesAction:
+    def test_devices_action_lists_assigned(self, auth_client, collector):
+        from apps.devices.models import Device
+        Device.objects.create(
+            hostname="edge-1", ip_address="10.9.9.9", vendor="Cisco",
+            platform="ios_xe", collector=collector,
+        )
+        Device.objects.create(hostname="other", ip_address="10.9.9.10", vendor="Cisco", platform="ios_xe")
+        resp = auth_client.get(f"/api/collectors/{collector.pk}/devices/")
+        assert resp.status_code == 200
+        hostnames = [d["hostname"] for d in resp.json()]
+        assert hostnames == ["edge-1"]
