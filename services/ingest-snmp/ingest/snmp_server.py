@@ -14,7 +14,7 @@ import json
 import logging
 import signal
 
-from .config import cfg
+from .config import cfg, _resolve_openbao_token
 from .credentials import CredentialManager
 from .gnmi_state import GNMIActivity
 from .models import Device
@@ -46,9 +46,13 @@ async def serve() -> None:
     await publisher.connect()
 
     # ── OpenBao credential manager ────────────────────────────────────────────
+    # Pass the resolver (not cfg.openbao_token, which is frozen at import time):
+    # on a reboot race the token may not be readable yet when this module is
+    # imported, so the manager re-reads it on demand and self-heals once
+    # .init_keys is present and OpenBao is unsealed.
     creds = CredentialManager(
         addr=cfg.openbao_addr,
-        token=cfg.openbao_token,
+        token_provider=_resolve_openbao_token,
         cache_ttl=cfg.cred_cache_ttl,
     )
 
