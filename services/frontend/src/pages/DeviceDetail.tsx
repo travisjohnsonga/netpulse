@@ -5,7 +5,7 @@ import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, re
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import { useWebSocket } from '../hooks/useWebSocket'
 import Overview from './device/Overview'
-import Telemetry, { TelemetryConfigPanel } from './device/Telemetry'
+import Telemetry, { TelemetryConfigPanel, Environment } from './device/Telemetry'
 import Logs from './device/Logs'
 import ArpMac from './device/ArpMac'
 import Configuration from './device/Configuration'
@@ -20,6 +20,7 @@ import { CollectionMethodBadges } from '../components/CollectionMethodBadges'
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'telemetry', label: 'Telemetry' },
+  { id: 'environment', label: 'Environment' },
   { id: 'logs', label: 'Logs' },
   { id: 'arpmac', label: 'ARP / MAC' },
   { id: 'configuration', label: 'Configuration' },
@@ -130,6 +131,10 @@ export default function DeviceDetail() {
 
   return (
     <div className="space-y-4">
+      {/* Sticky header + tab bar — stay visible while the tab content below
+          scrolls. main (in Layout) is the scroll container; the sidebar and
+          this bar never scroll off. bg matches main so content scrolls under. */}
+      <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 -mt-4 lg:-mt-6 pt-4 lg:pt-6 bg-gray-50 dark:bg-gray-950 space-y-3">
       {/* Breadcrumb + header */}
       <div>
         <Link to="/devices" className="text-sm text-blue-600 hover:text-blue-800">&larr; Devices</Link>
@@ -175,14 +180,8 @@ export default function DeviceDetail() {
         </div>
       </div>
 
-      {toast && (
-        <div className={clsx('rounded-lg px-4 py-2 text-sm border', toast.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800')}>
-          {toast.ok ? '✅' : '❌'} {toast.msg}
-        </div>
-      )}
-
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800 overflow-x-auto">
         {TABS.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={clsx('px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap transition-colors',
@@ -191,10 +190,18 @@ export default function DeviceDetail() {
           </button>
         ))}
       </div>
+      </div>{/* end sticky header + tab bar */}
+
+      {toast && (
+        <div className={clsx('rounded-lg px-4 py-2 text-sm border', toast.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800')}>
+          {toast.ok ? '✅' : '❌'} {toast.msg}
+        </div>
+      )}
 
       {/* Tab content */}
       {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} onManageCredentials={() => setManagingCreds(true)} />}
       {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} refreshSignal={telemetryRefresh} />}
+      {tab === 'environment' && <Environment device={device} />}
       {tab === 'logs' && <Logs device={device} />}
       {tab === 'arpmac' && <ArpMac device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}

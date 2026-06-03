@@ -58,7 +58,7 @@ export default function Layout({ children }: Props) {
   const currentPage = navItems.find((n) => location.pathname.startsWith(n.href))?.label ?? 'NetPulse'
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex">
+    <div className="h-screen overflow-hidden bg-gray-50 dark:bg-gray-950 flex">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -157,7 +157,7 @@ export default function Layout({ children }: Props) {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Top bar — page title (mobile menu toggle) + IP/MAC quick-search */}
         <header className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 shadow-sm">
           <button
@@ -186,8 +186,8 @@ export default function Layout({ children }: Props) {
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-auto p-4 lg:p-6">
+        {/* Page content — the only scroll region; sidebar + header stay fixed */}
+        <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6">
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>

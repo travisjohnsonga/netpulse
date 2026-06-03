@@ -798,110 +798,16 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
             subtitle="since last reboot" />
           <HealthCard label="Poll" value={health?.poll_duration_ms != null ? `${health.poll_duration_ms.toFixed(0)} ms` : null} />
         </div>
-        {/* Environment tiles — only rendered when the device reports physical
-            sensors. Virtual platforms (e.g. C8000V) report none, so nothing
-            shows here for them. */}
-        {(() => {
-          const env = metrics?.environment
-          const fans = env?.fan_count ?? env?.fan_sensors
-          const psus = env?.psu_count ?? env?.power_sensors
-          if (!env || (env.temperature_c == null && !fans && !psus)) return null
-          const tempSensors = env.sensors?.length ?? env.temperature_sensors ?? 1
-          return (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-              {env.temperature_c != null && (
-                <HealthCard label="Temperature" value={`${env.temperature_c}°C`}
-                  subtitle={`${tempSensors} sensor${tempSensors === 1 ? '' : 's'}`} />
-              )}
-              {!!fans && (
-                <HealthCard label="Fans" value={`${fans}`} subtitle={`${fans === 1 ? 'fan' : 'fans'} present`} />
-              )}
-              {!!psus && (
-                <HealthCard label="Power" value={`${psus}`} subtitle={`${psus === 1 ? 'supply' : 'supplies'} present`} />
-              )}
-            </div>
-          )
-        })()}
       </div>
 
-      {/* Sections 1b + 1c — Ping Latency and Environment, side by side at half
-          width on lg+; stacked on small screens. Environment only renders when
-          the device reports sensors/history, so Ping Latency keeps full width
-          on devices without physical sensors (e.g. virtual platforms). */}
-      {(() => {
-        const env = metrics?.environment
-        const hasSensors = !!env?.sensors?.length
-        const hasFans = !!env?.fans?.length
-        const hasPsus = !!env?.psus?.length
-        const hasPoe = !!env?.poe && (env.poe.budget_watts ?? 0) > 0
-        const hasHistory = !!env?.temperature_history?.length
-        const hasEnv = !!env && (hasSensors || hasFans || hasPsus || hasPoe || hasHistory)
-
-        const pingCard = (
-          <div className={clsx(liveCard, 'p-4')}>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Ping Latency</h3>
-            </div>
-            <PingLatencyChart reach={metrics?.reachability} />
-          </div>
-        )
-
-        if (!hasEnv) return pingCard
-
-        const envCard = (
-          <div className={clsx(liveCard, 'p-4')}>
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Environment</h3>
-
-            {hasSensors && (
-              <EnvSection title="Temperature">
-                {env!.sensors!.map((s) => (
-                  <EnvRow key={s.sensor_name} icon="🌡" name={s.sensor_name}
-                    value={s.temperature_c != null ? `${s.temperature_c}°C` : '—'}
-                    statusOk={s.status_ok} statusText={s.status_ok ? 'OK' : 'Fault'} />
-                ))}
-              </EnvSection>
-            )}
-
-            {hasFans && (
-              <EnvSection title="Fans">
-                {env!.fans!.map((f) => (
-                  <EnvRow key={f.name} icon="🌀" name={f.name}
-                    value={f.rpm != null ? `${f.rpm} RPM` : '—'}
-                    statusOk={f.status_ok}
-                    statusText={f.status_ok == null ? 'Unknown' : f.status_ok ? 'OK' : 'Fault'} />
-                ))}
-              </EnvSection>
-            )}
-
-            {hasPsus && (
-              <EnvSection title="Power Supplies">
-                {env!.psus!.map((p) => (
-                  <EnvRow key={p.name} icon="⚡" name={p.name}
-                    value={p.watts != null ? `${p.watts} W` : '—'}
-                    statusOk={p.status_ok}
-                    statusText={p.status_ok == null ? 'Unknown' : p.status_ok ? 'Online' : 'Offline'} />
-                ))}
-              </EnvSection>
-            )}
-
-            {hasPoe && <PoeBar poe={env!.poe!} />}
-
-            {hasHistory && (
-              <div className="mt-3">
-                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Temperature — last 24h (device max)</p>
-                <TemperatureHistoryChart series={env!.temperature_history} />
-              </div>
-            )}
-          </div>
-        )
-
-        return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-            {pingCard}
-            {envCard}
-          </div>
-        )
-      })()}
+      {/* Section 1b — Ping Latency (full width; physical-sensor environment data
+          now lives on its own Environment tab). */}
+      <div className={clsx(liveCard, 'p-4')}>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Ping Latency</h3>
+        </div>
+        <PingLatencyChart reach={metrics?.reachability} />
+      </div>
 
       {/* Section 2 — Interface Traffic */}
       <div className={liveCard}>
@@ -1031,6 +937,145 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
       <p className="text-xs text-gray-400 dark:text-gray-500">
         Live metrics populate once SNMP/gNMI polling reports for this device. Manage what's collected in ⚙ Settings → Telemetry Configuration.
       </p>
+    </div>
+  )
+}
+
+// ── Environment tab (default export's sibling) ───────────────────────────────
+// Physical-sensor view moved off the Telemetry tab: temperature (sensor rows +
+// 24h history chart), fans, power supplies and PoE budget. Pulls the same
+// /metrics endpoint and only shows sections the device actually reports.
+export function Environment({ device }: { device: DeviceDetail }) {
+  const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [polling, setPolling] = useState(false)
+  const [pollToast, setPollToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    // 24h range so the temperature-history chart has a full day of context.
+    const load = () => fetchDeviceMetrics(device.id, '24h')
+      .then((m) => { if (!cancelled) setMetrics(m) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    load()
+    const t = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [device.id])
+
+  const pollNow = async () => {
+    setPolling(true); setPollToast(null)
+    try {
+      await pollDeviceNow(device.id)
+      await new Promise((r) => setTimeout(r, 5000))   // give the poller a cycle
+      setMetrics(await fetchDeviceMetrics(device.id, '24h'))
+      setPollToast('Poll complete — environment refreshed')
+    } catch {
+      setPollToast('Poll request failed')
+    } finally {
+      setPolling(false)
+      setTimeout(() => setPollToast(null), 4000)
+    }
+  }
+
+  const env = metrics?.environment
+  const hasSensors = !!env?.sensors?.length
+  const hasFans = !!env?.fans?.length
+  const hasPsus = !!env?.psus?.length
+  const hasPoe = !!env?.poe && (env.poe.budget_watts ?? 0) > 0
+  const hasHistory = !!env?.temperature_history?.length
+  const fanCount = env?.fan_count ?? env?.fan_sensors
+  const psuCount = env?.psu_count ?? env?.power_sensors
+  const tempSensors = env?.sensors?.length ?? env?.temperature_sensors ?? (env?.temperature_c != null ? 1 : 0)
+  const hasDetail = hasSensors || hasFans || hasPsus || hasPoe || hasHistory
+  const hasAny = !!env && (hasDetail || env.temperature_c != null || !!fanCount || !!psuCount)
+
+  if (loading && !metrics) {
+    return <div className="flex items-center justify-center py-24"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+  }
+
+  if (!hasAny) {
+    return (
+      <div className={clsx(liveCard, 'py-16 text-center')}>
+        <div className="text-4xl mb-2">🌡</div>
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">No environment data</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-md mx-auto">
+          This device doesn't report physical sensors (temperature, fans, power supplies).
+          Virtual platforms (e.g. C8000V) expose none.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Summary tiles */}
+      <div className={clsx(liveCard, 'p-4')}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Environment</h3>
+          <button onClick={pollNow} disabled={polling}
+            className="px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
+            {polling ? '↻ Polling…' : '↻ Poll Now'}
+          </button>
+        </div>
+        {pollToast && <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{pollToast}</p>}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <HealthCard label="Temperature" value={env?.temperature_c != null ? `${env.temperature_c}°C` : null}
+            subtitle={`${tempSensors} sensor${tempSensors === 1 ? '' : 's'}`} />
+          <HealthCard label="Fans" value={fanCount ? `${fanCount}` : null}
+            subtitle={`${fanCount === 1 ? 'fan' : 'fans'} present`} />
+          <HealthCard label="Power" value={psuCount ? `${psuCount}` : null}
+            subtitle={`${psuCount === 1 ? 'supply' : 'supplies'} present`} />
+          <HealthCard label="PoE" value={hasPoe ? `${env!.poe!.used_watts ?? 0} W` : null}
+            subtitle={hasPoe ? `of ${env!.poe!.budget_watts ?? 0} W budget` : 'no PoE'} />
+        </div>
+      </div>
+
+      {/* Detail: per-unit temperature / fans / PSUs + PoE bar + history chart */}
+      {hasDetail && (
+        <div className={clsx(liveCard, 'p-4')}>
+          {hasSensors && (
+            <EnvSection title="Temperature">
+              {env!.sensors!.map((s) => (
+                <EnvRow key={s.sensor_name} icon="🌡" name={s.sensor_name}
+                  value={s.temperature_c != null ? `${s.temperature_c}°C` : '—'}
+                  statusOk={s.status_ok} statusText={s.status_ok ? 'OK' : 'Fault'} />
+              ))}
+            </EnvSection>
+          )}
+
+          {hasFans && (
+            <EnvSection title="Fans">
+              {env!.fans!.map((f) => (
+                <EnvRow key={f.name} icon="🌀" name={f.name}
+                  value={f.rpm != null ? `${f.rpm} RPM` : '—'}
+                  statusOk={f.status_ok}
+                  statusText={f.status_ok == null ? 'Unknown' : f.status_ok ? 'OK' : 'Fault'} />
+              ))}
+            </EnvSection>
+          )}
+
+          {hasPsus && (
+            <EnvSection title="Power Supplies">
+              {env!.psus!.map((p) => (
+                <EnvRow key={p.name} icon="⚡" name={p.name}
+                  value={p.watts != null ? `${p.watts} W` : '—'}
+                  statusOk={p.status_ok}
+                  statusText={p.status_ok == null ? 'Unknown' : p.status_ok ? 'Online' : 'Offline'} />
+              ))}
+            </EnvSection>
+          )}
+
+          {hasPoe && <PoeBar poe={env!.poe!} />}
+
+          {hasHistory && (
+            <div className="mt-3">
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Temperature — last 24h (device max)</p>
+              <TemperatureHistoryChart series={env!.temperature_history} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
