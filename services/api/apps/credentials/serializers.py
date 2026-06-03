@@ -37,6 +37,14 @@ def _secret_field():
     return serializers.CharField(write_only=True, required=False, allow_blank=True)
 
 
+# RFC 3414: SNMPv3 auth/priv passphrases are at least 8 characters. 64 is a
+# sane upper bound (and what NetPulse documents). Validated on write so a
+# too-short key is rejected with a clear message instead of silently failing
+# auth ("Wrong SNMP PDU digest") at poll time.
+SNMPV3_KEY_MIN = 8
+SNMPV3_KEY_MAX = 64
+
+
 class CredentialProfileSerializer(serializers.ModelSerializer):
     device_count = serializers.IntegerField(read_only=True)
     enabled_protocols = serializers.ListField(child=serializers.CharField(), read_only=True)
@@ -69,6 +77,17 @@ class CredentialProfileSerializer(serializers.ModelSerializer):
             "last_tested", "last_test_result", "last_test_message",
             "created_at", "updated_at",
         )
+
+    def validate(self, attrs):
+        # A blank secret on update means "leave unchanged", so only length-check
+        # a non-blank value the client actually supplied.
+        for field in ("snmpv3_auth_key", "snmpv3_priv_key"):
+            val = attrs.get(field)
+            if val and not (SNMPV3_KEY_MIN <= len(val) <= SNMPV3_KEY_MAX):
+                raise serializers.ValidationError({
+                    field: f"SNMPv3 passphrase must be {SNMPV3_KEY_MIN}-{SNMPV3_KEY_MAX} characters."
+                })
+        return attrs
 
     def _pop_secrets(self, validated_data: dict) -> dict:
         return {f: validated_data.pop(f) for f in SECRET_FIELDS if f in validated_data}

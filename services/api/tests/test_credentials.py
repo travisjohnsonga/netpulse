@@ -51,6 +51,33 @@ class TestCredentialProfileCrud:
         assert body["vault_path"] == f"netpulse/credentials/{profile.pk}"
         assert not hasattr(profile, "ssh_password")
 
+    def test_snmpv3_short_key_rejected(self, auth_client):
+        resp = auth_client.post("/api/credentials/", {
+            "name": "ShortKey", "snmpv3_enabled": True, "snmpv3_username": "u",
+            "snmpv3_auth_key": "short",   # 5 chars < 8
+            "snmpv3_priv_key": "privkey1234",
+        }, format="json")
+        assert resp.status_code == 400
+        assert "snmpv3_auth_key" in resp.json()
+        assert "8-64" in resp.json()["snmpv3_auth_key"][0]
+
+    def test_snmpv3_long_key_rejected(self, auth_client):
+        resp = auth_client.post("/api/credentials/", {
+            "name": "LongKey", "snmpv3_enabled": True, "snmpv3_username": "u",
+            "snmpv3_auth_key": "a" * 65,   # > 64
+        }, format="json")
+        assert resp.status_code == 400
+        assert "snmpv3_auth_key" in resp.json()
+
+    def test_snmpv3_valid_30_char_key_accepted(self, auth_client):
+        # The real AOS-CX passphrase length that previously "worked".
+        resp = auth_client.post("/api/credentials/", {
+            "name": "GoodKey", "snmpv3_enabled": True, "snmpv3_username": "fpsrw",
+            "snmpv3_auth_key": "xZQm2BEyZy1I0q1lJAQziedda8mT4u",   # 30 chars
+            "snmpv3_priv_key": "2ETsOc5RMX0pg9T8nDwsbcxfOE2Srr",   # 30 chars
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+
     def test_list_uses_lightweight_serializer(self, auth_client, ssh_profile):
         resp = auth_client.get("/api/credentials/")
         assert resp.status_code == 200

@@ -235,7 +235,10 @@ function CredentialModal({ profile, onClose, onSaved }: {
                       {['SHA', 'SHA256', 'SHA512', 'MD5'].map((x) => <option key={x}>{x}</option>)}
                     </select>
                   </Field>
-                  <Field label="Auth key"><Secret value={secrets.snmpv3_auth_key} onChange={(v) => setSecret('snmpv3_auth_key', v)} placeholder={secretPlaceholder} /></Field>
+                  <Field label="Auth key">
+                    <Secret value={secrets.snmpv3_auth_key} onChange={(v) => setSecret('snmpv3_auth_key', v)} placeholder={secretPlaceholder} />
+                    <KeyHint value={secrets.snmpv3_auth_key} />
+                  </Field>
                 </Row>
                 <Row>
                   <Field label="Priv protocol">
@@ -243,7 +246,10 @@ function CredentialModal({ profile, onClose, onSaved }: {
                       {['AES', 'AES192', 'AES256', 'DES'].map((x) => <option key={x}>{x}</option>)}
                     </select>
                   </Field>
-                  <Field label="Priv key"><Secret value={secrets.snmpv3_priv_key} onChange={(v) => setSecret('snmpv3_priv_key', v)} placeholder={secretPlaceholder} /></Field>
+                  <Field label="Priv key">
+                    <Secret value={secrets.snmpv3_priv_key} onChange={(v) => setSecret('snmpv3_priv_key', v)} placeholder={secretPlaceholder} />
+                    <KeyHint value={secrets.snmpv3_priv_key} />
+                  </Field>
                 </Row>
               </>
             )}
@@ -349,6 +355,19 @@ function Row({ children }: { children: React.ReactNode }) {
 }
 function Secret({ value, onChange, placeholder }: { value?: string; onChange: (v: string) => void; placeholder?: string }) {
   return <input type="password" autoComplete="new-password" className={inputCls} value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+}
+
+// SNMPv3 passphrase length hint — RFC 3414 requires 8–64 chars. A too-short key
+// is the usual cause of "Wrong SNMP PDU digest" at poll time. Only flags a
+// non-empty value that's out of range (blank = unchanged on edit).
+function KeyHint({ value }: { value?: string }) {
+  const len = (value ?? '').length
+  const bad = len > 0 && (len < 8 || len > 64)
+  return (
+    <p className={clsx('text-[10px] mt-1', bad ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500')}>
+      {bad ? `Must be 8–64 characters (currently ${len})` : '8–64 characters'}
+    </p>
+  )
 }
 
 // ── Test modal ───────────────────────────────────────────────────────────────
