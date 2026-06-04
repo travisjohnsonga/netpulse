@@ -223,14 +223,29 @@ def _fetch_via_netconf(device, profile, creds: dict) -> str:
         return str(m.get_config(source="running"))
 
 
+def collect_sonicwall_config(device, profile, creds: dict) -> str:
+    """Collect a SonicWall's full config as pretty JSON via the SonicOS REST API."""
+    import json
+
+    from .sonicwall_client import SonicWallClient, resolve_rest_credentials
+    username, password, port = resolve_rest_credentials(profile, creds)
+    # SonicWall management certs are self-signed → don't verify TLS.
+    with SonicWallClient(str(device.management_ip or device.ip_address),
+                         username, password, port=port, verify_ssl=False) as client:
+        return json.dumps(client.get_config(), indent=2)
+
+
 def _fetch_running_config(device, creds: dict) -> str:
     """
     Dispatch to the right protocol and return the running config text.
 
-    SSH is primary; NETCONF is used when it's the only enabled protocol. This is
+    SonicWall uses its REST API (SSH CLI is limited); SSH is primary for
+    everything else; NETCONF is used when it's the only enabled protocol. This is
     the single network seam — tests monkeypatch it.
     """
     profile = device.credential_profile
+    if (device.platform or "").lower() == "sonicwall":
+        return collect_sonicwall_config(device, profile, creds)
     if profile and profile.netconf_enabled and not profile.ssh_enabled:
         return _fetch_via_netconf(device, profile, creds)
     return _fetch_via_ssh(device, profile, creds)

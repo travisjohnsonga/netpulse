@@ -1079,6 +1079,35 @@ fgSysCpuUsage 1.3.6.1.4.1.12356.101.4.1.3.0 / fgSysMemUsage .4.1.4.0 /
 fgSysMemCapacity .4.1.5.0) + Syslog + NetFlow; SSH-banner auto-detection covers
 FortiOS/PAN-OS that Netmiko SSHDetect misses.
 
+### SonicWall (SonicOS) notes
+- REST API is preferred over SSH for config backup AND enrichment.
+  - Auth: RFC-7616 HTTP Digest (SHA-256) — `requests.auth.HTTPDigestAuth`.
+    Basic auth is disabled by default in SonicOSX 8.
+    POST `/api/sonicos/auth` body `{"override": true}` → `status.info[0]`
+    (`auth_code == "API_AUTH_SUCCESS"`, model, privilege).
+  - Config: GET `/api/sonicos/config/current` → top-level `model`,
+    `serial_number`, `firmware_version`, `system_uptime`, plus the full JSON
+    config; `administration.firewall_name` is the hostname.
+  - TLS: `verify=False` (device cert is self-signed). GOTCHA: the api image sets
+    `REQUESTS_CA_BUNDLE`, and requests' env-merge turns a per-request
+    `verify=None` into that bundle BEFORE `session.verify=False` applies — so
+    `SonicWallClient` sets `session.trust_env=False` AND passes `verify=` on
+    every call. Just setting `session.verify=False` is silently ignored.
+  - Credentials: prefers the HTTPS/API profile credential (`https_username` +
+    `https_password`, `https_port`), falls back to SSH (`resolve_rest_credentials`).
+  - Sessions are limited — always `logout()` (DELETE `/api/sonicos/auth`); the
+    client context manager does. Client: `apps/compliance/sonicwall_client.py`.
+  - Verified live on the lab NSv (SonicOSX 8.2.1-8010): model "NSv XS",
+    serial 0017-C5F1-0547, ~1.5 MB config.
+- SNMP fallback (when REST is unavailable): SNMPv3, enterprise OID
+  1.3.6.1.4.1.8741; sysDescr "SonicWALL {model} ({os_details})" parsed for
+  model/os_version (enrich `_parse_sonicwall_descr`); serial from
+  `snwlSysSerialNumber` 1.3.6.1.4.1.8741.1.3.1.1.0 when entPhysicalSerialNum is
+  empty. Netmiko has no SonicOS driver → device_type `generic` (sonic_os is not
+  a valid Netmiko type).
+- Docker containers must MASQUERADE-NAT to the host IP (SonicWall restricts
+  mgmt by source IP) — see "Docker NAT (Required)".
+
 ### FortiOS notes
 - Config collection uses `show full-configuration` (FortiOS has no
   `show running-config`); the `#config-version` / `#conf_file_ver` / `#buildno`

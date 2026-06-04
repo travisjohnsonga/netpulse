@@ -294,6 +294,53 @@ def _parse_aos_cx(info: dict, updates: dict) -> None:
     updates.setdefault("vendor", "aruba")
 
 
+# ── SonicWall REST API (preferred for sonicwall) ────────────────────────────────
+
+def _sonicwall_collect(ip: str, profile, secrets) -> dict:
+    """
+    Collect SonicWall system info over the SonicOS REST API (preferred over
+    SNMP). Prefers the HTTPS/API credential, falls back to SSH. Returns
+    {model, os_version, serial, hostname} or {} on any failure (caller falls
+    back to SNMP).
+    """
+    try:
+        from apps.compliance.sonicwall_client import (
+            SonicWallClient, resolve_rest_credentials,
+        )
+        username, password, port = resolve_rest_credentials(profile, secrets)
+        if not password:
+            return {}
+        # SonicWall management certs are self-signed → don't verify TLS.
+        with SonicWallClient(ip, username, password, port=port, verify_ssl=False) as client:
+            cfg = client.get_config()
+    except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+        logger.warning("SonicWall REST enrichment failed for %s: %s", ip, exc)
+        return {}
+    admin = cfg.get("administration") or {}
+    return {
+        "model": _clean(cfg.get("model")),
+        "os_version": _clean(cfg.get("firmware_version")),
+        "serial": _clean(cfg.get("serial_number")),
+        "hostname": _clean(admin.get("firewall_name")),
+    }
+
+
+def _parse_sonicwall_rest(info: dict, updates: dict) -> None:
+    """Map the SonicWall REST config (config/current) onto device-field updates."""
+    if not info:
+        return
+    if info.get("hostname"):
+        updates["hostname"] = info["hostname"]
+    if info.get("os_version"):
+        updates["os_version"] = info["os_version"]
+    if info.get("model"):
+        updates["model"] = info["model"]
+    if info.get("serial"):
+        updates["serial_number"] = info["serial"]
+    updates.setdefault("platform", "sonicwall")
+    updates.setdefault("vendor", "sonicwall")
+
+
 # ── orchestration ─────────────────────────────────────────────────────────────
 
 def _discover_interfaces(device):
@@ -391,14 +438,18 @@ def enrich_device(device_id: int) -> dict:
     # ── Step 1: device-info enrichment (REST → SNMP → SSH) ─────────────────────
     updates: dict = {}
 
-    # AOS-CX: try the REST API first (most accurate). SNMP only runs as a
-    # fallback when REST returns nothing, so it can't clobber REST values.
+    # AOS-CX / SonicWall: try the REST API first (most accurate). SNMP only runs
+    # as a fallback when REST returns nothing, so it can't clobber REST values.
     aos_info: dict = {}
+    sonic_info: dict = {}
     if device.platform == "aos_cx":
         aos_info = _aos_cx_collect(ip, profile, secrets)
         _parse_aos_cx(aos_info, updates)
+    elif device.platform == "sonicwall":
+        sonic_info = _sonicwall_collect(ip, profile, secrets)
+        _parse_sonicwall_rest(sonic_info, updates)
 
-    if device.platform != "aos_cx" or not aos_info:
+    if device.platform not in ("aos_cx", "sonicwall") or not (aos_info or sonic_info):
         _parse_snmp(_snmp_collect(ip, profile, secrets), updates)
 
     # If SNMP just revealed this is an AOS-CX box that was misclassified on add
