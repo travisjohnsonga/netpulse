@@ -179,6 +179,69 @@ class TestEnrichDevice:
         assert calls["iface"] == 1 and calls["lldp"] == 1
 
 
+class TestSonicWall:
+    SYSDESCR = "SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)"
+
+    def test_parse_sonicwall_descr(self):
+        assert enrich._parse_sonicwall_descr(self.SYSDESCR) == {
+            "model": "NSv XS", "os_version": "SonicOSX 8.2.1-8010-R9437"}
+
+    def test_parse_non_sonicwall_returns_empty(self):
+        assert enrich._parse_sonicwall_descr("Cisco IOS Software, Version 17.3.1") == {}
+
+    def test_snmp_descr_parsing(self):
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: self.SYSDESCR,
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.8741.1",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["model"] == "NSv XS"
+        assert updates["os_version"] == "SonicOSX 8.2.1-8010-R9437"
+        assert updates["vendor"] == "sonicwall"
+        assert updates["platform"] == "sonicwall"
+
+    def test_serial_oid_fallback(self, monkeypatch):
+        class FakeProfile:
+            snmpv3_enabled = False
+            snmpv2c_enabled = True
+
+        async def fake_get(ip, oids, auth):
+            if oids == [enrich._OID_SONICWALL_SERIAL]:
+                return {enrich._OID_SONICWALL_SERIAL: "0017C5AABBCC"}
+            return {
+                enrich._OID_SYS_DESCR: self.SYSDESCR,
+                enrich._OID_SYS_OBJID: "1.3.6.1.4.1.8741.1",
+                enrich._OID_ENT_MODEL: "", enrich._OID_ENT_SERIAL: "",
+            }
+
+        async def fake_walk(ip, base, auth):
+            return ""   # entPhysical columns empty on SonicWall
+
+        monkeypatch.setattr(enrich, "_snmp_get", fake_get)
+        monkeypatch.setattr(enrich, "_snmp_walk_first", fake_walk)
+        monkeypatch.setattr("apps.credentials.snmp_auth.build_snmp_auth", lambda p, s: object())
+
+        res = enrich._snmp_collect("10.0.0.4", FakeProfile(), {})
+        assert res[enrich._OID_ENT_SERIAL] == "0017C5AABBCC"  # from the SonicWall OID
+        updates: dict = {}
+        enrich._parse_snmp(res, updates)
+        assert updates["serial_number"] == "0017C5AABBCC"
+        assert updates["model"] == "NSv XS"
+
+    def test_netmiko_device_type_is_generic(self):
+        from apps.compliance.collector import netmiko_device_type
+        # Netmiko has no SonicOS driver — generic beats autodetect (cisco_ios).
+        assert netmiko_device_type("sonicwall", "sonicwall") == "generic"
+
+    def test_enterprise_oid_maps(self):
+        from apps.devices.management.commands.run_discovery import (
+            _platform_from_sysobjid, _vendor_from_sysobjid,
+        )
+        assert _vendor_from_sysobjid("1.3.6.1.4.1.8741.1.3.1") == "sonicwall"
+        assert _platform_from_sysobjid("1.3.6.1.4.1.8741.1.3.1") == "sonicwall"
+
+
 class TestEnrichChain:
     def test_discovers_interfaces_and_lldp(self, device, monkeypatch):
         from apps.devices import topology

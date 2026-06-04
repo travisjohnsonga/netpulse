@@ -33,6 +33,8 @@ _ENRICH_OIDS = [_OID_SYS_DESCR, _OID_SYS_OBJID, _OID_SYS_NAME, _OID_ENT_MODEL, _
 _OID_ENT_MODEL_TBL = "1.3.6.1.2.1.47.1.1.1.1.13"   # entPhysicalModelName
 _OID_ENT_SERIAL_TBL = "1.3.6.1.2.1.47.1.1.1.1.11"  # entPhysicalSerialNum
 _OID_ENT_DESCR_TBL = "1.3.6.1.2.1.47.1.1.1.1.2"    # entPhysicalDescr
+# SonicWall doesn't populate entPhysicalSerialNum; serial lives in its own MIB.
+_OID_SONICWALL_SERIAL = "1.3.6.1.4.1.8741.1.3.1.1.0"  # snwlSysSerialNumber
 
 # sysObjectID → model fallback when sysDescr can't name the model.
 SYSOBJID_MODELS = {
@@ -50,6 +52,26 @@ _AOS_CX_MODEL_RE = re.compile(r"(Aruba[\w-]+\d+[A-Z]?)")
 _AOS_CX_FW_RE = re.compile(r"\b([A-Z]{2}\.\d[\d.]+)")
 # Drops the trailing firmware token from a sysDescr ("… Sw PL.10.16.1030").
 _AOS_CX_FW_SPLIT_RE = re.compile(r"\s+[A-Z]{2}\.\d")
+
+# SonicWall sysDescr: "SonicWALL {model} (… SonicOS{X} {version})", e.g.
+# "SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)". The greedy
+# .* grabs the LAST SonicOS* token so os_version reads "SonicOSX 8.2.1-…".
+_SONICWALL_RE = re.compile(
+    r"SonicWALL\s+(.+?)\s+\(.*(SonicOS\w*)\s+(\S+?)\)", re.IGNORECASE)
+
+
+def _parse_sonicwall_descr(descr: str) -> dict:
+    """
+    Parse a SonicWall sysDescr into {model, os_version}. Returns {} for any
+    non-SonicWall sysDescr. Example:
+      'SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)'
+        → {'model': 'NSv XS', 'os_version': 'SonicOSX 8.2.1-8010-R9437'}
+    """
+    m = _SONICWALL_RE.search(descr)
+    if not m:
+        return {}
+    return {"model": m.group(1).strip(),
+            "os_version": f"{m.group(2)} {m.group(3)}".strip()}
 
 
 def _model_from_aos_cx_descr(descr: str) -> str:
@@ -137,6 +159,11 @@ def _snmp_collect(ip: str, profile, secrets) -> dict:
         res = asyncio.run(_snmp_get(ip, _ENRICH_OIDS, build_snmp_auth(profile, secrets)))
         if _clean(res.get(_OID_ENT_SERIAL)) == "":
             serial = asyncio.run(_snmp_walk_first(ip, _OID_ENT_SERIAL_TBL, build_snmp_auth(profile, secrets)))
+            if not serial:
+                # SonicWall (and some others) don't fill entPhysicalSerialNum —
+                # try the SonicWall serial scalar. Harmless on other vendors.
+                got = asyncio.run(_snmp_get(ip, [_OID_SONICWALL_SERIAL], build_snmp_auth(profile, secrets)))
+                serial = _clean(got.get(_OID_SONICWALL_SERIAL))
             if serial:
                 res[_OID_ENT_SERIAL] = serial
         if _clean(res.get(_OID_ENT_MODEL)) == "":
@@ -162,6 +189,14 @@ def _parse_snmp(res: dict, updates: dict) -> None:
     serial = _clean(res.get(_OID_ENT_SERIAL))
 
     if descr:
+        # SonicWall: "SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-…)".
+        # Fill model + os_version here (the version regexes below don't match
+        # SonicOS); vendor/platform fall to the shared detectors → "sonicwall",
+        # keeping vendor lowercase like every other platform.
+        sonic = _parse_sonicwall_descr(descr)
+        if sonic:
+            model = sonic["model"]
+            updates["os_version"] = sonic["os_version"]
         # The HPE/ANW AOS-CX sysDescr carries the most descriptive model
         # ("HPE ANW R9Y04A 6100 …"); prefer it over the entPhysical column.
         descr_model = _model_from_aos_cx_descr(descr)

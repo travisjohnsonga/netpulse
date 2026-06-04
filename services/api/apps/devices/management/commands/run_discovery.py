@@ -52,6 +52,7 @@ _ENTERPRISE_VENDORS = {
     "2011":  "huawei",
     "14823": "aruba",
     "47196": "aruba",   # HPE Networking (Aruba AOS-CX, e.g. 6100/6300)
+    "8741":  "sonicwall",  # SonicWall (sysObjectID 1.3.6.1.4.1.8741.*)
 }
 
 
@@ -68,6 +69,7 @@ def _vendor_from_sysobjid(oid: str) -> str:
 # pins the platform unambiguously (used as a fallback when sysDescr can't).
 _ENTERPRISE_PLATFORMS = {
     "47196": "aos_cx",   # HPE Networking — Aruba AOS-CX (6100/6300/…)
+    "8741":  "sonicwall",  # SonicWall — SonicOS
 }
 
 

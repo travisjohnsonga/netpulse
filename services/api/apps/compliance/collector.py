@@ -38,6 +38,10 @@ _NETMIKO_TYPES = {
     "eos": "arista_eos",
     "junos": "juniper_junos",
     "sonic": "linux",
+    # SonicWall firewalls. Netmiko 4.x has no native SonicOS driver (sonic_os
+    # does not exist), so use the generic SSH driver — pinning a device_type
+    # still beats autodetect, which mis-IDs SonicOS as cisco_ios.
+    "sonicwall": "generic",
     "fortios": "fortinet",
     "other": "",
 }
