@@ -1,0 +1,10 @@
+Value IP_ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value TYPE (Static|Dynamic)
+Value MAC_ADDRESS ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})
+Value VENDOR (.+?)
+Value INTERFACE (\S+)
+Value TIMEOUT (.+?)
+
+Start
+  ^${IP_ADDRESS}\s+${TYPE}\s+${MAC_ADDRESS}\s+${VENDOR}\s{2,}${INTERFACE}\s+${TIMEOUT}\s*$$ -> Record
+  ^.*$$

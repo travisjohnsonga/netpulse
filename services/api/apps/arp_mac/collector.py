@@ -34,6 +34,8 @@ DEVICE_TYPE_MAP = {
     "aos_cx": "aruba_aoscx",
     "aruba": "aruba_os",
     "fortios": "fortinet",
+    # SonicOS has no Netmiko driver — drive the CLI with the generic handler.
+    "sonicwall": "generic",
 }
 
 # ARP command per platform — chosen to match an available ntc-template.
@@ -47,9 +49,11 @@ ARP_COMMANDS = {
     "aos_cx": "show arp all-vrfs",
     "aruba": "show arp",
     "fortios": "get system arp",
+    "sonicwall": "show arp caches",
 }
 
-# MAC address-table command per platform. FortiOS has no traditional MAC table.
+# MAC address-table command per platform. FortiOS and SonicWall (firewalls, not
+# switches) have no traditional MAC table — they are absent here on purpose.
 MAC_COMMANDS = {
     "ios": "show mac address-table",
     "ios_xe": "show mac address-table",
@@ -140,6 +144,54 @@ def _parse_fortios_arp(output: str) -> list[dict]:
     return out
 
 
+# SonicWall "show arp caches" TIMEOUT column: "Expires in 10 minutes" → 10,
+# "Permanent published" → None.
+_SONICWALL_AGE_RE = re.compile(r"(\d+)\s+minutes?")
+
+
+def _parse_sonicwall_arp(output: str) -> list[dict]:
+    """
+    Parse SonicWall ``show arp caches`` via the bundled TextFSM template into
+    normalized ARP rows. The device-reported VENDOR column is dropped — the API
+    derives the vendor from the MAC OUI at read time — and the Static/Dynamic
+    TYPE has no column on ARPEntry, so it is not persisted.
+    """
+    out = []
+    for raw in _textfsm_parse(output, "sonicwall_show_arp_caches.textfsm"):
+        r = _lower_keys(raw)
+        ip = r.get("ip_address")
+        mac = r.get("mac_address")
+        if not ip or not mac:
+            continue
+        m = _SONICWALL_AGE_RE.search(r.get("timeout", "") or "")
+        out.append({
+            "ip_address": ip,
+            "mac_address": normalize_mac(mac),
+            "interface": r.get("interface", ""),   # SonicWall "X0:V500" form
+            "vlan": None,
+            "age_minutes": int(m.group(1)) if m else None,
+            "protocol": "Internet",
+        })
+    return out
+
+
+def _collect_sonicwall_arp(conn) -> list[dict]:
+    """
+    Read the ARP cache from a SonicWall over the generic Netmiko handler. SonicOS
+    has no driver, so disable CLI paging first (avoids ``--More--`` truncation)
+    and fall back to timing-based reads when the prompt isn't auto-detected.
+    """
+    try:
+        conn.send_command_timing("no cli pager session", strip_prompt=False, strip_command=False)
+    except Exception:  # not all SonicOS versions support it — best effort
+        pass
+    try:
+        out = conn.send_command("show arp caches", expect_string=r"[>#]\s*$", read_timeout=60)
+    except Exception:
+        out = conn.send_command_timing("show arp caches", strip_prompt=True, strip_command=True)
+    return _parse_sonicwall_arp(out)
+
+
 def _textfsm_parse(output: str, template_name: str) -> list[dict]:
     """Parse raw output with a bundled custom TextFSM template → list of dicts."""
     path = os.path.join(_TEMPLATE_DIR, template_name)
@@ -187,6 +239,8 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
         "fast_cli": False,
         "conn_timeout": 30,
     }
+    if platform == "sonicwall":
+        params["global_delay_factor"] = 2  # SonicOS CLI is slow over the generic driver
     arp_entries: list[dict] = []
     mac_entries: list[dict] = []
     try:
@@ -196,7 +250,10 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
         return [], []
     try:
         arp_cmd = ARP_COMMANDS.get(platform)
-        if arp_cmd:
+        if platform == "sonicwall":
+            # Custom CLI path (paging + generic driver + custom TextFSM template).
+            arp_entries = _collect_sonicwall_arp(conn)
+        elif arp_cmd:
             out = _send(conn, arp_cmd)
             if isinstance(out, list):
                 arp_entries = _normalize_arp(out)

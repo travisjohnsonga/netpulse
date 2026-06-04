@@ -60,6 +60,24 @@ class TestParsing:
                           "interface": "1/1/5", "entry_type": "dynamic"}
         assert out[1]["interface"] == "Gi0/1" and out[1]["entry_type"] == "dynamic"
 
+    def test_sonicwall_arp_textfsm(self):
+        from apps.arp_mac.collector import _parse_sonicwall_arp
+        # Note: 2+ spaces separate the (space-containing) vendor from interface.
+        sample = (
+            "===================\n"
+            "Current ARP caches:\n"
+            "===================\n"
+            "IP Address     Type     MAC Address        Vendor      Interface  Timeout\n"
+            "10.16.128.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\n"
+            "10.16.128.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\n"
+            "10.16.129.11   Dynamic  D4:A2:CD:13:5C:FB  DELL                        X0:V201    Expires in 2 minutes   2\n"
+        )
+        out = _parse_sonicwall_arp(sample)
+        assert out[0] == {"ip_address": "10.16.128.129", "mac_address": "1a:c2:41:2c:0b:0c",
+                          "interface": "X0:V1000", "vlan": None, "age_minutes": None, "protocol": "Internet"}
+        assert out[1]["mac_address"] == "9c:37:08:25:f3:40" and out[1]["age_minutes"] == 10
+        assert out[2]["interface"] == "X0:V201" and out[2]["age_minutes"] == 2
+
     def test_fortios_arp_regex(self):
         from apps.arp_mac.collector import _parse_fortios_arp
         out = _parse_fortios_arp(

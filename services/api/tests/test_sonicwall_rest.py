@@ -202,4 +202,4 @@ class TestRestEnrichment:
         enrich.enrich_device(device.id)
         device.refresh_from_db()
         assert device.model == "NSv XS"
-        assert device.os_version == "SonicOSX 8.2.1-8010-R9437"   # from SNMP fallback
+        assert device.os_version == "8.2.1-8010-R9437"   # bare version from SNMP fallback

@@ -940,11 +940,21 @@ Full architecture in docs/ARCHITECTURE.md.
   device_environment; /api/devices/{id}/metrics/ returns fans/psus/poe; UI shows
   status dots + PoE bar (green<50/amber50-80/red>80) ✅
 - ARP/MAC collection: apps/arp_mac collects ARP + MAC tables over SSH (Netmiko +
-  ntc-templates 9.1.0, which already ships aruba_aoscx templates; FortiOS
-  ARP-only). Models ARPEntry/MACEntry/MACVendor (relational). Endpoints
+  ntc-templates 9.1.0, which already ships aruba_aoscx templates; FortiOS and
+  SonicWall ARP-only — firewalls have no MAC address-table). Models
+  ARPEntry/MACEntry/MACVendor (relational). Endpoints
   /api/devices/{id}/arp/|/mac/|/arp-mac/collect/, /api/network/search/ (find
   host by IP/MAC), /api/network/mac-vendor/{mac}/. UI: device ARP/MAC tab +
   global IP/MAC search on Devices page ✅
+  - SonicWall ARP: no Netmiko SonicOS driver → generic device_type; CLI
+    `show arp caches` (paging disabled via `no cli pager session`, fall back to
+    timing reads). Custom TextFSM template
+    apps/collectors/templates/sonicwall_show_arp_caches.textfsm parses the
+    IP/Type/MAC/Vendor/Interface/Timeout columns (vendor may contain spaces →
+    `\s{2,}` delimiter before the X0:Vnnn interface); collector
+    `_parse_sonicwall_arp` maps "Expires in N minutes" → age_minutes,
+    "Permanent published" → None. Device-reported Vendor dropped (API derives
+    it from the MAC OUI); Static/Dynamic TYPE not persisted (no ARPEntry column).
 - Ping latency on device list: GET /api/devices/ping-summary/ (per-device
   current/avg/max RTT + 24h uptime% + ~24-pt sparkline from device_reachability,
   cached 60s); Ping column with colored ms + inline SVG sparkline, fetched in
