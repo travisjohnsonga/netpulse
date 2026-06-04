@@ -13,6 +13,7 @@ from apps.telemetry.views import (
 
 from .views import (
     DeviceGroupViewSet,
+    DeviceRoleViewSet,
     DeviceViewSet,
     DiscoveredDeviceViewSet,
     DiscoveryJobViewSet,
@@ -22,6 +23,7 @@ from .views import (
 router = DefaultRouter()
 router.register("sites", SiteViewSet)
 router.register("groups", DeviceGroupViewSet)
+router.register("roles", DeviceRoleViewSet)
 router.register("", DeviceViewSet)
 
 # Discovery routes live under /api/devices/discovery/{jobs,discovered}/. They are

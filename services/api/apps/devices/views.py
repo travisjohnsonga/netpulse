@@ -11,12 +11,13 @@ from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
 
 from . import detect, fingerprint
-from .models import Device, DeviceGroup, DiscoveredDevice, DiscoveryJob, Site
+from .models import Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob, Site
 from .serializers import (
     DetectPlatformRequestSerializer,
     DetectPlatformResponseSerializer,
     DeviceGroupSerializer,
     DeviceListSerializer,
+    DeviceRoleSerializer,
     DeviceSerializer,
     DiscoveredDeviceSerializer,
     DiscoveryJobSerializer,
@@ -68,6 +69,32 @@ class DeviceGroupViewSet(viewsets.ModelViewSet):
     serializer_class = DeviceGroupSerializer
 
 
+class DeviceRoleViewSet(viewsets.ModelViewSet):
+    """
+    Manage device roles — labelled, colour-coded classifications (Core Switch,
+    Firewall, Router, …) shown as bubbles in the device list and detail pages.
+
+    A role assigned to one or more devices cannot be deleted; reassign those
+    devices first.
+    """
+
+    queryset = DeviceRole.objects.all()
+    serializer_class = DeviceRoleSerializer
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["name"]
+
+    def destroy(self, request, *args, **kwargs):
+        role = self.get_object()
+        in_use = role.devices.count()
+        if in_use:
+            return Response(
+                {"error": f"Role is assigned to {in_use} device(s). Reassign them before deleting."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
 class DeviceViewSet(viewsets.ModelViewSet):
     """
     Manage network devices — the core inventory of NetPulse.
@@ -79,8 +106,8 @@ class DeviceViewSet(viewsets.ModelViewSet):
     `topology/` action returns nodes + edges for the network map.
     """
 
-    queryset = Device.objects.select_related("site").prefetch_related("groups").all()
-    filterset_fields = ["status", "platform", "vendor", "site"]
+    queryset = Device.objects.select_related("site", "role").prefetch_related("groups").all()
+    filterset_fields = ["status", "platform", "vendor", "site", "role"]
     search_fields = ["hostname", "ip_address", "serial_number"]
     ordering_fields = [
         "hostname", "status", "ip_address", "vendor", "platform", "model",

@@ -12,6 +12,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'general',      label: 'General',        icon: '⚙' },
   { to: 'polling',      label: 'Polling',        icon: '⏱' },
   { to: 'users',        label: 'Users & Access', icon: '👥' },
+  { to: 'roles',        label: 'Device Roles',   icon: '🏷' },
   { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
   { to: 'integrations', label: 'Integrations',   icon: '🔌' },
   { to: 'alerting',     label: 'Alerting',       icon: '⚠' },

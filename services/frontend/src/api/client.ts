@@ -74,6 +74,20 @@ export interface InfraHealth {
   }
 }
 
+// Configurable device role (Core Switch, Firewall, …) with a colour used for
+// the role bubbles in the device list/detail. Nested on devices as `role`.
+export interface DeviceRole {
+  id: number
+  name: string
+  slug: string
+  color: string
+  description: string
+  icon: string
+  device_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
 export interface Device {
   id: number
   hostname: string
@@ -89,6 +103,7 @@ export interface Device {
   serial_number: string
   status: 'active' | 'inactive' | 'pending' | 'unreachable'
   site_name: string | null
+  role: DeviceRole | null
   credential_profile: number | null
   last_seen: string | null
   is_reachable?: boolean
@@ -294,6 +309,36 @@ interface Paginated<T> {
 
 function unwrap<T>(data: T[] | Paginated<T>): T[] {
   return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+// ── Config diff (structured unified diff from the backend) ───────────────────
+
+export interface ConfigDiffLine {
+  type: 'context' | 'add' | 'remove'
+  content: string
+  line_no: number
+}
+
+export interface ConfigDiffHunk {
+  old_start: number
+  old_count: number
+  new_start: number
+  new_count: number
+  lines: ConfigDiffLine[]
+}
+
+export interface ConfigDiff {
+  summary: { added: number; removed: number; changed: number }
+  hunks: ConfigDiffHunk[]
+}
+
+// Compare two stored snapshots by id, or two raw config strings.
+export async function fetchConfigDiff(
+  payload: { left: number; right: number } | { old: string; new: string },
+  context = 3,
+): Promise<ConfigDiff> {
+  const { data } = await api.post<ConfigDiff>('/configbackup/configs/diff/', { ...payload, context })
+  return data
 }
 
 // ── API calls ────────────────────────────────────────────────────────────────
@@ -1504,6 +1549,7 @@ export interface DeviceDetail {
   serial_number: string
   status: string
   site: number | null
+  role: DeviceRole | null
   groups: number[]
   credential_profile: number | null
   last_seen?: string | null
@@ -1529,6 +1575,7 @@ export interface DeviceCreatePayload {
   serial_number?: string
   status?: string
   site?: number | null
+  role_id?: number | null
   collector?: number | null
   credential_profile?: number | null
   notes?: string
@@ -1585,6 +1632,40 @@ export async function fetchDevicePlatforms(): Promise<PlatformOption[]> {
 
 export async function setDeviceCollector(id: number, collector: number | null): Promise<DeviceDetail> {
   const { data } = await api.patch<DeviceDetail>(`/devices/${id}/`, { collector })
+  return data
+}
+
+// ── Device roles ─────────────────────────────────────────────────────────────
+
+export interface DeviceRolePayload {
+  name: string
+  color: string
+  description?: string
+  icon?: string
+}
+
+export async function fetchDeviceRoles(): Promise<DeviceRole[]> {
+  const { data } = await api.get<DeviceRole[] | Paginated<DeviceRole>>('/devices/roles/')
+  return unwrap(data)
+}
+
+export async function createDeviceRole(payload: DeviceRolePayload): Promise<DeviceRole> {
+  const { data } = await api.post<DeviceRole>('/devices/roles/', payload)
+  return data
+}
+
+export async function updateDeviceRole(id: number, payload: Partial<DeviceRolePayload>): Promise<DeviceRole> {
+  const { data } = await api.patch<DeviceRole>(`/devices/roles/${id}/`, payload)
+  return data
+}
+
+export async function deleteDeviceRole(id: number): Promise<void> {
+  await api.delete(`/devices/roles/${id}/`)
+}
+
+// Assign (or, with null, clear) a device's role.
+export async function setDeviceRole(id: number, role_id: number | null): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(`/devices/${id}/`, { role_id })
   return data
 }
 

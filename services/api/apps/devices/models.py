@@ -72,6 +72,34 @@ class DeviceGroup(TimestampedModel):
         return self.name
 
 
+class DeviceRole(TimestampedModel):
+    """A configurable device role (Core Switch, Firewall, Router, …) with a
+    colour used for the role bubbles shown in the device list/detail UI."""
+
+    name = models.CharField(max_length=64, unique=True)
+    slug = models.SlugField(max_length=64, unique=True, blank=True)
+    color = models.CharField(max_length=7, default="#6366f1")  # hex colour
+    description = models.CharField(max_length=255, blank=True)
+    icon = models.CharField(max_length=50, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            base = slugify(self.name) or "role"
+            slug, n = base, 1
+            while DeviceRole.objects.exclude(pk=self.pk).filter(slug=slug).exists():
+                n += 1
+                slug = f"{base}-{n}"
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
 class Device(TimestampedModel):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -115,6 +143,12 @@ class Device(TimestampedModel):
     # Drives the downtime duration shown in the device-list status badge.
     unreachable_since = models.DateTimeField(null=True, blank=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
+    role = models.ForeignKey(
+        "devices.DeviceRole",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="devices",
+    )
     groups = models.ManyToManyField(DeviceGroup, blank=True, related_name="devices")
     # A device uses one multi-protocol credential profile (secrets in OpenBao).
     credential_profile = models.ForeignKey(

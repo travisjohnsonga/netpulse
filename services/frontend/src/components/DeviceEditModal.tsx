@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Modal from './Modal'
-import { fetchSites, updateDevice, fetchDevicePlatforms, type DeviceDetail, type Site, type PlatformOption } from '../api/client'
+import { fetchSites, fetchDeviceRoles, updateDevice, fetchDevicePlatforms, type DeviceDetail, type Site, type DeviceRole, type PlatformOption } from '../api/client'
+import RoleBubble from './RoleBubble'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:text-gray-100'
@@ -16,27 +17,25 @@ const PLATFORMS_FALLBACK: PlatformOption[] = [
   { value: 'aruba', label: 'Aruba AOS' }, { value: 'sonic', label: 'SONiC' },
   { value: 'other', label: 'Other' },
 ]
-const ROLES = ['', 'access', 'distribution', 'core', 'wan-edge', 'firewall']
 
-// Role/tags live inside notes (no dedicated model fields). Parse them out so they
-// can be edited, and preserve any other note lines.
-function parseNotes(notes: string): { role: string; tags: string[]; rest: string } {
-  let role = ''
+// Tags live inside notes (no dedicated model field). Parse them out so they can
+// be edited, and preserve any other note lines. (Role is now a real FK; any
+// legacy "Role:" line in notes is dropped on save in favour of the FK.)
+function parseNotes(notes: string): { tags: string[]; rest: string } {
   let tags: string[] = []
   const rest: string[] = []
   for (const ln of (notes || '').split('\n')) {
     const r = ln.match(/^\s*Role:\s*(.*)$/i)
     const t = ln.match(/^\s*Tags:\s*(.*)$/i)
-    if (r) role = r[1].trim()
+    if (r) continue  // drop legacy notes-based role
     else if (t) tags = t[1].split(',').map((s) => s.trim()).filter(Boolean)
     else rest.push(ln)
   }
-  return { role, tags, rest: rest.join('\n').trim() }
+  return { tags, rest: rest.join('\n').trim() }
 }
 
-function buildNotes(role: string, tags: string[], rest: string): string {
+function buildNotes(tags: string[], rest: string): string {
   const parts: string[] = []
-  if (role) parts.push(`Role: ${role}`)
   if (tags.length) parts.push(`Tags: ${tags.join(', ')}`)
   if (rest.trim()) parts.push(rest.trim())
   return parts.join('\n')
@@ -57,19 +56,23 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
   const [model, setModel] = useState(device.model)
   const [serial, setSerial] = useState(device.serial_number)
   const [siteId, setSiteId] = useState<number | ''>(device.site ?? '')
-  const [role, setRole] = useState(parsed.role)
+  const [roleId, setRoleId] = useState<number | ''>(device.role?.id ?? '')
   const [tags, setTags] = useState<string[]>(parsed.tags)
   const [tagInput, setTagInput] = useState('')
   const [notes, setNotes] = useState(parsed.rest)
   const [sites, setSites] = useState<Site[]>([])
+  const [roles, setRoles] = useState<DeviceRole[]>([])
   const [platforms, setPlatforms] = useState<PlatformOption[]>(PLATFORMS_FALLBACK)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => { fetchSites().then(setSites).catch(() => {}) }, [])
+  useEffect(() => { fetchDeviceRoles().then(setRoles).catch(() => {}) }, [])
   useEffect(() => {
     fetchDevicePlatforms().then((p) => { if (p.length) setPlatforms(p) }).catch(() => {})
   }, [])
+
+  const selectedRole = roles.find((r) => r.id === roleId) ?? null
 
   const addTag = () => {
     const t = tagInput.trim()
@@ -92,9 +95,10 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
         serial_number: serial,
         status: device.status,                  // preserve
         site: siteId === '' ? null : Number(siteId),
+        role_id: roleId === '' ? null : Number(roleId),
         credential_profile: device.credential_profile,  // preserve
         groups: device.groups,                  // preserve
-        notes: buildNotes(role, tags, notes),
+        notes: buildNotes(tags, notes),
       })
       onSaved()
     } catch (e) {
@@ -146,9 +150,17 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
             </select>
           </Field>
           <Field label="Role">
-            <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
-              {ROLES.map((r) => <option key={r} value={r}>{r || '— Select —'}</option>)}
-            </select>
+            <div className="flex items-center gap-2">
+              <select
+                className={inputCls}
+                value={roleId}
+                onChange={(e) => setRoleId(e.target.value === '' ? '' : Number(e.target.value))}
+              >
+                <option value="">— No role —</option>
+                {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+              {selectedRole && <RoleBubble role={selectedRole} />}
+            </div>
           </Field>
         </Row>
         <Field label="Tags">

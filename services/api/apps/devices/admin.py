@@ -1,9 +1,16 @@
 from django.contrib import admin
 
-from .models import Device, DeviceGroup, Site
+from .models import Device, DeviceGroup, DeviceRole, Site
 
 admin.site.register(Site)
 admin.site.register(DeviceGroup)
+
+
+@admin.register(DeviceRole)
+class DeviceRoleAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "color", "description", "created_at")
+    search_fields = ("name", "description")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(Device)

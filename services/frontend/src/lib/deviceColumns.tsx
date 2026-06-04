@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { type Device, type PingSummary, reachabilityOf, reachabilityReason } from '../api/client'
 import { sshUrl, sshTooltip } from './ssh'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
+import RoleBubble from '../components/RoleBubble'
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
@@ -41,13 +42,6 @@ function relTime(iso: string | null): string {
   if (s < 3600) return `${Math.round(s / 60)}m ago`
   if (s < 86400) return `${Math.round(s / 3600)}h ago`
   return `${Math.round(s / 86400)}d ago`
-}
-
-function roleFromNotes(notes: string): string {
-  for (const line of (notes || '').split('\n')) {
-    if (line.toLowerCase().startsWith('role:')) return line.split(':').slice(1).join(':').trim()
-  }
-  return '—'
 }
 
 /** Compact downtime since the device went unreachable, e.g. "4m", "2h", "3d". */
@@ -128,7 +122,7 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
     render: (d, ctx) => <span className="text-gray-600">{d.credential_profile ? (ctx.credNames[d.credential_profile] ?? `#${d.credential_profile}`) : <span className="text-gray-300">—</span>}</span>,
   },
   { key: 'created_at', label: 'Added', default: false, sortKey: 'created_at', render: (d) => <span className="text-gray-500 text-xs">{new Date(d.created_at).toLocaleDateString()}</span> },
-  { key: 'role', label: 'Role', default: false, render: (d) => <span className="text-gray-600">{roleFromNotes(d.notes)}</span> },
+  { key: 'role', label: 'Role', default: true, render: (d) => (d.role ? <RoleBubble role={d.role} /> : <span className="text-gray-300">—</span>) },
   { key: 'notes', label: 'Notes', default: false, render: (d) => <span className="text-gray-500 text-xs line-clamp-1 max-w-xs">{dash(d.notes?.trim())}</span> },
 ]
 

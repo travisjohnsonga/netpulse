@@ -39,6 +39,10 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] seeding default alert rules..."
     python manage.py seed_alert_rules || echo "[entrypoint] alert-rule seed had issues (continuing)"
 
+    # Seed the default device roles so the role bubbles work on a fresh install.
+    echo "[entrypoint] seeding default device roles..."
+    python manage.py seed_device_roles || echo "[entrypoint] device-role seed had issues (continuing)"
+
     # Seed SSO providers from any SOCIAL_AUTH_* env vars (idempotent).
     echo "[entrypoint] seeding SSO providers from env..."
     python manage.py seed_sso_providers || echo "[entrypoint] SSO provider seed had issues (continuing)"

@@ -1,6 +1,18 @@
 from rest_framework import serializers
 
-from .models import Device, DeviceGroup, DiscoveredDevice, DiscoveryJob, Site
+from .models import Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob, Site
+
+
+class DeviceRoleSerializer(serializers.ModelSerializer):
+    device_count = serializers.IntegerField(source="devices.count", read_only=True)
+
+    class Meta:
+        model = DeviceRole
+        fields = (
+            "id", "name", "slug", "color", "description", "icon",
+            "device_count", "created_at", "updated_at",
+        )
+        read_only_fields = ("slug", "device_count", "created_at", "updated_at")
 
 
 class SiteSerializer(serializers.ModelSerializer):
@@ -26,6 +38,12 @@ class DeviceSerializer(serializers.ModelSerializer):
     collector_ip = serializers.SerializerMethodField()
     collector_status = serializers.SerializerMethodField()
     display_hostname = serializers.SerializerMethodField()
+    # Role: nested object on read, `role_id` on write (matches the UI dropdown).
+    role = DeviceRoleSerializer(read_only=True)
+    role_id = serializers.PrimaryKeyRelatedField(
+        queryset=DeviceRole.objects.all(), source="role",
+        write_only=True, required=False, allow_null=True,
+    )
 
     class Meta:
         model = Device
@@ -55,15 +73,16 @@ class DeviceSerializer(serializers.ModelSerializer):
 class DeviceListSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source="site.name", read_only=True, default=None)
     display_hostname = serializers.SerializerMethodField()
+    role = DeviceRoleSerializer(read_only=True)
 
     class Meta:
         model = Device
         # Lightweight, but carries enough for the configurable Devices columns
-        # (vendor, model, OS, serial, mgmt IP, last seen, credentials, notes).
+        # (vendor, model, OS, serial, mgmt IP, last seen, credentials, notes, role).
         fields = (
             "id", "hostname", "display_hostname", "ip_address", "management_ip",
             "platform", "vendor", "model", "os_version", "serial_number", "status",
-            "site_name", "credential_profile", "last_seen", "is_reachable",
+            "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",
             "notes", "created_at",
         )
