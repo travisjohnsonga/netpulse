@@ -38,12 +38,18 @@ CISCO_CPU_5MIN = "1.3.6.1.4.1.9.9.109.1.1.1.1.8.1"
 FG_CPU_USAGE = "1.3.6.1.4.1.12356.101.4.1.3.0"    # fgSysCpuUsage (%)
 FG_MEM_USAGE = "1.3.6.1.4.1.12356.101.4.1.4.0"    # fgSysMemUsage (%)
 FG_MEM_CAPACITY = "1.3.6.1.4.1.12356.101.4.1.5.0"  # fgSysMemCapacity (KB)
-# SonicWall SonicOS (SONICWALL-FIREWALL enterprise 8741) — confirmed via
-# PRTG/SonicWall docs. CPU/memory are direct percentages (0-100), no
-# calculation needed (unlike hrStorage).
+# SonicWall SonicOS (SONICWALL-FIREWALL enterprise 8741). Primary OIDs
+# (confirmed v7/v8 via PRTG/SonicWall docs) are direct percentages (0-100),
+# no calculation needed (unlike hrStorage).
 SONIC_CPU = "1.3.6.1.4.1.8741.1.3.1.3.0"   # CPU utilization (%)
 SONIC_MEM = "1.3.6.1.4.1.8741.1.3.1.4.0"   # RAM utilization (%)
 SONIC_CONN = "1.3.6.1.4.1.8741.1.3.1.2.0"  # current connection count
+# Legacy 8741.1.3.2.x subtree — fallback for older SonicOS that only exposes
+# this tree. CPU is a %; memory is used/total in KB (percentage derived in
+# post-processing, metrics_influx). Poll both; first non-zero wins.
+SONIC_CPU_ALT = "1.3.6.1.4.1.8741.1.3.2.3.0"       # CPU utilization (%)
+SONIC_MEM_USED_KB = "1.3.6.1.4.1.8741.1.3.2.2.0"   # RAM used (KB)
+SONIC_MEM_TOTAL_KB = "1.3.6.1.4.1.8741.1.3.2.1.0"  # RAM total (KB)
 # AOS-CX memory via HOST-RESOURCES hrStorage index 1 ("Physical memory").
 # CPU (hrProcessorLoad) and the ENTITY-SENSOR temp/fan/PSU tables live at
 # vendor indexes, so they are WALKED (PLATFORM_WALK_OIDS), not GET here.
@@ -63,8 +69,11 @@ PLATFORM_DEVICE_OIDS = {
     "fortios": [SYSUPTIME, HRPROCLOAD,
                 FG_CPU_USAGE, FG_MEM_USAGE, FG_MEM_CAPACITY],  # FortiGate
     "panos":   [SYSUPTIME, HRPROCLOAD],                   # Palo Alto: hostMIB CPU
-    # SonicWall SonicOS (SONICWALL-FIREWALL enterprise 8741).
-    "sonicwall": [SYSUPTIME, SONIC_CPU, SONIC_MEM, SONIC_CONN],
+    # SonicWall SonicOS (SONICWALL-FIREWALL enterprise 8741). Poll both the
+    # primary 1.3.1.x and legacy 1.3.2.x subtrees; post-processing prefers the
+    # primary and falls back to the legacy values.
+    "sonicwall": [SYSUPTIME, SONIC_CPU, SONIC_MEM, SONIC_CONN,
+                  SONIC_CPU_ALT, SONIC_MEM_USED_KB, SONIC_MEM_TOTAL_KB],
     # HPE AOS-CX: uptime + memory via GET; CPU/temp/fan/PSU/PoE via walk (below).
     "aos_cx":  [SYSUPTIME, AOSCX_MEM_SIZE, AOSCX_MEM_USED, AOSCX_MEM_ALLOC],
     # Aruba AOS mobility controllers (ARUBA enterprise 14823).

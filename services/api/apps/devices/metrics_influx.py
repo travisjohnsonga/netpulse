@@ -48,11 +48,19 @@ FIELD_MAP = {
     "fgSysMemUsage_0": "memory_used_pct",
     "1_3_6_1_4_1_12356_101_4_1_5_0": "memory_total_kb",  # fgSysMemCapacity (KB)
     "fgSysMemCapacity_0": "memory_total_kb",
-    # SonicWall SonicOS (enterprise 8741) — CPU/mem are direct percentages
-    # (0-100), no calculation needed. OIDs confirmed via PRTG/SonicWall docs.
+    # SonicWall SonicOS (enterprise 8741) — primary 1.3.1.x subtree (confirmed
+    # v7/v8 via PRTG/SonicWall docs). CPU/mem are direct percentages (0-100),
+    # no calculation needed.
     "1_3_6_1_4_1_8741_1_3_1_3_0": "cpu_pct",          # CPU utilization (%)
     "1_3_6_1_4_1_8741_1_3_1_4_0": "memory_used_pct",  # RAM utilization (%)
     "1_3_6_1_4_1_8741_1_3_1_2_0": "connections",      # current connections
+    # SonicWall legacy 1.3.2.x subtree — fallback for older SonicOS. Mapped to
+    # distinct intermediate names so they don't clobber the primary fields;
+    # query_device_metrics prefers the primary and derives memory_used_pct from
+    # the used/total KB when the primary percentage is missing/zero.
+    "1_3_6_1_4_1_8741_1_3_2_3_0": "cpu_pct_alt",      # CPU utilization (%)
+    "1_3_6_1_4_1_8741_1_3_2_2_0": "memory_used_kb",   # RAM used (KB)
+    "1_3_6_1_4_1_8741_1_3_2_1_0": "memory_total_kb",  # RAM total (KB)
     # Aruba AOS mobility controllers (enterprise 14823) — CPU/mem percentages.
     "1_3_6_1_4_1_14823_2_2_1_1_1_11_0": "cpu_pct",          # wlsxSysXCpuUtilization
     "wlsxSysXCpuUtilization_0": "cpu_pct",
@@ -300,11 +308,24 @@ def query_device_metrics(device_id: str, metric: str = "all", period: str = "1h"
     for key in ("cpu_5sec_pct", "cpu_1min_pct", "cpu_5min_pct"):
         if cpu is None:
             cpu = snapshot.get(key)
+    # SonicWall: some SonicOS versions only expose the legacy 8741.1.3.2.x
+    # subtree. Prefer the primary cpu_pct (8741.1.3.1.3.0); fall back to the
+    # alternate OID when the primary is missing or zero.
+    if not cpu and snapshot.get("cpu_pct_alt") is not None:
+        cpu = snapshot.get("cpu_pct_alt")
     # Prefer a directly-reported memory utilisation % (FortiGate fgSysMemUsage)
     # over the bytes-derived value (Cisco/gNMI report used+free/total bytes).
     mem_pct = snapshot.get("memory_used_pct")
     if mem_pct is None:
         mem_pct = _mem_used_pct(used, free, total)
+    # SonicWall legacy subtree reports memory as used/total KB rather than a
+    # percentage — derive the percentage when the direct value is missing/zero.
+    if not mem_pct:
+        used_kb = snapshot.get("memory_used_kb")
+        total_kb_mem = snapshot.get("memory_total_kb")
+        if (isinstance(used_kb, (int, float)) and isinstance(total_kb_mem, (int, float))
+                and total_kb_mem > 0):
+            mem_pct = round(used_kb / total_kb_mem * 100, 1)
     total_kb = snapshot.get("memory_total_kb")
     result["metrics"] = {
         "uptime_seconds": snapshot.get("uptime_seconds"),

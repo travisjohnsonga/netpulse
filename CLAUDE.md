@@ -1105,6 +1105,22 @@ FortiOS/PAN-OS that Netmiko SSHDetect misses.
   `snwlSysSerialNumber` 1.3.6.1.4.1.8741.1.3.1.1.0 when entPhysicalSerialNum is
   empty. Netmiko has no SonicOS driver → device_type `generic` (sonic_os is not
   a valid Netmiko type).
+- SonicWall SNMP CPU/memory OID versions (the CPU/mem subtree MOVED between
+  major SonicOS releases — poll BOTH, use whichever returns non-zero):
+  - v7 (SonicOS 7.x): legacy `1.3.6.1.4.1.8741.1.3.2.*`
+    CPU `…8741.1.3.2.3.0` (%), MemUsed `…8741.1.3.2.2.0` (KB),
+    MemTotal `…8741.1.3.2.1.0` (KB) → memory_used_pct = used/total×100.
+    Confirmed live: v7 TZ 670 (SonicOS 7.3.2) responds to 1.3.2.x, NOT 1.3.1.x.
+  - v8 (SonicOSX 8.x): `1.3.6.1.4.1.8741.1.3.1.*`
+    CPU `…8741.1.3.1.3.0` (%), Memory `…8741.1.3.1.4.0` (% direct, no calc),
+    Conns `…8741.1.3.1.2.0`.
+    Confirmed live: v8 NSv XS (SonicOSX 8.2.1) responds to 1.3.1.x.
+  - Implementation: PLATFORM_DEVICE_OIDS["sonicwall"] (snmp_publish) polls both
+    subtrees; FIELD_MAP maps 1.3.1.x to cpu_pct/memory_used_pct/connections and
+    1.3.2.x to cpu_pct_alt/memory_used_kb/memory_total_kb; query_device_metrics
+    prefers the primary (1.3.1.x) and falls back to the legacy values
+    (cpu_pct_alt; memory_used_pct derived from the KB pair) when the primary is
+    missing or zero.
 - Docker containers must MASQUERADE-NAT to the host IP (SonicWall restricts
   mgmt by source IP) — see "Docker NAT (Required)".
 
