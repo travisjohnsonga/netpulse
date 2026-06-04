@@ -122,8 +122,9 @@ class TestMetricsModule:
 
     def test_field_map_sonicwall_aruba(self):
         from apps.devices.metrics_influx import FIELD_MAP
-        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_2_1_0"] == "cpu_pct"          # sonicCpuUtil
-        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_2_2_0"] == "memory_used_pct"  # sonicRamUtil
+        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_1_3_0"] == "cpu_pct"          # SonicWall CPU %
+        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_1_4_0"] == "memory_used_pct"  # SonicWall RAM %
+        assert FIELD_MAP["1_3_6_1_4_1_8741_1_3_1_2_0"] == "connections"      # SonicWall conn count
         assert FIELD_MAP["1_3_6_1_4_1_14823_2_2_1_1_1_11_0"] == "cpu_pct"    # wlsxSysXCpuUtilization
         assert FIELD_MAP["1_3_6_1_4_1_14823_2_2_1_1_1_10_0"] == "memory_used_pct"
 
