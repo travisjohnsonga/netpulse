@@ -3609,6 +3609,47 @@ After reboot:
   Run ./scripts/setup.sh only if OpenBao was wiped
   (factory reset or volume deletion)
 
+## Docker NAT (Required)
+
+NetPulse containers must NAT to the host IP for SNMP/SSH to work with devices
+that restrict access by source IP. Applied automatically by `setup.sh`:
+
+  sudo iptables -t nat -A POSTROUTING \
+    -s {docker_subnet} \
+    ! -d {docker_subnet} \
+    -j MASQUERADE
+
+This ensures:
+- All container traffic appears to come from the host IP
+- No Docker subnet conflicts with the network
+- SNMP/SSH works regardless of device ACLs
+
+If SNMP stops working after reboot:  `sudo ./netpulse.sh fix-nat`
+(applying the rule needs root — run the whole command under sudo so the script
+skips its inner sudo.)
+
+### Details
+
+- Docker containers always NAT to the host IP (MASQUERADE on the netpulse
+  bridge subnet, default 172.18.0.0/16 — the network is `netpulse_netpulse-net`,
+  not `netpulse_default`).
+- Why: devices that filter SNMP/SSH by source IP see the host IP (not a
+  container IP), and the 172.x bridge range can't collide with real network
+  infrastructure. No per-deployment decision needed.
+- Applied by `scripts/setup.sh` after the stack starts, and re-applied during
+  `scripts/update.sh`. Shared logic lives in `scripts/nat.sh`
+  (`apply_docker_nat` / `detect_docker_subnet`), idempotent.
+- Persisted across reboots via netfilter-persistent (or
+  `/etc/iptables/rules.v4`); if iptables-persistent isn't installed the rule is
+  lost on reboot.
+- If SNMP/SSH from containers stops working after a reboot:
+    sudo ./netpulse.sh fix-nat
+  (requires root/sudo — iptables needs privileges; run the whole command with
+  sudo so the script skips its inner sudo.)
+- Health check: `run_health_checks` includes a "Docker NAT" check. It runs
+  inside the api container, which has no host iptables access, so it WARNs
+  ("verify on the host") rather than failing; run `fix-nat` on the host to apply.
+
 ## PINNED — AOS-CX and Aruba Telemetry + Config Templates
 
 ### Next session starts here.

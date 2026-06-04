@@ -113,6 +113,29 @@ Ports that must be accessible on the NetPulse server:
 | 161   | UDP      | SNMP (outbound polls)      | Outbound to devices    |
 | 22    | TCP      | SSH (config collection)    | Outbound to devices    |
 
+#### Container NAT (automatic)
+
+NetPulse automatically configures iptables to NAT container traffic through the
+host IP. This ensures network devices see the host server IP for SNMP and SSH
+connections.
+
+**Requirements:**
+- `sudo` access on the host server
+- `iptables` available (standard on Linux)
+- `iptables-persistent` recommended for persistence across reboots (used by
+  `setup.sh` when available)
+
+**Why this is needed:**
+Network devices typically restrict SNMP and SSH access to specific management
+IPs. Without NAT, Docker containers would connect from the Docker bridge subnet
+(e.g. `172.18.x.x`), which is usually not in device ACLs. The MASQUERADE rule
+makes all container traffic appear to come from the host IP instead.
+
+**If SNMP stops working after a reboot:**
+```bash
+sudo ./netpulse.sh fix-nat
+```
+
 ### Device Requirements
 
 For full telemetry support, network devices need:

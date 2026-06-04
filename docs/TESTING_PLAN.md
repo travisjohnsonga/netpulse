@@ -266,6 +266,19 @@ curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}:3000/
 
 ---
 
+## 15a. NAT / Networking
+
+- [ ] SNMP works from container to device
+- [ ] Host IP visible on device SNMP logs (not the Docker subnet IP)
+- [ ] NAT rule persists after reboot (`sudo iptables -t nat -L POSTROUTING -n`)
+- [ ] `sudo ./netpulse.sh fix-nat` reapplies the rule (idempotent — second run
+      reports "already configured")
+- [ ] Health check reports the NAT rule status
+      (`./netpulse.sh health` → "Docker NAT"; warns from inside the container,
+      fails on the host when the rule is missing)
+
+---
+
 ## 16. AOS-CX (HPE) Testing
 
 Reference device: wco2-idf5-asw-01 (10.150.0.21, AOS-CX 6100, SNMPv3 `fpsrw`).

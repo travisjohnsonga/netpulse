@@ -449,6 +449,33 @@ Each microservice has its own AppRole with minimal Vault policy:
 
 ---
 
+## Network Architecture
+
+### Container NAT
+
+All NetPulse container traffic is NAT'd to the host IP address using iptables
+MASQUERADE.
+
+**Rationale:**
+- Network devices often restrict SNMP/SSH access by source IP.
+- The Docker bridge subnet (172.x.x.x) is typically not in device ACLs.
+- NAT ensures containers use the host IP, which *is* in device management ACLs.
+- Prevents the Docker subnet from conflicting with existing network
+  infrastructure.
+
+**Implementation:**
+- Applied automatically during `setup.sh` (shared logic in `scripts/nat.sh`),
+  re-applied during `scripts/update.sh`, and re-runnable via
+  `sudo ./netpulse.sh fix-nat`.
+- Rule: `iptables -t nat -A POSTROUTING -s <subnet> ! -d <subnet> -j MASQUERADE`
+  on the netpulse bridge subnet (default 172.18.0.0/16).
+- Persisted across reboots via `netfilter-persistent` (or
+  `/etc/iptables/rules.v4`).
+- `run_health_checks` includes a "Docker NAT" check (warns from inside the
+  container, where it has no host iptables access; verify/apply on the host).
+
+---
+
 ## Data Architecture
 
 ### PostgreSQL (Primary Database)
