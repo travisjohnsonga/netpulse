@@ -64,8 +64,13 @@ export default function ArpMac({ device }: { device: DeviceDetail }) {
     setCollecting(true)
     setError(null)
     try {
+      // Collection runs in the background on the server; poll the tables a few
+      // times so the freshly collected rows appear without a manual refresh.
       await collectDeviceArpMac(device.id)
-      await load()
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 5000))
+        await load()
+      }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
       setError(msg || 'Collection failed (check SSH credentials and reachability).')

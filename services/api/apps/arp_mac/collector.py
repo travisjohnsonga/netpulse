@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 
 from apps.compliance.collector import device_host, netmiko_device_type
 from .normalize import normalize_mac
@@ -196,17 +197,33 @@ def _parse_sonicwall_arp(output: str) -> list[dict]:
 def _collect_sonicwall_arp(conn) -> list[dict]:
     """
     Read the ARP cache from a SonicWall over the generic Netmiko handler. SonicOS
-    has no driver, so disable CLI paging first (avoids ``--More--`` truncation)
-    and fall back to timing-based reads when the prompt isn't auto-detected.
+    has no driver, so disable CLI paging first (avoids ``--More--`` truncation).
+
+    The generic driver doesn't auto-detect the SonicOS prompt, so it sends the
+    next command before "no cli pager session" has actually taken effect — the
+    fix manually waits (``time.sleep``) after disabling paging so the subsequent
+    "show arp caches" doesn't page. Timing-based reads with a generous
+    delay_factor/read_timeout absorb the slow CLI.
     """
     try:
-        conn.send_command_timing("no cli pager session", strip_prompt=False, strip_command=False)
+        # Disable paging and wait for it to apply.
+        conn.send_command_timing(
+            "no cli pager session",
+            strip_prompt=False,
+            strip_command=False,
+            delay_factor=2,
+        )
+        time.sleep(1)  # let paging actually disable before the next command
     except Exception:  # not all SonicOS versions support it — best effort
         pass
-    try:
-        out = conn.send_command("show arp caches", expect_string=r"[>#]\s*$", read_timeout=60)
-    except Exception:
-        out = conn.send_command_timing("show arp caches", strip_prompt=True, strip_command=True)
+    # Now collect ARP — should not page.
+    out = conn.send_command_timing(
+        "show arp caches",
+        strip_prompt=True,
+        strip_command=True,
+        delay_factor=3,
+        max_loops=500,
+    )
     return _parse_sonicwall_arp(out)
 
 
