@@ -1,6 +1,9 @@
 """REST endpoints for ARP/MAC tables, global IP/MAC search and OUI lookup."""
 from __future__ import annotations
 
+import logging
+import threading
+
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -11,6 +14,8 @@ from rest_framework.views import APIView
 from apps.devices.models import Device
 from .models import ARPEntry, MACEntry, MACVendor
 from .normalize import normalize_mac, oui_of
+
+logger = logging.getLogger(__name__)
 
 
 def _vendor_map(macs) -> dict:
@@ -84,14 +89,31 @@ class DeviceMACView(APIView):
         })
 
 
+def _run_arp_collection(device, secrets: dict, username: str) -> None:
+    """Background worker: collect ARP/MAC over SSH and persist the rows.
+
+    Runs in a daemon thread so the request returns immediately — SonicOS and
+    other slow-CLI devices can take well past the gunicorn worker timeout to
+    walk their ARP cache.
+    """
+    from .collector import collect_arp_mac, store_arp_mac
+    try:
+        arp, mac = collect_arp_mac(device, secrets, username)
+        n_arp, n_mac = store_arp_mac(device, arp, mac)
+        logger.info("arp_mac: collected %s ARP / %s MAC entries for %s",
+                    n_arp, n_mac, device.hostname)
+    except Exception:
+        logger.exception("arp_mac: background collection failed for %s", device.hostname)
+
+
 class DeviceARPMACCollectView(APIView):
-    """Trigger an immediate ARP/MAC collection for one device (runs inline)."""
+    """Trigger an immediate ARP/MAC collection for one device (runs async)."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, device_id):
         device = get_object_or_404(Device, pk=device_id)
         from apps.compliance.collector import get_credentials
-        from .collector import DEVICE_TYPE_MAP, collect_arp_mac, store_arp_mac
+        from .collector import DEVICE_TYPE_MAP
 
         if (device.platform or "").lower() not in DEVICE_TYPE_MAP:
             return Response({"error": f"ARP/MAC collection not supported for platform '{device.platform}'."},
@@ -102,13 +124,16 @@ class DeviceARPMACCollectView(APIView):
         if not username or not secrets.get("ssh_password"):
             return Response({"error": "No SSH credentials configured for this device."},
                             status=status.HTTP_400_BAD_REQUEST)
-        try:
-            arp, mac = collect_arp_mac(device, secrets, username)
-            n_arp, n_mac = store_arp_mac(device, arp, mac)
-        except Exception as exc:
-            return Response({"error": f"Collection failed: {exc}"},
-                            status=status.HTTP_502_BAD_GATEWAY)
-        return Response({"arp": n_arp, "mac": n_mac})
+        # Collection runs in the background (slow devices exceed the gunicorn
+        # worker timeout); mirror the config-backup / CVE-sync async pattern.
+        threading.Thread(
+            target=_run_arp_collection,
+            args=(device, secrets, username),
+            name=f"arp-collect-{device_id}",
+            daemon=True,
+        ).start()
+        return Response({"status": "started", "device_id": device_id},
+                        status=status.HTTP_202_ACCEPTED)
 
 
 class NetworkSearchView(APIView):

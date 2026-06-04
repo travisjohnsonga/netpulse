@@ -504,7 +504,7 @@ export async function fetchDeviceMac(
   return data
 }
 
-export async function collectDeviceArpMac(deviceId: number): Promise<{ arp: number; mac: number }> {
+export async function collectDeviceArpMac(deviceId: number): Promise<{ status: string; device_id: number }> {
   const { data } = await api.post(`/devices/${deviceId}/arp-mac/collect/`)
   return data
 }
