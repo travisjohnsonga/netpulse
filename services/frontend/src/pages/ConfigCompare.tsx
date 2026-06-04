@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { createTwoFilesPatch, diffLines } from 'diff'
-import { api, fetchDevices, type Device } from '../api/client'
+import { diffLines } from 'diff'
+import { api, fetchDevices, fetchConfigDiff, type Device } from '../api/client'
+import DiffViewer from '../components/DiffViewer'
 
 interface ConfigRow {
   id: number
@@ -13,7 +14,7 @@ interface ConfigRow {
   content_hash: string
 }
 
-type Mode = 'unified' | 'side' | 'summary'
+type Mode = 'unified' | 'side'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -66,6 +67,13 @@ export default function ConfigCompare() {
 
   const ready = !!leftCfg && !!rightCfg
 
+  // Backend-computed structured diff (used by the unified DiffViewer).
+  const { data: diff, isLoading: diffLoading, isError: diffError } = useQuery({
+    queryKey: ['config-diff', leftVersion, rightVersion],
+    queryFn: () => fetchConfigDiff({ left: leftVersion as number, right: rightVersion as number }),
+    enabled: ready && mode === 'unified',
+  })
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Configuration Compare</h1>
@@ -86,7 +94,7 @@ export default function ConfigCompare() {
 
       {/* Mode toggle */}
       <div className="flex gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-1 w-fit">
-        {([['unified', 'Unified'], ['side', 'Side by Side'], ['summary', 'Summary']] as [Mode, string][]).map(([m, lbl]) => (
+        {([['unified', 'Unified'], ['side', 'Side by Side']] as [Mode, string][]).map(([m, lbl]) => (
           <button key={m} onClick={() => setMode(m)}
             className={clsx('px-3 py-1.5 text-sm rounded-md font-medium', mode === m ? 'bg-white dark:bg-gray-800 shadow-sm text-blue-700' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100')}>
             {lbl}
@@ -105,9 +113,16 @@ export default function ConfigCompare() {
             <span className="text-red-600 font-mono truncate">− {leftLabel}</span>
             <span className="text-green-600 font-mono truncate">+ {rightLabel}</span>
           </div>
-          {mode === 'unified' && <Unified left={leftCfg!.content} right={rightCfg!.content} leftLabel={leftLabel} rightLabel={rightLabel} />}
+          {mode === 'unified' && (
+            diffLoading ? (
+              <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+            ) : diffError || !diff ? (
+              <div className="py-12 text-center text-sm text-red-600 dark:text-red-400">Failed to compute the diff. The API may be unavailable.</div>
+            ) : (
+              <DiffViewer diff={diff} leftLabel={leftLabel} rightLabel={rightLabel} />
+            )
+          )}
           {mode === 'side' && <SideBySide left={leftCfg!.content} right={rightCfg!.content} />}
-          {mode === 'summary' && <Summary left={leftCfg!.content} right={rightCfg!.content} />}
         </div>
       )}
     </div>
@@ -161,26 +176,6 @@ function Selector({ title, devices, device, setDevice, configs, version, setVers
   )
 }
 
-function Unified({ left, right, leftLabel, rightLabel }: { left: string; right: string; leftLabel: string; rightLabel: string }) {
-  const patch = useMemo(
-    () => createTwoFilesPatch(leftLabel, rightLabel, left, right, '', '', { context: 3 }),
-    [left, right, leftLabel, rightLabel],
-  )
-  return (
-    <pre className="bg-gray-900 text-xs font-mono p-4 overflow-x-auto leading-relaxed max-h-[32rem]">
-      {patch.split('\n').map((line, i) => (
-        <div key={i} className={clsx(
-          line.startsWith('+') && !line.startsWith('+++') && 'text-green-400',
-          line.startsWith('-') && !line.startsWith('---') && 'text-red-400',
-          line.startsWith('@@') && 'text-sky-400',
-          (line.startsWith('+++') || line.startsWith('---') || line.startsWith('Index') || line.startsWith('===')) && 'text-gray-500',
-          !/^[+\-@]/.test(line) && 'text-gray-300',
-        )}>{line || ' '}</div>
-      ))}
-    </pre>
-  )
-}
-
 interface Aligned { left: string | null; right: string | null; kind: 'same' | 'add' | 'del' }
 
 function alignedRows(left: string, right: string): Aligned[] {
@@ -217,34 +212,3 @@ function SideBySide({ left, right }: { left: string; right: string }) {
   )
 }
 
-function Summary({ left, right }: { left: string; right: string }) {
-  const { added, removed, sections } = useMemo(() => {
-    let added = 0, removed = 0, sections = 0
-    for (const part of diffLines(left, right)) {
-      const n = part.count ?? part.value.split('\n').filter(Boolean).length
-      if (part.added) { added += n; sections++ }
-      else if (part.removed) { removed += n; sections++ }
-    }
-    return { added, removed, sections }
-  }, [left, right])
-
-  return (
-    <div className="p-6 grid grid-cols-3 gap-4 text-center">
-      <Stat value={`+${added}`} label="lines added" color="text-green-600" />
-      <Stat value={`-${removed}`} label="lines removed" color="text-red-600" />
-      <Stat value={String(sections)} label="sections changed" color="text-gray-800" />
-      {added === 0 && removed === 0 && (
-        <p className="col-span-3 text-sm text-gray-500 dark:text-gray-400">The two configurations are identical.</p>
-      )}
-    </div>
-  )
-}
-
-function Stat({ value, label, color }: { value: string; label: string; color: string }) {
-  return (
-    <div>
-      <p className={clsx('text-3xl font-bold', color)}>{value}</p>
-      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{label}</p>
-    </div>
-  )
-}

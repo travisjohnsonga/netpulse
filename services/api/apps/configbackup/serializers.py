@@ -33,6 +33,40 @@ class TestGitRequestSerializer(serializers.Serializer):
     git_repo_url = serializers.CharField(required=False, allow_blank=True)
 
 
+class ConfigDiffRequestSerializer(serializers.Serializer):
+    """Compare two stored snapshots (by id) or two raw config strings."""
+    left = serializers.IntegerField(required=False, help_text="DeviceConfig id (the 'old' side).")
+    right = serializers.IntegerField(required=False, help_text="DeviceConfig id (the 'new' side).")
+    old = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    new = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    context = serializers.IntegerField(required=False, default=3, min_value=0, max_value=100)
+
+
+class ConfigDiffLineSerializer(serializers.Serializer):
+    type = serializers.ChoiceField(choices=["context", "add", "remove"])
+    content = serializers.CharField(allow_blank=True)
+    line_no = serializers.IntegerField()
+
+
+class ConfigDiffHunkSerializer(serializers.Serializer):
+    old_start = serializers.IntegerField()
+    old_count = serializers.IntegerField()
+    new_start = serializers.IntegerField()
+    new_count = serializers.IntegerField()
+    lines = ConfigDiffLineSerializer(many=True)
+
+
+class ConfigDiffSummarySerializer(serializers.Serializer):
+    added = serializers.IntegerField()
+    removed = serializers.IntegerField()
+    changed = serializers.IntegerField()
+
+
+class ConfigDiffResponseSerializer(serializers.Serializer):
+    summary = ConfigDiffSummarySerializer()
+    hunks = ConfigDiffHunkSerializer(many=True)
+
+
 class SimpleResultSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
     message = serializers.CharField()

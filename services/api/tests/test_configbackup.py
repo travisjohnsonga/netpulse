@@ -127,3 +127,58 @@ class TestDeviceConfigEndpoint:
         cfg = DeviceConfig.objects.get(device=device)
         assert cfg.collected_by == "manual"
         assert cfg.content == "running cfg from probe"
+
+
+class TestConfigDiff:
+    @pytest.fixture
+    def device(self):
+        from apps.devices.models import Device
+        return Device.objects.create(hostname="rtr-1", ip_address="10.9.0.1")
+
+    def _config(self, device, content):
+        from django.utils import timezone
+        from apps.configbackup.models import DeviceConfig
+        return DeviceConfig.objects.create(
+            device=device, content=content, collected_at=timezone.now())
+
+    def test_diff_raw_strings(self, auth_client):
+        resp = auth_client.post("/api/configbackup/configs/diff/", {
+            "old": "interface Gi0/0\n ip address 192.168.1.1 255.255.255.0\n!",
+            "new": "interface Gi0/0\n ip address 10.0.0.1 255.255.255.0\n description wan\n!",
+        }, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["removed"] == 1
+        assert body["summary"]["added"] == 2
+        assert body["summary"]["changed"] == 1
+        assert len(body["hunks"]) == 1
+        types = [ln["type"] for ln in body["hunks"][0]["lines"]]
+        assert "remove" in types and "add" in types and "context" in types
+
+    def test_diff_identical(self, auth_client):
+        resp = auth_client.post("/api/configbackup/configs/diff/", {
+            "old": "a\nb\nc", "new": "a\nb\nc",
+        }, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"] == {"added": 0, "removed": 0, "changed": 0}
+        assert body["hunks"] == []
+
+    def test_diff_by_config_ids(self, auth_client, device):
+        left = self._config(device, "line1\nline2\nline3")
+        right = self._config(device, "line1\nlineTWO\nline3")
+        resp = auth_client.post("/api/configbackup/configs/diff/", {
+            "left": left.id, "right": right.id,
+        }, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["changed"] == 1
+        hunk = body["hunks"][0]
+        assert any(ln["type"] == "remove" and ln["content"] == "line2" for ln in hunk["lines"])
+        assert any(ln["type"] == "add" and ln["content"] == "lineTWO" for ln in hunk["lines"])
+
+    def test_diff_missing_config_id(self, auth_client):
+        resp = auth_client.post("/api/configbackup/configs/diff/", {
+            "left": 999999, "right": 888888,
+        }, format="json")
+        assert resp.status_code == 404

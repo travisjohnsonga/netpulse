@@ -10,9 +10,12 @@ from rest_framework.views import APIView
 
 from apps.credentials import vault
 
+from .diff import generate_diff
 from .models import ConfigBackupSettings, DeviceConfig
 from .serializers import (
     ConfigBackupSettingsSerializer,
+    ConfigDiffRequestSerializer,
+    ConfigDiffResponseSerializer,
     DeviceConfigSerializer,
     SimpleResultSerializer,
     TestGitRequestSerializer,
@@ -44,6 +47,46 @@ class DeviceConfigViewSet(viewsets.ReadOnlyModelViewSet):
         from django.core.management import call_command
         call_command("run_config_manager", device_id=device_id, once=True)
         return Response({"status": "collection triggered"})
+
+    @extend_schema(request=ConfigDiffRequestSerializer, responses=ConfigDiffResponseSerializer)
+    @action(detail=False, methods=["post"], url_path="diff")
+    def diff(self, request):
+        """
+        Structured unified diff between two configs.
+
+        Supply either two snapshot ids (`left`/`right`) or two raw strings
+        (`old`/`new`). Returns summary counts plus hunks of context/add/remove
+        lines with line numbers, for the Configuration Compare diff viewer.
+        """
+        req = ConfigDiffRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        data = req.validated_data
+
+        def _content(config_id):
+            cfg = DeviceConfig.objects.filter(pk=config_id).first()
+            if cfg is None:
+                return None
+            return cfg.content or ""
+
+        if data.get("left") is not None or data.get("right") is not None:
+            old = _content(data.get("left"))
+            new = _content(data.get("right"))
+            missing = [
+                str(cid) for cid, val in
+                ((data.get("left"), old), (data.get("right"), new))
+                if cid is not None and val is None
+            ]
+            if missing:
+                return Response(
+                    {"error": f"Config snapshot(s) not found: {', '.join(missing)}."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            old, new = old or "", new or ""
+        else:
+            old = data.get("old", "")
+            new = data.get("new", "")
+
+        return Response(generate_diff(old, new, context=data.get("context", 3)))
 
 
 class ConfigBackupSettingsView(generics.RetrieveUpdateAPIView):
