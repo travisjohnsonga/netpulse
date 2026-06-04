@@ -180,6 +180,24 @@ class TestJwtBridge:
         assert set(tokens) == {"access", "refresh"}
         assert tokens["access"] and tokens["refresh"]
 
+    def test_sso_token_carries_custom_claims(self, django_user_model):
+        # The SSO JWT must include the same username/role/name/email claims as
+        # local login, or the sidebar (which reads them) breaks for SSO users.
+        import json
+        from base64 import urlsafe_b64decode
+        user = django_user_model.objects.create_user(
+            username="ssouser", email="sso@company.com", password="x",
+            first_name="Sso", last_name="User", role="viewer",
+        )
+        access = get_tokens_for_user(user)["access"]
+        payload_b64 = access.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)  # pad for base64
+        claims = json.loads(urlsafe_b64decode(payload_b64))
+        assert claims["username"] == "ssouser"
+        assert claims["role"] == "viewer"
+        assert claims["name"] == "Sso User"
+        assert claims["email"] == "sso@company.com"
+
 
 # ── Stage 2: Azure AD + Okta + GitHub backends ──────────────────────────────────
 

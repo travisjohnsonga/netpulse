@@ -4,7 +4,6 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.permissions import AdminOnly
 from apps.credentials import vault
@@ -13,8 +12,11 @@ from .serializers import SSOProviderAdminSerializer, SSOProviderPublicSerializer
 
 
 def get_tokens_for_user(user) -> dict:
-    """Mint the same JWT pair as local login (DRF SimpleJWT)."""
-    refresh = RefreshToken.for_user(user)
+    """Mint the same JWT pair as local login — including the custom username/
+    role/name/email claims (RefreshToken.for_user alone omits them, which left
+    SSO users without a username/role in the token)."""
+    from apps.core.serializers import NetPulseTokenObtainPairSerializer
+    refresh = NetPulseTokenObtainPairSerializer.get_token(user)
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 

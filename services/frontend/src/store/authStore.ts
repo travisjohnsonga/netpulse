@@ -2,8 +2,10 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 interface JWTPayload {
-  username: string
+  username?: string
   role?: string
+  name?: string
+  email?: string
   exp: number
 }
 
@@ -20,6 +22,8 @@ interface AuthState {
   refreshToken: string | null
   username: string | null
   role: string | null
+  name: string | null
+  email: string | null
   isAuthenticated: boolean
   setTokens: (access: string, refresh: string) => void
   setAccessToken: (access: string) => void
@@ -33,6 +37,8 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       username: null,
       role: null,
+      name: null,
+      email: null,
       isAuthenticated: false,
 
       setTokens: (access, refresh) => {
@@ -42,6 +48,8 @@ export const useAuthStore = create<AuthState>()(
           refreshToken: refresh,
           username: payload?.username ?? null,
           role: payload?.role ?? null,
+          name: payload?.name || null,
+          email: payload?.email || null,
           isAuthenticated: true,
         })
       },
@@ -52,6 +60,8 @@ export const useAuthStore = create<AuthState>()(
           accessToken: access,
           username: payload?.username ?? null,
           role: payload?.role ?? null,
+          name: payload?.name || null,
+          email: payload?.email || null,
           isAuthenticated: true,
         })
       },
@@ -62,6 +72,8 @@ export const useAuthStore = create<AuthState>()(
           refreshToken: null,
           username: null,
           role: null,
+          name: null,
+          email: null,
           isAuthenticated: false,
         }),
     }),
@@ -72,6 +84,8 @@ export const useAuthStore = create<AuthState>()(
         refreshToken: s.refreshToken,
         username: s.username,
         role: s.role,
+        name: s.name,
+        email: s.email,
         isAuthenticated: s.isAuthenticated,
       }),
     },

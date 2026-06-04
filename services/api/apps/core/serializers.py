@@ -21,13 +21,18 @@ def sync_role_group(user):
 
 
 class NetPulseTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Extends the standard JWT access token with role and username claims."""
+    """Extends the standard JWT access token with role, username + display claims."""
 
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
         token["username"] = user.username
         token["role"]     = user.role
+        # Display claims so the UI can render a name/email/initials without an
+        # extra request — and so SSO logins (which mint via this same method)
+        # carry them too.
+        token["email"]    = user.email or ""
+        token["name"]     = f"{user.first_name} {user.last_name}".strip()
         return token
 
 

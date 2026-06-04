@@ -41,12 +41,22 @@ export default function Layout({ children }: Props) {
   const { connected } = useWebSocket('/ws/telemetry/')
   const location = useLocation()
   const navigate = useNavigate()
-  const { username, logout } = useAuthStore()
+  const { username, name, email, isAuthenticated, logout } = useAuthStore()
   const { theme, toggle } = useThemeStore()
   const loadPrefs = usePreferencesStore((s) => s.load)
 
   // Load preferences once (syncs theme from the backend) for the session.
   useEffect(() => { loadPrefs() }, [loadPrefs])
+
+  // Works for both local and SSO users: prefer full name, then username, then
+  // the email local-part. SSO tokens may not carry a username.
+  const displayName = name || username || email?.split('@')[0] || 'Account'
+  const initials = displayName
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join('') || '?'
 
   const handleLogout = () => {
     logout()
@@ -111,16 +121,24 @@ export default function Layout({ children }: Props) {
 
         {/* User + connection status */}
         <div className="px-5 py-4 border-t border-gray-800 space-y-3">
-          {username && (
+          {/* Shown for any authenticated user — local OR SSO. Gating on
+              isAuthenticated (not username) keeps the toggle + sign out visible
+              even when an SSO token carries no username. */}
+          {isAuthenticated && (
             <div className="flex items-center justify-between gap-2">
               <NavLink
                 to="/profile"
                 onClick={() => setSidebarOpen(false)}
-                className="flex items-center gap-2 text-xs text-gray-300 hover:text-white truncate"
-                title="Profile & preferences"
+                className="flex items-center gap-2 text-xs text-gray-300 hover:text-white truncate min-w-0"
+                title={email || displayName}
               >
-                <span aria-hidden>👤</span>
-                <span className="truncate">{username}</span>
+                <span
+                  aria-hidden
+                  className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-[10px] font-semibold flex items-center justify-center"
+                >
+                  {initials}
+                </span>
+                <span className="truncate">{displayName}</span>
               </NavLink>
               <div className="flex items-center gap-2 shrink-0">
                 <button
