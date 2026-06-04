@@ -194,36 +194,85 @@ def _parse_sonicwall_arp(output: str) -> list[dict]:
     return out
 
 
-def _collect_sonicwall_arp(conn) -> list[dict]:
-    """
-    Read the ARP cache from a SonicWall over the generic Netmiko handler. SonicOS
-    has no driver, so disable CLI paging first (avoids ``--More--`` truncation).
+# SonicOS CLI pager prompt — advance it with a space rather than disabling the
+# pager ("no cli pager session" needs elevated privileges and fails for
+# read-only users).
+_SONICWALL_MORE = "--More--"
 
-    The generic driver doesn't auto-detect the SonicOS prompt, so it sends the
-    next command before "no cli pager session" has actually taken effect — the
-    fix manually waits (``time.sleep``) after disabling paging so the subsequent
-    "show arp caches" doesn't page. Timing-based reads with a generous
-    delay_factor/read_timeout absorb the slow CLI.
+
+def _drive_sonicwall_shell(shell, command: str, *, banner_wait: float = 2.0,
+                           cmd_wait: float = 1.0, settle: float = 0.5,
+                           max_idle: int = 3) -> str:
     """
+    Drive an interactive SonicOS shell and return the raw output of ``command``.
+
+    SonicOS prints a login banner *before* the ``Password:`` prompt and pages
+    long output with ``--More--`` by default. The generic Netmiko driver doesn't
+    know the SonicOS prompt, so it mis-times the banner/password handshake and
+    truncates paged output. paramiko's interactive shell (auth already completed
+    by ``connect()``) sidesteps both: we drain the banner, send the command, and
+    advance the pager with a space until the output drains. This also works for
+    non-admin users who can't run "no cli pager session".
+    """
+    # Drain the login banner / initial prompt left in the channel after auth.
+    time.sleep(banner_wait)
+    if shell.recv_ready():
+        shell.recv(65535)
+
+    shell.send(command + "\n")
+    time.sleep(cmd_wait)
+
+    output = ""
+    idle = 0
+    while True:
+        if shell.recv_ready():
+            chunk = shell.recv(65535).decode("utf-8", errors="ignore")
+            output += chunk
+            idle = 0
+            if _SONICWALL_MORE in chunk:
+                shell.send(" ")  # advance the pager
+            time.sleep(settle)
+        else:
+            idle += 1
+            if idle >= max_idle:
+                break
+            time.sleep(settle)
+    # Strip the pager markers so they don't confuse line-based parsing.
+    return output.replace(_SONICWALL_MORE, "")
+
+
+def _collect_sonicwall_arp(host: str, username: str, password: str, port: int) -> list[dict]:
+    """
+    Read the ARP cache from a SonicWall over a direct paramiko SSH shell.
+
+    SonicOS has no Netmiko driver and its login banner interrupts Netmiko's
+    generic-driver authentication, so we connect with paramiko (generous
+    banner/auth timeouts) and drive the interactive shell ourselves
+    (``_drive_sonicwall_shell`` handles the banner + ``--More--`` paging).
+    """
+    import paramiko  # lazy import (paramiko ships with netmiko)
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        # Disable paging and wait for it to apply.
-        conn.send_command_timing(
-            "no cli pager session",
-            strip_prompt=False,
-            strip_command=False,
-            delay_factor=2,
+        ssh.connect(
+            hostname=host,
+            port=port,
+            username=username,
+            password=password,
+            timeout=30,
+            banner_timeout=30,   # wait for the SonicOS login banner
+            auth_timeout=30,     # wait for the "Password:" prompt after the banner
+            look_for_keys=False,
+            allow_agent=False,
         )
-        time.sleep(1)  # let paging actually disable before the next command
-    except Exception:  # not all SonicOS versions support it — best effort
-        pass
-    # Now collect ARP — should not page.
-    out = conn.send_command_timing(
-        "show arp caches",
-        strip_prompt=True,
-        strip_command=True,
-        delay_factor=3,
-        max_loops=500,
-    )
+        shell = ssh.invoke_shell()
+        out = _drive_sonicwall_shell(shell, "show arp caches")
+    finally:
+        try:
+            ssh.close()
+        except Exception:
+            pass
     return _parse_sonicwall_arp(out)
 
 
@@ -263,21 +312,35 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
         logger.warning("arp_mac: no Netmiko device_type for %s (%s)", device.hostname, platform)
         return [], []
 
+    host = device_host(device)
+    password = secrets.get("ssh_password", "")
+    port = getattr(device.credential_profile, "ssh_port", 22) or 22
+    arp_entries: list[dict] = []
+    mac_entries: list[dict] = []
+
+    if platform == "sonicwall":
+        # SonicOS has no Netmiko driver and its login banner interrupts the
+        # generic driver's auth — drive a direct paramiko shell instead. ARP
+        # only (firewalls have no MAC address-table).
+        try:
+            arp_entries = _collect_sonicwall_arp(host, username, password, port)
+        except Exception as exc:
+            logger.error("arp_mac: SonicWall SSH to %s failed: %s", device.hostname, exc)
+            return [], []
+        logger.info("arp_mac: %s — %d ARP, %d MAC", device.hostname, len(arp_entries), 0)
+        return arp_entries, []
+
     from netmiko import ConnectHandler  # lazy import
 
     params = {
         "device_type": device_type,
-        "host": device_host(device),
+        "host": host,
         "username": username,
-        "password": secrets.get("ssh_password", ""),
-        "port": getattr(device.credential_profile, "ssh_port", 22) or 22,
+        "password": password,
+        "port": port,
         "fast_cli": False,
         "conn_timeout": 30,
     }
-    if platform == "sonicwall":
-        params["global_delay_factor"] = 2  # SonicOS CLI is slow over the generic driver
-    arp_entries: list[dict] = []
-    mac_entries: list[dict] = []
     try:
         conn = ConnectHandler(**params)
     except Exception as exc:
@@ -285,10 +348,7 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
         return [], []
     try:
         arp_cmd = ARP_COMMANDS.get(platform)
-        if platform == "sonicwall":
-            # Custom CLI path (paging + generic driver + custom TextFSM template).
-            arp_entries = _collect_sonicwall_arp(conn)
-        elif arp_cmd:
+        if arp_cmd:
             out = _send(conn, arp_cmd)
             if isinstance(out, list):
                 arp_entries = _normalize_arp(out)

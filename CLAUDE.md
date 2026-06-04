@@ -946,9 +946,17 @@ Full architecture in docs/ARCHITECTURE.md.
   /api/devices/{id}/arp/|/mac/|/arp-mac/collect/, /api/network/search/ (find
   host by IP/MAC), /api/network/mac-vendor/{mac}/. UI: device ARP/MAC tab +
   global IP/MAC search on Devices page ✅
-  - SonicWall ARP: no Netmiko SonicOS driver → generic device_type; CLI
-    `show arp caches` (paging disabled via `no cli pager session`, fall back to
-    timing reads). Custom TextFSM template
+  - SonicWall ARP: no Netmiko SonicOS driver, and the SonicOS login banner
+    interrupts Netmiko's generic-driver auth (the banner prints BEFORE the
+    `Password:` prompt). Collected over a DIRECT paramiko SSH shell instead
+    (`_collect_sonicwall_arp` → `_drive_sonicwall_shell`): connect with
+    `banner_timeout=30`/`auth_timeout=30`/`look_for_keys=False`/
+    `allow_agent=False`, `invoke_shell()`, drain the banner, send
+    `show arp caches`, then advance the `--More--` pager with a space until the
+    output drains (pager markers stripped before parsing). This avoids
+    `no cli pager session` (which needs elevated privileges and fails for
+    read-only users) and is more reliable than the Netmiko generic driver for
+    SonicWall. Custom TextFSM template
     apps/collectors/templates/sonicwall_show_arp_caches.textfsm parses the
     IP/Type/MAC/Vendor/Interface/Timeout columns (vendor may contain spaces →
     `\s{2,}` delimiter before the X0:Vnnn interface); collector

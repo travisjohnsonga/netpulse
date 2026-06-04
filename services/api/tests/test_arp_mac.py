@@ -84,6 +84,42 @@ class TestParsing:
         assert out[1]["entry_type"] == "dynamic"                            # Dynamic row
         assert out[2]["interface"] == "X0:V201" and out[2]["age_minutes"] == 2
 
+    def test_sonicwall_shell_handles_banner_and_paging(self):
+        from apps.arp_mac.collector import _drive_sonicwall_shell, _parse_sonicwall_arp
+
+        class _FakeShell:
+            """Simulates SonicOS: login banner, then paged ARP output (--More--)."""
+            def __init__(self):
+                self._queue = [b"Copyright (c) 2024 SonicWall, Inc.\r\nhostname> "]
+                self.sent = []
+
+            def recv_ready(self):
+                return bool(self._queue)
+
+            def recv(self, _n):
+                return self._queue.pop(0)
+
+            def send(self, data):
+                self.sent.append(data)
+                if data.strip() == "show arp caches":
+                    self._queue.append(
+                        b"IP Address     Type     MAC Address        Vendor      Interface  Timeout\r\n"
+                        b"10.16.128.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\r\n"
+                        b"--More--")
+                elif data == " ":  # pager advanced
+                    self._queue.append(
+                        b"\r10.16.128.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\r\n"
+                        b"hostname> ")
+
+        shell = _FakeShell()
+        out = _drive_sonicwall_shell(shell, "show arp caches",
+                                     banner_wait=0, cmd_wait=0, settle=0, max_idle=2)
+        assert "--More--" not in out          # pager markers stripped
+        assert " " in shell.sent              # advanced the pager with a space
+        entries = _parse_sonicwall_arp(out)
+        assert {e["ip_address"] for e in entries} == {"10.16.128.129", "10.16.128.135"}
+        assert entries[0]["entry_type"] == "static"
+
     def test_fortios_arp_regex(self):
         from apps.arp_mac.collector import _parse_fortios_arp
         out = _parse_fortios_arp(
