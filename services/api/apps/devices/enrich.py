@@ -53,25 +53,31 @@ _AOS_CX_FW_RE = re.compile(r"\b([A-Z]{2}\.\d[\d.]+)")
 # Drops the trailing firmware token from a sysDescr ("… Sw PL.10.16.1030").
 _AOS_CX_FW_SPLIT_RE = re.compile(r"\s+[A-Z]{2}\.\d")
 
-# SonicWall sysDescr: "SonicWALL {model} (… SonicOS{X} {version})", e.g.
-# "SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)". The greedy
-# .* grabs the LAST SonicOS* token so os_version reads "SonicOSX 8.2.1-…".
+# SonicWall sysDescr: "SonicWALL {model} (… SonicOS{X} {version})". Handles both
+# SonicOS 7 (TZ/NSa, no X suffix) and SonicOSX 8 (NSv/NSsp):
+#   v7: "SonicWALL TZ 670 (SonicOS Enhanced SonicOS 7.3.2-7010-R9118)"
+#   v8: "SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)"
+# The lazy .*? skips the "SonicOS Enhanced" prefix and stops on the LAST
+# SonicOS/SonicOSX token (the one carrying the version), and os_version is the
+# bare version string without the SonicOS[X] word.
 _SONICWALL_RE = re.compile(
-    r"SonicWALL\s+(.+?)\s+\(.*(SonicOS\w*)\s+(\S+?)\)", re.IGNORECASE)
+    r"SonicWALL\s+(.+?)\s+\(.*?SonicOS[X]?\s+(\S+?)\)", re.IGNORECASE)
 
 
 def _parse_sonicwall_descr(descr: str) -> dict:
     """
     Parse a SonicWall sysDescr into {model, os_version}. Returns {} for any
-    non-SonicWall sysDescr. Example:
+    non-SonicWall sysDescr. Examples:
+      'SonicWALL TZ 670 (SonicOS Enhanced SonicOS 7.3.2-7010-R9118)'
+        → {'model': 'TZ 670', 'os_version': '7.3.2-7010-R9118'}
       'SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)'
-        → {'model': 'NSv XS', 'os_version': 'SonicOSX 8.2.1-8010-R9437'}
+        → {'model': 'NSv XS', 'os_version': '8.2.1-8010-R9437'}
     """
     m = _SONICWALL_RE.search(descr)
     if not m:
         return {}
     return {"model": m.group(1).strip(),
-            "os_version": f"{m.group(2)} {m.group(3)}".strip()}
+            "os_version": m.group(2).strip()}
 
 
 def _model_from_aos_cx_descr(descr: str) -> str:

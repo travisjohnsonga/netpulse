@@ -90,6 +90,42 @@ class SonicWallClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_os_version(self) -> str:
+        """
+        Best-effort SonicOS firmware version (e.g. "8.2.1-8010-R9437" on v8,
+        "7.3.2-7010-R9118" on v7). Returns "" if it can't be determined so the
+        caller can fall back to SNMP/sysDescr.
+
+        The /config/current response carries `firmware_version` on both SonicOS 7
+        and SonicOSX 8, but the key/shape has drifted across releases, so we probe
+        the lightweight /version endpoint first and then a few known config keys.
+        """
+        # 1) Dedicated version endpoint (present on some v7/v8 builds).
+        try:
+            resp = self.session.get(
+                f"{self.base_url}/version", auth=self.auth,
+                timeout=10, verify=self.verify_ssl,
+            )
+            if resp.ok:
+                data = resp.json()
+                ver = (data.get("firmware_version")
+                       or data.get("version")
+                       or (data.get("status", {}).get("info") or [{}])[0].get("firmware_version"))
+                if ver:
+                    return str(ver).strip()
+        except Exception as exc:  # noqa: BLE001 — fall through to config
+            logger.debug("SonicWall /version probe failed (ignored): %s", exc)
+
+        # 2) Fall back to the full config (firmware_version on both v7 and v8).
+        try:
+            cfg = self.get_config()
+            for key in ("firmware_version", "firmwareVersion", "fw_version"):
+                if cfg.get(key):
+                    return str(cfg[key]).strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("SonicWall version-from-config failed (ignored): %s", exc)
+        return ""
+
     def logout(self) -> None:
         """Release the session (SonicWall caps concurrent sessions). Best-effort."""
         try:

@@ -181,10 +181,17 @@ class TestEnrichDevice:
 
 class TestSonicWall:
     SYSDESCR = "SonicWALL NSv XS (SonicOS Enhanced SonicOSX 8.2.1-8010-R9437)"
+    SYSDESCR_V7 = "SonicWALL TZ 670 (SonicOS Enhanced SonicOS 7.3.2-7010-R9118)"
 
     def test_parse_sonicwall_descr(self):
+        # v8 — SonicOSX (X suffix)
         assert enrich._parse_sonicwall_descr(self.SYSDESCR) == {
-            "model": "NSv XS", "os_version": "SonicOSX 8.2.1-8010-R9437"}
+            "model": "NSv XS", "os_version": "8.2.1-8010-R9437"}
+
+    def test_parse_sonicwall_descr_v7(self):
+        # v7 — SonicOS (no X suffix)
+        assert enrich._parse_sonicwall_descr(self.SYSDESCR_V7) == {
+            "model": "TZ 670", "os_version": "7.3.2-7010-R9118"}
 
     def test_parse_non_sonicwall_returns_empty(self):
         assert enrich._parse_sonicwall_descr("Cisco IOS Software, Version 17.3.1") == {}
@@ -197,7 +204,19 @@ class TestSonicWall:
         }
         enrich._parse_snmp(res, updates)
         assert updates["model"] == "NSv XS"
-        assert updates["os_version"] == "SonicOSX 8.2.1-8010-R9437"
+        assert updates["os_version"] == "8.2.1-8010-R9437"
+        assert updates["vendor"] == "sonicwall"
+        assert updates["platform"] == "sonicwall"
+
+    def test_snmp_descr_parsing_v7(self):
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: self.SYSDESCR_V7,
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.8741.1",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["model"] == "TZ 670"
+        assert updates["os_version"] == "7.3.2-7010-R9118"
         assert updates["vendor"] == "sonicwall"
         assert updates["platform"] == "sonicwall"
 
