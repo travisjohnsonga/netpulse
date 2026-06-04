@@ -43,11 +43,15 @@ class TestParsing:
         rows = [
             {"address": "10.0.0.1", "mac": "aabb.ccdd.eeff", "age": "5", "interface": "vlan1", "protocol": "Internet"},
             {"ip_address": "10.0.0.2", "mac_address": "11:22:33:44:55:66", "interface": "1/1/2"},
+            {"ip_address": "10.0.0.3", "mac_address": "22:33:44:55:66:77", "flags": "Static"},
         ]
         out = _normalize_arp(rows)
         assert out[0] == {"ip_address": "10.0.0.1", "mac_address": "aa:bb:cc:dd:ee:ff",
-                          "interface": "vlan1", "vlan": None, "age_minutes": 5, "protocol": "Internet"}
+                          "interface": "vlan1", "vlan": None, "age_minutes": 5,
+                          "protocol": "Internet", "entry_type": "dynamic"}
         assert out[1]["mac_address"] == "11:22:33:44:55:66" and out[1]["protocol"] == "Internet"
+        assert out[1]["entry_type"] == "dynamic"     # no flag → dynamic
+        assert out[2]["entry_type"] == "static"      # static flag honored
 
     def test_normalize_mac_varied_keys(self):
         from apps.arp_mac.collector import _normalize_mac
@@ -74,8 +78,10 @@ class TestParsing:
         )
         out = _parse_sonicwall_arp(sample)
         assert out[0] == {"ip_address": "10.16.128.129", "mac_address": "1a:c2:41:2c:0b:0c",
-                          "interface": "X0:V1000", "vlan": None, "age_minutes": None, "protocol": "Internet"}
+                          "interface": "X0:V1000", "vlan": None, "age_minutes": None,
+                          "protocol": "Internet", "entry_type": "static"}   # Static row
         assert out[1]["mac_address"] == "9c:37:08:25:f3:40" and out[1]["age_minutes"] == 10
+        assert out[1]["entry_type"] == "dynamic"                            # Dynamic row
         assert out[2]["interface"] == "X0:V201" and out[2]["age_minutes"] == 2
 
     def test_fortios_arp_regex(self):
@@ -84,7 +90,8 @@ class TestParsing:
             "Address           Age(min)   Hardware Addr      Interface\n"
             "10.150.0.1        0          aa:bb:cc:dd:ee:ff  port1\n")
         assert out == [{"ip_address": "10.150.0.1", "mac_address": "aa:bb:cc:dd:ee:ff",
-                        "interface": "port1", "vlan": None, "age_minutes": 0, "protocol": "Internet"}]
+                        "interface": "port1", "vlan": None, "age_minutes": 0,
+                        "protocol": "Internet", "entry_type": "dynamic"}]
 
 
 # ── persistence ───────────────────────────────────────────────────────────────
@@ -92,13 +99,19 @@ class TestStore:
     def test_arp_upsert_and_mac_replace(self, device):
         from apps.arp_mac.collector import store_arp_mac
         from apps.arp_mac.models import ARPEntry, MACEntry
-        arp = [{"ip_address": "10.0.0.1", "mac_address": "aa:bb:cc:dd:ee:ff", "interface": "vlan1"}]
+        arp = [{"ip_address": "10.0.0.1", "mac_address": "aa:bb:cc:dd:ee:ff",
+                "interface": "vlan1", "entry_type": "static"}]
         mac = [{"mac_address": "aa:bb:cc:dd:ee:ff", "vlan": 1, "interface": "1/1/5", "entry_type": "dynamic"}]
         n_arp, n_mac = store_arp_mac(device, arp, mac)
         assert (n_arp, n_mac) == (1, 1)
         assert ARPEntry.objects.filter(device=device).count() == 1
+        assert ARPEntry.objects.get(device=device, ip_address="10.0.0.1").entry_type == "static"
 
-        # Second collection: ip changes MAC (upsert) + a stale ip is dropped.
+        # Second collection: no entry_type → defaults to dynamic.
+        store_arp_mac(device, [{"ip_address": "10.0.0.2", "mac_address": "aa:bb:cc:dd:ee:ff"}], [])
+        assert ARPEntry.objects.get(device=device, ip_address="10.0.0.2").entry_type == "dynamic"
+
+        # Third collection: ip changes MAC (upsert) + stale ips are dropped.
         store_arp_mac(device, [{"ip_address": "10.0.0.1", "mac_address": "11:22:33:44:55:66"}], [])
         assert ARPEntry.objects.get(device=device, ip_address="10.0.0.1").mac_address == "11:22:33:44:55:66"
         assert MACEntry.objects.filter(device=device).count() == 0  # replaced with empty
@@ -110,7 +123,7 @@ class TestApi:
         from apps.arp_mac.models import ARPEntry, MACEntry, MACVendor
         MACVendor.objects.create(oui="aa:bb:cc", vendor="Acme Networks")
         ARPEntry.objects.create(device=device, ip_address="10.0.0.1",
-                                mac_address="aa:bb:cc:dd:ee:ff", interface="vlan1")
+                                mac_address="aa:bb:cc:dd:ee:ff", interface="vlan1", entry_type="static")
         MACEntry.objects.create(device=device, mac_address="aa:bb:cc:dd:ee:ff", vlan=1, interface="1/1/5")
 
     def test_arp_requires_auth(self, api_client, device):
@@ -122,6 +135,7 @@ class TestApi:
         assert r.status_code == 200
         assert r.data["count"] == 1
         assert r.data["results"][0]["vendor"] == "Acme Networks"
+        assert r.data["results"][0]["entry_type"] == "static"
         assert r.data["last_collected"] is not None
 
     def test_mac_filter_by_vlan(self, auth_client, device):

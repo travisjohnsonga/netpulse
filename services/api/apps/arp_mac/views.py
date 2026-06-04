@@ -27,8 +27,8 @@ def _arp_dict(e: ARPEntry, vendors: dict) -> dict:
     return {
         "id": e.id, "ip_address": e.ip_address, "mac_address": e.mac_address,
         "vendor": vendors.get(e.mac_address, ""), "interface": e.interface,
-        "vlan": e.vlan, "protocol": e.protocol, "age_minutes": e.age_minutes,
-        "collected_at": e.collected_at.isoformat(),
+        "vlan": e.vlan, "protocol": e.protocol, "entry_type": e.entry_type,
+        "age_minutes": e.age_minutes, "collected_at": e.collected_at.isoformat(),
     }
 
 

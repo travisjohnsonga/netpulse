@@ -953,8 +953,11 @@ Full architecture in docs/ARCHITECTURE.md.
     IP/Type/MAC/Vendor/Interface/Timeout columns (vendor may contain spaces →
     `\s{2,}` delimiter before the X0:Vnnn interface); collector
     `_parse_sonicwall_arp` maps "Expires in N minutes" → age_minutes,
-    "Permanent published" → None. Device-reported Vendor dropped (API derives
-    it from the MAC OUI); Static/Dynamic TYPE not persisted (no ARPEntry column).
+    "Permanent published" → None, and Static/Dynamic TYPE → ARPEntry.entry_type
+    (`_arp_entry_type`; static/permanent → static, else dynamic; other platforms
+    populate it from a flags/state column where present — Cisco's encapsulation
+    "type"/ARPA is excluded). Device-reported Vendor dropped (API derives it from
+    the MAC OUI).
 - Ping latency on device list: GET /api/devices/ping-summary/ (per-device
   current/avg/max RTT + 24h uptime% + ~24-pt sparkline from device_reachability,
   cached 60s); Ping column with colored ms + inline SVG sparkline, fetched in

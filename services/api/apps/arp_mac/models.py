@@ -19,6 +19,7 @@ class ARPEntry(models.Model):
     interface = models.CharField(max_length=64, blank=True)
     vlan = models.IntegerField(null=True, blank=True)
     protocol = models.CharField(max_length=20, default="Internet")
+    entry_type = models.CharField(max_length=20, default="dynamic", blank=True)  # dynamic/static
     age_minutes = models.IntegerField(null=True, blank=True)
     collected_at = models.DateTimeField(auto_now=True)
 

@@ -94,6 +94,18 @@ def _first(row: dict, *keys):
     return ""
 
 
+def _arp_entry_type(value: str) -> str:
+    """
+    Normalize an ARP entry's static/dynamic flag to ``static``/``dynamic``.
+    Only ``static``/``permanent`` map to static; everything else (including an
+    empty value or an encapsulation type like Cisco's ``ARPA``) is ``dynamic``.
+    """
+    v = (value or "").strip().lower()
+    if "static" in v or "permanent" in v:
+        return "static"
+    return "dynamic"
+
+
 def _normalize_arp(rows: list[dict]) -> list[dict]:
     out = []
     for raw in rows:
@@ -102,6 +114,9 @@ def _normalize_arp(rows: list[dict]) -> list[dict]:
         mac = _first(r, "mac_address", "mac", "hardware_addr")
         if not ip or not mac:
             continue
+        # Static/dynamic lives in different columns per vendor (flags/state/
+        # entry_type). Cisco's "type" column is the encapsulation (ARPA), not a
+        # static/dynamic flag, so it's deliberately excluded.
         out.append({
             "ip_address": ip,
             "mac_address": normalize_mac(mac),
@@ -109,6 +124,7 @@ def _normalize_arp(rows: list[dict]) -> list[dict]:
             "vlan": _to_int(_first(r, "vlan")),
             "age_minutes": _to_int(_first(r, "age", "age_min", "age_minutes")),
             "protocol": _first(r, "protocol") or "Internet",
+            "entry_type": _arp_entry_type(_first(r, "entry_type", "flags", "state")),
         })
     return out
 
@@ -140,6 +156,7 @@ def _parse_fortios_arp(output: str) -> list[dict]:
             "ip_address": ip, "mac_address": normalize_mac(mac),
             "interface": intf, "vlan": None,
             "age_minutes": _to_int(age), "protocol": "Internet",
+            "entry_type": "dynamic",   # FortiOS ARP carries no static/dynamic flag
         })
     return out
 
@@ -153,8 +170,8 @@ def _parse_sonicwall_arp(output: str) -> list[dict]:
     """
     Parse SonicWall ``show arp caches`` via the bundled TextFSM template into
     normalized ARP rows. The device-reported VENDOR column is dropped — the API
-    derives the vendor from the MAC OUI at read time — and the Static/Dynamic
-    TYPE has no column on ARPEntry, so it is not persisted.
+    derives the vendor from the MAC OUI at read time — but the Static/Dynamic
+    TYPE is mapped to ``entry_type``.
     """
     out = []
     for raw in _textfsm_parse(output, "sonicwall_show_arp_caches.textfsm"):
@@ -171,6 +188,7 @@ def _parse_sonicwall_arp(output: str) -> list[dict]:
             "vlan": None,
             "age_minutes": int(m.group(1)) if m else None,
             "protocol": "Internet",
+            "entry_type": _arp_entry_type(r.get("type", "")),   # Static/Dynamic
         })
     return out
 
@@ -302,6 +320,7 @@ def store_arp_mac(device, arp: list[dict], mac: list[dict]) -> tuple[int, int]:
                     "vlan": e.get("vlan"),
                     "age_minutes": e.get("age_minutes"),
                     "protocol": e.get("protocol") or "Internet",
+                    "entry_type": e.get("entry_type") or "dynamic",
                 },
             )
         # Drop ARP rows no longer present (released bindings).
