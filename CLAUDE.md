@@ -951,17 +951,17 @@ Full architecture in docs/ARCHITECTURE.md.
     `Password:` prompt). Collected over a DIRECT paramiko SSH shell instead
     (`_collect_sonicwall_arp` → `_drive_sonicwall_shell`): connect with
     `banner_timeout=30`/`auth_timeout=30`/`look_for_keys=False`/
-    `allow_agent=False`, `invoke_shell()`, drain the banner, send
-    `show arp caches`, then advance the `--More--` pager with a space until the
-    output drains (pager markers stripped before parsing). Double password:
-    SonicWall re-prompts for the password on the interactive shell even after
-    paramiko has authenticated the SSH session (the banner ends with
-    `Access denied\nPassword:`) — `_drive_sonicwall_shell` re-sends the SAME
-    password when it sees that prompt before issuing the command. This is normal
-    SonicOS behavior; both prompts take the same password. This avoids
-    `no cli pager session` (which needs elevated privileges and fails for
-    read-only users) and is more reliable than the Netmiko generic driver for
-    SonicWall. Custom TextFSM template
+    `allow_agent=False`, `invoke_shell()`, then drive the shell:
+    (1) read the banner; (2) DOUBLE PASSWORD — SonicWall re-prompts for the
+    password on the interactive shell even after paramiko has authenticated the
+    SSH session (the banner ends with `Access denied\nPassword:`), so
+    `_drive_sonicwall_shell` re-sends the SAME password when it sees that prompt
+    (normal SonicOS behavior; both prompts take the same password); (3) send
+    `no cli pager session` as its OWN command and drain its response to disable
+    paging; (4) send `show arp caches` and read the full reply. With paging
+    disabled the whole table comes back unpaged (~69K chars in the lab) — no
+    `--More--` handling needed. More reliable than the Netmiko generic driver
+    for SonicWall. Custom TextFSM template
     apps/collectors/templates/sonicwall_show_arp_caches.textfsm parses the
     IP/Type/MAC/Vendor/Interface/Timeout columns (vendor may contain spaces →
     `\s{2,}` delimiter before the X0:Vnnn interface); collector

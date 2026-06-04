@@ -194,31 +194,25 @@ def _parse_sonicwall_arp(output: str) -> list[dict]:
     return out
 
 
-# SonicOS CLI pager prompt — advance it with a space rather than disabling the
-# pager ("no cli pager session" needs elevated privileges and fails for
-# read-only users).
-_SONICWALL_MORE = "--More--"
-
-
 def _drive_sonicwall_shell(shell, command: str, password: str = "", *,
-                           banner_wait: float = 2.0, cmd_wait: float = 1.0,
-                           settle: float = 0.5, max_idle: int = 3) -> str:
+                           banner_wait: float = 2.0, drain_wait: float = 2.0,
+                           cmd_wait: float = 5.0, settle: float = 0.5,
+                           max_idle: int = 3) -> str:
     """
     Drive an interactive SonicOS shell and return the raw output of ``command``.
 
-    SonicOS prints a login banner *before* the ``Password:`` prompt and pages
-    long output with ``--More--`` by default. The generic Netmiko driver doesn't
-    know the SonicOS prompt, so it mis-times the banner/password handshake and
-    truncates paged output. paramiko's interactive shell sidesteps both: we drain
-    the banner, send the command, and advance the pager with a space until the
-    output drains. This also works for non-admin users who can't run
-    "no cli pager session".
+    SonicOS prints a login banner that re-prompts for the password (see below)
+    and pages long output by default. paramiko's interactive shell lets us
+    complete the shell-side password handshake, DISABLE paging with a separate
+    ``no cli pager session`` command (draining its response), then issue the
+    command and read the full reply — long ARP tables come back complete with no
+    ``--More--`` truncation. The generic Netmiko driver mis-times all of this.
 
     Double password: SonicWall asks for the password AGAIN on the interactive
     shell even though paramiko already authenticated the SSH session (the banner
     ends with "Access denied\nPassword:"). When that prompt is seen we re-send
-    the same password before issuing the command. This is normal SonicOS
-    behavior; both prompts take the same password.
+    the same password before continuing. This is normal SonicOS behavior; both
+    prompts take the same password.
     """
     # Read the login banner / initial prompt left in the channel after auth.
     time.sleep(banner_wait)
@@ -233,6 +227,14 @@ def _drive_sonicwall_shell(shell, command: str, password: str = "", *,
         if shell.recv_ready():
             shell.recv(65535)  # drain the post-login prompt
 
+    # Disable CLI paging as its own command so long tables aren't truncated by
+    # --More--, then drain its response before issuing the real command.
+    shell.send("no cli pager session\n")
+    time.sleep(drain_wait)
+    if shell.recv_ready():
+        shell.recv(65535)  # drain the pager-disable response
+
+    # Paging is now off — issue the command and read the full reply.
     shell.send(command + "\n")
     time.sleep(cmd_wait)
 
@@ -240,19 +242,15 @@ def _drive_sonicwall_shell(shell, command: str, password: str = "", *,
     idle = 0
     while True:
         if shell.recv_ready():
-            chunk = shell.recv(65535).decode("utf-8", errors="ignore")
-            output += chunk
+            output += shell.recv(65535).decode("utf-8", errors="ignore")
             idle = 0
-            if _SONICWALL_MORE in chunk:
-                shell.send(" ")  # advance the pager
             time.sleep(settle)
         else:
             idle += 1
             if idle >= max_idle:
                 break
             time.sleep(settle)
-    # Strip the pager markers so they don't confuse line-based parsing.
-    return output.replace(_SONICWALL_MORE, "")
+    return output
 
 
 def _collect_sonicwall_arp(host: str, username: str, password: str, port: int) -> list[dict]:

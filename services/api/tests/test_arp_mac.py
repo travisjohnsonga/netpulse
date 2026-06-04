@@ -84,12 +84,13 @@ class TestParsing:
         assert out[1]["entry_type"] == "dynamic"                            # Dynamic row
         assert out[2]["interface"] == "X0:V201" and out[2]["age_minutes"] == 2
 
-    def test_sonicwall_shell_handles_double_password_and_paging(self):
+    def test_sonicwall_shell_double_password_and_pager_disable(self):
         from apps.arp_mac.collector import _drive_sonicwall_shell, _parse_sonicwall_arp
 
         class _FakeShell:
-            """Simulates SonicOS: banner re-prompts for the password, then pages
-            ARP output with --More--."""
+            """Simulates SonicOS: banner re-prompts for the password, then
+            'no cli pager session' disables paging so the full ARP table returns
+            in one unpaged reply."""
             def __init__(self):
                 # Banner ends asking for the password AGAIN (double password).
                 self._queue = [b"Copyright (c) 2024 SonicWall, Inc.\r\nAccess denied\r\nPassword:"]
@@ -107,22 +108,24 @@ class TestParsing:
                 if data == "s3cret\n" and not self._authed:
                     self._authed = True
                     self._queue.append(b"\r\nhostname> ")
+                elif data.strip() == "no cli pager session":
+                    self._queue.append(b"\r\nhostname> ")  # pager-disable ack to drain
                 elif data.strip() == "show arp caches":
+                    # Paging disabled → full table in one reply, no --More--.
                     self._queue.append(
                         b"IP Address     Type     MAC Address        Vendor      Interface  Timeout\r\n"
                         b"10.16.128.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\r\n"
-                        b"--More--")
-                elif data == " ":  # pager advanced
-                    self._queue.append(
-                        b"\r10.16.128.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\r\n"
+                        b"10.16.128.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\r\n"
                         b"hostname> ")
 
         shell = _FakeShell()
         out = _drive_sonicwall_shell(shell, "show arp caches", "s3cret",
-                                     banner_wait=0, cmd_wait=0, settle=0, max_idle=2)
-        assert "s3cret\n" in shell.sent       # re-sent the password on the shell prompt
-        assert "--More--" not in out          # pager markers stripped
-        assert " " in shell.sent              # advanced the pager with a space
+                                     banner_wait=0, drain_wait=0, cmd_wait=0,
+                                     settle=0, max_idle=2)
+        assert "s3cret\n" in shell.sent                  # re-sent the password on the shell prompt
+        assert "no cli pager session\n" in shell.sent    # disabled paging as its own command
+        assert " " not in shell.sent                     # no --More-- space-advancing needed
+        assert "--More--" not in out
         entries = _parse_sonicwall_arp(out)
         assert {e["ip_address"] for e in entries} == {"10.16.128.129", "10.16.128.135"}
         assert entries[0]["entry_type"] == "static"
