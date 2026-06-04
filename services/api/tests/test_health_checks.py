@@ -66,3 +66,44 @@ class TestRunner:
         all_ok = [ok("C", "a"), warn("C", "b")]
         assert all(x.passed for x in all_ok)        # warnings don't fail
         assert not all(x.passed for x in all_ok + [fail("C", "c")])
+
+
+class TestNatCheck:
+    """The Docker NAT check degrades gracefully when run inside a container."""
+
+    class _Result:
+        def __init__(self, rc, stderr=b""):
+            self.returncode = rc
+            self.stderr = stderr
+
+    def test_rule_present_passes(self, monkeypatch):
+        r = HealthCheckRunner()
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: self._Result(0))
+        out = r._check_nat()
+        assert out[0].status == PASS
+
+    def test_rule_missing_fails(self, monkeypatch):
+        r = HealthCheckRunner()
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: self._Result(1, b"iptables: Bad rule"))
+        out = r._check_nat()
+        assert out[0].status == FAIL
+        assert "fix-nat" in out[0].fix
+
+    def test_iptables_missing_warns(self, monkeypatch):
+        r = HealthCheckRunner()
+
+        def _raise(*a, **k):
+            raise FileNotFoundError("iptables")
+        monkeypatch.setattr("subprocess.run", _raise)
+        out = r._check_nat()
+        assert out[0].status == WARN  # can't verify from inside the container
+
+    def test_permission_denied_warns(self, monkeypatch):
+        r = HealthCheckRunner()
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: self._Result(1, b"Permission denied (you must be root)"))
+        out = r._check_nat()
+        assert out[0].status == WARN
+
+    def test_subnet_guess_prefers_env(self, monkeypatch):
+        monkeypatch.setenv("DOCKER_SUBNET", "10.5.0.0/16")
+        assert HealthCheckRunner._docker_subnet_guess() == "10.5.0.0/16"

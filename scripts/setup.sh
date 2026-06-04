@@ -18,6 +18,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 EXAMPLE="$ROOT_DIR/.env.example"
 ENV_FILE="$ROOT_DIR/.env"
 
+# Shared Docker MASQUERADE NAT helper (apply_docker_nat / detect_docker_subnet).
+# shellcheck source=scripts/nat.sh
+. "$SCRIPT_DIR/nat.sh"
+
 # ── colors ────────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
   R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[34m'; BOLD=$'\e[1m'; N=$'\e[0m'
@@ -348,6 +352,16 @@ if yesno "Pull and start NetPulse now?" Y; then
   (cd "$ROOT_DIR" && docker compose pull || warn "some images could not be pulled (will build on up)")
   info "starting the stack…"
   (cd "$ROOT_DIR" && docker compose up -d)
+  echo
+  # Always NAT container traffic to the host IP — devices that filter SNMP/SSH by
+  # source IP see the host, and the 172.x bridge can't collide with the network.
+  echo "📡 Configuring container networking…"
+  echo "   NAT rule ensures devices see the host IP for SNMP and SSH connections."
+  if apply_docker_nat; then
+    ok "Network NAT configured"
+  else
+    warn "Could not apply Docker NAT rule — run: sudo ./netpulse.sh fix-nat"
+  fi
   echo
   info "Downloading SNMP MIB files (LibreNMS + net-snmp + Cisco)…"
   (cd "$ROOT_DIR" && ./scripts/download_mibs.sh) \

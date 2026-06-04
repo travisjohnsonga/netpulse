@@ -57,6 +57,12 @@ else
   echo "3/4 Frontend unchanged — skipping rebuild."
 fi
 
+# Re-apply the Docker NAT rule in case it was lost (e.g. a reboot during/after
+# the update on a host without persisted iptables). Idempotent.
+# shellcheck source=scripts/nat.sh
+. "$(dirname "$0")/nat.sh"
+apply_docker_nat || echo "⚠️  Could not re-apply Docker NAT rule — run: sudo ./netpulse.sh fix-nat"
+
 echo "4/4 Verifying services..."
 UP="$(docker compose ps --status running --format '{{.Service}}' | wc -l | tr -d ' ')"
 echo "    services running: ${UP}"

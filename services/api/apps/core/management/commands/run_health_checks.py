@@ -76,6 +76,7 @@ class HealthCheckRunner:
         ("Credential Secrets", "_check_credential_placeholders"),
         ("Ingest Services", "_check_ingest_heartbeats"),
         ("Network", "_check_network"),
+        ("Docker NAT", "_check_nat"),
         ("MIBs", "_check_mibs"),
     ]
 
@@ -483,6 +484,53 @@ class HealthCheckRunner:
             out.append(warn(cat, "Outbound HTTPS", str(exc),
                             "CVE/advisory feeds + git sync need outbound HTTPS"))
         return out
+
+    def _check_nat(self) -> list[CheckResult]:
+        """
+        Verify the Docker MASQUERADE NAT rule (so containers egress as the host
+        IP for SNMP/SSH). This runs inside the api container, which normally has
+        no iptables / host nat access — in that case we WARN (can't verify from
+        here) rather than fail, and point at `./netpulse.sh fix-nat` on the host.
+        """
+        import subprocess
+        cat = "Docker NAT"
+        subnet = self._docker_subnet_guess()
+        cmd = ["iptables", "-t", "nat", "-C", "POSTROUTING",
+               "-s", subnet, "!", "-d", subnet, "-j", "MASQUERADE"]
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=5)
+        except FileNotFoundError:
+            return [warn(cat, "MASQUERADE rule",
+                         "iptables unavailable in this container — verify on the host",
+                         "sudo ./netpulse.sh fix-nat")]
+        except Exception as exc:
+            return [warn(cat, "MASQUERADE rule", str(exc), "sudo ./netpulse.sh fix-nat")]
+        if result.returncode == 0:
+            return [ok(cat, "MASQUERADE rule")]
+        stderr = (result.stderr or b"").decode(errors="replace").lower()
+        if any(s in stderr for s in ("permission", "denied", "must be root", "operation not permitted")):
+            return [warn(cat, "MASQUERADE rule",
+                         "insufficient privileges to read the host nat table from the container",
+                         "sudo ./netpulse.sh fix-nat")]
+        return [fail(cat, "MASQUERADE rule", f"MASQUERADE for {subnet}", "rule missing",
+                     "sudo ./netpulse.sh fix-nat (or re-run scripts/setup.sh)")]
+
+    @staticmethod
+    def _docker_subnet_guess() -> str:
+        """Best-effort Docker bridge subnet for the NAT check message: an explicit
+        DOCKER_SUBNET env, else the container's own /16, else the default."""
+        import socket
+        env = os.environ.get("DOCKER_SUBNET")
+        if env:
+            return env
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+            o = ip.split(".")
+            if len(o) == 4 and o[0] == "172":
+                return f"{o[0]}.{o[1]}.0.0/16"
+        except Exception:
+            pass
+        return "172.18.0.0/16"
 
     def _check_mibs(self) -> list[CheckResult]:
         cat = "MIBs"
