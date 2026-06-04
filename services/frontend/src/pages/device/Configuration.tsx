@@ -109,6 +109,22 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
     URL.revokeObjectURL(url)
   }
 
+  // The snapshot immediately older than the selected one (configs are sorted
+  // newest-first), so "Compare" can pre-populate current vs previous.
+  const selectedIdx = configs.findIndex((c) => c.id === (selectedId ?? configs[0]?.id))
+  const previous = selectedIdx >= 0 ? configs[selectedIdx + 1] : undefined
+
+  // Pre-populate Configuration Compare with this device's current + previous
+  // snapshot (left = current, right = previous); the compare page auto-runs the
+  // diff. Falls back to just the current version when there's no prior snapshot.
+  const compare = () => {
+    const curId = selectedId ?? configs[0]?.id
+    const qs = new URLSearchParams({ device: String(deviceId) })
+    if (curId) { qs.set('left', String(deviceId)); qs.set('leftVersion', String(curId)) }
+    if (previous) { qs.set('right', String(deviceId)); qs.set('rightVersion', String(previous.id)) }
+    navigate(`/configs/compare?${qs.toString()}`)
+  }
+
   if (isLoading) {
     return <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
   }
@@ -165,9 +181,10 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Running Config</h3>
           <div className="flex gap-2">
             <button
-              onClick={() => navigate(`/configs/compare?left=${deviceId}${selectedId ? `&leftVersion=${selectedId}` : ''}`)}
+              onClick={compare}
+              title={previous ? 'Compare this version with the previous snapshot' : 'Open Configuration Compare for this device'}
               className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50"
-            >Compare</button>
+            >{previous ? 'Compare with previous' : 'Compare'}</button>
             <button onClick={download} disabled={!selected} className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">Download</button>
           </div>
         </div>

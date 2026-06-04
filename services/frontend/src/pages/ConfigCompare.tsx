@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { diffLines } from 'diff'
@@ -27,21 +27,27 @@ function fetchConfigs(deviceId: number): Promise<ConfigRow[]> {
 
 export default function ConfigCompare() {
   const [params, setParams] = useSearchParams()
-  const [leftDevice, setLeftDevice] = useState<number | null>(numParam(params, 'left'))
+  // Originating device when navigated from a device's Configuration tab — drives
+  // the "← Back to device" link, the title, and (when no explicit versions are
+  // given) auto-selecting that device's latest two snapshots. Captured once: the
+  // URL-sync effect below rewrites the query string, so re-reading would lose it.
+  const [fromDeviceId] = useState<number | null>(() => numParam(params, 'device'))
+  const [leftDevice, setLeftDevice] = useState<number | null>(numParam(params, 'left') ?? fromDeviceId)
   const [leftVersion, setLeftVersion] = useState<number | null>(numParam(params, 'leftVersion'))
-  const [rightDevice, setRightDevice] = useState<number | null>(numParam(params, 'right'))
+  const [rightDevice, setRightDevice] = useState<number | null>(numParam(params, 'right') ?? fromDeviceId)
   const [rightVersion, setRightVersion] = useState<number | null>(numParam(params, 'rightVersion'))
   const [mode, setMode] = useState<Mode>('unified')
 
   // Keep the URL shareable.
   useEffect(() => {
     const next: Record<string, string> = {}
+    if (fromDeviceId) next.device = String(fromDeviceId)
     if (leftDevice) next.left = String(leftDevice)
     if (leftVersion) next.leftVersion = String(leftVersion)
     if (rightDevice) next.right = String(rightDevice)
     if (rightVersion) next.rightVersion = String(rightVersion)
     setParams(next, { replace: true })
-  }, [leftDevice, leftVersion, rightDevice, rightVersion, setParams])
+  }, [fromDeviceId, leftDevice, leftVersion, rightDevice, rightVersion, setParams])
 
   const { data: devices = [] } = useQuery({
     queryKey: ['devices-all'],
@@ -59,6 +65,16 @@ export default function ConfigCompare() {
     enabled: !!rightDevice,
   })
 
+  // Auto-select when arriving with ?device= but no explicit versions: left =
+  // latest snapshot, right = the one immediately prior. Diff then runs on its
+  // own. Scoped to the originating device so manually switching a selector to a
+  // different device doesn't get its version auto-picked out from under the user.
+  useEffect(() => {
+    if (!fromDeviceId) return
+    if (leftDevice === fromDeviceId && leftVersion == null && leftConfigs.length) setLeftVersion(leftConfigs[0].id)
+    if (rightDevice === fromDeviceId && rightVersion == null && rightConfigs.length > 1) setRightVersion(rightConfigs[1].id)
+  }, [fromDeviceId, leftDevice, rightDevice, leftConfigs, rightConfigs, leftVersion, rightVersion])
+
   const leftCfg = leftConfigs.find((c) => c.id === leftVersion)
   const rightCfg = rightConfigs.find((c) => c.id === rightVersion)
 
@@ -74,9 +90,20 @@ export default function ConfigCompare() {
     enabled: ready && mode === 'unified',
   })
 
+  const fromDeviceName = fromDeviceId ? devices.find((d) => d.id === fromDeviceId)?.hostname : null
+
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Configuration Compare</h1>
+      <div>
+        {fromDeviceId && (
+          <Link to={`/devices/${fromDeviceId}?tab=configuration`} className="text-sm text-blue-600 hover:text-blue-800">
+            &larr; Back to {fromDeviceName || 'device'}
+          </Link>
+        )}
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+          Configuration Compare{fromDeviceName ? ` — ${fromDeviceName}` : ''}
+        </h1>
+      </div>
 
       {/* Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
