@@ -1190,6 +1190,8 @@ export interface DiscoveryJob {
   seed_device_hostname: string | null
   credential_profile: number | null
   credential_profile_name: string | null
+  site: number | null
+  site_name: string | null
   progress_current: number
   progress_total: number
   progress_message: string
@@ -1218,6 +1220,7 @@ export interface NewDiscoveryJob {
   allowed_subnets?: string[]
   excluded_subnets?: string[]
   credential_profile?: number | null
+  site?: number | null
   max_devices?: number
   rate_limit_pps?: number
 }

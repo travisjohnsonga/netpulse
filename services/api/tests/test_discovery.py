@@ -1,7 +1,7 @@
 """Discovery API: DiscoveryJob CRUD + DiscoveredDevice approve/reject."""
 import pytest
 
-from apps.devices.models import Device, DiscoveredDevice, DiscoveryJob
+from apps.devices.models import Device, DiscoveredDevice, DiscoveryJob, Site
 
 pytestmark = pytest.mark.django_db
 
@@ -13,6 +13,11 @@ def job(db):
         subnets=["10.1.0.0/24"], allowed_subnets=["10.0.0.0/8"],
         excluded_subnets=["10.99.0.0/16"],
     )
+
+
+@pytest.fixture
+def site(db):
+    return Site.objects.create(name="DC-West")
 
 
 @pytest.fixture
@@ -77,6 +82,21 @@ class TestDiscoveryJobCRUD:
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/devices/discovery/jobs/").status_code == 401
 
+    def test_create_job_with_site(self, auth_client, site):
+        resp = auth_client.post("/api/devices/discovery/jobs/", {
+            "name": "DC-West scan", "method": "scan", "site": site.id,
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        body = resp.json()
+        assert body["site"] == site.id
+        assert body["site_name"] == "DC-West"
+        assert DiscoveryJob.objects.get(pk=body["id"]).site_id == site.id
+
+    def test_site_name_null_when_unassigned(self, auth_client, job):
+        body = auth_client.get(f"/api/devices/discovery/jobs/{job.pk}/").json()
+        assert body["site"] is None
+        assert body["site_name"] is None
+
 
 class TestDiscoveredDeviceApproval:
     def test_list_filtered_by_status(self, auth_client, discovered):
@@ -96,6 +116,23 @@ class TestDiscoveredDeviceApproval:
         assert discovered.status == "approved"
         assert discovered.approved_device_id == device.id
         assert discovered.approved_by is not None
+
+    def test_approve_assigns_job_site(self, auth_client, job, site):
+        job.site = site
+        job.save(update_fields=["site"])
+        dd = DiscoveredDevice.objects.create(
+            job=job, source_ip="10.1.0.9", confidence_score=60,
+            discovered_hostname="rtr-9", discovered_platform="ios_xe",
+        )
+        resp = auth_client.post(f"/api/devices/discovery/discovered/{dd.pk}/approve/")
+        assert resp.status_code == 201, resp.content
+        device = Device.objects.get(ip_address="10.1.0.9")
+        assert device.site_id == site.id
+
+    def test_approve_without_job_site_leaves_device_unassigned(self, auth_client, discovered):
+        resp = auth_client.post(f"/api/devices/discovery/discovered/{discovered.pk}/approve/")
+        assert resp.status_code == 201
+        assert Device.objects.get(ip_address="10.1.0.5").site_id is None
 
     def test_approve_twice_resolves_to_existing(self, auth_client, discovered):
         # Second approve finds the device created by the first → already_exists,

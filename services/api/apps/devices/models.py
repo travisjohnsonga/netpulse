@@ -196,6 +196,11 @@ class DiscoveryJob(TimestampedModel):
         "credentials.CredentialProfile", null=True, blank=True,
         on_delete=models.SET_NULL, related_name="discovery_jobs",
     )
+    # Site that devices discovered by this job are assigned to on approval.
+    site = models.ForeignKey(
+        "devices.Site", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="discovery_jobs",
+    )
     started_at        = models.DateTimeField(null=True, blank=True)
     completed_at      = models.DateTimeField(null=True, blank=True)
     error_message     = models.TextField(blank=True)

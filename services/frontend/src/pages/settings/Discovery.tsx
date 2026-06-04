@@ -8,9 +8,9 @@ import {
   fetchDiscoveryJobs, createDiscoveryJob, updateDiscoveryJob, runDiscoveryJob,
   restartDiscoveryJob, cancelDiscoveryJob, deleteDiscoveryJob,
   fetchDiscoveredDevices, approveDiscoveredDevice, rejectDiscoveredDevice,
-  fetchCredentials, fetchDiscoveryProgress, fetchJobDiscovered,
+  fetchCredentials, fetchDiscoveryProgress, fetchJobDiscovered, fetchSites,
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
-  type CredentialProfileListItem, type DiscoveryProgress,
+  type CredentialProfileListItem, type DiscoveryProgress, type Site,
 } from '../../api/client'
 
 const inputCls =
@@ -304,6 +304,7 @@ export default function Discovery() {
   const [editJob, setEditJob] = useState<DiscoveryJob | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
+  const [sites, setSites] = useState<Site[]>([])
   const [approving, setApproving] = useState<DiscoveredDevice | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   // Hide endpoints/workstations from the pending queue (default on). When off,
@@ -353,6 +354,7 @@ export default function Discovery() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { fetchCredentials().then(setProfiles).catch(() => {}) }, [])
+  useEffect(() => { fetchSites().then(setSites).catch(() => {}) }, [])
 
   const removeJob = async (id: number) => {
     setBusyId(id)
@@ -513,6 +515,7 @@ export default function Discovery() {
         <JobModal
           job={editJob ?? undefined}
           profiles={profiles}
+          sites={sites}
           onClose={() => setShowModal(false)}
           onSaved={(edited) => { setShowModal(false); flash(edited ? 'Job updated' : 'Job created'); load(true) }}
         />
@@ -522,6 +525,7 @@ export default function Discovery() {
           device={approving}
           profiles={profiles}
           defaultProfileId={jobs.find((j) => j.id === approving.job)?.credential_profile ?? null}
+          siteName={jobs.find((j) => j.id === approving.job)?.site_name ?? null}
           busy={busyId === approving.id}
           onClose={() => setApproving(null)}
           onConfirm={(cid, platform) => confirmApprove(approving, cid, platform)}
@@ -654,7 +658,7 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setOpen((o) => !o)}>
           <p className="font-medium text-gray-800 dark:text-gray-100">{job.name}</p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {METHOD_LABEL[job.method]} · {found} found
+            {METHOD_LABEL[job.method]} · {found} found · Site: {job.site_name || 'Unassigned'}
             {job.pending_count > 0 && <span className="text-amber-600 dark:text-amber-400"> · {job.pending_count} pending approval</span>}
           </p>
         </div>
@@ -798,10 +802,11 @@ function JobRow({ job, busy, onDelete, onEdit, onStart, onCancel, onApprove, onR
   )
 }
 
-function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onConfirm }: {
+function ApproveModal({ device, profiles, defaultProfileId, siteName, busy, onClose, onConfirm }: {
   device: DiscoveredDevice
   profiles: CredentialProfileListItem[]
   defaultProfileId: number | null
+  siteName: string | null
   busy: boolean
   onClose: () => void
   onConfirm: (credentialProfileId: number | null, platform: string) => void
@@ -826,6 +831,9 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
       <div className="space-y-3">
         <p className="text-sm text-gray-600 dark:text-gray-300">
           Adding <span className="font-mono">{device.source_ip}</span> to inventory as an active device.
+        </p>
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          Will be assigned to: <span className="font-medium">{siteName || 'Unassigned'}</span>
         </p>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -852,7 +860,7 @@ function ApproveModal({ device, profiles, defaultProfileId, busy, onClose, onCon
   )
 }
 
-function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; profiles: CredentialProfileListItem[]; onClose: () => void; onSaved: (edited: boolean) => void }) {
+function JobModal({ job, profiles, sites, onClose, onSaved }: { job?: DiscoveryJob; profiles: CredentialProfileListItem[]; sites: Site[]; onClose: () => void; onSaved: (edited: boolean) => void }) {
   const editing = !!job
   const [name, setName] = useState(job?.name ?? '')
   // Default to the production-safe Ping + SNMP (Active Scan's nmap probing
@@ -862,6 +870,7 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
   const [allowed, setAllowed] = useState(job ? job.allowed_subnets.join('\n') : '10.0.0.0/8')
   const [excluded, setExcluded] = useState(job?.excluded_subnets.join('\n') ?? '')
   const [credId, setCredId] = useState<number | null>(job?.credential_profile ?? null)
+  const [siteId, setSiteId] = useState<number | null>(job?.site ?? null)
   const [maxDevices, setMaxDevices] = useState(job?.max_devices ?? 1000)
   const [ratePps, setRatePps] = useState(job?.rate_limit_pps ?? 10)
   const [saving, setSaving] = useState(false)
@@ -890,6 +899,7 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
       allowed_subnets: parse(allowed),
       excluded_subnets: parse(excluded),
       credential_profile: needsCreds ? credId : null,
+      site: siteId,
       max_devices: maxDevices,
       rate_limit_pps: ratePps,
     }
@@ -953,6 +963,14 @@ function JobModal({ job, profiles, onClose, onSaved }: { job?: DiscoveryJob; pro
             <a href="/settings/credentials" target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-600 hover:text-blue-800 mt-1">+ Create a credential profile (opens Settings → Credentials)</a>
           </div>
         )}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Assign to Site</label>
+          <select className={inputCls} value={siteId ?? ''} onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">— No site (unassigned) —</option>
+            {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Discovered devices will be automatically assigned to this site on approval.</p>
+        </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed subnets</label>
           <textarea className={`${inputCls} font-mono text-xs h-14`} value={allowed} onChange={(e) => setAllowed(e.target.value)} placeholder="10.0.0.0/8" />

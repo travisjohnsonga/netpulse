@@ -167,6 +167,7 @@ class DiscoveryJobSerializer(serializers.ModelSerializer):
         source="seed_device.hostname", read_only=True, default=None)
     credential_profile_name = serializers.CharField(
         source="credential_profile.name", read_only=True, default=None)
+    site_name = serializers.CharField(source="site.name", read_only=True, default=None)
     pending_count = serializers.SerializerMethodField()
     progress_pct = serializers.SerializerMethodField()
 

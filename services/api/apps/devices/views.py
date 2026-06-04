@@ -676,6 +676,8 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
             os_version=dd.discovered_os or "",
             status=Device.Status.ACTIVE,
             credential_profile=cred_profile,
+            # Inherit the discovery job's target site, if one was set.
+            site=dd.job.site,
         )
         dd.status = DiscoveredDevice.Status.APPROVED
         dd.approved_device = device
