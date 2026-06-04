@@ -1,10 +1,11 @@
 """
 show_credentials — safe inspection of credential profiles.
 
-Replaces the ad-hoc scripts/check_keys.py debug shell. By default it shows only
-non-secret metadata plus a set/missing status and length for each secret field
-(never the value). ``--show-secrets`` reveals the actual values for local
-troubleshooting and must be used deliberately.
+By default it shows only non-secret metadata plus a set/missing status for each
+secret field (never the value, never the length). ``--show-secrets`` reveals a
+PARTIAL value (first/last 4 chars, fixed-width mask) for local verification —
+enough to confirm a secret starts/ends correctly without exposing it or its
+length.
 
 # TODO: Remove or restrict before public release
 # This command shows sensitive credential info
@@ -18,14 +19,32 @@ from apps.credentials.models import CredentialProfile
 from apps.credentials.vault import is_placeholder, read_secret
 
 
+def truncate_secret(val: str) -> str:
+    """
+    Partial, length-hiding view of a secret for --show-secrets. Always uses a
+    fixed-width mask so the output never reveals the real length.
+      ''      → '(empty)'
+      'abc'   → '********'          (≤4: fully masked)
+      'netmagic' → 'ne********'     (≤8: first 2 + mask)
+      'ThisPassword1!' → 'This********d1!'  (first 4 + mask + last 4)
+    """
+    if not val:
+        return "(empty)"
+    if len(val) <= 4:
+        return "********"
+    if len(val) <= 8:
+        return f"{val[:2]}********"
+    return f"{val[:4]}********{val[-4:]}"
+
+
 class Command(BaseCommand):
-    help = "Show credential profile status (lengths/set-state by default; --show-secrets reveals values)"
+    help = "Show credential profile status (set-state by default; --show-secrets reveals partial values)"
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--show-secrets",
             action="store_true",
-            help="Show actual secret values (USE WITH CAUTION)",
+            help="Show partial secret values (first/last 4 chars, length hidden)",
         )
         parser.add_argument(
             "--profile-id",
@@ -42,39 +61,49 @@ class Command(BaseCommand):
             self.stdout.write("No credential profiles found.")
             return
 
-        if options["show_secrets"]:
-            self.stdout.write(self.style.WARNING(
-                "⚠️  --show-secrets: printing plaintext secret values."))
+        show = options["show_secrets"]
+        if show:
+            self.stdout.write(self.style.NOTICE(
+                "ℹ️  --show-secrets: showing partial secret values for verification "
+                "(first/last 4 chars only). Full secrets stored encrypted in OpenBao."))
 
         for cp in profiles:
             creds = read_secret(cp.vault_path) or {}
-            ssh = creds.get("ssh_password", "") or ""
-            auth = creds.get("snmpv3_auth_key", "") or ""
-            priv = creds.get("snmpv3_priv_key", "") or ""
+            protocols = cp.enabled_protocols
 
             self.stdout.write(f"\nProfile: {cp.name} (id={cp.id})")
             self.stdout.write(f"  Vault path: {cp.vault_path or '(none)'}")
-            self.stdout.write(f"  Enabled protocols: {', '.join(cp.enabled_protocols) or '(none)'}")
-            self.stdout.write(f"  SSH username: {cp.ssh_username or '(none)'}")
+            self.stdout.write(f"  Enabled protocols: {', '.join(protocols) or '(none)'}")
 
-            if options["show_secrets"]:
-                self.stdout.write(f"  SSH password: {ssh}")
-                self.stdout.write(f"  SNMP username: {cp.snmpv3_username or '(none)'}")
-                self.stdout.write(f"  Auth key: {auth}")
-                self.stdout.write(f"  Priv key: {priv}")
-            else:
-                self.stdout.write(f"  SSH password: {self._status(ssh, 8)} (len={len(ssh)})")
-                self.stdout.write(f"  SNMP username: {cp.snmpv3_username or '(none)'}")
-                self.stdout.write(f"  Auth key: {self._status(auth, 8)} (len={len(auth)})")
-                self.stdout.write(f"  Priv key: {self._status(priv, 8)} (len={len(priv)})")
+            # SSH
+            self.stdout.write(f"  SSH username: {cp.ssh_username or '(none)'}")
+            self._emit("SSH password", creds.get("ssh_password", ""), show)
+
+            # SNMPv3
+            self.stdout.write(f"  SNMP username: {cp.snmpv3_username or '(none)'}")
+            self._emit("SNMP auth key", creds.get("snmpv3_auth_key", ""), show)
+            self._emit("SNMP priv key", creds.get("snmpv3_priv_key", ""), show)
+
+            # HTTPS / API — only when the profile actually enables it.
+            if "https" in protocols:
+                self.stdout.write(f"  HTTPS username: {cp.https_username or '(none)'}")
+                self.stdout.write(f"  HTTPS auth type: {cp.https_auth_type or '(none)'}")
+                self._emit("HTTPS password", creds.get("https_password", ""), show)
+                self._emit("HTTPS bearer token", creds.get("https_token", ""), show)
+                self._emit("HTTPS API key", creds.get("https_api_key", ""), show)
+
+    def _emit(self, label: str, value: str, show_secrets: bool) -> None:
+        value = value or ""
+        rhs = truncate_secret(value) if show_secrets else self._status(value)
+        self.stdout.write(f"  {label}: {rhs}")
 
     @staticmethod
-    def _status(value: str, min_len: int) -> str:
-        """Set/missing/placeholder status for a secret — never the value itself."""
+    def _status(value: str) -> str:
+        """Set/missing/placeholder status for a secret — never the value or length."""
         if not value:
             return "❌ missing"
         if is_placeholder(value):
             return "⚠️  placeholder (test value — re-enter real secret)"
-        if len(value) < min_len:
+        if len(value) < 8:
             return "⚠️  too short"
         return "✅ set"
