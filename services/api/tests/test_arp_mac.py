@@ -84,14 +84,17 @@ class TestParsing:
         assert out[1]["entry_type"] == "dynamic"                            # Dynamic row
         assert out[2]["interface"] == "X0:V201" and out[2]["age_minutes"] == 2
 
-    def test_sonicwall_shell_handles_banner_and_paging(self):
+    def test_sonicwall_shell_handles_double_password_and_paging(self):
         from apps.arp_mac.collector import _drive_sonicwall_shell, _parse_sonicwall_arp
 
         class _FakeShell:
-            """Simulates SonicOS: login banner, then paged ARP output (--More--)."""
+            """Simulates SonicOS: banner re-prompts for the password, then pages
+            ARP output with --More--."""
             def __init__(self):
-                self._queue = [b"Copyright (c) 2024 SonicWall, Inc.\r\nhostname> "]
+                # Banner ends asking for the password AGAIN (double password).
+                self._queue = [b"Copyright (c) 2024 SonicWall, Inc.\r\nAccess denied\r\nPassword:"]
                 self.sent = []
+                self._authed = False
 
             def recv_ready(self):
                 return bool(self._queue)
@@ -101,7 +104,10 @@ class TestParsing:
 
             def send(self, data):
                 self.sent.append(data)
-                if data.strip() == "show arp caches":
+                if data == "s3cret\n" and not self._authed:
+                    self._authed = True
+                    self._queue.append(b"\r\nhostname> ")
+                elif data.strip() == "show arp caches":
                     self._queue.append(
                         b"IP Address     Type     MAC Address        Vendor      Interface  Timeout\r\n"
                         b"10.16.128.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\r\n"
@@ -112,8 +118,9 @@ class TestParsing:
                         b"hostname> ")
 
         shell = _FakeShell()
-        out = _drive_sonicwall_shell(shell, "show arp caches",
+        out = _drive_sonicwall_shell(shell, "show arp caches", "s3cret",
                                      banner_wait=0, cmd_wait=0, settle=0, max_idle=2)
+        assert "s3cret\n" in shell.sent       # re-sent the password on the shell prompt
         assert "--More--" not in out          # pager markers stripped
         assert " " in shell.sent              # advanced the pager with a space
         entries = _parse_sonicwall_arp(out)

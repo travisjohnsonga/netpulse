@@ -953,7 +953,12 @@ Full architecture in docs/ARCHITECTURE.md.
     `banner_timeout=30`/`auth_timeout=30`/`look_for_keys=False`/
     `allow_agent=False`, `invoke_shell()`, drain the banner, send
     `show arp caches`, then advance the `--More--` pager with a space until the
-    output drains (pager markers stripped before parsing). This avoids
+    output drains (pager markers stripped before parsing). Double password:
+    SonicWall re-prompts for the password on the interactive shell even after
+    paramiko has authenticated the SSH session (the banner ends with
+    `Access denied\nPassword:`) — `_drive_sonicwall_shell` re-sends the SAME
+    password when it sees that prompt before issuing the command. This is normal
+    SonicOS behavior; both prompts take the same password. This avoids
     `no cli pager session` (which needs elevated privileges and fails for
     read-only users) and is more reliable than the Netmiko generic driver for
     SonicWall. Custom TextFSM template

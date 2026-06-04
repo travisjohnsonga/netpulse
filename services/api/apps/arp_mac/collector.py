@@ -200,24 +200,38 @@ def _parse_sonicwall_arp(output: str) -> list[dict]:
 _SONICWALL_MORE = "--More--"
 
 
-def _drive_sonicwall_shell(shell, command: str, *, banner_wait: float = 2.0,
-                           cmd_wait: float = 1.0, settle: float = 0.5,
-                           max_idle: int = 3) -> str:
+def _drive_sonicwall_shell(shell, command: str, password: str = "", *,
+                           banner_wait: float = 2.0, cmd_wait: float = 1.0,
+                           settle: float = 0.5, max_idle: int = 3) -> str:
     """
     Drive an interactive SonicOS shell and return the raw output of ``command``.
 
     SonicOS prints a login banner *before* the ``Password:`` prompt and pages
     long output with ``--More--`` by default. The generic Netmiko driver doesn't
     know the SonicOS prompt, so it mis-times the banner/password handshake and
-    truncates paged output. paramiko's interactive shell (auth already completed
-    by ``connect()``) sidesteps both: we drain the banner, send the command, and
-    advance the pager with a space until the output drains. This also works for
-    non-admin users who can't run "no cli pager session".
+    truncates paged output. paramiko's interactive shell sidesteps both: we drain
+    the banner, send the command, and advance the pager with a space until the
+    output drains. This also works for non-admin users who can't run
+    "no cli pager session".
+
+    Double password: SonicWall asks for the password AGAIN on the interactive
+    shell even though paramiko already authenticated the SSH session (the banner
+    ends with "Access denied\nPassword:"). When that prompt is seen we re-send
+    the same password before issuing the command. This is normal SonicOS
+    behavior; both prompts take the same password.
     """
-    # Drain the login banner / initial prompt left in the channel after auth.
+    # Read the login banner / initial prompt left in the channel after auth.
     time.sleep(banner_wait)
+    banner = ""
     if shell.recv_ready():
-        shell.recv(65535)
+        banner = shell.recv(65535).decode("utf-8", errors="ignore")
+
+    # SonicWall re-prompts for the password on the interactive shell.
+    if "Password:" in banner or "Access denied" in banner:
+        shell.send(password + "\n")
+        time.sleep(banner_wait)
+        if shell.recv_ready():
+            shell.recv(65535)  # drain the post-login prompt
 
     shell.send(command + "\n")
     time.sleep(cmd_wait)
@@ -267,7 +281,8 @@ def _collect_sonicwall_arp(host: str, username: str, password: str, port: int) -
             allow_agent=False,
         )
         shell = ssh.invoke_shell()
-        out = _drive_sonicwall_shell(shell, "show arp caches")
+        # Pass the password through — SonicWall re-prompts for it on the shell.
+        out = _drive_sonicwall_shell(shell, "show arp caches", password)
     finally:
         try:
             ssh.close()
