@@ -46,6 +46,9 @@ python-jose~=3.3       # JWT/JWS ID-token validation for SSO
 
 # Device access (config collection / interface discovery) — imported lazily
 netmiko~=4.4
+# paramiko is a transitive dep of netmiko; pin >=5.0.0 for CVE-2026-44405
+# (Dependabot moderate). netmiko 4.7 otherwise resolves the vulnerable 4.0.0.
+paramiko>=5.0.0
 ntc-templates~=9.1   # TextFSM templates for show-command parsing (LLDP, interfaces)
 textfsm~=2.1
 ncclient~=0.6
