@@ -988,16 +988,33 @@ Full architecture in docs/ARCHITECTURE.md.
   MAC_VENDOR_UPDATE_INTERVAL_S) — 6h/weekly first fire one interval after start ✅
 - Backend tests: 996 passing (services/api); ingest-snmp 58; ingest-grpc 32 ✅
 
-## Lab devices (current)
-Remote lab host: `azadmin@wco2lnxnetmon01`. (Credentials live in `.env`/OpenBao —
-never documented here per the security rules.)
-- wco2-idf5-asw-01: id=2, 10.150.0.21, aos_cx (HPE AOS-CX 6100). SNMPv3 user
-  `fpsrw`, authPriv SHA/AES (keys in OpenBao). Aruba Central-managed
-  (device-prod-d2.central.arubanetworks.com). Verified: model "R9Y04A 6100 48G
-  CL4 4SFP+ Sw", os_version PL.10.16.1030, serial TW45LHP009 (entPhysicalSerialNum
-  index 112001). CPU ~22%, memory ~29%, 1 temp sensor ~29°C, 4 fans, 1 PSU.
-- wco2-idf6-asw-01: 10.150.0.25, aos_cx (same model/credentials) — not yet in
-  inventory.
+## Known Lab Devices
+
+> 🔒 **Credentials are NOT stored here.** Actual SNMP/SSH/REST credentials for
+> these devices live in OpenBao (Settings → Credentials) and, for local
+> reference only, in the gitignored `LOCAL_NOTES.md` (never committed). Do NOT
+> add passwords/keys to this file — see Security Rules.
+
+### Local Lab (192.168.98.x)
+| Hostname | IP | Platform | Notes |
+|----------|----|----------|-------|
+| router2 | 192.168.98.152 | ios_xe | |
+| router1.dnstest.local | 192.168.98.100 | ios | |
+| fortinet1 | 192.168.98.155 | fortios | |
+| soniclab | 192.168.98.160 | sonicwall | NSv XS, SonicOSX 8.2.1 (v8, REST port 443) |
+
+### Remote Lab (10.16.x.x / 10.150.x.x)
+Remote lab host: `azadmin@wco2lnxnetmon01`.
+
+| Hostname | IP | Platform | Notes |
+|----------|----|----------|-------|
+| wco2-idf5-asw-01 | 10.150.0.21 | aos_cx | HPE 6100; Aruba Central-managed. Verified: model "R9Y04A 6100 48G CL4 4SFP+ Sw", os_version PL.10.16.1030, serial TW45LHP009 (entPhysicalSerialNum index 112001). CPU ~22%, mem ~29%, 1 temp ~29°C, 4 fans, 1 PSU |
+| wco2-idf6-asw-01 | 10.150.0.25 | aos_cx | HPE 6100 (same model) — not yet in inventory |
+| wco2-mdf-fw-01 | 10.16.128.129 | sonicwall | TZ 670, SonicOS 7.3.2 (v7, REST port 4444 — config backup needs built-in admin) |
+
+SNMPv3 on the AOS-CX switches uses user `fpsrw` (authPriv SHA/AES); the SonicWall
+REST account differs per version (v7 needs built-in admin). All passphrases live
+in OpenBao / `LOCAL_NOTES.md`.
 
 ### AOS-CX (HPE 6100) — verified SNMP findings
 - sysDescr: `HPE ANW {model} {firmware}` e.g. "HPE ANW R9Y04A 6100 48G CL4 4SFP+
@@ -1165,6 +1182,61 @@ FortiOS/PAN-OS that Netmiko SSHDetect misses.
   can't read `vm.lic` and FortiOS emits `Secure Module Access Violation`
   (`secappdomain=SNMPD`); the normalizer tags these `fortios_license_warning`
   with an explanatory note.
+
+## SonicWall Integration (IMPORTANT)
+
+Full guide: [docs/platforms/sonicwall.md](docs/platforms/sonicwall.md).
+
+### Authentication
+- **v7** (SonicOS 7.x): RFC-7616 HTTP Digest SHA-256, **port 4444**.
+  - `auth_code: API_AUTH_USER_CAN_MGMT` → user accounts (config backup blocked).
+  - `auth_code: API_AUTH_SUCCESS` → built-in `admin` only.
+- **v8** (SonicOSX 8.x): RFC-7616 HTTP Digest SHA-256, **port 443**.
+  - `auth_code: API_AUTH_SUCCESS` → all admin accounts.
+
+### Config Backup
+- **v8**: works with any admin account via REST — `GET /api/sonicos/config/current`.
+- **v7**: **REQUIRES the built-in `admin` account**. User accounts get 401 on
+  config endpoints even with FULL_ADMIN privilege — `auth_code` must be
+  `API_AUTH_SUCCESS`, not `API_AUTH_USER_CAN_MGMT`. Workaround: use the SSH CLI
+  backup or the built-in admin in the HTTPS credential profile.
+
+### SSH ARP Collection
+- SonicWall SSH requires the password sent **TWICE**:
+  1. SSH authentication (paramiko connect), then
+  2. the interactive shell re-prompts for the password.
+- Send `no cli pager session` **before** `show arp caches` to get full,
+  unpaged output.
+- Both steps use the same password. Use **paramiko directly** — Netmiko has no
+  SonicOS driver. (`apps/arp_mac` → `_drive_sonicwall_shell`.)
+
+### SNMP OIDs (poll BOTH subtrees, use whichever responds)
+- **v7** (SonicOS 7.x): `1.3.6.1.4.1.8741.1.3.2.x`
+  — CPU `.3.0` (%), MemUsed `.2.0` (KB), MemTotal `.1.0` (KB).
+- **v8** (SonicOSX 8.x): `1.3.6.1.4.1.8741.1.3.1.x`
+  — CPU `.3.0` (% direct), Memory `.4.0` (% direct), Connections `.2.0`.
+
+### Environment Data
+- SonicWall does **NOT** expose temperature, fan, or PSU data via SNMP or REST
+  API on any version. The Environment tab correctly shows "No environment data"
+  for SonicWall; CPU/Memory are available on the Telemetry tab.
+
+### Networking
+- Docker containers must MASQUERADE-NAT to the host IP (SonicWall restricts mgmt
+  by source IP) — confirmed required for SonicWall SNMP. See "Docker NAT
+  (Required)".
+
+## AOS-CX Notes
+
+Full guide: [docs/platforms/aos_cx.md](docs/platforms/aos_cx.md).
+
+- **Aruba Central keepalive logs are NORMAL**: `hpe-restd` AMM/UKWN messages
+  arrive roughly every ~30 s. These are cloud-management heartbeats, not errors —
+  filter them out with Log Filters if they add noise.
+- **SSH host key verification failures after a firmware update**: clear the
+  cached host key (`ssh-keygen -R {device_ip}`) — the switch presents a new key.
+- Verified SNMP findings (model/CPU/memory/temp/fan/PSU OIDs, 6100 limitations)
+  are documented under "Known Lab Devices" below and in the platform guide.
 
 ## Credential System (in progress)
 CredentialProfile model:

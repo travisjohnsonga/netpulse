@@ -543,8 +543,8 @@ MASQUERADE.
 - [x] FortiOS interface discovery (platform-aware parser)
 - [x] SNMPv3 authPriv config generation (per-platform)
 - [x] Auth rate limiting (H1 — JWT endpoint throttling)
-- [ ] 🔄 CVE ingestion + applicability (in progress)
-- [ ] 🔄 Lifecycle/EOL management (in progress)
+- [x] CVE ingestion + applicability engine
+- [x] Lifecycle/EOL management (stub)
 - [ ] 🔄 SSO authentication (Stage 1 — Google OAuth2 — in progress)
 - [x] Default/system alert rules (seed_alert_rules; disable-to-suppress)
 - [x] Admin user management (/api/users/ CRUD; self/last-admin delete guards)
@@ -557,8 +557,9 @@ MASQUERADE.
 - [x] Interface traffic (bps/pps/errors)
 - [x] Topology map (LLDP)
 - [x] Agentless service checks (7 handlers) + history panels + dashboard widget
-- [ ] NetFlow/sFlow path latency visualisation (D3)
-- [ ] Budget/security reports, unified risk score UI
+- [~] NetFlow/sFlow path latency visualisation (D3) — in progress
+- [x] Budget/security reports (partial)
+- [x] Unified risk score (stub)
 
 ### Phase 5 — Polish & Community
 - [ ] NetPulse Collector (on-prem agent)
@@ -650,6 +651,35 @@ FTP/LDAP check_types are defined on the model but have no handler yet.
   on-call schedules, notifications. UI: Settings → Alert Routing.
 - **Later stages**: PagerDuty/Webhook/SMS, visual escalation builder + on-call
   calendar.
+
+---
+
+## Supported Platforms
+
+### Fully Supported
+| Platform | SNMP | SSH | Config Backup | ARP/MAC | Environment |
+|----------|------|-----|---------------|---------|-------------|
+| Cisco IOS/IOS-XE | ✅ | ✅ | ✅ | ✅ | ❌ |
+| HPE AOS-CX | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Fortinet FortiOS | ✅ | ✅ | ✅ | ✅ | ❌ |
+| SonicWall (v7) | ✅ | ✅ | ⚠️ admin only | ✅ | ❌ |
+| SonicWall (v8) | ✅ | ✅ | ✅ | ✅ | ❌ |
+
+### Notes
+- **SonicWall v7 config backup** via the REST API requires the built-in `admin`
+  account. User accounts return `API_AUTH_USER_CAN_MGMT` and cannot access the
+  `/config/current` endpoint (401, even with FULL_ADMIN privilege). Workaround:
+  use the SSH CLI backup, or obtain built-in admin credentials.
+- **SonicWall environment data** (temperature / fans / PSU) is not exposed via
+  SNMP or REST API on any version — the Environment tab correctly shows
+  "No environment data" for SonicWall. CPU/Memory are available on the
+  Telemetry tab.
+- **AOS-CX**: Aruba Central keepalive logs are normal and expected
+  (`hpe-restd` AMM messages, roughly every 30 s — cloud-management heartbeats,
+  not errors). They can be hidden with Log Filters.
+
+See [docs/platforms/sonicwall.md](platforms/sonicwall.md) and
+[docs/platforms/aos_cx.md](platforms/aos_cx.md) for full per-platform guides.
 
 ---
 

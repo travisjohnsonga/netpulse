@@ -1,16 +1,23 @@
 # NetPulse — Network Intelligence Platform
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
-![Tests](https://img.shields.io/badge/tests-759%20passing-green)
+![Tests](https://img.shields.io/badge/tests-1135%20passing-green)
 ![Docker](https://img.shields.io/badge/docker-24%20services-blue)
 
 > Push-first, open source network intelligence platform.
 > Built for modern infrastructure, vendor-agnostic,
 > deployable on-prem via Docker Compose.
 
-NetPulse handles gRPC/gNMI streaming telemetry, config compliance, CVE
-intelligence, lifecycle management, log anomaly detection, and unified risk
-scoring — all open source, all containerized.
+NetPulse handles gRPC/gNMI + Cisco MDT streaming telemetry (SNMP polling as
+fallback), config compliance and backup, CVE intelligence, lifecycle/EOL
+tracking, log anomaly detection, and unified risk scoring — all open source,
+all containerized.
+
+**Also built:** four-tier device discovery + enrichment, LLDP topology mapping,
+environment telemetry (CPU/memory/temp/fans/PSU), ARP/MAC table collection with
+OUI lookup, agentless service checks (HTTP/HTTPS/TCP/ICMP/DNS/TLS/SMTP/SSH),
+reachability/ping-latency monitoring, alerting with team routing + escalation
+(email/Slack/Discord) and maintenance windows, and SSO (Google OAuth2, Stage 1).
 
 ---
 
@@ -320,6 +327,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
 
 ## Supported Platforms
 
+### Telemetry & access
+
 | Platform          | SNMP | SSH | gNMI | Syslog |
 |-------------------|------|-----|------|--------|
 | Cisco IOS-XE      | ✅   | ✅  | ✅   | ✅     |
@@ -330,9 +339,34 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
 | Arista EOS        | ✅   | ✅  | ✅   | ✅     |
 | Fortinet FortiOS  | ✅   | ✅  | —    | ✅     |
 | Palo Alto PAN-OS  | ✅   | ✅  | —    | ✅     |
-| SonicWall SonicOS | ✅   | ✅  | —    | ✅     |
+| SonicWall (v7)    | ✅   | ✅  | —    | ✅     |
+| SonicWall (v8)    | ✅   | ✅  | —    | ✅     |
 | HPE AOS-CX        | ✅   | ✅  | 📋   | ✅     |
 | Aruba AOS         | ✅   | ✅  | —    | ✅     |
+
+### Feature coverage (validated against lab hardware)
+
+| Platform          | SNMP | SSH | Config Backup   | ARP/MAC | Environment |
+|-------------------|------|-----|-----------------|---------|-------------|
+| Cisco IOS/IOS-XE  | ✅   | ✅  | ✅              | ✅      | ❌          |
+| HPE AOS-CX        | ✅   | ✅  | ✅              | ✅      | ✅          |
+| Fortinet FortiOS  | ✅   | ✅  | ✅              | ✅      | ❌          |
+| SonicWall (v7)    | ✅   | ✅  | ⚠️ admin only   | ✅      | ❌          |
+| SonicWall (v8)    | ✅   | ✅  | ✅              | ✅      | ❌          |
+
+**Notes:**
+- **SonicWall v7 config backup** via REST API requires the built-in `admin`
+  account — user accounts return `API_AUTH_USER_CAN_MGMT` and get 401 on
+  `/config/current`. v8 works with any admin account. See
+  [docs/platforms/sonicwall.md](docs/platforms/sonicwall.md).
+- **SonicWall environment** (temp/fans/PSU) is not exposed via SNMP or REST on
+  any version — the Environment tab shows "No environment data"; CPU/Memory are
+  on the Telemetry tab.
+- **AOS-CX** environment telemetry (CPU/memory/temp/fans/PSU) is SNMP-based and
+  validated on a real HPE 6100. Aruba Central keepalive logs (`hpe-restd`) are
+  normal. See [docs/platforms/aos_cx.md](docs/platforms/aos_cx.md).
+
+Per-platform guides live in [docs/platforms/](docs/platforms/).
 
 ---
 
@@ -357,6 +391,40 @@ collections are git-ignored (too large to commit) — only the per-vendor
 `README.md` files are tracked. Upload site-specific MIBs in the UI
 (**Settings → MIB Files**) → saved to `mibs/custom/`. The tree is mounted into
 the `api` and `ingest-snmp` containers for OID resolution.
+
+---
+
+## Troubleshooting
+
+### SNMP not working from containers
+Network devices that restrict management by source IP must see the **host IP**,
+not the Docker bridge subnet. Re-apply the NAT (MASQUERADE) rule:
+```bash
+sudo ./netpulse.sh fix-nat
+```
+Then confirm the device allows SNMP from the host IP. See the **Container NAT**
+section above and [docs/setup/nat.md](docs/setup/nat.md).
+
+### SonicWall config backup fails (v7)
+SonicOS **v7** requires the built-in `admin` account for REST API config backup.
+User accounts return `API_AUTH_USER_CAN_MGMT` and get **401** on
+`/config/current`. Workaround: put the built-in admin credentials in the device's
+HTTPS credential profile, or use the SSH CLI backup. (v8 works with any admin
+account.) Full details: [docs/platforms/sonicwall.md](docs/platforms/sonicwall.md).
+
+### SSH host key verification failure
+After a device firmware update the host key changes. Clear the cached key:
+```bash
+docker compose exec api ssh-keygen -R {device_ip}
+```
+
+### Credentials appear reset after a rebuild
+Check the credential profile status:
+```bash
+./netpulse.sh credentials --show-secrets
+```
+If it shows placeholder values, OpenBao did not retain the secret (e.g. the
+volume was wiped) — re-enter the credentials via **Settings → Credentials**.
 
 ---
 

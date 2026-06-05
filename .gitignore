@@ -14,6 +14,12 @@ openbao/data/
 .init_keys
 **/.init_keys
 
+# Operator-local notes — lab credentials, site-specific + testing notes.
+# NEVER commit (see the LOCAL_NOTES.md template referenced from CLAUDE.md/README).
+LOCAL_NOTES.md
+local_notes.md
+*_local_notes.md
+
 # Python
 __pycache__/
 *.py[cod]

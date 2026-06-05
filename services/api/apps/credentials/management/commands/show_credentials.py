@@ -25,8 +25,8 @@ def truncate_secret(val: str) -> str:
     fixed-width mask so the output never reveals the real length.
       ''      → '(empty)'
       'abc'   → '********'          (≤4: fully masked)
-      'netmagic' → 'ne********'     (≤8: first 2 + mask)
-      'ThisPassword1!' → 'This********d1!'  (first 4 + mask + last 4)
+      'password' → 'pa********'     (≤8: first 2 + mask)
+      'ExamplePass99' → 'Exam********ss99'  (first 4 + mask + last 4)
     """
     if not val:
         return "(empty)"

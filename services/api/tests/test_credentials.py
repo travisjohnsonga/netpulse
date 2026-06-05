@@ -70,11 +70,12 @@ class TestCredentialProfileCrud:
         assert "snmpv3_auth_key" in resp.json()
 
     def test_snmpv3_valid_30_char_key_accepted(self, auth_client):
-        # The real AOS-CX passphrase length that previously "worked".
+        # A 30-char passphrase — the length that previously "worked" on AOS-CX.
+        # Placeholder values only (never real credentials).
         resp = auth_client.post("/api/credentials/", {
-            "name": "GoodKey", "snmpv3_enabled": True, "snmpv3_username": "fpsrw",
-            "snmpv3_auth_key": "xZQm2BEyZy1I0q1lJAQziedda8mT4u",   # 30 chars
-            "snmpv3_priv_key": "2ETsOc5RMX0pg9T8nDwsbcxfOE2Srr",   # 30 chars
+            "name": "GoodKey", "snmpv3_enabled": True, "snmpv3_username": "snmpuser",
+            "snmpv3_auth_key": "ExampleAuthKey0123456789abcdef",   # 30 chars
+            "snmpv3_priv_key": "ExamplePrivKey0123456789abcdef",   # 30 chars
         }, format="json")
         assert resp.status_code == 201, resp.content
 
