@@ -890,10 +890,65 @@ export interface LogQueryResponse {
   results: LogEntry[]
   summary: { total: number; by_severity: Record<string, number> }
   error?: string
+  // Number of rows on this page hidden by enabled suppress filters
+  // (from the X-Suppressed-Count response header).
+  suppressed_count: number
 }
 
 export async function fetchLogs(params: Record<string, string>): Promise<LogQueryResponse> {
-  const { data } = await api.get<LogQueryResponse>('/logs/', { params })
+  const resp = await api.get<LogQueryResponse>('/logs/', { params })
+  const suppressed = Number(resp.headers?.['x-suppressed-count'] ?? 0)
+  return { ...resp.data, suppressed_count: Number.isFinite(suppressed) ? suppressed : 0 }
+}
+
+// ── Log Filters ─────────────────────────────────────────────────────────────────
+
+export type LogFilterAction = 'suppress' | 'highlight' | 'tag'
+
+export interface LogFilter {
+  id: number
+  name: string
+  pattern: string
+  action: LogFilterAction
+  color: string
+  tag: string
+  platforms: string[]
+  enabled: boolean
+  created_at?: string
+}
+
+export interface LogFilterPayload {
+  name: string
+  pattern: string
+  action: LogFilterAction
+  color?: string
+  tag?: string
+  platforms?: string[]
+  enabled?: boolean
+}
+
+export async function fetchLogFilters(): Promise<LogFilter[]> {
+  const { data } = await api.get<LogFilter[] | Paginated<LogFilter>>('/logs/filters/')
+  return unwrap(data)
+}
+
+export async function createLogFilter(payload: LogFilterPayload): Promise<LogFilter> {
+  const { data } = await api.post<LogFilter>('/logs/filters/', payload)
+  return data
+}
+
+export async function updateLogFilter(id: number, payload: Partial<LogFilterPayload>): Promise<LogFilter> {
+  const { data } = await api.patch<LogFilter>(`/logs/filters/${id}/`, payload)
+  return data
+}
+
+export async function deleteLogFilter(id: number): Promise<void> {
+  await api.delete(`/logs/filters/${id}/`)
+}
+
+export async function testLogFilter(pattern: string, message: string): Promise<{ matches: boolean; error: string | null }> {
+  const { data } = await api.post<{ matches: boolean; error: string | null }>(
+    '/logs/filters/test/', { pattern, message })
   return data
 }
 

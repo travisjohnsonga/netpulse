@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { fetchLogs, type DeviceDetail, type LogEntry } from '../../api/client'
 import { SEVERITY_ORDER, TIME_RANGES, rangeFrom, severityBadge } from '../../lib/severity'
@@ -17,6 +18,8 @@ export default function Logs({ device }: { device: DeviceDetail }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [auto, setAuto] = useState(false)
+  const [suppressed, setSuppressed] = useState(0)
+  const [showAll, setShowAll] = useState(false)
 
   // Apply user preference defaults once loaded.
   const prefs = usePreferencesStore((s) => s.prefs)
@@ -38,13 +41,14 @@ export default function Logs({ device }: { device: DeviceDetail }) {
     const from = rangeFrom(range)
     if (from) params.from = from
     if (search.trim()) params.search = search.trim()
+    if (showAll) params.apply_filters = 'false'
     try {
       const res = await fetchLogs(params)
-      setCount(res.count)
+      setCount(res.count); setSuppressed(res.suppressed_count)
       setRows((prev) => (append ? [...prev, ...res.results] : res.results))
       if (res.error) setError(res.error)
     } catch { setError('Failed to load logs.') } finally { setLoading(false) }
-  }, [device.hostname, severities, range, search, pageSize])
+  }, [device.hostname, severities, range, search, pageSize, showAll])
 
   // Reload from page 1 when filters change (debounced for search).
   useEffect(() => {
@@ -96,6 +100,21 @@ export default function Logs({ device }: { device: DeviceDetail }) {
             className="flex-1 min-w-[12rem] px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
       </div>
+
+      {!showAll && suppressed > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-gray-700 px-4 py-2 text-sm text-blue-700 dark:text-blue-300">
+          <span>🔽 Filters active · {suppressed} hidden</span>
+          <button onClick={() => setShowAll(true)} className="font-medium underline hover:no-underline">Show all</button>
+          <span className="text-blue-300 dark:text-blue-600">·</span>
+          <Link to="/settings/log-filters" className="font-medium underline hover:no-underline">Manage filters →</Link>
+        </div>
+      )}
+      {showAll && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
+          <span>Log filters disabled for this view.</span>
+          <button onClick={() => setShowAll(false)} className="font-medium underline hover:no-underline text-blue-600 dark:text-blue-400">Re-apply</button>
+        </div>
+      )}
 
       {error && <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-sm text-yellow-800">{error}</div>}
 

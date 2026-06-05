@@ -116,3 +116,104 @@ class TestLogQuery:
 
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/logs/").status_code == 401
+
+
+class TestLogFilters:
+    def test_crud(self, auth_client):
+        from apps.logs.models import LogFilter
+        resp = auth_client.post("/api/logs/filters/", {
+            "name": "Noise", "pattern": r"hpe-restd.*AMM", "action": "suppress",
+            "platforms": ["aos_cx"],
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        fid = resp.json()["id"]
+        assert resp.json()["platforms"] == ["aos_cx"]
+
+        assert auth_client.get("/api/logs/filters/").json()["count"] == 1
+
+        resp = auth_client.patch(f"/api/logs/filters/{fid}/", {"enabled": False}, format="json")
+        assert resp.status_code == 200
+        assert LogFilter.objects.get(id=fid).enabled is False
+
+        assert auth_client.delete(f"/api/logs/filters/{fid}/").status_code == 204
+
+    def test_invalid_regex_rejected_on_create(self, auth_client):
+        resp = auth_client.post("/api/logs/filters/", {
+            "name": "Bad", "pattern": r"[unclosed", "action": "suppress",
+        }, format="json")
+        assert resp.status_code == 400
+        assert "pattern" in resp.json()
+
+    def test_test_endpoint_match(self, auth_client):
+        resp = auth_client.post("/api/logs/filters/test/", {
+            "pattern": r"hpe-restd.*AMM", "message": "hpe-restd: [AMM] User logged in",
+        }, format="json")
+        assert resp.status_code == 200
+        assert resp.json() == {"matches": True, "error": None}
+
+    def test_test_endpoint_no_match(self, auth_client):
+        resp = auth_client.post("/api/logs/filters/test/", {
+            "pattern": r"hpe-restd.*AMM", "message": "ospf neighbor up",
+        }, format="json")
+        assert resp.json() == {"matches": False, "error": None}
+
+    def test_test_endpoint_invalid_regex(self, auth_client):
+        resp = auth_client.post("/api/logs/filters/test/", {
+            "pattern": r"[bad", "message": "x",
+        }, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["matches"] is False and body["error"]
+
+    def test_suppress_filter_removes_matching_logs(self, auth_client, monkeypatch):
+        from apps.logs.models import LogFilter
+        LogFilter.objects.create(name="drop-bgp", pattern=r"BGP", action="suppress")
+        monkeypatch.setattr(logs_views, "_execute", lambda body: _fake_response())
+        resp = auth_client.get("/api/logs/")
+        assert resp.status_code == 200
+        msgs = [r["message"] for r in resp.json()["results"]]
+        assert "BGP: Neighbor down" not in msgs
+        assert "Interface up" in msgs
+        assert resp["X-Suppressed-Count"] == "1"
+
+    def test_apply_filters_false_bypasses(self, auth_client, monkeypatch):
+        from apps.logs.models import LogFilter
+        LogFilter.objects.create(name="drop-bgp", pattern=r"BGP", action="suppress")
+        monkeypatch.setattr(logs_views, "_execute", lambda body: _fake_response())
+        resp = auth_client.get("/api/logs/?apply_filters=false")
+        assert len(resp.json()["results"]) == 2
+        assert resp["X-Suppressed-Count"] == "0"
+
+    def test_disabled_filter_not_applied(self, auth_client, monkeypatch):
+        from apps.logs.models import LogFilter
+        LogFilter.objects.create(name="drop-bgp", pattern=r"BGP", action="suppress", enabled=False)
+        monkeypatch.setattr(logs_views, "_execute", lambda body: _fake_response())
+        resp = auth_client.get("/api/logs/")
+        assert len(resp.json()["results"]) == 2
+
+    def test_platform_scoped_suppress(self, auth_client, monkeypatch):
+        # router-a is ios_xe; a filter scoped to aos_cx must NOT suppress it,
+        # while one scoped to ios_xe (or unscoped) must.
+        from apps.devices.models import Device
+        from apps.logs.models import LogFilter
+        Device.objects.create(hostname="router-a", ip_address="192.0.2.50", platform="ios_xe")
+        LogFilter.objects.create(name="aoscx-only", pattern=r"BGP", action="suppress",
+                                 platforms=["aos_cx"])
+        monkeypatch.setattr(logs_views, "_execute", lambda body: _fake_response())
+        resp = auth_client.get("/api/logs/")
+        assert resp["X-Suppressed-Count"] == "0"  # platform mismatch → not suppressed
+
+        LogFilter.objects.create(name="iosxe-only", pattern=r"BGP", action="suppress",
+                                 platforms=["ios_xe"])
+        resp = auth_client.get("/api/logs/")
+        assert resp["X-Suppressed-Count"] == "1"
+
+    def test_seed_log_filters_idempotent(self):
+        from django.core.management import call_command
+        from apps.logs.models import LogFilter
+        call_command("seed_log_filters")
+        first = LogFilter.objects.count()
+        assert first == 2
+        assert LogFilter.objects.filter(enabled=True).count() == 0
+        call_command("seed_log_filters")
+        assert LogFilter.objects.count() == first

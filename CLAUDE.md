@@ -1086,7 +1086,10 @@ Model names below reflect what is actually defined in each app's models.py.
 - collectors: Collector
 - configbackup: ConfigBackupSettings, DeviceConfig
 - integrations: NetBox/DNA import endpoints (no persistent models)
-- logs: OpenSearch-backed log query (no DB model)
+- logs: OpenSearch-backed log query + LogFilter (regex rules:
+  suppress/highlight/tag, optional platform scope). Suppress filters hide
+  matching rows from /api/logs/ (bypass with ?apply_filters=false;
+  X-Suppressed-Count header). seed_log_filters seeds examples (disabled).
 - tls: SSL/TLS + CA certificate management
 - checks: ServiceCheck, CheckResult (agentless synthetic monitoring; types
   http/https/tcp/icmp/dns/tls/smtp/ssh_banner; engine = run_check_engine)
@@ -1308,7 +1311,8 @@ DeviceCredential (through model):
 /api/credentials/:id/test/      — test credential against IP
 /api/sites/                     — site CRUD (+ /:id/devices/)
 /api/alerts/                    — alert rules/events/channels
-/api/logs/                      — OpenSearch log query (filters incl. from/to on @timestamp)
+/api/logs/                      — OpenSearch log query (filters incl. from/to on @timestamp; ?apply_filters=false to bypass suppress filters)
+/api/logs/filters/              — LogFilter CRUD (suppress/highlight/tag) + /test/ (pattern vs message)
 /api/checks/                    — service check CRUD
 /api/checks/:id/run-now/        — probe a check immediately
 /api/checks/:id/results/        — check result history + uptime summary (?period=1h|6h|24h|7d)

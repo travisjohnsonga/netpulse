@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchLogs, fetchDevices, fetchSites,
@@ -32,6 +32,8 @@ export default function Logs() {
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [auto, setAuto] = useState(false)
+  const [suppressed, setSuppressed] = useState(0)
+  const [showAll, setShowAll] = useState(false)  // temporarily bypass suppress filters
 
   // Apply user preference defaults once they load (without clobbering edits).
   const prefs = usePreferencesStore((s) => s.prefs)
@@ -61,13 +63,14 @@ export default function Logs() {
     const from = rangeFrom(range)
     if (from) params.from = from
     if (search.trim()) params.search = search.trim()
+    if (showAll) params.apply_filters = 'false'
     try {
       const res = await fetchLogs(params)
-      setCount(res.count); setSummary(res.summary.by_severity)
+      setCount(res.count); setSummary(res.summary.by_severity); setSuppressed(res.suppressed_count)
       setRows((prev) => (append ? [...prev, ...res.results] : res.results))
       if (res.error) setError(res.error)
     } catch { setError('Failed to load logs.') } finally { setLoading(false) }
-  }, [deviceHost, site, role, severities, range, search, pageSize])
+  }, [deviceHost, site, role, severities, range, search, pageSize, showAll])
 
   useEffect(() => {
     const t = setTimeout(() => { setPage(1); load(1, false) }, 300)
@@ -145,6 +148,22 @@ export default function Logs() {
           </span>
         ))}
       </div>
+
+      {/* Log-filter suppression banner */}
+      {!showAll && suppressed > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-gray-700 rounded-lg px-4 py-2 text-sm text-blue-700 dark:text-blue-300">
+          <span>🔽 Filters active · {suppressed.toLocaleString()} message{suppressed !== 1 ? 's' : ''} hidden</span>
+          <button onClick={() => setShowAll(true)} className="font-medium underline hover:no-underline">Show all</button>
+          <span className="text-blue-300 dark:text-blue-600">·</span>
+          <Link to="/settings/log-filters" className="font-medium underline hover:no-underline">Manage filters →</Link>
+        </div>
+      )}
+      {showAll && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
+          <span>Log filters disabled for this view.</span>
+          <button onClick={() => setShowAll(false)} className="font-medium underline hover:no-underline text-blue-600 dark:text-blue-400">Re-apply filters</button>
+        </div>
+      )}
 
       {error && <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-800">{error}</div>}
 

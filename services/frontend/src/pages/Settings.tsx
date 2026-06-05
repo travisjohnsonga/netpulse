@@ -14,6 +14,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'users',        label: 'Users & Access', icon: '👥' },
   { to: 'roles',        label: 'Device Roles',   icon: '🏷' },
   { to: 'hostname-rules', label: 'Hostname Rules', icon: '🔤' },
+  { to: 'log-filters',  label: 'Log Filters',    icon: '📋' },
   { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
   { to: 'integrations', label: 'Integrations',   icon: '🔌' },
   { to: 'alerting',     label: 'Alerting',       icon: '⚠' },

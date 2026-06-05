@@ -13,9 +13,14 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
+from rest_framework import viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from .models import LogFilter
+from .serializers import LogFilterSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +115,58 @@ def _empty_summary() -> dict[str, int]:
     return {canonical: 0 for canonical in SEVERITY_SYNONYMS}
 
 
+def _apply_filters_enabled(params) -> bool:
+    """Whether suppress filters apply (default true; ?apply_filters=false to skip)."""
+    return str(params.get("apply_filters", "true")).lower() not in ("false", "0", "no")
+
+
+def _platform_by_hostname(results: list[dict]) -> dict[str, str]:
+    """Map each page hostname → device platform (one query) for platform-scoped filters."""
+    hostnames = {r.get("hostname") for r in results if r.get("hostname")}
+    if not hostnames:
+        return {}
+    from apps.devices.models import Device
+
+    return {
+        hn: plat
+        for hn, plat in Device.objects.filter(hostname__in=hostnames).values_list(
+            "hostname", "platform"
+        )
+    }
+
+
+def _apply_suppress_filters(results: list[dict]) -> tuple[list[dict], int]:
+    """
+    Drop log rows matched by any enabled SUPPRESS filter (regex on the message,
+    optionally scoped to the device's platform). Returns (kept_rows, dropped_count).
+    Best-effort: a DB error leaves results untouched.
+    """
+    try:
+        filters = list(
+            LogFilter.objects.filter(enabled=True, action=LogFilter.Action.SUPPRESS)
+        )
+    except Exception as exc:  # noqa: BLE001 — never break the log view on filter errors
+        logger.warning("Could not load log filters: %s", exc)
+        return results, 0
+    if not filters:
+        return results, 0
+
+    platform_by_host = _platform_by_hostname(results)
+    kept, suppressed = [], 0
+    for row in results:
+        message = row.get("message") or ""
+        platform = platform_by_host.get(row.get("hostname"))
+        drop = any(
+            (not f.platforms or platform in f.platforms) and f.test(message)
+            for f in filters
+        )
+        if drop:
+            suppressed += 1
+        else:
+            kept.append(row)
+    return kept, suppressed
+
+
 class LogQueryView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -191,7 +248,16 @@ class LogQueryView(APIView):
                 {"count": 0, "results": [], "summary": {"by_severity": _empty_summary()}}
             )
 
-        return Response(self._format(raw))
+        formatted = self._format(raw)
+
+        # Apply enabled suppress filters to the page unless explicitly disabled.
+        suppressed = 0
+        if _apply_filters_enabled(params):
+            formatted["results"], suppressed = _apply_suppress_filters(formatted["results"])
+
+        resp = Response(formatted)
+        resp["X-Suppressed-Count"] = str(suppressed)
+        return resp
 
     @staticmethod
     def _format(raw: dict) -> dict:
@@ -228,3 +294,39 @@ class LogQueryView(APIView):
             summary[canonical] = summary.get(canonical, 0) + bucket.get("doc_count", 0)
 
         return {"count": count, "results": results, "summary": {"by_severity": summary}}
+
+
+class LogFilterViewSet(viewsets.ModelViewSet):
+    """
+    Manage log filters — regex rules that suppress noise, highlight, or tag fleet
+    log messages, optionally scoped to specific platforms.
+
+    Suppress filters are applied to `GET /api/logs/` results (disable per-request
+    with `?apply_filters=false`). The `test/` action dry-runs a pattern against a
+    sample message.
+    """
+
+    queryset = LogFilter.objects.all()
+    serializer_class = LogFilterSerializer
+    filterset_fields = ["action", "enabled"]
+    search_fields = ["name", "pattern", "tag"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+    @action(detail=False, methods=["post"])
+    def test(self, request):
+        """Dry-run a pattern against a message → {matches, error}. Invalid regex
+        returns matches=false with the error string (never 400)."""
+        import re
+
+        pattern = request.data.get("pattern", "")
+        message = request.data.get("message", "")
+        try:
+            matches = bool(re.search(pattern, message or "", re.IGNORECASE))
+            return Response({"matches": matches, "error": None})
+        except re.error as exc:
+            return Response({"matches": False, "error": str(exc)})
