@@ -66,6 +66,22 @@ case "$1" in
     . "$(dirname "$0")/scripts/nat.sh"
     apply_docker_nat
     ;;
+  install-service)
+    # Install + enable the systemd units (netpulse + netpulse-nat) for boot start.
+    # shellcheck source=scripts/systemd.sh
+    . "$(dirname "$0")/scripts/systemd.sh"
+    install_systemd_service
+    ;;
+  uninstall-service)
+    # shellcheck source=scripts/systemd.sh
+    . "$(dirname "$0")/scripts/systemd.sh"
+    uninstall_systemd_service
+    ;;
+  service-status)
+    # shellcheck source=scripts/systemd.sh
+    . "$(dirname "$0")/scripts/systemd.sh"
+    systemd_service_status
+    ;;
   status)
     docker compose ps
     echo ""
@@ -88,7 +104,7 @@ case "$1" in
     docker compose exec api python manage.py show_credentials "${@:2}"
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|status|health|credentials|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
@@ -99,6 +115,9 @@ case "$1" in
     echo "  rebuild-frontend   Rebuild and recreate the frontend (--no-deps)"
     echo "  fix-nat            Re-apply the Docker NAT rule (run after a reboot if"
     echo "                     SNMP/SSH from containers stops working)"
+    echo "  install-service    Install + enable the systemd service (start on boot)"
+    echo "  uninstall-service  Disable + remove the systemd service"
+    echo "  service-status     Show the systemd service status"
     echo "  status             Show service status and health"
     echo "  health             Run full post-setup health checks (add --json/--fail-fast)"
     echo "  credentials        Show credential profile status (add --show-secrets to reveal values)"

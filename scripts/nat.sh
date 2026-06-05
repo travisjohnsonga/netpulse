@@ -66,3 +66,10 @@ apply_docker_nat() {
     echo "      (otherwise re-run ./netpulse.sh fix-nat after a reboot)"
   fi
 }
+
+# When EXECUTED directly (not sourced) — e.g. as the netpulse-nat.service
+# ExecStart on boot — apply the rule. Sourcing this file still only defines the
+# helpers above (does nothing on its own).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  apply_docker_nat
+fi

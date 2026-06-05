@@ -21,6 +21,28 @@ reachability/ping-latency monitoring, alerting with team routing + escalation
 
 ---
 
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scripts/install.sh | bash
+```
+
+Requires: Ubuntu 22.04/24.04 or RHEL/Rocky 8/9.
+Installs: Docker, Docker Compose, and NetPulse, then runs the interactive setup.
+
+### Custom install directory
+```bash
+NETPULSE_DIR=/opt/netpulse curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scripts/install.sh | bash
+# or
+curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scripts/install.sh | bash -s -- --dir /opt/netpulse
+```
+
+> **Security note:** Always review scripts before running them with `curl | bash`.
+> Read this one first:
+> https://github.com/travisjohnsonga/netpulse/blob/main/scripts/install.sh
+
+---
+
 ## System Requirements
 
 Size the host to your fleet.
@@ -245,6 +267,27 @@ restarts.
 
 ## Auto-start on Boot (Linux)
 
+To start NetPulse automatically on reboot:
+
+```bash
+./netpulse.sh install-service
+```
+
+This installs and enables two systemd units — `netpulse.service` (runs
+`docker compose up -d` on boot) and `netpulse-nat.service` (re-applies the Docker
+NAT rule once the stack is up). `setup.sh` also offers to do this during initial
+setup.
+
+```bash
+./netpulse.sh service-status      # show service status
+./netpulse.sh uninstall-service   # disable + remove the service
+sudo systemctl start netpulse     # start now
+sudo journalctl -u netpulse -f    # follow boot logs
+```
+
+<details>
+<summary>Manual install (equivalent)</summary>
+
 ```bash
 sudo tee /etc/systemd/system/netpulse.service << 'EOF'
 [Unit]
@@ -268,6 +311,7 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable netpulse.service
 ```
+</details>
 
 ---
 

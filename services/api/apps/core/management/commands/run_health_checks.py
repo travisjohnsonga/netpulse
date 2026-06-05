@@ -77,6 +77,7 @@ class HealthCheckRunner:
         ("Ingest Services", "_check_ingest_heartbeats"),
         ("Network", "_check_network"),
         ("Docker NAT", "_check_nat"),
+        ("Systemd Service", "_check_systemd"),
         ("MIBs", "_check_mibs"),
     ]
 
@@ -531,6 +532,30 @@ class HealthCheckRunner:
         except Exception:
             pass
         return "172.18.0.0/16"
+
+    def _check_systemd(self) -> list[CheckResult]:
+        """
+        Report whether the boot-time systemd service is enabled. Like the NAT
+        check, this runs inside the api container (no host systemd access), so it
+        normally WARNs ("verify on the host") rather than failing.
+        """
+        import subprocess
+        cat = "Systemd Service"
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-enabled", "netpulse"], capture_output=True, timeout=5)
+        except FileNotFoundError:
+            return [warn(cat, "Enabled on boot",
+                         "systemctl unavailable in this container — verify on the host",
+                         "./netpulse.sh install-service")]
+        except Exception as exc:
+            return [warn(cat, "Enabled on boot", str(exc), "./netpulse.sh install-service")]
+        state = (result.stdout or b"").decode(errors="replace").strip()
+        if result.returncode == 0 and state == "enabled":
+            return [ok(cat, "Enabled on boot")]
+        return [warn(cat, "Enabled on boot",
+                     f"not installed/enabled ({state or 'absent'})",
+                     "./netpulse.sh install-service")]
 
     def _check_mibs(self) -> list[CheckResult]:
         cat = "MIBs"

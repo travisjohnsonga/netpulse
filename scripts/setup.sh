@@ -22,6 +22,10 @@ ENV_FILE="$ROOT_DIR/.env"
 # shellcheck source=scripts/nat.sh
 . "$SCRIPT_DIR/nat.sh"
 
+# Shared systemd-service helpers (install_systemd_service / …).
+# shellcheck source=scripts/systemd.sh
+. "$SCRIPT_DIR/systemd.sh"
+
 # ── colors ────────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
   R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[34m'; BOLD=$'\e[1m'; N=$'\e[0m'
@@ -377,6 +381,12 @@ if yesno "Pull and start NetPulse now?" Y; then
     ok "All health checks passed."
   else
     warn "Some health checks failed (see report above). Re-run later with: ./netpulse.sh health"
+  fi
+  echo
+  if yesno "Install NetPulse as a systemd service to start on boot?" N; then
+    install_systemd_service
+  else
+    info "skipped — install later with: ./netpulse.sh install-service"
   fi
 else
   info "skipped startup. When ready:  docker compose up -d"

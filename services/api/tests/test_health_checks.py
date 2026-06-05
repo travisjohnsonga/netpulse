@@ -107,3 +107,34 @@ class TestNatCheck:
     def test_subnet_guess_prefers_env(self, monkeypatch):
         monkeypatch.setenv("DOCKER_SUBNET", "10.5.0.0/16")
         assert HealthCheckRunner._docker_subnet_guess() == "10.5.0.0/16"
+
+
+class TestSystemdCheck:
+    """The systemd-service check degrades gracefully when run inside a container."""
+
+    class _Result:
+        def __init__(self, rc, stdout=b""):
+            self.returncode = rc
+            self.stdout = stdout
+
+    def test_enabled_passes(self, monkeypatch):
+        r = HealthCheckRunner()
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: self._Result(0, b"enabled\n"))
+        out = r._check_systemd()
+        assert out[0].status == PASS
+
+    def test_not_installed_warns(self, monkeypatch):
+        r = HealthCheckRunner()
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: self._Result(1, b""))
+        out = r._check_systemd()
+        assert out[0].status == WARN
+        assert "install-service" in out[0].fix
+
+    def test_systemctl_missing_warns(self, monkeypatch):
+        r = HealthCheckRunner()
+
+        def _raise(*a, **k):
+            raise FileNotFoundError("systemctl")
+        monkeypatch.setattr("subprocess.run", _raise)
+        out = r._check_systemd()
+        assert out[0].status == WARN
