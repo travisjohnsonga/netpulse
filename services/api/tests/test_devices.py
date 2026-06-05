@@ -600,3 +600,182 @@ class TestDeviceRoleEndpoints:
         assert first == 8
         call_command("seed_device_roles")
         assert DeviceRole.objects.count() == first
+
+
+# ── Hostname Rules ──────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def core_role():
+    from apps.devices.models import DeviceRole
+    return DeviceRole.objects.create(name="Core Switch", color="#3b82f6")
+
+
+@pytest.fixture
+def fw_role():
+    from apps.devices.models import DeviceRole
+    return DeviceRole.objects.create(name="Firewall", color="#ef4444")
+
+
+@pytest.fixture
+def wco2_site():
+    return Site.objects.create(name="WCO2", location="West")
+
+
+def _make_rule(**kwargs):
+    from apps.devices.models import HostnameRule
+    return HostnameRule.objects.create(**kwargs)
+
+
+class TestHostnameRuleModel:
+    def test_matches_case_insensitive(self):
+        from apps.devices.models import HostnameRule
+        rule = HostnameRule(name="x", pattern=r"-(crt|mdf)-")
+        assert rule.matches("WCO2-MDF-CRT-01")
+        assert not rule.matches("router1.local")
+
+    def test_invalid_regex_never_matches(self):
+        from apps.devices.models import HostnameRule
+        rule = HostnameRule(name="x", pattern=r"[unclosed")
+        assert rule.matches("anything") is False
+
+
+class TestApplyHostnameRules:
+    def test_assigns_role_and_site(self, core_role, wco2_site):
+        from apps.devices.hostname_rules import apply_hostname_rules
+        from apps.devices.models import HostnameRule
+        _make_rule(name="site", pattern=r"^wco2-", rule_type=HostnameRule.RuleType.SITE,
+                   site=wco2_site, priority=10)
+        _make_rule(name="core", pattern=r"-(crt|mdf)-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        dev = Device.objects.create(hostname="wco2-mdf-crt-01", ip_address="10.9.0.1")
+        role_assigned, site_assigned = apply_hostname_rules(dev)
+        assert role_assigned and site_assigned
+        dev.refresh_from_db()
+        assert dev.role_id == core_role.id
+        assert dev.site_id == wco2_site.id
+
+    def test_does_not_override_existing(self, core_role, fw_role, site):
+        from apps.devices.hostname_rules import apply_hostname_rules
+        from apps.devices.models import HostnameRule
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        dev = Device.objects.create(
+            hostname="x-crt-1", ip_address="10.9.0.2", role=fw_role, site=site)
+        role_assigned, _ = apply_hostname_rules(dev)
+        assert role_assigned is False
+        dev.refresh_from_db()
+        assert dev.role_id == fw_role.id
+
+    def test_force_overrides_existing(self, core_role, fw_role):
+        from apps.devices.hostname_rules import apply_hostname_rules
+        from apps.devices.models import HostnameRule
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        dev = Device.objects.create(hostname="x-crt-1", ip_address="10.9.0.3", role=fw_role)
+        role_assigned, _ = apply_hostname_rules(dev, force=True)
+        assert role_assigned
+        dev.refresh_from_db()
+        assert dev.role_id == core_role.id
+
+    def test_first_match_wins_by_priority(self, core_role, fw_role):
+        from apps.devices.hostname_rules import apply_hostname_rules
+        from apps.devices.models import HostnameRule
+        # Both match; lower priority number wins.
+        _make_rule(name="b", pattern=r"-x-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=fw_role, priority=50)
+        _make_rule(name="a", pattern=r"-x-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=10)
+        dev = Device.objects.create(hostname="dev-x-1", ip_address="10.9.0.4")
+        apply_hostname_rules(dev)
+        dev.refresh_from_db()
+        assert dev.role_id == core_role.id
+
+    def test_disabled_rules_ignored(self, core_role):
+        from apps.devices.hostname_rules import apply_hostname_rules
+        from apps.devices.models import HostnameRule
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20, enabled=False)
+        dev = Device.objects.create(hostname="x-crt-1", ip_address="10.9.0.5")
+        role_assigned, _ = apply_hostname_rules(dev)
+        assert role_assigned is False
+
+
+class TestHostnameRuleEndpoints:
+    def test_crud(self, auth_client, core_role):
+        from apps.devices.models import HostnameRule
+        resp = auth_client.post("/api/devices/hostname-rules/", {
+            "name": "Core", "pattern": r"-crt-", "rule_type": "role",
+            "role": core_role.id, "priority": 20,
+        }, format="json")
+        assert resp.status_code == 201, resp.json()
+        rule_id = resp.json()["id"]
+        assert resp.json()["role_name"] == "Core Switch"
+
+        resp = auth_client.get("/api/devices/hostname-rules/")
+        assert resp.json()["count"] == 1
+
+        resp = auth_client.patch(
+            f"/api/devices/hostname-rules/{rule_id}/", {"priority": 5}, format="json")
+        assert resp.status_code == 200
+        assert HostnameRule.objects.get(id=rule_id).priority == 5
+
+        resp = auth_client.delete(f"/api/devices/hostname-rules/{rule_id}/")
+        assert resp.status_code == 204
+
+    def test_invalid_regex_rejected(self, auth_client):
+        resp = auth_client.post("/api/devices/hostname-rules/", {
+            "name": "Bad", "pattern": r"[unclosed", "rule_type": "role",
+        }, format="json")
+        assert resp.status_code == 400
+        assert "pattern" in resp.json()
+
+    def test_pattern_test_endpoint(self, auth_client):
+        resp = auth_client.post("/api/devices/hostname-rules/test/", {
+            "pattern": r"-(crt|mdf)-",
+            "hostnames": ["wco2-mdf-crt-01", "wco2-idf5-asw-01", "router1.local"],
+        }, format="json")
+        assert resp.status_code == 200
+        results = {r["hostname"]: r["matches"] for r in resp.json()}
+        assert results["wco2-mdf-crt-01"] is True
+        assert results["router1.local"] is False
+
+    def test_pattern_test_invalid_regex(self, auth_client):
+        resp = auth_client.post("/api/devices/hostname-rules/test/", {
+            "pattern": r"[bad", "hostnames": ["x"],
+        }, format="json")
+        assert resp.status_code == 400
+
+    def test_per_device_apply(self, auth_client, core_role):
+        from apps.devices.models import HostnameRule
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        dev = Device.objects.create(hostname="x-crt-1", ip_address="10.9.0.6")
+        resp = auth_client.post(f"/api/devices/{dev.id}/apply-rules/", {}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["role_assigned"] is True
+        assert resp.json()["device"]["role"]["id"] == core_role.id
+
+    def test_bulk_apply(self, auth_client, core_role, wco2_site):
+        from apps.devices.models import HostnameRule
+        _make_rule(name="site", pattern=r"^wco2-", rule_type=HostnameRule.RuleType.SITE,
+                   site=wco2_site, priority=10)
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        Device.objects.create(hostname="wco2-mdf-crt-01", ip_address="10.9.0.7")
+        Device.objects.create(hostname="wco2-mdf-crt-02", ip_address="10.9.0.8")
+        Device.objects.create(hostname="nomatch-host", ip_address="10.9.0.9")
+        resp = auth_client.post("/api/devices/apply-rules/", {}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["updated"] == 2
+        assert resp.json()["skipped"] == 1
+
+    def test_seed_hostname_rules_idempotent(self, core_role, wco2_site):
+        from django.core.management import call_command
+        from apps.devices.models import HostnameRule
+        call_command("seed_hostname_rules")
+        first = HostnameRule.objects.count()
+        assert first > 0
+        # All seeded examples ship disabled.
+        assert HostnameRule.objects.filter(enabled=True).count() == 0
+        call_command("seed_hostname_rules")
+        assert HostnameRule.objects.count() == first

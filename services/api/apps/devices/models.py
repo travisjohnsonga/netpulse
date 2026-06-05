@@ -100,6 +100,47 @@ class DeviceRole(TimestampedModel):
         return self.name
 
 
+class HostnameRule(TimestampedModel):
+    """A pattern rule that auto-assigns a role and/or site to a device based on
+    its hostname. Applied during discovery approval, device enrichment, and via
+    the manual/bulk apply endpoints. First matching rule per type wins (lowest
+    ``priority`` number), and existing role/site are not overwritten unless
+    forced (see ``apply_hostname_rules``)."""
+
+    class RuleType(models.TextChoices):
+        ROLE = "role", "Role"
+        SITE = "site", "Site"
+        BOTH = "both", "Role + Site"
+
+    name = models.CharField(max_length=128)
+    pattern = models.CharField(
+        max_length=255, help_text="Regex pattern to match hostname")
+    rule_type = models.CharField(
+        max_length=10, choices=RuleType.choices, default=RuleType.ROLE)
+    role = models.ForeignKey(
+        "devices.DeviceRole", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="hostname_rules")
+    site = models.ForeignKey(
+        "devices.Site", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="hostname_rules")
+    priority = models.IntegerField(
+        default=100, help_text="Lower = higher priority. First match wins.")
+    enabled = models.BooleanField(default=True)
+
+    class Meta(TimestampedModel.Meta):
+        ordering = ["priority", "name"]
+
+    def matches(self, hostname: str) -> bool:
+        import re
+        try:
+            return bool(re.search(self.pattern, hostname or "", re.IGNORECASE))
+        except re.error:
+            return False
+
+    def __str__(self):
+        return f"{self.name} ({self.pattern})"
+
+
 class Device(TimestampedModel):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"

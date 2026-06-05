@@ -20,6 +20,7 @@ import General from './pages/settings/General'
 import Polling from './pages/settings/Polling'
 import Users from './pages/settings/Users'
 import Roles from './pages/settings/Roles'
+import HostnameRules from './pages/settings/HostnameRules'
 import Credentials from './pages/settings/Credentials'
 import Integrations from './pages/settings/Integrations'
 import Alerting from './pages/settings/Alerting'
@@ -116,6 +117,7 @@ function AppRoutes() {
                   <Route path="polling" element={<Polling />} />
                   <Route path="users" element={<Users />} />
                   <Route path="roles" element={<Roles />} />
+                  <Route path="hostname-rules" element={<HostnameRules />} />
                   <Route path="credentials" element={<Credentials />} />
                   <Route path="integrations" element={<Integrations />} />
                   <Route path="alerting" element={<Alerting />} />

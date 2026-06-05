@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from .models import Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob, Site
+from .models import (
+    Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob,
+    HostnameRule, Site,
+)
 
 
 class DeviceRoleSerializer(serializers.ModelSerializer):
@@ -13,6 +16,42 @@ class DeviceRoleSerializer(serializers.ModelSerializer):
             "device_count", "created_at", "updated_at",
         )
         read_only_fields = ("slug", "device_count", "created_at", "updated_at")
+
+
+class HostnameRuleSerializer(serializers.ModelSerializer):
+    role_name = serializers.CharField(source="role.name", read_only=True, default=None)
+    role_color = serializers.CharField(source="role.color", read_only=True, default=None)
+    site_name = serializers.CharField(source="site.name", read_only=True, default=None)
+
+    class Meta:
+        model = HostnameRule
+        fields = (
+            "id", "name", "pattern", "rule_type", "role", "role_name",
+            "role_color", "site", "site_name", "priority", "enabled",
+            "created_at", "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+    def validate_pattern(self, value):
+        import re
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise serializers.ValidationError(f"Invalid regex: {exc}")
+        return value
+
+
+class HostnameRuleTestSerializer(serializers.Serializer):
+    pattern = serializers.CharField()
+    hostnames = serializers.ListField(child=serializers.CharField(), allow_empty=False)
+
+    def validate_pattern(self, value):
+        import re
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise serializers.ValidationError(f"Invalid regex: {exc}")
+        return value
 
 
 class SiteSerializer(serializers.ModelSerializer):

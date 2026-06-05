@@ -835,6 +835,9 @@ function ApproveModal({ device, profiles, defaultProfileId, siteName, busy, onCl
         <p className="text-sm text-gray-600 dark:text-gray-300">
           Will be assigned to: <span className="font-medium">{siteName || 'Unassigned'}</span>
         </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Hostname rules will auto-assign role and site on approval (where unset).
+        </p>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Platform {platformUnknown && <span className="text-red-500">*</span>}

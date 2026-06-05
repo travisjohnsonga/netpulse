@@ -17,6 +17,7 @@ from .views import (
     DeviceViewSet,
     DiscoveredDeviceViewSet,
     DiscoveryJobViewSet,
+    HostnameRuleViewSet,
     SiteViewSet,
 )
 
@@ -24,6 +25,7 @@ router = DefaultRouter()
 router.register("sites", SiteViewSet)
 router.register("groups", DeviceGroupViewSet)
 router.register("roles", DeviceRoleViewSet)
+router.register("hostname-rules", HostnameRuleViewSet)
 router.register("", DeviceViewSet)
 
 # Discovery routes live under /api/devices/discovery/{jobs,discovered}/. They are

@@ -481,6 +481,15 @@ def enrich_device(device_id: int) -> dict:
         logger.info("SNMP/SSH enrichment complete for %s: %s", device.hostname,
                     {f: getattr(device, f) for f in changed})
 
+    # Auto-assign role/site from hostname rules now that the hostname is known
+    # (enrichment may have corrected it, e.g. AOS-CX/SonicWall REST). Best-effort:
+    # only fills an unset role/site, never overrides an existing assignment.
+    try:
+        from .hostname_rules import apply_hostname_rules
+        apply_hostname_rules(device)
+    except Exception as exc:  # noqa: BLE001 — never block enrichment
+        logger.warning("Hostname rule apply failed for %s: %s", device.hostname, exc)
+
     # ── Step 2: interface discovery ───────────────────────────────────────────
     interfaces = None
     try:

@@ -13,6 +13,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'polling',      label: 'Polling',        icon: '⏱' },
   { to: 'users',        label: 'Users & Access', icon: '👥' },
   { to: 'roles',        label: 'Device Roles',   icon: '🏷' },
+  { to: 'hostname-rules', label: 'Hostname Rules', icon: '🔤' },
   { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
   { to: 'integrations', label: 'Integrations',   icon: '🔌' },
   { to: 'alerting',     label: 'Alerting',       icon: '⚠' },

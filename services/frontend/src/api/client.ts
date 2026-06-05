@@ -1663,6 +1663,75 @@ export async function deleteDeviceRole(id: number): Promise<void> {
   await api.delete(`/devices/roles/${id}/`)
 }
 
+// ── Hostname Rules ──────────────────────────────────────────────────────────────
+
+export type HostnameRuleType = 'role' | 'site' | 'both'
+
+export interface HostnameRule {
+  id: number
+  name: string
+  pattern: string
+  rule_type: HostnameRuleType
+  role: number | null
+  role_name: string | null
+  role_color: string | null
+  site: number | null
+  site_name: string | null
+  priority: number
+  enabled: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface HostnameRulePayload {
+  name: string
+  pattern: string
+  rule_type: HostnameRuleType
+  role?: number | null
+  site?: number | null
+  priority?: number
+  enabled?: boolean
+}
+
+export async function fetchHostnameRules(): Promise<HostnameRule[]> {
+  const { data } = await api.get<HostnameRule[] | Paginated<HostnameRule>>('/devices/hostname-rules/')
+  return unwrap(data)
+}
+
+export async function createHostnameRule(payload: HostnameRulePayload): Promise<HostnameRule> {
+  const { data } = await api.post<HostnameRule>('/devices/hostname-rules/', payload)
+  return data
+}
+
+export async function updateHostnameRule(id: number, payload: Partial<HostnameRulePayload>): Promise<HostnameRule> {
+  const { data } = await api.patch<HostnameRule>(`/devices/hostname-rules/${id}/`, payload)
+  return data
+}
+
+export async function deleteHostnameRule(id: number): Promise<void> {
+  await api.delete(`/devices/hostname-rules/${id}/`)
+}
+
+export async function testHostnameRule(pattern: string, hostnames: string[]): Promise<{ hostname: string; matches: boolean }[]> {
+  const { data } = await api.post<{ hostname: string; matches: boolean }[]>(
+    '/devices/hostname-rules/test/', { pattern, hostnames })
+  return data
+}
+
+// Apply hostname rules to all devices missing role/site (or force overwrite).
+export async function applyHostnameRulesBulk(force = false): Promise<{ updated: number; skipped: number }> {
+  const { data } = await api.post<{ updated: number; skipped: number }>(
+    '/devices/apply-rules/', { force })
+  return data
+}
+
+// Apply hostname rules to a single device.
+export async function applyHostnameRulesToDevice(id: number, force = false): Promise<{ role_assigned: boolean; site_assigned: boolean }> {
+  const { data } = await api.post<{ role_assigned: boolean; site_assigned: boolean }>(
+    `/devices/${id}/apply-rules/`, { force })
+  return data
+}
+
 // Assign (or, with null, clear) a device's role.
 export async function setDeviceRole(id: number, role_id: number | null): Promise<DeviceDetail> {
   const { data } = await api.patch<DeviceDetail>(`/devices/${id}/`, { role_id })

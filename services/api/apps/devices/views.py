@@ -11,7 +11,10 @@ from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
 
 from . import detect, fingerprint
-from .models import Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob, Site
+from .models import (
+    Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob,
+    HostnameRule, Site,
+)
 from .serializers import (
     DetectPlatformRequestSerializer,
     DetectPlatformResponseSerializer,
@@ -21,6 +24,8 @@ from .serializers import (
     DeviceSerializer,
     DiscoveredDeviceSerializer,
     DiscoveryJobSerializer,
+    HostnameRuleSerializer,
+    HostnameRuleTestSerializer,
     SiteSerializer,
     TestConnectionRequestSerializer,
     TestConnectionResponseSerializer,
@@ -253,6 +258,43 @@ class DeviceViewSet(viewsets.ModelViewSet):
             cache.set("ping_summary", data, 60)
         return Response(data)
 
+    @extend_schema(summary="Apply hostname rules to this device", request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="apply-rules")
+    def apply_rules(self, request, pk=None):
+        """
+        Apply matching hostname rules to assign role/site. By default only fills
+        an unset role/site; pass {"force": true} to overwrite existing values.
+        """
+        from .hostname_rules import apply_hostname_rules
+        device = self.get_object()
+        role_assigned, site_assigned = apply_hostname_rules(
+            device, force=_truthy(request.data.get("force")))
+        device.refresh_from_db()
+        return Response({
+            "role_assigned": role_assigned,
+            "site_assigned": site_assigned,
+            "device": DeviceSerializer(device).data,
+        })
+
+    @extend_schema(summary="Apply hostname rules to all devices", request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="apply-rules")
+    def apply_rules_bulk(self, request):
+        """
+        Apply hostname rules across the fleet. By default only fills devices that
+        are missing a role and/or site; pass {"force": true} to overwrite.
+        """
+        from .hostname_rules import apply_hostname_rules
+        force = _truthy(request.data.get("force"))
+        updated, skipped = 0, 0
+        qs = Device.objects.select_related("role", "site").all()
+        for device in qs:
+            role_assigned, site_assigned = apply_hostname_rules(device, force=force)
+            if role_assigned or site_assigned:
+                updated += 1
+            else:
+                skipped += 1
+        return Response({"updated": updated, "skipped": skipped})
+
     @action(detail=False, methods=["get"], url_path="platforms")
     def platforms(self, request):
         """
@@ -428,6 +470,42 @@ class DeviceViewSet(viewsets.ModelViewSet):
             for ln in links
         ]
         return Response({"nodes": nodes, "edges": edges})
+
+
+class HostnameRuleViewSet(viewsets.ModelViewSet):
+    """
+    Manage hostname pattern rules that auto-assign device role and/or site
+    during discovery approval, enrichment, and manual/bulk apply.
+
+    Rules are evaluated in priority order (lowest number first); the first match
+    per type wins. The `test/` action dry-runs a pattern against sample hostnames.
+    """
+
+    queryset = HostnameRule.objects.select_related("role", "site").all()
+    serializer_class = HostnameRuleSerializer
+    filterset_fields = ["rule_type", "enabled"]
+    search_fields = ["name", "pattern"]
+    ordering_fields = ["priority", "name", "created_at"]
+    ordering = ["priority", "name"]
+
+    @extend_schema(
+        request=HostnameRuleTestSerializer, responses=None,
+        summary="Test a regex pattern against sample hostnames",
+    )
+    @action(detail=False, methods=["post"])
+    def test(self, request):
+        """Dry-run a pattern: returns [{hostname, matches}] for each sample."""
+        import re
+
+        req = HostnameRuleTestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        pattern = req.validated_data["pattern"]
+        rx = re.compile(pattern, re.IGNORECASE)
+        results = [
+            {"hostname": h, "matches": bool(rx.search(h or ""))}
+            for h in req.validated_data["hostnames"]
+        ]
+        return Response(results)
 
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
@@ -713,6 +791,10 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         dd.save(update_fields=["status", "approved_device", "approved_by", "approved_at", "updated_at"])
         logger.info("Device created from discovery: %s (id=%s, ip=%s)",
                     device.hostname, device.id, device.ip_address)
+
+        # Auto-assign role/site from hostname rules (won't override the job's site).
+        from .hostname_rules import apply_hostname_rules
+        apply_hostname_rules(device)
 
         # Enrich in the background (SNMP/SSH device info → interfaces → LLDP).
         from .enrich import trigger_enrich
