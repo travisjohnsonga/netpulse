@@ -1918,6 +1918,100 @@ export async function fetchComplianceResults(deviceId: number): Promise<Complian
   return unwrap(data)
 }
 
+// ── Template-based compliance ───────────────────────────────────────────────────
+
+export interface ComplianceFinding {
+  type: 'MISSING' | 'EXTRA' | 'DRIFT' | 'ERROR'
+  severity: string
+  line: string
+  expected: string | null
+  actual: string | null
+  context?: string
+}
+
+export interface ComplianceTemplateResult {
+  id: number
+  device: number
+  device_hostname: string | null
+  template: number
+  template_name: string | null
+  status: 'compliant' | 'non_compliant' | 'error' | 'skipped'
+  score: number | null
+  checked_at: string
+  config_snapshot: number | null
+  findings: ComplianceFinding[]
+  missing_count: number
+  extra_count: number
+  drift_count: number
+  remediation: string
+}
+
+export interface DeviceComplianceResponse {
+  overall_score: number | null
+  results: ComplianceTemplateResult[]
+}
+
+export async function fetchDeviceCompliance(deviceId: number): Promise<DeviceComplianceResponse> {
+  const { data } = await api.get<DeviceComplianceResponse>(`/devices/${deviceId}/compliance/`)
+  return data
+}
+
+export async function runComplianceCheck(body: { device_id?: number; template_id?: number }): Promise<{ checked: number; compliant: number; non_compliant: number; error: number }> {
+  const { data } = await api.post('/compliance/check/', body)
+  return data
+}
+
+export interface ComplianceTemplate {
+  id: number
+  name: string
+  description: string
+  role: number | null
+  role_name: string | null
+  platform: string
+  site: number | null
+  site_name: string | null
+  template_content: string
+  variables: Record<string, unknown>
+  enabled: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ComplianceTemplatePayload {
+  name: string
+  description?: string
+  role?: number | null
+  platform?: string
+  site?: number | null
+  template_content: string
+  variables?: Record<string, unknown>
+  enabled?: boolean
+}
+
+export async function fetchComplianceTemplates(): Promise<ComplianceTemplate[]> {
+  const { data } = await api.get<ComplianceTemplate[] | Paginated<ComplianceTemplate>>('/compliance/templates/')
+  return unwrap(data)
+}
+
+export async function createComplianceTemplate(payload: ComplianceTemplatePayload): Promise<ComplianceTemplate> {
+  const { data } = await api.post<ComplianceTemplate>('/compliance/templates/', payload)
+  return data
+}
+
+export async function updateComplianceTemplate(id: number, payload: Partial<ComplianceTemplatePayload>): Promise<ComplianceTemplate> {
+  const { data } = await api.patch<ComplianceTemplate>(`/compliance/templates/${id}/`, payload)
+  return data
+}
+
+export async function deleteComplianceTemplate(id: number): Promise<void> {
+  await api.delete(`/compliance/templates/${id}/`)
+}
+
+export async function previewComplianceTemplate(id: number, deviceId: number): Promise<{ rendered: string; hostname: string } | { error: string }> {
+  const { data } = await api.post(`/compliance/templates/${id}/preview/`, { device_id: deviceId })
+  return data
+}
+
 export interface DeviceCVE {
   id: number
   device: number

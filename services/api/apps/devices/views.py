@@ -353,6 +353,34 @@ class DeviceViewSet(viewsets.ModelViewSet):
         qs = DeviceCVE.objects.select_related("cve").filter(device=device)
         return Response(DeviceCVESerializer(qs, many=True).data)
 
+    @extend_schema(summary="Latest template-compliance results for the device", responses=None)
+    @action(detail=True, methods=["get"], url_path="compliance")
+    def compliance(self, request, pk=None):
+        """
+        The most recent ComplianceTemplateResult per applicable template, plus an
+        overall score (average of per-template scores). Drives the device
+        Compliance tab. Returns {overall_score, results: [...]}.
+        """
+        from apps.compliance.models import ComplianceTemplateResult
+        from apps.compliance.serializers import ComplianceTemplateResultSerializer
+        device = self.get_object()
+
+        # Latest result per template (results are ordered -checked_at).
+        latest: dict[int, ComplianceTemplateResult] = {}
+        for r in (ComplianceTemplateResult.objects
+                  .select_related("template")
+                  .filter(device=device)):
+            if r.template_id not in latest:
+                latest[r.template_id] = r
+        results = sorted(latest.values(), key=lambda r: r.template.name if r.template else "")
+
+        scored = [r.score for r in results if r.score is not None]
+        overall = round(sum(scored) / len(scored), 1) if scored else None
+        return Response({
+            "overall_score": overall,
+            "results": ComplianceTemplateResultSerializer(results, many=True).data,
+        })
+
     @extend_schema(summary="Re-run SNMP/SSH enrichment + interface/LLDP discovery", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="enrich")
     def enrich(self, request, pk=None):

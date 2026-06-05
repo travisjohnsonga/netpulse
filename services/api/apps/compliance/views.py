@@ -1,9 +1,25 @@
-from rest_framework import viewsets
+from drf_spectacular.utils import extend_schema
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
-from .models import CompliancePolicy, CompliancePolicyRule, ComplianceResult
-from .serializers import CompliancePolicyRuleSerializer, CompliancePolicySerializer, ComplianceResultSerializer
+from .models import (
+    CompliancePolicy,
+    CompliancePolicyRule,
+    ComplianceResult,
+    ComplianceTemplate,
+    ComplianceTemplateResult,
+)
+from .serializers import (
+    CompliancePolicyRuleSerializer,
+    CompliancePolicySerializer,
+    ComplianceResultSerializer,
+    ComplianceTemplateResultSerializer,
+    ComplianceTemplateSerializer,
+)
 
 
 class CompliancePolicyViewSet(viewsets.ModelViewSet):
@@ -24,3 +40,128 @@ class ComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet
     serializer_class = ComplianceResultSerializer
     filterset_fields = ["device", "policy", "outcome"]
     ordering_fields = ["created_at"]
+
+
+# ── Template-based compliance ───────────────────────────────────────────────────
+
+class ComplianceTemplateViewSet(viewsets.ModelViewSet):
+    """
+    Manage compliance templates — Jinja2 templates of expected config, scoped by
+    role / platform / site. The `preview/` action renders a template for a device.
+    """
+
+    queryset = ComplianceTemplate.objects.select_related("role", "site").all()
+    serializer_class = ComplianceTemplateSerializer
+    filterset_fields = ["platform", "role", "site", "enabled"]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+    @extend_schema(request=None, responses=None,
+                   summary="Render this template for a device (no save)")
+    @action(detail=True, methods=["post"])
+    def preview(self, request, pk=None):
+        """Render the template for {device_id} using its overrides + context."""
+        from apps.devices.models import Device
+
+        from .engine import ComplianceEngine
+        from .models import DeviceComplianceOverride
+
+        template = self.get_object()
+        device_id = request.data.get("device_id")
+        device = Device.objects.filter(pk=device_id).first()
+        if not device:
+            return Response({"error": "device_id not found"}, status=status.HTTP_400_BAD_REQUEST)
+        overrides = (
+            DeviceComplianceOverride.objects
+            .filter(device=device, template=template)
+            .values_list("variables", flat=True)
+            .first()
+        ) or {}
+        try:
+            rendered = ComplianceEngine().render_template(template, device, overrides)
+        except Exception as exc:  # noqa: BLE001 — surface template errors to the UI
+            return Response({"error": f"Template render error: {exc}"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({"device_id": device.id, "hostname": device.hostname, "rendered": rendered})
+
+
+class ComplianceTemplateResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+    """Read template-compliance results. Filter by device, template, status."""
+
+    queryset = ComplianceTemplateResult.objects.select_related("device", "template").all()
+    serializer_class = ComplianceTemplateResultSerializer
+    filterset_fields = ["device", "template", "status"]
+    ordering_fields = ["checked_at", "score"]
+    ordering = ["-checked_at"]
+
+
+class ComplianceCheckView(APIView):
+    """
+    Run template compliance checks and save results.
+
+    POST body:
+      {"device_id": N}    → all applicable templates for one device
+      {"template_id": N}  → one template across all active devices
+      {}                  → every template against every active device
+
+    Returns {"checked", "compliant", "non_compliant", "error"}.
+    """
+
+    @extend_schema(request=None, responses=None, summary="Run compliance checks")
+    def post(self, request):
+        from apps.devices.models import Device
+
+        from .engine import ComplianceEngine, get_templates_for_device
+
+        device_id = request.data.get("device_id")
+        template_id = request.data.get("template_id")
+        engine = ComplianceEngine()
+
+        results: list[ComplianceTemplateResult] = []
+
+        if device_id:
+            device = Device.objects.filter(pk=device_id).first()
+            if not device:
+                return Response({"error": "device_id not found"}, status=status.HTTP_400_BAD_REQUEST)
+            templates = get_templates_for_device(device)
+            if template_id:
+                templates = [t for t in templates if t.id == int(template_id)]
+            results = [self._run(engine, device, t) for t in templates]
+        else:
+            devices = Device.objects.filter(status=Device.Status.ACTIVE)
+            if template_id:
+                template = ComplianceTemplate.objects.filter(pk=template_id, enabled=True).first()
+                if not template:
+                    return Response({"error": "template_id not found or disabled"},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                for device in devices:
+                    if template in get_templates_for_device(device):
+                        results.append(self._run(engine, device, template))
+            else:
+                for device in devices:
+                    for template in get_templates_for_device(device):
+                        results.append(self._run(engine, device, template))
+
+        compliant = sum(1 for r in results if r.status == ComplianceTemplateResult.Status.COMPLIANT)
+        non_compliant = sum(1 for r in results if r.status == ComplianceTemplateResult.Status.NON_COMPLIANT)
+        errored = sum(1 for r in results if r.status == ComplianceTemplateResult.Status.ERROR)
+        return Response({
+            "checked": len(results),
+            "compliant": compliant,
+            "non_compliant": non_compliant,
+            "error": errored,
+        })
+
+    @staticmethod
+    def _run(engine, device, template) -> ComplianceTemplateResult:
+        try:
+            result = engine.check_device(device, template)
+        except Exception as exc:  # noqa: BLE001
+            result = engine._error_result(device, template, str(exc))
+        result.save()
+        return result

@@ -17,6 +17,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'log-filters',  label: 'Log Filters',    icon: '📋' },
   { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
   { to: 'integrations', label: 'Integrations',   icon: '🔌' },
+  { to: 'compliance-templates', label: 'Compliance',  icon: '📐' },
   { to: 'alerting',     label: 'Alerting',       icon: '⚠' },
   { to: 'alert-routing', label: 'Alert Routing', icon: '🧭' },
   { to: 'discovery',    label: 'Discovery',      icon: '🔎' },

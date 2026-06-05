@@ -373,6 +373,15 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
         except Exception as exc:
             logger.warning("topology discovery skipped for %s: %s", device.hostname, exc)
 
+    # Run template compliance against the new snapshot (best-effort; independent
+    # of config-change — a freshly stored baseline should be evaluated too).
+    if cfg is not None:
+        try:
+            from .engine import run_compliance_for_device
+            run_compliance_for_device(device, config_snapshot=cfg)
+        except Exception as exc:  # noqa: BLE001 — compliance must not break collection
+            logger.warning("compliance run after collection failed for %s: %s", device.hostname, exc)
+
     elapsed = time.monotonic() - start
     if cfg is None:
         logger.info("config unchanged for %s (%s) — %.2fs", device.hostname, device.platform or "?", elapsed)
