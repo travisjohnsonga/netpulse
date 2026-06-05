@@ -106,10 +106,3 @@ case "$1" in
     exit 1
     ;;
 esac
-
-token() {
-    curl -s -X POST http://localhost:8000/api/auth/token/ \
-      -H 'Content-Type: application/json' \
-      -d '{"username":"admin","password":"netmagic"}' | \
-      python3 -m json.tool | grep '"access"' | cut -d'"' -f4
-}

@@ -3745,7 +3745,7 @@ NetPulse runs as a systemd service:
 
 Service file: /etc/systemd/system/netpulse.service
 Requires: docker.service
-WorkingDirectory: /home/netmagic/netpulse
+WorkingDirectory: /home/your-username/netpulse
 
 After reboot:
   Services start automatically via docker compose up -d
@@ -3806,8 +3806,8 @@ Config push template (SSH):
   SNMP config snippet:
   snmp-server vrf mgmt
   snmp-server community netpulse
-  snmpv3 user testsnmp auth sha auth-pass netmagic \
-    priv aes priv-pass netmagic
+  snmpv3 user your-username auth sha auth-pass your-auth-key \
+    priv aes priv-pass your-priv-key
   
   Syslog config snippet:
   logging <collector_ip> severity info
