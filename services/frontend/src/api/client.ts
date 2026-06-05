@@ -1725,6 +1725,36 @@ export async function applyHostnameRulesBulk(force = false): Promise<{ updated: 
   return data
 }
 
+export interface HostnameRulePreviewRoleRef { id: number; name: string; color: string }
+export interface HostnameRulePreviewSiteRef { id: number; name: string }
+
+export interface HostnameRulePreviewUpdate {
+  device_id: number
+  hostname: string
+  current_role: HostnameRulePreviewRoleRef | null
+  new_role: HostnameRulePreviewRoleRef | null
+  current_site: HostnameRulePreviewSiteRef | null
+  new_site: HostnameRulePreviewSiteRef | null
+}
+
+export interface HostnameRulePreviewSkip {
+  device_id: number
+  hostname: string
+  reason: string
+}
+
+export interface HostnameRulePreview {
+  would_update: HostnameRulePreviewUpdate[]
+  would_skip: HostnameRulePreviewSkip[]
+  summary: { total_devices: number; would_update: number; would_skip: number }
+}
+
+// Dry-run the bulk apply — what would change, without saving.
+export async function previewHostnameRules(force = false): Promise<HostnameRulePreview> {
+  const { data } = await api.post<HostnameRulePreview>('/devices/hostname-rules/preview/', { force })
+  return data
+}
+
 // Apply hostname rules to a single device.
 export async function applyHostnameRulesToDevice(id: number, force = false): Promise<{ role_assigned: boolean; site_assigned: boolean }> {
   const { data } = await api.post<{ role_assigned: boolean; site_assigned: boolean }>(

@@ -769,6 +769,46 @@ class TestHostnameRuleEndpoints:
         assert resp.json()["updated"] == 2
         assert resp.json()["skipped"] == 1
 
+    def test_preview(self, auth_client, core_role, fw_role, wco2_site):
+        from apps.devices.models import HostnameRule
+        _make_rule(name="site", pattern=r"^wco2-", rule_type=HostnameRule.RuleType.SITE,
+                   site=wco2_site, priority=10)
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        d1 = Device.objects.create(hostname="wco2-mdf-crt-01", ip_address="10.9.0.7")
+        Device.objects.create(hostname="nomatch-host", ip_address="10.9.0.9")
+        # Already has a role → role blocked, but site still applies → updated.
+        Device.objects.create(hostname="wco2-edge-crt-9", ip_address="10.9.0.10", role=fw_role)
+
+        resp = auth_client.post("/api/devices/hostname-rules/preview/", {}, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"] == {"total_devices": 3, "would_update": 2, "would_skip": 1}
+
+        upd = {u["hostname"]: u for u in body["would_update"]}
+        assert upd["wco2-mdf-crt-01"]["new_role"]["id"] == core_role.id
+        assert upd["wco2-mdf-crt-01"]["new_role"]["color"] == core_role.color
+        assert upd["wco2-mdf-crt-01"]["new_site"]["name"] == "WCO2"
+        assert upd["wco2-mdf-crt-01"]["current_role"] is None
+
+        skip = {s["hostname"]: s["reason"] for s in body["would_skip"]}
+        assert skip["nomatch-host"] == "no matching rules"
+
+        # Preview must NOT save anything.
+        d1.refresh_from_db()
+        assert d1.role_id is None and d1.site_id is None
+
+    def test_preview_skip_reason_role_already_assigned(self, auth_client, core_role, fw_role):
+        from apps.devices.models import HostnameRule
+        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+                   role=core_role, priority=20)
+        Device.objects.create(hostname="x-crt-1", ip_address="10.9.0.11", role=fw_role)
+        resp = auth_client.post("/api/devices/hostname-rules/preview/", {}, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["would_update"] == 0
+        assert body["would_skip"][0]["reason"] == "role already assigned"
+
     def test_seed_hostname_rules_idempotent(self, core_role, wco2_site):
         from django.core.management import call_command
         from apps.devices.models import HostnameRule

@@ -507,6 +507,20 @@ class HostnameRuleViewSet(viewsets.ModelViewSet):
         ]
         return Response(results)
 
+    @extend_schema(
+        request=None, responses=None,
+        summary="Dry-run bulk apply — what role/site each device would get (no save)",
+    )
+    @action(detail=False, methods=["post"])
+    def preview(self, request):
+        """
+        Preview the bulk apply: returns the devices that would be updated (with
+        current vs new role/site) and those that would be skipped (with a reason),
+        without saving anything. {"force": true} mirrors the force apply.
+        """
+        from .hostname_rules import preview_hostname_rules
+        return Response(preview_hostname_rules(force=_truthy(request.data.get("force"))))
+
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
 

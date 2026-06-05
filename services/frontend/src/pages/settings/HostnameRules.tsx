@@ -4,8 +4,8 @@ import { RoleDot } from '../../components/RoleBubble'
 import { SectionHeader } from '../Settings'
 import {
   fetchHostnameRules, createHostnameRule, updateHostnameRule, deleteHostnameRule,
-  testHostnameRule, applyHostnameRulesBulk, fetchDeviceRoles, fetchSites,
-  type HostnameRule, type HostnameRuleType, type DeviceRole, type Site,
+  testHostnameRule, applyHostnameRulesBulk, previewHostnameRules, fetchDeviceRoles, fetchSites,
+  type HostnameRule, type HostnameRuleType, type HostnameRulePreview, type DeviceRole, type Site,
 } from '../../api/client'
 
 const inputCls =
@@ -25,7 +25,8 @@ export default function HostnameRules() {
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<HostnameRule | null>(null)
   const [applyMsg, setApplyMsg] = useState<string | null>(null)
-  const [applying, setApplying] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const [preview, setPreview] = useState<HostnameRulePreview | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -36,16 +37,24 @@ export default function HostnameRules() {
   }
   useEffect(load, [])
 
-  const runApply = async () => {
-    setApplying(true); setApplyMsg(null)
+  // Step 1: fetch the dry-run preview, then open the confirmation modal.
+  const openPreview = async () => {
+    setPreviewing(true); setApplyMsg(null)
     try {
-      const res = await applyHostnameRulesBulk(false)
-      setApplyMsg(`Updated ${res.updated} device${res.updated !== 1 ? 's' : ''}, skipped ${res.skipped}.`)
+      setPreview(await previewHostnameRules(false))
     } catch {
-      setApplyMsg('Failed to apply rules.')
+      setApplyMsg('Failed to preview rules.')
     } finally {
-      setApplying(false)
+      setPreviewing(false)
     }
+  }
+
+  // Step 2: user confirmed in the modal → actually apply.
+  const confirmApply = async () => {
+    const res = await applyHostnameRulesBulk(false)
+    setApplyMsg(`✅ Updated ${res.updated} device${res.updated !== 1 ? 's' : ''}, skipped ${res.skipped}.`)
+    setPreview(null)
+    load()
   }
 
   return (
@@ -55,9 +64,10 @@ export default function HostnameRules() {
         description="Auto-assign device role and site from the hostname during discovery, enrichment, or on demand. First match per type wins (lowest priority number)."
         action={
           <div className="flex gap-2">
-            <button onClick={runApply} disabled={applying || rules.length === 0}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300">
-              {applying ? 'Applying…' : 'Apply Rules'}
+            <button onClick={openPreview} disabled={previewing || rules.length === 0}
+              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 inline-flex items-center gap-2">
+              {previewing && <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />}
+              {previewing ? 'Loading preview…' : 'Apply Rules'}
             </button>
             <button onClick={() => setCreating(true)}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
@@ -136,7 +146,126 @@ export default function HostnameRules() {
           onDeleted={() => { setDeleting(null); load() }}
         />
       )}
+      {preview && (
+        <PreviewModal
+          preview={preview}
+          onClose={() => setPreview(null)}
+          onConfirm={confirmApply}
+        />
+      )}
     </div>
+  )
+}
+
+function PreviewModal({ preview, onClose, onConfirm }: {
+  preview: HostnameRulePreview
+  onClose: () => void
+  onConfirm: () => Promise<void>
+}) {
+  const [applying, setApplying] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [showSkipped, setShowSkipped] = useState(false)
+  const { would_update, would_skip, summary } = preview
+
+  const apply = async () => {
+    setApplying(true); setErr(null)
+    try {
+      await onConfirm()
+    } catch {
+      setErr('Failed to apply rules.')
+      setApplying(false)
+    }
+  }
+
+  return (
+    <Modal
+      title="Apply Hostname Rules — Preview"
+      onClose={onClose}
+      size="xl"
+      footer={
+        <>
+          <button onClick={onClose} disabled={applying}
+            className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">Cancel</button>
+          <button onClick={apply} disabled={applying || summary.would_update === 0}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+            {applying ? 'Applying…' : `Apply ${summary.would_update} change${summary.would_update !== 1 ? 's' : ''}`}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
+
+        {/* Summary bar */}
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium">
+            <span className="w-2 h-2 rounded-full bg-green-500" />
+            {summary.would_update} device{summary.would_update !== 1 ? 's' : ''} will be updated
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+            <span className="w-2 h-2 rounded-full bg-gray-400" />
+            {summary.would_skip} device{summary.would_skip !== 1 ? 's' : ''} will be skipped
+          </span>
+        </div>
+
+        {/* Will be updated */}
+        {would_update.length > 0 ? (
+          <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+                  <th className="px-4 py-2 font-medium">Hostname</th>
+                  <th className="px-4 py-2 font-medium">Role</th>
+                  <th className="px-4 py-2 font-medium">Site</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                {would_update.map((u) => (
+                  <tr key={u.device_id}>
+                    <td className="px-4 py-2 font-mono text-xs text-gray-900 dark:text-gray-100">{u.hostname}</td>
+                    <td className="px-4 py-2">
+                      {u.new_role ? (
+                        <span className="inline-flex items-center gap-1.5 text-gray-700 dark:text-gray-300">
+                          → <RoleDot color={u.new_role.color} />{u.new_role.name}
+                        </span>
+                      ) : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">
+                      {u.new_site ? <span>→ {u.new_site.name}</span> : <span className="text-gray-400">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500 dark:text-gray-400 py-3 text-center border border-gray-200 dark:border-gray-700 rounded-lg">
+            No devices would be updated by the current rules.
+          </div>
+        )}
+
+        {/* Collapsible skipped */}
+        {would_skip.length > 0 && (
+          <div>
+            <button onClick={() => setShowSkipped((s) => !s)}
+              className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 inline-flex items-center gap-1">
+              <span className="text-xs">{showSkipped ? '▼' : '▶'}</span>
+              {would_skip.length} device{would_skip.length !== 1 ? 's' : ''} skipped (click to {showSkipped ? 'collapse' : 'expand'})
+            </button>
+            {showSkipped && (
+              <ul className="mt-2 space-y-1 text-sm bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3">
+                {would_skip.map((s) => (
+                  <li key={s.device_id} className="text-gray-600 dark:text-gray-400">
+                    <span className="font-mono text-xs text-gray-800 dark:text-gray-200">{s.hostname}</span>
+                    <span className="text-gray-400"> — {s.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
   )
 }
 
