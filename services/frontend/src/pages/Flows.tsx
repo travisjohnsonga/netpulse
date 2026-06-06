@@ -15,17 +15,18 @@ import {
   type FlowProtocol,
 } from '../api/client'
 import { fmtBytes } from '../lib/bytes'
+import { useIsDark, chartColors } from '../lib/useIsDark'
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const
 type Window = (typeof WINDOWS)[number]
 
 const PIE_COLORS = ['#3b82f6', '#a855f7', '#f59e0b', '#22c55e', '#ef4444', '#14b8a6', '#ec4899', '#64748b']
 
-function protocolDonutOption(protocols: FlowProtocol[]): EChartsOption {
+function protocolDonutOption(protocols: FlowProtocol[], isDark: boolean): EChartsOption {
   return {
     color: PIE_COLORS,
     tooltip: { trigger: 'item', formatter: '{b}: {c} flows ({d}%)' },
-    legend: { bottom: 0, type: 'scroll', textStyle: { fontSize: 11 } },
+    legend: { bottom: 0, type: 'scroll', textStyle: { fontSize: 11, color: chartColors(isDark).text } },
     series: [
       {
         name: 'Protocol',
@@ -43,6 +44,7 @@ function protocolDonutOption(protocols: FlowProtocol[]): EChartsOption {
 
 export default function Flows() {
   const [window, setWindow] = useState<Window>('1h')
+  const isDark = useIsDark()
   // When set, the recent-flows table drills into a single IP (src OR dst).
   const [ipFilter, setIpFilter] = useState<string | null>(null)
 
@@ -153,7 +155,7 @@ export default function Flows() {
           {protocols.length === 0 ? (
             <p className="py-16 text-center text-sm text-gray-400 dark:text-gray-500">No flow data in this window.</p>
           ) : (
-            <ReactECharts option={protocolDonutOption(protocols)} style={{ height: 260 }} opts={{ renderer: 'svg' }} notMerge />
+            <ReactECharts option={protocolDonutOption(protocols, isDark)} style={{ height: 260 }} opts={{ renderer: 'svg' }} notMerge />
           )}
         </div>
       </div>

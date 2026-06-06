@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { fmtBytes } from '../lib/bytes'
+import { useIsDark, chartColors } from '../lib/useIsDark'
 import type { FlowSankeyData, FlowSankeyLink } from '../api/client'
 
 // RFC1918 private ranges: 10/8, 172.16/12, 192.168/16.
@@ -38,7 +39,7 @@ function acyclic(links: FlowSankeyLink[]): FlowSankeyLink[] {
   return kept
 }
 
-function sankeyOption(links: FlowSankeyLink[], deviceIp?: string | null): EChartsOption {
+function sankeyOption(links: FlowSankeyLink[], deviceIp: string | null | undefined, isDark: boolean): EChartsOption {
   // Derive nodes from the kept links so no orphans float in the diagram.
   const names: string[] = []
   const seen = new Set<string>()
@@ -68,8 +69,8 @@ function sankeyOption(links: FlowSankeyLink[], deviceIp?: string | null): EChart
           itemStyle: { color: nodeColor(name, deviceIp), borderWidth: 0 },
         })),
         links,
-        label: { color: '#e2e8f0', fontSize: 11 },
-        lineStyle: { color: 'gradient', opacity: 0.4 },
+        label: { color: chartColors(isDark).text, fontSize: 11, fontWeight: 500 },
+        lineStyle: { color: 'gradient', opacity: isDark ? 0.4 : 0.5 },
       },
     ],
   }
@@ -86,6 +87,7 @@ export default function FlowSankey({
   deviceIp?: string | null
   height?: number
 }) {
+  const isDark = useIsDark()
   const links = useMemo(() => acyclic(data?.links ?? []), [data])
 
   return (
@@ -104,7 +106,7 @@ export default function FlowSankey({
       ) : (
         <>
           <ReactECharts
-            option={sankeyOption(links, deviceIp)}
+            option={sankeyOption(links, deviceIp, isDark)}
             style={{ height }}
             opts={{ renderer: 'svg' }}
             notMerge

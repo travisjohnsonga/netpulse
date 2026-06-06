@@ -16,6 +16,7 @@ import {
   type FlowConversation,
 } from '../../api/client'
 import { fmtBytes } from '../../lib/bytes'
+import { useIsDark, chartColors } from '../../lib/useIsDark'
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const
 type Window = (typeof WINDOWS)[number]
@@ -25,16 +26,14 @@ const INBOUND = '#10b981'
 const OUTBOUND = '#3b82f6'
 const PROTO_COLORS: Record<string, string> = { TCP: '#3b82f6', UDP: '#10b981', ICMP: '#f59e0b', Other: '#64748b' }
 
-// Muted axis styling that reads on both the light and dark card background.
-const AXIS_LABEL = { color: '#94a3b8', fontSize: 10 } as const
-const SPLIT_LINE = { lineStyle: { color: 'rgba(148,163,184,0.15)' } } as const
-
-function trafficOption(points: FlowTrafficPoint[]): EChartsOption {
+function trafficOption(points: FlowTrafficPoint[], isDark: boolean): EChartsOption {
+  const c = chartColors(isDark)
+  const axisLabel = { color: c.muted, fontSize: 10 }
   const area = (color: string) => ({ opacity: 0.18, color })
   return {
     color: [INBOUND, OUTBOUND],
     grid: { left: 56, right: 16, top: 28, bottom: 28 },
-    legend: { top: 0, right: 0, textStyle: { fontSize: 11, color: '#94a3b8' }, icon: 'roundRect' },
+    legend: { top: 0, right: 0, textStyle: { fontSize: 11, color: c.text }, icon: 'roundRect' },
     tooltip: {
       trigger: 'axis',
       formatter: (params: any) => {
@@ -44,8 +43,8 @@ function trafficOption(points: FlowTrafficPoint[]): EChartsOption {
         return `${t}<br/>${rows}`
       },
     },
-    xAxis: { type: 'time', axisLabel: AXIS_LABEL },
-    yAxis: { type: 'value', min: 0, axisLabel: { ...AXIS_LABEL, formatter: (v: number) => fmtBytes(v) }, splitLine: SPLIT_LINE },
+    xAxis: { type: 'time', axisLabel },
+    yAxis: { type: 'value', min: 0, axisLabel: { ...axisLabel, formatter: (v: number) => fmtBytes(v) }, splitLine: { lineStyle: { color: c.split } } },
     series: [
       { name: 'Inbound', type: 'line', smooth: true, showSymbol: false, areaStyle: area(INBOUND), lineStyle: { width: 1.5 }, data: points.map((p) => [p.timestamp, p.inbound_bytes]) },
       { name: 'Outbound', type: 'line', smooth: true, showSymbol: false, areaStyle: area(OUTBOUND), lineStyle: { width: 1.5 }, data: points.map((p) => [p.timestamp, p.outbound_bytes]) },
@@ -53,13 +52,13 @@ function trafficOption(points: FlowTrafficPoint[]): EChartsOption {
   }
 }
 
-function protocolOption(mix: FlowProtocolMix[]): EChartsOption {
+function protocolOption(mix: FlowProtocolMix[], isDark: boolean): EChartsOption {
   return {
     tooltip: {
       trigger: 'item',
       formatter: (p: any) => `${p.name}: ${fmtBytes(p.data.value)} (${p.data.pct}%)<br/>${p.data.flows.toLocaleString()} flows`,
     },
-    legend: { bottom: 0, type: 'scroll', textStyle: { fontSize: 11, color: '#94a3b8' } },
+    legend: { bottom: 0, type: 'scroll', textStyle: { fontSize: 11, color: chartColors(isDark).text } },
     series: [
       {
         name: 'Protocol',
@@ -81,7 +80,8 @@ function protocolOption(mix: FlowProtocolMix[]): EChartsOption {
   }
 }
 
-function conversationsOption(convos: FlowConversation[]): EChartsOption {
+function conversationsOption(convos: FlowConversation[], isDark: boolean): EChartsOption {
+  const c = chartColors(isDark)
   // Largest at the top: ECharts category axis draws index 0 at the bottom.
   const rows = [...convos].reverse()
   return {
@@ -90,19 +90,19 @@ function conversationsOption(convos: FlowConversation[]): EChartsOption {
       trigger: 'item',
       formatter: (p: any) => `${p.data.src} → ${p.data.dst}<br/>Bytes: ${fmtBytes(p.data.value)}<br/>Packets: ${p.data.packets.toLocaleString()}<br/>Flows: ${p.data.flows.toLocaleString()}`,
     },
-    xAxis: { type: 'value', axisLabel: { ...AXIS_LABEL, formatter: (v: number) => fmtBytes(v) }, splitLine: SPLIT_LINE },
+    xAxis: { type: 'value', axisLabel: { color: c.muted, fontSize: 10, formatter: (v: number) => fmtBytes(v) }, splitLine: { lineStyle: { color: c.split } } },
     yAxis: {
       type: 'category',
-      data: rows.map((c) => `${c.src_ip} → ${c.dst_ip}`),
-      axisLabel: { color: '#94a3b8', fontSize: 11, fontFamily: 'monospace' },
+      data: rows.map((r) => `${r.src_ip} → ${r.dst_ip}`),
+      axisLabel: { color: c.text, fontSize: 11, fontFamily: 'monospace' },
     },
     series: [
       {
         type: 'bar',
         barWidth: '60%',
         itemStyle: { color: OUTBOUND, borderRadius: [0, 4, 4, 0] },
-        label: { show: true, position: 'right', formatter: (p: any) => fmtBytes(p.data.value), fontSize: 10, color: '#94a3b8' },
-        data: rows.map((c) => ({ value: c.bytes, src: c.src_ip, dst: c.dst_ip, packets: c.packets, flows: c.flows })),
+        label: { show: true, position: 'right', formatter: (p: any) => fmtBytes(p.data.value), fontSize: 10, color: c.muted },
+        data: rows.map((r) => ({ value: r.bytes, src: r.src_ip, dst: r.dst_ip, packets: r.packets, flows: r.flows })),
       },
     ],
   }
@@ -111,6 +111,7 @@ function conversationsOption(convos: FlowConversation[]): EChartsOption {
 // Device "Flows" tab — flows involving this device (src OR dst = device IP).
 export default function Flows({ device }: { device: DeviceDetail }) {
   const [window, setWindow] = useState<Window>('1h')
+  const isDark = useIsDark()
   const deviceId = String(device.id)
   const deviceIp = device.management_ip || device.ip_address
 
@@ -179,7 +180,7 @@ export default function Flows({ device }: { device: DeviceDetail }) {
           ) : traffic.length === 0 ? (
             <p className="h-[240px] flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">No flow data in this window.</p>
           ) : (
-            <ReactECharts option={trafficOption(traffic)} style={{ height: 240 }} opts={{ renderer: 'svg' }} notMerge />
+            <ReactECharts option={trafficOption(traffic, isDark)} style={{ height: 240 }} opts={{ renderer: 'svg' }} notMerge />
           )}
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
@@ -187,7 +188,7 @@ export default function Flows({ device }: { device: DeviceDetail }) {
           {protocols.length === 0 ? (
             <p className="h-[240px] flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">No flow data in this window.</p>
           ) : (
-            <ReactECharts option={protocolOption(protocols)} style={{ height: 240 }} opts={{ renderer: 'svg' }} notMerge />
+            <ReactECharts option={protocolOption(protocols, isDark)} style={{ height: 240 }} opts={{ renderer: 'svg' }} notMerge />
           )}
         </div>
       </div>
@@ -198,7 +199,7 @@ export default function Flows({ device }: { device: DeviceDetail }) {
         {convos.length === 0 ? (
           <p className="h-[180px] flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">No flow data in this window.</p>
         ) : (
-          <ReactECharts option={conversationsOption(convos)} style={{ height: Math.max(140, convos.length * 38) }} opts={{ renderer: 'svg' }} notMerge />
+          <ReactECharts option={conversationsOption(convos, isDark)} style={{ height: Math.max(140, convos.length * 38) }} opts={{ renderer: 'svg' }} notMerge />
         )}
       </div>
 
