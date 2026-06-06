@@ -174,6 +174,154 @@ class TestFlowSummary:
         assert body["total_flows"] == 0 and body["top_protocols"] == []
 
 
+class TestFlowDeviceSummary:
+    def _agg(self):
+        return {
+            "hits": {"total": {"value": 100}},
+            "aggregations": {
+                "over_time": {"buckets": [
+                    {"key_as_string": "2026-06-06T01:00:00Z", "key": 1,
+                     "inbound": {"doc_count": 3, "bytes": {"value": 12345.0}},
+                     "outbound": {"doc_count": 2, "bytes": {"value": 6789.0}}},
+                ]},
+                "protocols": {"buckets": [
+                    {"key": 6, "doc_count": 234, "bytes": {"value": 123456.0}},
+                    {"key": 17, "doc_count": 156, "bytes": {"value": 78901.0}},
+                    {"key": 1, "doc_count": 89, "bytes": {"value": 45678.0}},
+                    {"key": 47, "doc_count": 45, "bytes": {"value": 23456.0}},  # GRE → Other
+                ]},
+                "conversations": {"buckets": [
+                    {"key": ["192.168.98.100", "8.8.8.8"], "doc_count": 45,
+                     "total_bytes": {"value": 1234567.0}, "total_packets": {"value": 1234.0}},
+                ]},
+            },
+        }
+
+    def _device(self, ip="192.168.98.100"):
+        from apps.devices.models import Device
+        return Device.objects.create(hostname="dev1", ip_address=ip)
+
+    def test_device_summary_shape(self, auth_client, monkeypatch):
+        dev = self._device()
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or self._agg())
+        resp = auth_client.get(f"/api/flows/device-summary/?device_id={dev.id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["traffic_over_time"][0] == {
+            "timestamp": "2026-06-06T01:00:00Z", "inbound_bytes": 12345, "outbound_bytes": 6789,
+        }
+        # protocol mix collapses GRE into "Other" and computes byte-share pct
+        mix = {m["protocol"]: m for m in body["protocol_mix"]}
+        assert mix["TCP"]["bytes"] == 123456 and mix["TCP"]["flows"] == 234
+        assert mix["Other"]["bytes"] == 23456 and mix["Other"]["flows"] == 45
+        assert mix["TCP"]["pct"] == 45.5  # 123456 / 271491
+        assert [m["protocol"] for m in body["protocol_mix"]] == ["TCP", "UDP", "ICMP", "Other"]
+        assert body["top_conversations"][0] == {
+            "src_ip": "192.168.98.100", "dst_ip": "8.8.8.8",
+            "bytes": 1234567, "packets": 1234, "flows": 45,
+        }
+
+    def test_device_summary_query_is_src_or_dst(self, auth_client, monkeypatch):
+        dev = self._device("10.5.5.5")
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or self._agg())
+        auth_client.get(f"/api/flows/device-summary/?device_id={dev.id}")
+        q = captured["query"]["bool"]
+        assert q["minimum_should_match"] == 1
+        assert {"term": {"dst_ip.keyword": "10.5.5.5"}} in q["should"]
+        assert {"term": {"src_ip.keyword": "10.5.5.5"}} in q["should"]
+        # default 1h → 5m buckets
+        assert captured["aggs"]["over_time"]["date_histogram"]["fixed_interval"] == "5m"
+
+    def test_device_summary_interval_per_window(self, auth_client, monkeypatch):
+        dev = self._device()
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or self._agg())
+        auth_client.get(f"/api/flows/device-summary/?device_id={dev.id}&window=24h")
+        assert captured["aggs"]["over_time"]["date_histogram"]["fixed_interval"] == "2h"
+        auth_client.get(f"/api/flows/device-summary/?device_id={dev.id}&window=7d")
+        assert captured["aggs"]["over_time"]["date_histogram"]["fixed_interval"] == "12h"
+
+    def test_device_summary_no_device_is_empty(self, auth_client, monkeypatch):
+        called = {"n": 0}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: called.__setitem__("n", called["n"] + 1) or self._agg())
+        resp = auth_client.get("/api/flows/device-summary/")
+        assert resp.status_code == 200
+        assert resp.json() == {"window": "1h", "traffic_over_time": [], "protocol_mix": [], "top_conversations": []}
+        assert called["n"] == 0  # no OpenSearch call without a resolvable device
+
+    def test_device_summary_unknown_device_is_empty(self, auth_client, monkeypatch):
+        monkeypatch.setattr(flow_views, "_execute", lambda body: self._agg())
+        resp = auth_client.get("/api/flows/device-summary/?device_id=99999")
+        assert resp.json()["top_conversations"] == []
+
+    def test_device_summary_degrades(self, auth_client, monkeypatch):
+        dev = self._device()
+        monkeypatch.setattr(flow_views, "_execute", lambda body: (_ for _ in ()).throw(RuntimeError()))
+        resp = auth_client.get(f"/api/flows/device-summary/?device_id={dev.id}")
+        assert resp.status_code == 200
+        assert resp.json()["protocol_mix"] == []
+
+
+class TestFlowSankey:
+    def _agg(self):
+        return {"aggregations": {"conversations": {"buckets": [
+            {"key": ["192.168.98.100", "8.8.8.8"], "doc_count": 45,
+             "total_bytes": {"value": 1234567.0}, "total_packets": {"value": 1234.0}},
+            {"key": ["192.168.98.254", "1.1.1.1"], "doc_count": 12,
+             "total_bytes": {"value": 456789.0}, "total_packets": {"value": 678.0}},
+            {"key": ["10.0.0.1", "10.0.0.1"], "doc_count": 3,
+             "total_bytes": {"value": 100.0}, "total_packets": {"value": 1.0}},  # self-loop dropped
+        ]}}}
+
+    def test_sankey_shape(self, auth_client, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or self._agg())
+        resp = auth_client.get("/api/flows/sankey/?window=6h&limit=20")
+        assert resp.status_code == 200
+        body = resp.json()
+        # self-loop (10.0.0.1→10.0.0.1) dropped; two real conversations remain
+        assert body["links"] == [
+            {"source": "192.168.98.100", "target": "8.8.8.8", "value": 1234567,
+             "bytes": 1234567, "packets": 1234, "flows": 45},
+            {"source": "192.168.98.254", "target": "1.1.1.1", "value": 456789,
+             "bytes": 456789, "packets": 678, "flows": 12},
+        ]
+        assert body["nodes"] == [
+            {"name": "192.168.98.100"}, {"name": "8.8.8.8"},
+            {"name": "192.168.98.254"}, {"name": "1.1.1.1"},
+        ]
+        agg = captured["aggs"]["conversations"]["multi_terms"]
+        assert agg["size"] == 20 and agg["order"] == {"total_bytes": "desc"}
+        assert {"range": {"@timestamp": {"gte": "now-6h"}}} in captured["query"]["bool"]["must"]
+
+    def test_sankey_device_filter_src_or_dst(self, auth_client, monkeypatch):
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="dev1", ip_address="192.168.98.100")
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or self._agg())
+        auth_client.get(f"/api/flows/sankey/?device_id={dev.id}")
+        musts = captured["query"]["bool"]["must"]
+        assert {"bool": {"should": [
+            {"term": {"src_ip.keyword": "192.168.98.100"}},
+            {"term": {"dst_ip.keyword": "192.168.98.100"}},
+        ], "minimum_should_match": 1}} in musts
+
+    def test_sankey_unknown_device_empty(self, auth_client, monkeypatch):
+        called = {"n": 0}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: called.__setitem__("n", called["n"] + 1) or self._agg())
+        resp = auth_client.get("/api/flows/sankey/?device_id=99999")
+        assert resp.json() == {"window": "1h", "nodes": [], "links": []}
+        assert called["n"] == 0
+
+    def test_sankey_degrades(self, auth_client, monkeypatch):
+        monkeypatch.setattr(flow_views, "_execute", lambda body: (_ for _ in ()).throw(RuntimeError()))
+        resp = auth_client.get("/api/flows/sankey/")
+        assert resp.status_code == 200
+        assert resp.json()["links"] == []
+
+
 class TestFlowSearch:
     def test_search_by_ip_src_or_dst(self, auth_client, monkeypatch):
         captured = {}

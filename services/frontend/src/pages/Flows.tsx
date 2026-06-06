@@ -5,9 +5,11 @@ import type { EChartsOption } from 'echarts'
 import clsx from 'clsx'
 import StatCard from '../components/StatCard'
 import FlowsTable from '../components/FlowsTable'
+import FlowSankey from '../components/FlowSankey'
 import {
   fetchFlows,
   fetchFlowSummary,
+  fetchFlowSankey,
   fetchTopTalkers,
   searchFlows,
   type FlowProtocol,
@@ -47,6 +49,10 @@ export default function Flows() {
   const summaryQ = useQuery({
     queryKey: ['flow-summary', window],
     queryFn: () => fetchFlowSummary({ window }),
+  })
+  const sankeyQ = useQuery({
+    queryKey: ['flow-sankey', window],
+    queryFn: () => fetchFlowSankey({ window, limit: '30' }),
   })
   const talkersQ = useQuery({
     queryKey: ['flow-top-talkers', window],
@@ -98,6 +104,9 @@ export default function Flows() {
         <StatCard title="Unique IPs" value={((summary?.unique_src_ips ?? 0) + (summary?.unique_dst_ips ?? 0)).toLocaleString()} subtitle={`${summary?.unique_src_ips ?? 0} src · ${summary?.unique_dst_ips ?? 0} dst`} color="yellow" />
         <StatCard title="Top Protocol" value={topProto} subtitle={protocols[0] ? `${protocols[0].flows.toLocaleString()} flows` : 'no data'} color="blue" />
       </div>
+
+      {/* Traffic Flow sankey (full width) */}
+      <FlowSankey data={sankeyQ.data} loading={sankeyQ.isLoading} />
 
       {/* Two panels: top talkers + protocol distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

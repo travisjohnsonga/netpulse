@@ -10,6 +10,9 @@ Endpoints (all read-only, IsAuthenticated):
   GET /api/flows/                recent flows (filter by device/src/dst/proto/window)
   GET /api/flows/top-talkers/    top source IPs by bytes / packets / flows
   GET /api/flows/summary/        totals, unique IPs, protocol mix, bytes-over-time
+  GET /api/flows/device-summary/ per-device inbound/outbound traffic, protocol mix,
+                                 top conversations (backs the device Flows-tab charts)
+  GET /api/flows/sankey/         top conversations as Sankey nodes + links
   GET /api/flows/search/         all flows where an IP is src OR dst
 
 The OpenSearch call is isolated in :func:`_execute` so tests can monkeypatch it,
@@ -57,6 +60,17 @@ HIST_INTERVAL: dict[str, str] = {
     "12h": "1h",
     "24h": "1h",
     "7d": "6h",
+}
+
+# Per-device traffic-over-time bucket size — tuned for ~12–14 points per window
+# (1h→12, 6h→12, 24h→12, 7d→14) so the device Flows-tab area chart stays readable.
+DEVICE_HIST_INTERVAL: dict[str, str] = {
+    "15m": "1m",
+    "1h": "5m",
+    "6h": "30m",
+    "12h": "1h",
+    "24h": "2h",
+    "7d": "12h",
 }
 
 
@@ -109,6 +123,38 @@ def _device_exporter_ip(device_id) -> str | None:
     if not dev:
         return None
     return str(dev.management_ip or dev.ip_address)
+
+
+def _src_or_dst(ip: str) -> dict:
+    """bool/should clause matching flows where ``ip`` is the source OR the dest."""
+    return {
+        "bool": {
+            "should": [
+                {"term": {_IP_KW["src_ip"]: ip}},
+                {"term": {_IP_KW["dst_ip"]: ip}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
+def _conversations_agg(size: int) -> dict:
+    """multi_terms agg over (src_ip, dst_ip) ranked by total bytes — the shared
+    shape behind the top-conversations table and the Sankey diagram."""
+    return {
+        "multi_terms": {
+            "terms": [
+                {"field": _IP_KW["src_ip"]},
+                {"field": _IP_KW["dst_ip"]},
+            ],
+            "size": size,
+            "order": {"total_bytes": "desc"},
+        },
+        "aggs": {
+            "total_bytes": {"sum": {"field": "bytes"}},
+            "total_packets": {"sum": {"field": "packets"}},
+        },
+    }
 
 
 def _format_flow(hit: dict) -> dict:
@@ -368,4 +414,204 @@ class FlowSummaryView(APIView):
             "unique_dst_ips": int(aggs.get("unique_dst", {}).get("value") or 0),
             "top_protocols": top_protocols,
             "bytes_over_time": bytes_over_time,
+        }
+
+
+class FlowDeviceSummaryView(APIView):
+    """GET /api/flows/device-summary/ — per-device flow charts for the device
+    Flows tab.
+
+    Matches every flow where the device's IP (management_ip preferred, else
+    ip_address) is the source OR the destination — inbound = the device is the
+    destination, outbound = the device is the source. Returns:
+      * traffic_over_time  — inbound/outbound bytes per histogram bucket
+      * protocol_mix       — TCP/UDP/ICMP/Other split with byte share (pct)
+      * top_conversations  — top 5 src→dst pairs by bytes
+
+    ?device_id=1 (required) ?window=1h|6h|24h|7d (default 1h).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    # ip_protocol number → donut group; anything else rolls up into "Other".
+    _PROTO_GROUP = {6: "TCP", 17: "UDP", 1: "ICMP"}
+    _PROTO_ORDER = ["TCP", "UDP", "ICMP", "Other"]
+
+    def get(self, request):
+        params = request.query_params
+        window = _window(params)
+        device_id = params.get("device_id")
+        device_ip = _device_exporter_ip(device_id) if device_id else None
+        # Without a resolvable device IP there is nothing to match — return empty
+        # rather than querying the whole fleet.
+        if not device_ip:
+            return Response(self._empty(window))
+
+        inbound = {"term": {_IP_KW["dst_ip"]: device_ip}}
+        outbound = {"term": {_IP_KW["src_ip"]: device_ip}}
+        body = {
+            "size": 0,
+            "track_total_hits": True,
+            "query": {
+                "bool": {
+                    "must": [_range_filter(window)],
+                    "should": [inbound, outbound],
+                    "minimum_should_match": 1,
+                }
+            },
+            "aggs": {
+                "over_time": {
+                    "date_histogram": {
+                        "field": "@timestamp",
+                        "fixed_interval": DEVICE_HIST_INTERVAL[window],
+                        "min_doc_count": 0,
+                    },
+                    "aggs": {
+                        "inbound": {"filter": inbound, "aggs": {"bytes": {"sum": {"field": "bytes"}}}},
+                        "outbound": {"filter": outbound, "aggs": {"bytes": {"sum": {"field": "bytes"}}}},
+                    },
+                },
+                "protocols": {
+                    "terms": {"field": "ip_protocol", "size": 20},
+                    "aggs": {"bytes": {"sum": {"field": "bytes"}}},
+                },
+                "conversations": _conversations_agg(5),
+            },
+        }
+        try:
+            raw = _execute(body)
+        except Exception as exc:
+            logger.warning("Flow device-summary query failed, returning empty: %s", exc)
+            return Response(self._empty(window))
+
+        return Response(self._format(raw, window))
+
+    @staticmethod
+    def _empty(window: str) -> dict:
+        return {
+            "window": window,
+            "traffic_over_time": [],
+            "protocol_mix": [],
+            "top_conversations": [],
+        }
+
+    @classmethod
+    def _protocol_mix(cls, buckets: list[dict]) -> list[dict]:
+        """Collapse the per-protocol-number buckets into TCP/UDP/ICMP/Other and
+        attach each group's share of total bytes as ``pct``."""
+        grouped: dict[str, dict] = {}
+        for b in buckets:
+            name = cls._PROTO_GROUP.get(b.get("key"), "Other")
+            g = grouped.setdefault(name, {"protocol": name, "bytes": 0, "flows": 0})
+            g["bytes"] += int(b.get("bytes", {}).get("value") or 0)
+            g["flows"] += b.get("doc_count", 0)
+        total = sum(g["bytes"] for g in grouped.values())
+        rows = []
+        for name in cls._PROTO_ORDER:
+            g = grouped.get(name)
+            if not g:
+                continue
+            g["pct"] = round(g["bytes"] / total * 100, 1) if total else 0.0
+            rows.append(g)
+        return rows
+
+    @classmethod
+    def _format(cls, raw: dict, window: str) -> dict:
+        aggs = raw.get("aggregations", {})
+        traffic_over_time = [
+            {
+                "timestamp": b.get("key_as_string"),
+                "inbound_bytes": int(b.get("inbound", {}).get("bytes", {}).get("value") or 0),
+                "outbound_bytes": int(b.get("outbound", {}).get("bytes", {}).get("value") or 0),
+            }
+            for b in aggs.get("over_time", {}).get("buckets", [])
+        ]
+        top_conversations = [
+            {
+                "src_ip": (b.get("key") or [None, None])[0],
+                "dst_ip": (b.get("key") or [None, None])[1],
+                "bytes": int(b.get("total_bytes", {}).get("value") or 0),
+                "packets": int(b.get("total_packets", {}).get("value") or 0),
+                "flows": b.get("doc_count", 0),
+            }
+            for b in aggs.get("conversations", {}).get("buckets", [])
+        ]
+        return {
+            "window": window,
+            "traffic_over_time": traffic_over_time,
+            "protocol_mix": cls._protocol_mix(aggs.get("protocols", {}).get("buckets", [])),
+            "top_conversations": top_conversations,
+        }
+
+
+class FlowSankeyView(APIView):
+    """GET /api/flows/sankey/ — top conversations shaped as Sankey nodes + links
+    (link width = bytes) for the Traffic Flow diagram.
+
+    ?window=1h|6h|24h|7d ?device_id=1 (optional — restrict to flows where the
+    device IP is src OR dst) ?limit=30 (max links/conversations, cap 100).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        params = request.query_params
+        window = _window(params)
+        limit = _limit(params, default=30, cap=100)
+
+        musts: list[dict] = [_range_filter(window)]
+        device_id = params.get("device_id")
+        if device_id:
+            device_ip = _device_exporter_ip(device_id)
+            # Unknown device → nothing to show rather than the whole fleet.
+            if not device_ip:
+                return Response(self._empty(window))
+            musts.append(_src_or_dst(device_ip))
+
+        body = {
+            "size": 0,
+            "query": {"bool": {"must": musts}},
+            "aggs": {"conversations": _conversations_agg(limit)},
+        }
+        try:
+            raw = _execute(body)
+        except Exception as exc:
+            logger.warning("Flow sankey query failed, returning empty: %s", exc)
+            return Response(self._empty(window))
+
+        return Response(self._format(raw, window))
+
+    @staticmethod
+    def _empty(window: str) -> dict:
+        return {"window": window, "nodes": [], "links": []}
+
+    @staticmethod
+    def _format(raw: dict, window: str) -> dict:
+        buckets = raw.get("aggregations", {}).get("conversations", {}).get("buckets", [])
+        links = []
+        names: list[str] = []
+        seen: set[str] = set()
+        for b in buckets:
+            key = b.get("key") or [None, None]
+            src, dst = key[0], key[1]
+            # Drop malformed pairs and self-loops (Sankey can't render src==dst).
+            if not src or not dst or src == dst:
+                continue
+            byts = int(b.get("total_bytes", {}).get("value") or 0)
+            links.append({
+                "source": src,
+                "target": dst,
+                "value": byts,
+                "bytes": byts,
+                "packets": int(b.get("total_packets", {}).get("value") or 0),
+                "flows": b.get("doc_count", 0),
+            })
+            for ip in (src, dst):
+                if ip not in seen:
+                    seen.add(ip)
+                    names.append(ip)
+        return {
+            "window": window,
+            "nodes": [{"name": n} for n in names],
+            "links": links,
         }

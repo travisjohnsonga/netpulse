@@ -2605,3 +2605,63 @@ export async function fetchFlowSummary(params: Record<string, string>): Promise<
   const { data } = await api.get<FlowSummary>('/flows/summary/', { params })
   return data
 }
+
+// Per-device flow charts (device Flows tab): inbound/outbound traffic over time,
+// TCP/UDP/ICMP/Other mix, and the top conversations involving the device.
+export interface FlowTrafficPoint {
+  timestamp: string
+  inbound_bytes: number
+  outbound_bytes: number
+}
+
+export interface FlowProtocolMix {
+  protocol: string
+  bytes: number
+  flows: number
+  pct: number
+}
+
+export interface FlowConversation {
+  src_ip: string
+  dst_ip: string
+  bytes: number
+  packets: number
+  flows: number
+}
+
+export interface FlowDeviceSummary {
+  window: string
+  traffic_over_time: FlowTrafficPoint[]
+  protocol_mix: FlowProtocolMix[]
+  top_conversations: FlowConversation[]
+}
+
+export async function fetchFlowDeviceSummary(params: Record<string, string>): Promise<FlowDeviceSummary> {
+  const { data } = await api.get<FlowDeviceSummary>('/flows/device-summary/', { params })
+  return data
+}
+
+// Traffic-flow Sankey: top conversations as nodes (unique IPs) + links (bytes).
+export interface FlowSankeyNode {
+  name: string
+}
+
+export interface FlowSankeyLink {
+  source: string
+  target: string
+  value: number
+  bytes: number
+  packets: number
+  flows: number
+}
+
+export interface FlowSankeyData {
+  window: string
+  nodes: FlowSankeyNode[]
+  links: FlowSankeyLink[]
+}
+
+export async function fetchFlowSankey(params: Record<string, string>): Promise<FlowSankeyData> {
+  const { data } = await api.get<FlowSankeyData>('/flows/sankey/', { params })
+  return data
+}
