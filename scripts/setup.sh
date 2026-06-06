@@ -230,7 +230,23 @@ echo
 echo "${BOLD}Pre-flight checks${N}"
 [ "$(id -u)" -eq 0 ] && warn "running as root — prefer a non-root user in the docker group"
 command -v docker >/dev/null 2>&1 && ok "docker found" || err "docker not found — install Docker before continuing"
-if docker compose version >/dev/null 2>&1; then ok "docker compose found"; else err "docker compose v2 not found"; fi
+
+# Resolve how to invoke docker compose. The installer exports COMPOSE_CMD when a
+# freshly-added docker group isn't active in the session yet (so it must use
+# sudo). When run standalone, detect it ourselves: probe daemon-socket access
+# (`docker ps`) — not just `docker compose version`, which works without the
+# socket and so would mask a permission problem.
+if [ -n "${COMPOSE_CMD:-}" ]; then
+  COMPOSE="$COMPOSE_CMD"
+elif docker ps >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+elif sudo docker ps >/dev/null 2>&1; then
+  COMPOSE="sudo docker compose"
+  warn "docker group not active in this session — using 'sudo docker compose'"
+else
+  err "cannot access the Docker daemon (not running or permission denied)"; exit 1
+fi
+if $COMPOSE version >/dev/null 2>&1; then ok "docker compose found"; else err "docker compose v2 not found"; exit 1; fi
 command -v openssl >/dev/null 2>&1 || warn "openssl not found — secret generation will fail"
 for p in 80 443 "${FRONTEND_PORT:-3000}" "${API_PORT:-8000}"; do
   if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${p} "; then
@@ -372,9 +388,9 @@ echo
 url_host="$(env_get COLLECTOR_IP)"; [ -z "$url_host" ] && url_host="localhost"
 if yesno "Pull and start NetPulse now?" Y; then
   info "pulling images (this can take a while)…"
-  (cd "$ROOT_DIR" && docker compose pull || warn "some images could not be pulled (will build on up)")
+  (cd "$ROOT_DIR" && $COMPOSE pull || warn "some images could not be pulled (will build on up)")
   info "starting the stack…"
-  (cd "$ROOT_DIR" && docker compose up -d)
+  (cd "$ROOT_DIR" && $COMPOSE up -d)
   echo
   # Always NAT container traffic to the host IP — devices that filter SNMP/SSH by
   # source IP see the host, and the 172.x bridge can't collide with the network.
@@ -396,7 +412,7 @@ if yesno "Pull and start NetPulse now?" Y; then
   echo
   info "Waiting for services to come up, then running health checks…"
   sleep 30
-  if (cd "$ROOT_DIR" && docker compose exec -T api python manage.py run_health_checks); then
+  if (cd "$ROOT_DIR" && $COMPOSE exec -T api python manage.py run_health_checks); then
     ok "All health checks passed."
   else
     warn "Some health checks failed (see report above). Re-run later with: ./netpulse.sh health"
@@ -408,6 +424,6 @@ if yesno "Pull and start NetPulse now?" Y; then
     info "skipped — install later with: ./netpulse.sh install-service"
   fi
 else
-  info "skipped startup. When ready:  docker compose up -d"
+  info "skipped startup. When ready:  $COMPOSE up -d"
   echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)"
 fi

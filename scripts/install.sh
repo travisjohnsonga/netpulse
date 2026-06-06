@@ -159,17 +159,32 @@ fi
 if ! groups "$USER" | grep -q docker; then
     sudo usermod -aG docker "$USER"
     log "Added $USER to docker group"
-    warn "You may need to log out and back in for"
-    warn "docker group membership to take effect."
-    warn "The installer will use 'sudo docker' for now."
-    DOCKER_CMD="sudo docker"
-else
-    DOCKER_CMD="docker"
 fi
 
 # Start and enable Docker
 sudo systemctl enable docker --now
 log "Docker service enabled and started"
+
+# Resolve how we talk to the Docker daemon for the rest of THIS session.
+#
+# `usermod -aG docker` only takes effect in a NEW login session — the current
+# shell still lacks the group, so a bare `docker ps` hits the socket with the
+# old (groupless) credentials and fails with "permission denied". Rather than
+# guess from group membership, probe the daemon directly: try unprivileged
+# first, fall back to sudo. setup.sh inherits these via the environment.
+USED_SUDO_DOCKER=0
+if docker ps &>/dev/null; then
+    DOCKER_CMD="docker"
+    COMPOSE_CMD="docker compose"
+elif sudo docker ps &>/dev/null; then
+    log "Docker group not active in this session yet — using 'sudo docker' for now"
+    DOCKER_CMD="sudo docker"
+    COMPOSE_CMD="sudo docker compose"
+    USED_SUDO_DOCKER=1
+else
+    error "Docker is not accessible (daemon not running or permission denied)"
+fi
+export DOCKER_CMD COMPOSE_CMD
 
 # Verify Docker
 $DOCKER_CMD --version || error "Docker installation failed"
@@ -177,8 +192,7 @@ $DOCKER_CMD --version || error "Docker installation failed"
 # ─── Install Docker Compose ────────────────
 section "Installing Docker Compose"
 
-if docker compose version &>/dev/null 2>&1 || \
-   sudo docker compose version &>/dev/null 2>&1; then
+if $COMPOSE_CMD version &>/dev/null 2>&1; then
     log "Docker Compose already installed"
 else
     log "Installing Docker Compose plugin..."
@@ -242,3 +256,12 @@ ${GREEN}✅ NetPulse installed successfully!${NC}
     ./netpulse.sh install-service
 
 EOF
+
+if [ "$USED_SUDO_DOCKER" -eq 1 ]; then
+    echo ""
+    echo -e "${YELLOW}⚠️  NOTE: Docker group membership was just added.${NC}"
+    echo "   Log out and back in (or run 'newgrp docker') so you can run"
+    echo "   docker commands without sudo:"
+    echo "     cd $NETPULSE_DIR && ./netpulse.sh status"
+    echo ""
+fi
