@@ -1,3 +1,5 @@
+import logging
+
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -6,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
+from apps.core.errors import safe_detail
 from .models import (
     CompliancePolicy,
     CompliancePolicyRule,
@@ -20,6 +23,8 @@ from .serializers import (
     ComplianceTemplateResultSerializer,
     ComplianceTemplateSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CompliancePolicyViewSet(viewsets.ModelViewSet):
@@ -84,8 +89,9 @@ class ComplianceTemplateViewSet(viewsets.ModelViewSet):
         ) or {}
         try:
             rendered = ComplianceEngine().render_template(template, device, overrides)
-        except Exception as exc:  # noqa: BLE001 — surface template errors to the UI
-            return Response({"error": f"Template render error: {exc}"},
+        except Exception as exc:  # noqa: BLE001 — template errors become a 400 for the UI
+            return Response({"error": safe_detail(exc, logger, "render compliance template",
+                            public="Template render error (check the template syntax and variables).")},
                             status=status.HTTP_400_BAD_REQUEST)
         return Response({"device_id": device.id, "hostname": device.hostname, "rendered": rendered})
 

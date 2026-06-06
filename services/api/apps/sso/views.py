@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.shortcuts import redirect
 from rest_framework import viewsets
@@ -5,10 +7,13 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from apps.core.errors import log_internal_error
 from apps.core.permissions import AdminOnly
 from apps.credentials import vault
 from .models import SSOProvider
 from .serializers import SSOProviderAdminSerializer, SSOProviderPublicSerializer
+
+logger = logging.getLogger(__name__)
 
 
 def get_tokens_for_user(user) -> dict:
@@ -61,7 +66,8 @@ class SSOProviderViewSet(viewsets.ModelViewSet):
             try:
                 secret = (vault.read_secret(provider.vault_path) or {}).get("client_secret", "")
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"OpenBao read failed: {exc}")
+                log_internal_error(exc, logger, "sso validate: OpenBao read")
+                errors.append("OpenBao read failed")
         if not secret:
             errors.append("client_secret is not stored in OpenBao")
         if provider.provider == SSOProvider.Provider.AZURE and not provider.tenant_id:

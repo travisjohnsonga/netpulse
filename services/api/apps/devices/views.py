@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 
+from apps.core.errors import safe_detail
 from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
 
@@ -425,7 +426,9 @@ class DeviceViewSet(viewsets.ModelViewSet):
         try:
             found = topo.discover_links(device)
         except DiscoveryError as exc:
-            return Response({"error": str(exc), "neighbors": []}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response({"error": safe_detail(exc, logger, "topology discover",
+                            public="LLDP neighbor discovery failed."), "neighbors": []},
+                            status=status.HTTP_502_BAD_GATEWAY)
         return Response({
             "count": len(found),
             "matched": sum(1 for f in found if f["matched_device_id"]),

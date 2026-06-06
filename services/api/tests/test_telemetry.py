@@ -154,7 +154,12 @@ class TestDiscover:
         monkeypatch.setattr(discovery, "_discover_via_ssh", boom)
         resp = auth_client.post(f"/api/devices/{device.id}/interfaces/discover/")
         assert resp.status_code == 502
-        assert "SNMP timeout" in resp.json()["error"]
+        body = resp.json()
+        assert body["interfaces"] == []
+        # The raw exception text must not leak to the client (CodeQL: information
+        # exposure through an exception) — a safe, generic message is returned.
+        assert "SNMP timeout" not in body["error"]
+        assert body["error"] == "Interface discovery failed."
 
     def test_snmpv3_routes_to_snmp_walk(self, monkeypatch):
         # An SNMPv3-only profile (no v2c, no SSH) must go through the SNMP walk,

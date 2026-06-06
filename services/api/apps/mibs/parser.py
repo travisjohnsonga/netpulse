@@ -36,7 +36,10 @@ _DEF_RE = re.compile(
     r"(?P<name>[A-Za-z][\w-]*)\s+(?:" + _TYPE_ALT + r")\b.*?::=\s*\{(?P<clause>[^}]+)\}",
     re.DOTALL,
 )
-_MODULE_RE = re.compile(r"(?P<name>[A-Za-z0-9][\w-]*)\s+DEFINITIONS\b[^:]*::=\s*BEGIN")
+# Possessive quantifiers (`*+`, Python 3.11+) make this linear — they forbid the
+# backtracking that would otherwise let a long word/colon-free run be re-scanned
+# at every start offset (polynomial ReDoS on untrusted MIB text).
+_MODULE_RE = re.compile(r"(?P<name>[A-Za-z0-9][\w-]*+)\s+DEFINITIONS\b[^:]*+::=\s*BEGIN")
 _NAME_NUM = re.compile(r"^([A-Za-z][\w-]*)\((\d+)\)$")
 _BARE_NAME = re.compile(r"^[A-Za-z][\w-]*$")
 _BARE_NUM = re.compile(r"^\d+$")

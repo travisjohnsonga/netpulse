@@ -121,7 +121,7 @@ def validate_text(text: str) -> dict:
 def save_upload(filename: str, text: str) -> dict:
     """Validate + save an uploaded MIB into custom/. Returns the validation dict."""
     name = os.path.basename(filename)
-    if not name.lower().endswith(MIB_EXTENSIONS):
+    if not name or name in (".", "..") or not name.lower().endswith(MIB_EXTENSIONS):
         return {"ok": False, "error": "unsupported extension (use .my/.mib/.txt)"}
     result = validate_text(text)
     if not result["ok"]:
@@ -129,7 +129,13 @@ def save_upload(filename: str, text: str) -> dict:
                 "warnings": result["warnings"]}
     custom = mibs_dir() / "custom"
     custom.mkdir(parents=True, exist_ok=True)
-    (custom / name).write_text(text)
+    # Defence-in-depth against path traversal: basename() already strips any
+    # directory components, but verify the resolved target still lives inside
+    # custom/ before writing (rejects symlink/edge-case escapes too).
+    dest = (custom / name).resolve()
+    if dest.parent != custom.resolve():
+        raise ValueError("invalid MIB filename")
+    dest.write_text(text)
     reload()
     return {"success": True, "objects_loaded": result["objects"],
             "module": result["module"], "warnings": result["warnings"]}

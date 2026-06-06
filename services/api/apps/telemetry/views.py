@@ -6,10 +6,15 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+import logging
+
+from apps.core.errors import safe_detail
 from apps.credentials import vault
 from apps.devices.models import Device
 
 from . import config_gen, discovery
+
+logger = logging.getLogger(__name__)
 from .models import ConfigPush, MonitoredInterface, SNMPGlobalSettings, TelemetryConfig
 from .serializers import (
     ConfigPushSerializer,
@@ -79,7 +84,8 @@ class DiscoverInterfacesView(APIView):
         try:
             interfaces = discovery.discover_interfaces(device)
         except discovery.DiscoveryError as exc:
-            return Response({"error": str(exc), "interfaces": []},
+            return Response({"error": safe_detail(exc, logger, "discover interfaces",
+                            public="Interface discovery failed."), "interfaces": []},
                             status=status.HTTP_502_BAD_GATEWAY)
         return Response({
             "count": len(interfaces),
@@ -224,13 +230,14 @@ class PushConfigView(APIView):
                 port=profile.ssh_port or 22, fast_cli=False,
             )
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("telemetry push connect failed for %s: %s", device.hostname, exc)
+            logger.warning("telemetry push connect failed for %s: %s", device.hostname, exc, exc_info=True)
+            # Audit record is internal-only; the HTTP response must not echo the
+            # raw exception (it can carry connection/library internals).
             self._audit(device, request, requested, False, "", [f"connection failed: {exc}"])
             return Response({"success": False, "pushed_sections": [], "output": "",
-                             "error": f"SSH connection failed: {exc}",
+                             "error": "SSH connection failed.",
                              "suggestion": "Check the device's SSH credentials, reachability and that SSH is enabled.",
-                             "errors": [f"connection failed: {exc}"]},
+                             "errors": ["connection failed"]},
                             status=status.HTTP_502_BAD_GATEWAY)
 
         try:

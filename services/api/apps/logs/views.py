@@ -19,6 +19,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.errors import safe_detail
 from .models import LogFilter
 from .serializers import LogFilterSerializer
 
@@ -329,4 +330,5 @@ class LogFilterViewSet(viewsets.ModelViewSet):
             matches = bool(re.search(pattern, message or "", re.IGNORECASE))
             return Response({"matches": matches, "error": None})
         except re.error as exc:
-            return Response({"matches": False, "error": str(exc)})
+            return Response({"matches": False, "error": safe_detail(
+                exc, logger, "log-filter regex test", public="Invalid regular expression.")})

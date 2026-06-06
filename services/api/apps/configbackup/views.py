@@ -1,3 +1,4 @@
+import logging
 import socket
 import urllib.parse
 
@@ -12,6 +13,8 @@ from apps.credentials import vault
 
 from .diff import generate_diff
 from .models import ConfigBackupSettings, DeviceConfig
+
+logger = logging.getLogger(__name__)
 from .serializers import (
     ConfigBackupSettingsSerializer,
     ConfigDiffRequestSerializer,
@@ -129,7 +132,9 @@ def _probe_host(repo_url: str, ssh: bool, timeout: float = 3.0) -> tuple[bool, s
         with socket.create_connection((host, port), timeout=timeout):
             return True, f"Reachable: {host}:{port}. Full auth is verified by the config-manager worker."
     except OSError as exc:
-        return False, f"{host}:{port} unreachable: {exc}"
+        # Log the OS-level detail; return only host:port (no raw exception text).
+        logger.info("git host probe failed for %s:%s: %s", host, port, exc)
+        return False, f"{host}:{port} is unreachable."
 
 
 class TestGitView(APIView):

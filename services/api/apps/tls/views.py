@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.errors import safe_detail
 from . import ca_store, certs
 from .models import CACertificate, ServerCertificate
 from .serializers import (
@@ -105,7 +106,10 @@ class SSLUploadView(APIView):
                 req.validated_data.get("chain") or None,
             )
         except certs.CertError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": safe_detail(exc, logger, "install certificate",
+                            public="The certificate could not be installed — it may be malformed, "
+                                   "unsupported, or may not match the private key.")},
+                            status=status.HTTP_400_BAD_REQUEST)
         # CSR-fulfilling uploads are CA-signed; a bundled key is a direct upload.
         source = ServerCertificate.Source.CSR if had_csr and not req.validated_data.get("private_key") \
             else ServerCertificate.Source.UPLOADED
@@ -146,7 +150,9 @@ class CACertificateListView(APIView):
         try:
             parsed = ca_store.load_certificates(_decode_upload(req.validated_data["certificate"]))
         except ca_store.CAError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": safe_detail(exc, logger, "add CA certificate",
+                            public="The CA certificate could not be parsed (invalid or unsupported format).")},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         added, skipped = [], []
         for cert in parsed:

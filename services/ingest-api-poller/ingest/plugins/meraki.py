@@ -33,6 +33,17 @@ from ..models import VendorAlert, VendorDevice
 
 logger = logging.getLogger(__name__)
 
+# Keys whose values are credentials/secrets and must never be persisted in an
+# alert's `raw` payload or written to logs in clear text.
+_SENSITIVE_KEYS = frozenset({"sharedsecret", "api_key", "apikey", "secret",
+                             "token", "password", "authorization"})
+
+
+def _redact(payload: dict) -> dict:
+    """Return a shallow copy of payload with sensitive values masked."""
+    return {k: ("***" if k.lower() in _SENSITIVE_KEYS else v)
+            for k, v in payload.items()}
+
 _ALERT_TYPE_SEVERITY: dict[str, str] = {
     "power_supply_down": "critical",
     "gateway_to_internet_disconnected": "critical",
@@ -231,7 +242,10 @@ class MerakiPlugin(VendorAPIPlugin):
             message=f"{alert_type}: {alert_data}",
             occurred_at=occurred_at,
             resolved=False,
-            raw=payload,
+            # Strip the webhook sharedSecret (and any other credential-like
+            # fields) before persisting — `raw` is stored and may be surfaced
+            # in logs/UI, so it must not carry clear-text secrets.
+            raw=_redact(payload),
         )
         logger.info(
             "Meraki webhook from %s: alert_type=%s network=%s",

@@ -16,8 +16,8 @@ class LogFilterSerializer(serializers.ModelSerializer):
         import re
         try:
             re.compile(value)
-        except re.error as exc:
-            raise serializers.ValidationError(f"Invalid regex: {exc}")
+        except re.error:
+            raise serializers.ValidationError("Invalid regular expression.")
         return value
 
 

@@ -9,8 +9,11 @@ here would pull heavy deps into the API container.
 """
 from __future__ import annotations
 
+import logging
 import socket
 import time
+
+logger = logging.getLogger(__name__)
 
 # Default service port per credential type.
 DEFAULT_PORTS = {
@@ -60,7 +63,8 @@ def probe(credential_type: str, ip: str, port: int | None, tls_enabled: bool,
                     "latency_ms": int((time.monotonic() - start) * 1000),
                     "port": resolved}
         except OSError as exc:
-            return {"success": False, "message": f"UDP send failed: {exc}",
+            logger.info("UDP probe to %s:%s failed: %s", ip, resolved, exc)
+            return {"success": False, "message": f"UDP/{resolved} send to {ip} failed.",
                     "latency_ms": None, "port": resolved}
 
     # TCP connect test for SSH / NETCONF / gNMI / HTTP.
@@ -71,6 +75,7 @@ def probe(credential_type: str, ip: str, port: int | None, tls_enabled: bool,
                     "latency_ms": int((time.monotonic() - start) * 1000),
                     "port": resolved}
     except OSError as exc:
+        logger.info("TCP probe to %s:%s failed: %s", ip, resolved, exc)
         return {"success": False,
-                "message": f"TCP/{resolved} on {ip} unreachable: {exc}",
+                "message": f"TCP/{resolved} on {ip} is unreachable.",
                 "latency_ms": None, "port": resolved}

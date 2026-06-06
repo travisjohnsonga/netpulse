@@ -1,12 +1,17 @@
+import logging
+
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.errors import safe_detail
 from apps.credentials import vault
 
 from . import netbox
+
+logger = logging.getLogger(__name__)
 from .models import NetBoxImport
 from .serializers import (
     NetBoxImportRequestSerializer,
@@ -40,7 +45,9 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
             version = client.detect_version()
             return Response({"ok": True, "version": version, "message": f"Connected to NetBox {version}."})
         except netbox.NetBoxError as exc:
-            return Response({"ok": False, "version": "", "message": str(exc)})
+            return Response({"ok": False, "version": "", "message": safe_detail(
+                exc, logger, "netbox test-connection",
+                public="Could not connect to NetBox. Check the URL and API token.")})
 
     @extend_schema(request=NetBoxImportRequestSerializer, responses=NetBoxImportSerializer)
     def create(self, request):

@@ -30,7 +30,7 @@ class TestSelfSigned:
         assert b["installed"] is True and b["has_private_key"] is True
         assert b["common_name"] == "netpulse.example.com"
         assert b["expiry_status"] == "ok" and b["days_remaining"] > 800
-        assert "netpulse.example.com" in b["sans"] and "10.0.0.1" in b["sans"]
+        assert {"netpulse.example.com", "10.0.0.1"}.issubset(b["sans"])
         # key + cert on disk, no private key in the response
         assert (ssl_dir / "netpulse.key").exists() and (ssl_dir / "netpulse.crt").exists()
         assert "private_key" not in b and "PRIVATE KEY" not in resp.content.decode()

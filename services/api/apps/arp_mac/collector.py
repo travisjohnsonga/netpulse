@@ -265,7 +265,12 @@ def _collect_sonicwall_arp(host: str, username: str, password: str, port: int) -
     import paramiko  # lazy import (paramiko ships with netmiko)
 
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # NOTE: AutoAddPolicy is intentional for network-device monitoring, where
+    # device host keys are not pre-distributed and devices may be re-imaged.
+    # Risk accepted: collection runs only against operator-configured devices on
+    # the internal management network, never arbitrary/internet hosts.
+    # TODO: implement per-device host-key pinning once a key store exists.
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 - see note above
     try:
         ssh.connect(
             hostname=host,

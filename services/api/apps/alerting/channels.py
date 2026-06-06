@@ -77,5 +77,6 @@ def send_discord(webhook_url: str, payload: dict) -> tuple[bool, str]:
             return False, f"discord returned {resp.status_code}"
         return True, ""
     except Exception as exc:
-        logger.warning("discord notify failed: %s", exc)
-        return False, str(exc)
+        logger.warning("discord notify failed: %s", exc, exc_info=True)
+        # Don't surface the raw exception to API clients (it can leak internals).
+        return False, "request to the Discord webhook failed"

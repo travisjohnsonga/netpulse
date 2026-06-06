@@ -181,8 +181,9 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
     # Teams sends an HMAC in Authorization header if outgoing webhook HMAC is configured
     payload  = request.data
     text     = payload.get("text", "")
-    # Teams wraps text in HTML — strip tags
-    text     = re.sub(r"<[^>]+>", "", text).strip()
+    # Teams wraps text in HTML — strip tags. Possessive `[^>]++` (Python 3.11+)
+    # keeps this linear on untrusted webhook input (avoids polynomial ReDoS).
+    text     = re.sub(r"<[^>]++>", "", text).strip()
     from_obj = payload.get("from", {})
     user     = from_obj.get("name", "unknown")
 
