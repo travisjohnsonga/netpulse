@@ -27,8 +27,25 @@ reachability/ping-latency monitoring, alerting with team routing + escalation
 curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scripts/install.sh | bash
 ```
 
-Requires: Ubuntu 22.04/24.04 or RHEL/Rocky 8/9.
+Requires: Ubuntu 22.04 or 24.04 LTS.
 Installs: Docker, Docker Compose, and NetPulse, then runs the interactive setup.
+
+> **If the installer appears to hang**, it is almost always waiting for your
+> `sudo` password (the curl pipe can't forward the prompt cleanly). Cache your
+> credentials first, then pipe to bash:
+> ```bash
+> sudo -v   # cache sudo credentials up front
+> curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scripts/install.sh | bash
+> ```
+> Or download and run it directly so prompts work normally:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scripts/install.sh -o install.sh
+> chmod +x install.sh
+> ./install.sh   # runs interactively
+> ```
+> When piped, the installer runs non-interactively: apt prompts are
+> pre-answered and setup falls back to safe defaults (auto-generated secrets,
+> dev ports). Re-run `./scripts/setup.sh` from a terminal to customise.
 
 ### Custom install directory
 ```bash
@@ -48,9 +65,10 @@ curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scrip
 Size the host to your fleet.
 
 ### Supported Operating Systems
-- Ubuntu 22.04+ (recommended: Ubuntu 24.04 LTS)
-- RHEL 9+ / Alma Linux 9+ / Rocky Linux 9+
-- Debian 12+
+- Ubuntu 22.04 LTS
+- Ubuntu 24.04 LTS (recommended)
+
+Other Linux distributions may work but are not tested or supported.
 
 ### Small Deployment (< 50 devices)
 | Component | Minimum | Recommended |
@@ -90,26 +108,17 @@ Size the host to your fleet.
 
 1. **Docker Engine** (v24.0+)
 
-   Ubuntu/Debian:
    ```bash
    curl -fsSL https://get.docker.com | sh
    sudo usermod -aG docker $USER
    newgrp docker
    ```
 
-   RHEL/Alma/Rocky:
-   ```bash
-   sudo dnf install -y docker-ce docker-ce-cli
-   sudo systemctl enable --now docker
-   sudo usermod -aG docker $USER
-   ```
-
 2. **Docker Compose** (v2.20+) — included with Docker Desktop.
 
    For Linux:
    ```bash
-   sudo apt-get install docker-compose-plugin   # Debian/Ubuntu
-   sudo dnf install docker-compose-plugin        # RHEL/Alma/Rocky
+   sudo apt-get install docker-compose-plugin
    ```
 
    Verify:
@@ -119,8 +128,7 @@ Size the host to your fleet.
 
 3. **Git**
    ```bash
-   sudo apt-get install git    # Debian/Ubuntu
-   sudo dnf install git         # RHEL/Alma/Rocky
+   sudo apt-get install git
    ```
 
 ### Optional but Recommended

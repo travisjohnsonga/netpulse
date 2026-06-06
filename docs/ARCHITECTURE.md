@@ -250,6 +250,15 @@ Enterprise authentication via external identity providers. Local admin login is
 NetPulse uses a monorepo with multiple Docker Compose profiles for different
 deployment scenarios.
 
+### Supported host OS
+
+- Ubuntu 22.04 LTS (Jammy)
+- Ubuntu 24.04 LTS (Noble) ← recommended
+
+Other Linux distributions may work but are not tested or supported. The
+one-line installer (`scripts/install.sh`) only provisions prerequisites via
+`apt-get`.
+
 ### Mode 1: Full Stack (default)
 
 Complete NetPulse installation with all services including UI, API, and all

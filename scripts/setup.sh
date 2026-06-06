@@ -37,6 +37,21 @@ warn() { echo "${Y}⚠️  $*${N}"; }
 err()  { echo "${R}❌ $*${N}" >&2; }
 info() { echo "${B}→${N} $*"; }
 
+# Detect a real terminal on stdin. When this script is reached through the
+# one-line installer (`curl … | bash` → install.sh → setup.sh), stdin is the
+# curl pipe, so every `read` gets EOF. In that case we fall back to defaults
+# (auto-generated secrets, dev ports) instead of prompting, and tell the user
+# how to re-run interactively to customise anything.
+if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
+if [ "$INTERACTIVE" -eq 0 ]; then
+  warn "Non-interactive mode (no TTY on stdin) — using safe defaults:"
+  warn "  • all infrastructure + admin secrets auto-generated"
+  warn "  • development web ports (3000/3443)"
+  warn "  • optional integrations skipped"
+  warn "Re-run interactively to customise:  cd \"$ROOT_DIR\" && ./scripts/setup.sh"
+  echo
+fi
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 gen_secret() { openssl rand -base64 36 2>/dev/null | tr -d '/+=' | cut -c1-32; }
 
@@ -92,8 +107,12 @@ ask_secret() {
 
 yesno() { # yesno "Question" default(Y/n) → returns 0 for yes
   local prompt="$1" def="${2:-Y}" reply
-  read -r -p "$(printf '%s (%s): ' "$prompt" "$([ "$def" = Y ] && echo 'Y/n' || echo 'y/N')")" reply || true
-  reply="${reply:-$def}"
+  if [ "${INTERACTIVE:-1}" -eq 0 ]; then
+    reply="$def"   # no TTY: take the default, don't block on read
+  else
+    read -r -p "$(printf '%s (%s): ' "$prompt" "$([ "$def" = Y ] && echo 'Y/n' || echo 'y/N')")" reply || true
+    reply="${reply:-$def}"
+  fi
   [[ "$reply" =~ ^[Yy] ]]
 }
 
@@ -253,7 +272,7 @@ echo "Web UI port configuration:"
 echo "  1) Development — 3000 (HTTP) / 3443 (HTTPS)  [default]"
 echo "  2) Production  — 80 (HTTP) / 443 (HTTPS)"
 echo "  3) Custom"
-printf "Choose [1]: "; read -r port_choice
+printf "Choose [1]: "; read -r port_choice || true
 case "${port_choice:-1}" in
   2) env_set FRONTEND_PORT 80;  env_set FRONTEND_HTTPS_PORT 443 ;;
   3) ask FRONTEND_PORT       "HTTP port"  "$(env_get FRONTEND_PORT || echo 3000)"

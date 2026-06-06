@@ -11,6 +11,11 @@ set -euo pipefail
 #    NETPULSE_DIR=/opt/netpulse curl -fsSL .../install.sh | bash
 # ─────────────────────────────────────────
 
+# Never let apt/dpkg pop an interactive ncurses dialog. When this script is run
+# via `curl … | bash`, stdin is the curl pipe (not a TTY), so any package that
+# prompts (iptables-persistent, etc.) would hang forever waiting for input.
+export DEBIAN_FRONTEND=noninteractive
+
 NETPULSE_REPO="https://github.com/travisjohnsonga/netpulse.git"
 NETPULSE_DIR="${NETPULSE_DIR:-$HOME/netpulse}"
 NETPULSE_BRANCH="${NETPULSE_BRANCH:-main}"
@@ -35,6 +40,22 @@ log()     { echo -e "${GREEN}[netpulse]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[warning]${NC} $*"; }
 error()   { echo -e "${RED}[error]${NC} $*"; exit 1; }
 section() { echo -e "\n${BLUE}━━━ $* ━━━${NC}"; }
+
+# Yes/no prompt that is safe under `curl … | bash`. When stdin is not a TTY
+# (piped install) we cannot read an answer, so we auto-apply the supplied
+# default and warn instead of blocking on `read`.
+#   confirm "Question? [y/N]:" <default Y|N>  → exit 0 for yes, 1 for no
+confirm() {
+    local prompt="$1" default="${2:-N}" yn
+    if [ ! -t 0 ]; then
+        warn "Non-interactive mode — assuming '$default' for: $prompt"
+        yn="$default"
+    else
+        read -p "$prompt " yn || yn="$default"
+        yn="${yn:-$default}"
+    fi
+    [[ "$yn" =~ ^[Yy]$ ]]
+}
 
 # ─── Banner ───────────────────────────────
 cat << 'BANNER'
@@ -65,16 +86,10 @@ case "$OS" in
         PKG_MGR="apt-get"
         log "Detected: $PRETTY_NAME"
         ;;
-    rhel|centos|fedora|rocky|almalinux)
-        PKG_MGR="dnf"
-        log "Detected: $PRETTY_NAME"
-        ;;
     *)
-        warn "Unsupported OS: $OS"
-        warn "This installer is tested on Ubuntu 22.04/24.04"
-        read -p "Continue anyway? [y/N]: " yn
-        [[ "$yn" =~ ^[Yy]$ ]] || exit 1
-        PKG_MGR="apt-get"
+        error "Unsupported OS: ${OS:-unknown}
+       NetPulse supports Ubuntu 22.04/24.04.
+       Please use a supported OS."
         ;;
 esac
 
@@ -90,8 +105,9 @@ esac
 if [ "$EUID" -eq 0 ]; then
     warn "Running as root is not recommended."
     warn "Consider running as a regular user with sudo access."
-    read -p "Continue as root? [y/N]: " yn
-    [[ "$yn" =~ ^[Yy]$ ]] || exit 1
+    # Non-interactive default = Y: `curl … | sudo bash` is a common install path
+    # and root already has every privilege the installer needs.
+    confirm "Continue as root? [y/N]:" Y || exit 1
 fi
 
 # Check sudo
@@ -105,7 +121,18 @@ section "Installing prerequisites"
 
 install_apt() {
     sudo apt-get update -qq
-    sudo apt-get install -y -qq \
+
+    # iptables-persistent normally pops an ncurses dialog asking whether to save
+    # the current IPv4/IPv6 rules. Pre-seed the answers via debconf so the
+    # install runs unattended (critical for `curl … | bash` where stdin is the
+    # pipe, not a terminal). We let it save existing IPv4 rules but not IPv6;
+    # NetPulse re-applies its own MASQUERADE NAT via scripts/nat.sh afterwards.
+    echo iptables-persistent iptables-persistent/autosave_v4 boolean true \
+        | sudo debconf-set-selections
+    echo iptables-persistent iptables-persistent/autosave_v6 boolean false \
+        | sudo debconf-set-selections
+
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         curl wget git jq \
         ca-certificates gnupg \
         lsb-release apt-transport-https \
@@ -114,19 +141,7 @@ install_apt() {
     log "Prerequisites installed"
 }
 
-install_dnf() {
-    sudo dnf install -y -q \
-        curl wget git jq \
-        ca-certificates gnupg \
-        iptables-services \
-        net-tools
-    log "Prerequisites installed"
-}
-
-case "$PKG_MGR" in
-    apt-get) install_apt ;;
-    dnf)     install_dnf ;;
-esac
+install_apt
 
 # ─── Install Docker ────────────────────────
 section "Installing Docker"
@@ -136,21 +151,7 @@ if command -v docker &>/dev/null; then
     log "Docker already installed: $DOCKER_VERSION"
 else
     log "Installing Docker..."
-
-    case "$OS" in
-        ubuntu|debian)
-            curl -fsSL https://get.docker.com | sudo sh
-            ;;
-        rhel|centos|rocky|almalinux|fedora)
-            sudo dnf install -y docker-ce docker-ce-cli \
-                containerd.io docker-buildx-plugin \
-                docker-compose-plugin
-            ;;
-        *)
-            curl -fsSL https://get.docker.com | sudo sh
-            ;;
-    esac
-
+    curl -fsSL https://get.docker.com | sudo DEBIAN_FRONTEND=noninteractive sh
     log "Docker installed"
 fi
 
@@ -197,8 +198,7 @@ section "Cloning NetPulse"
 
 if [ -d "$NETPULSE_DIR/.git" ]; then
     warn "Directory $NETPULSE_DIR already exists"
-    read -p "Update existing installation? [y/N]: " yn
-    if [[ "$yn" =~ ^[Yy]$ ]]; then
+    if confirm "Update existing installation? [y/N]:" N; then
         cd "$NETPULSE_DIR"
         git pull origin "$NETPULSE_BRANCH"
         log "Updated to latest version"
