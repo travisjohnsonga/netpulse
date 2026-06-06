@@ -6,6 +6,7 @@ import {
   fetchCollectors, type Site, type Device, type Collector,
 } from '../api/client'
 import SiteFormModal from '../components/SiteFormModal'
+import DeviceLink from '../components/DeviceLink'
 
 const TYPE_ICON: Record<string, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
@@ -218,7 +219,9 @@ function Devices({ siteId, onOpen, onChanged }: { siteId: number; onOpen: (id: n
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {devices.map((d) => (
                 <tr key={d.id} onClick={() => onOpen(d.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                  <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{d.hostname}</td>
+                  <td className="px-5 py-3 font-medium" onClick={(e) => e.stopPropagation()}>
+                    <DeviceLink deviceId={d.id} hostname={d.hostname} />
+                  </td>
                   <td className="px-5 py-3 text-gray-600 dark:text-gray-400 font-mono text-xs">{d.ip_address}</td>
                   <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{d.platform}</td>
                   <td className="px-5 py-3"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400')}>{d.status}</span></td>

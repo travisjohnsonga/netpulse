@@ -4,6 +4,7 @@ import {
   fetchDeviceArp, fetchDeviceMac, collectDeviceArpMac,
   type DeviceDetail, type ArpEntry, type MacEntry,
 } from '../../api/client'
+import IPLink from '../../components/IPLink'
 
 function relTime(iso: string | null): string {
   if (!iso) return 'never'
@@ -126,7 +127,7 @@ export default function ArpMac({ device }: { device: DeviceDetail }) {
               <tbody>
                 {arp.map((e) => (
                   <tr key={e.id} className="border-b border-gray-50 dark:border-gray-800/50">
-                    <td className={clsx(td, 'font-mono text-xs')}>{e.ip_address}</td>
+                    <td className={clsx(td, 'text-xs')}><IPLink ip={e.ip_address} /></td>
                     <td className={td}><MacCell mac={e.mac_address} vendor={e.vendor} /></td>
                     <td className={td}>{e.age_minutes != null ? `${e.age_minutes}m` : '—'}</td>
                     <td className={td}>{e.interface || '—'}</td>

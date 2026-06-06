@@ -254,6 +254,20 @@ class TestInterfaces:
         with pytest.raises(Exception):
             MonitoredInterface.objects.create(device=device, if_name="Gi0/0")
 
+    def test_list_includes_neighbor_device_id(self, auth_client, device):
+        # A neighbor that IS in inventory → its device id, so the UI links it.
+        neighbor = Device.objects.create(hostname="core1", ip_address="10.9.0.2", status="active")
+        MonitoredInterface.objects.create(device=device, if_name="Gi0/0", lldp_neighbor_hostname="core1")
+        # A neighbor not in inventory → null (plain text in the UI).
+        MonitoredInterface.objects.create(device=device, if_name="Gi0/1", lldp_neighbor_hostname="unknown-sw")
+        # No LLDP neighbor at all → null.
+        MonitoredInterface.objects.create(device=device, if_name="Gi0/2")
+
+        rows = {r["if_name"]: r for r in auth_client.get(f"/api/devices/{device.id}/interfaces/").json()}
+        assert rows["Gi0/0"]["lldp_neighbor_device_id"] == neighbor.id
+        assert rows["Gi0/1"]["lldp_neighbor_device_id"] is None
+        assert rows["Gi0/2"]["lldp_neighbor_device_id"] is None
+
 
 # ── config generation + push ──────────────────────────────────────────────────
 

@@ -32,15 +32,41 @@ class PollingSettingsSerializer(serializers.ModelSerializer):
 
 
 class MonitoredInterfaceSerializer(serializers.ModelSerializer):
+    # Device id of the LLDP neighbor when it's in inventory, so the UI can link
+    # the neighbor hostname to its detail page (null = not a known device).
+    lldp_neighbor_device_id = serializers.SerializerMethodField()
+
     class Meta:
         model = MonitoredInterface
         fields = (
             "id", "if_index", "if_name", "if_description", "if_speed_mbps", "if_type",
             "lldp_neighbor_hostname", "lldp_neighbor_port", "lldp_neighbor_desc",
+            "lldp_neighbor_device_id",
             "poll_traffic", "poll_errors", "poll_status", "collection_method",
             "last_discovered", "last_status", "last_status_changed",
             "alert_on_down", "alert_on_up", "alert_severity", "consecutive_polls_before_alert",
         )
+
+    def get_lldp_neighbor_device_id(self, obj) -> int | None:
+        name = (obj.lldp_neighbor_hostname or "").strip()
+        if not name:
+            return None
+        # Cache lookups on the shared serializer context to avoid an N+1 across
+        # the many interfaces serialized in one response.
+        cache = self.context.setdefault("_neighbor_device_ids", {})
+        if name not in cache:
+            from django.db.models import Q
+
+            from apps.devices.models import Device
+
+            cache[name] = (
+                Device.objects.filter(
+                    Q(hostname__iexact=name) | Q(management_ip=name) | Q(ip_address=name)
+                )
+                .values_list("id", flat=True)
+                .first()
+            )
+        return cache[name]
 
 
 class DiscoveredInterfaceSerializer(serializers.Serializer):

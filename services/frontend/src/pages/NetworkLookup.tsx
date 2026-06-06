@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { networkSearch, searchFlows, type NetworkSearchResult } from '../api/client'
 import { detectQueryKind, relTime, latestCollected } from '../lib/ipmac'
 import FlowsTable from '../components/FlowsTable'
+import DeviceLink from '../components/DeviceLink'
 
 const card = 'bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800'
 const th = 'text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-400'
@@ -124,7 +125,7 @@ export default function NetworkLookup() {
                       <tbody>
                         {arp.map((e) => (
                           <tr key={`a${e.id}`} className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                            <td className={td}><DeviceLink id={e.device_id} name={e.device_hostname} /></td>
+                            <td className={td}><DeviceLink deviceId={e.device_id} hostname={e.device_hostname} className="font-medium" /></td>
                             <td className={`${td} font-mono text-xs`}>{e.ip_address}</td>
                             <td className={td}>
                               <span className="font-mono text-xs">{e.mac_address}</span>
@@ -150,7 +151,7 @@ export default function NetworkLookup() {
                       <tbody>
                         {mac.map((e) => (
                           <tr key={`m${e.id}`} className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                            <td className={td}><DeviceLink id={e.device_id} name={e.device_hostname} /></td>
+                            <td className={td}><DeviceLink deviceId={e.device_id} hostname={e.device_hostname} className="font-medium" /></td>
                             <td className={td}>
                               <span className="font-mono text-xs">{e.mac_address}</span>
                               {e.vendor && <span className="block text-xs text-gray-400 dark:text-gray-500">{e.vendor}</span>}
@@ -210,10 +211,6 @@ function IpFlows({ ip }: { ip: string }) {
       </div>
     </div>
   )
-}
-
-function DeviceLink({ id, name }: { id: number; name: string }) {
-  return <Link to={`/devices/${id}`} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">{name}</Link>
 }
 
 function EmptyResults() {

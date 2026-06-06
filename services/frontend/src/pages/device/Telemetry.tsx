@@ -11,6 +11,7 @@ import {
   type DeviceEnvironmentPoe,
 } from '../../api/client'
 import Modal from '../../components/Modal'
+import DeviceLink from '../../components/DeviceLink'
 import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
@@ -60,6 +61,7 @@ interface Row {
   lldp_neighbor_hostname: string | null
   lldp_neighbor_port: string | null
   lldp_neighbor_desc: string | null
+  lldp_neighbor_device_id: number | null
   collection_method: string
   alert_on_down: boolean
   alert_on_up: boolean
@@ -301,7 +303,8 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
           if_name: m.if_name, if_index: m.if_index, if_description: m.if_description,
           if_speed_mbps: m.if_speed_mbps, if_type: m.if_type, status: m.last_status,
           lldp_neighbor_hostname: m.lldp_neighbor_hostname, lldp_neighbor_port: m.lldp_neighbor_port,
-          lldp_neighbor_desc: m.lldp_neighbor_desc, collection_method: m.collection_method,
+          lldp_neighbor_desc: m.lldp_neighbor_desc, lldp_neighbor_device_id: m.lldp_neighbor_device_id,
+          collection_method: m.collection_method,
           alert_on_down: m.alert_on_down, alert_on_up: m.alert_on_up, alert_severity: m.alert_severity,
         })))
         setSelected(new Set(mi.map((m) => m.if_name)))
@@ -322,7 +325,8 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
         if_name: d.if_name, if_index: d.if_index, if_description: d.if_description,
         if_speed_mbps: d.if_speed_mbps, if_type: d.if_type, status: d.oper_status,
         lldp_neighbor_hostname: d.lldp_neighbor_hostname, lldp_neighbor_port: d.lldp_neighbor_port,
-        lldp_neighbor_desc: d.lldp_neighbor_desc, collection_method: d.collection_method,
+        lldp_neighbor_desc: d.lldp_neighbor_desc, lldp_neighbor_device_id: null,
+        collection_method: d.collection_method,
         alert_on_down: true, alert_on_up: true, alert_severity: 'high' as const,
       })))
       // Pre-check auto-selected interfaces (and anything already monitored).
@@ -424,7 +428,7 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
                     <td className={clsx('px-3 py-1.5', r.if_description ? 'text-gray-700' : 'text-gray-300')}>{r.if_description || '—'}</td>
                     <td className="px-3 py-1.5">{r.lldp_neighbor_hostname
                       ? <span className="inline-flex flex-col">
-                          <span className="text-blue-600">{r.lldp_neighbor_hostname}</span>
+                          <DeviceLink deviceId={r.lldp_neighbor_device_id} hostname={r.lldp_neighbor_hostname} className="text-blue-600" />
                           <span className="text-[10px] text-green-600 dark:text-green-400" title="Network link — auto-selected for monitoring">● LLDP neighbor detected</span>
                         </span>
                       : <span className="text-gray-300">—</span>}</td>

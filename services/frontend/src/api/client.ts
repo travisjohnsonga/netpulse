@@ -1430,6 +1430,7 @@ export interface MonitoredInterface {
   lldp_neighbor_hostname: string | null
   lldp_neighbor_port: string | null
   lldp_neighbor_desc: string | null
+  lldp_neighbor_device_id: number | null
   poll_traffic: boolean
   poll_errors: boolean
   poll_status: boolean

@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import type { FlowRecord } from '../api/client'
 import { fmtBytes } from '../lib/bytes'
+import IPLink from './IPLink'
 
 interface Props {
   rows: FlowRecord[]
@@ -36,6 +37,8 @@ export default function FlowsTable({ rows, loading, onIpClick, maxHeight = 'max-
     return <p className="py-12 text-center text-sm text-gray-400 dark:text-gray-500">No flows in this window.</p>
   }
 
+  // With an onIpClick handler the IP drills into "flows for this IP" in-place;
+  // otherwise it links to the IP/MAC lookup page.
   const IpCell = ({ ip }: { ip: string }) =>
     onIpClick ? (
       <button
@@ -45,7 +48,7 @@ export default function FlowsTable({ rows, loading, onIpClick, maxHeight = 'max-
         {ip}
       </button>
     ) : (
-      <span className="font-mono text-xs text-gray-700 dark:text-gray-300">{ip}</span>
+      <IPLink ip={ip} className="text-xs" />
     )
 
   return (

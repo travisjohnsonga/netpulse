@@ -4,6 +4,7 @@ import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import StatCard from '../components/StatCard'
 import EmptyState from '../components/EmptyState'
+import DeviceLink from '../components/DeviceLink'
 import {
   fetchDevices,
   fetchAlerts,
@@ -479,7 +480,7 @@ function DeviceLatencyWidget({ devices }: { devices: Device[] }) {
           const rtt = r?.rtt_ms ?? null
           return (
             <div key={d.id} className="flex items-center gap-3 px-5 py-2 text-sm">
-              <a href={`/devices/${d.id}`} className="flex-1 min-w-0 truncate text-gray-700 dark:text-gray-300 hover:text-blue-600">{d.hostname}</a>
+              <DeviceLink deviceId={d.id} hostname={d.hostname} className="flex-1 min-w-0 truncate" />
               <div className="shrink-0"><LatencySpark data={r?.data ?? []} /></div>
               <span className="w-16 text-right font-mono font-medium" style={{ color: latencyColor(rtt) }}>
                 {rtt != null ? `${rtt.toFixed(1)}ms` : '—'}
