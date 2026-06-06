@@ -160,6 +160,40 @@ print("ok")
   fi
 }
 
+# Ensure DJANGO_ALLOWED_HOSTS lets the dashboard be reached by IP. Django (in
+# production settings) rejects any Host not in this list, so a fresh install
+# with only localhost blocks browser access by IP. Merge localhost + 127.0.0.1 +
+# the configured collector IP + every address from `hostname -I` into the
+# existing value, de-duplicated and order-preserving.
+merge_allowed_hosts() {
+  local candidates ip final=""
+  candidates="localhost 127.0.0.1"
+  candidates="$candidates $(_clean_env_value "$(env_get DJANGO_ALLOWED_HOSTS)" | tr ',' ' ')"
+  candidates="$candidates $(hostname -I 2>/dev/null)"
+  candidates="$candidates $(_clean_env_value "$(env_get COLLECTOR_IP)")"
+  for ip in $candidates; do
+    [ -z "$ip" ] && continue
+    case ",$final," in *",$ip,"*) continue;; esac   # already present → skip
+    final="${final:+$final,}$ip"
+  done
+  env_set DJANGO_ALLOWED_HOSTS "$final"
+  info "allowed hosts: $final"
+}
+
+# Post-start sanity check: confirm the running api would accept this server's IP.
+verify_allowed_hosts() {
+  local ip ah
+  ip="$(_detect_host_ip)"
+  [ -z "$ip" ] && return 0
+  ah="$($COMPOSE exec -T api python -c 'from django.conf import settings; print(",".join(settings.ALLOWED_HOSTS))' 2>/dev/null | tr -d '\r')"
+  case ",$ah," in
+    *",*,"*|*",$ip,"*) ok "ALLOWED_HOSTS includes this server ($ip)";;
+    *) warn "ALLOWED_HOSTS may not include this server's IP ($ip) — browser access by IP could be blocked."
+       warn "  current: ${ah:-<empty>}"
+       warn "  fix: add '$ip' to DJANGO_ALLOWED_HOSTS in .env, then ./netpulse.sh restart";;
+  esac
+}
+
 # ── infrastructure secrets ──────────────────────────────────────────────────────
 # Secrets that can be batch auto-generated with gen_secret(). Order is cosmetic.
 INFRA_SECRETS=(
@@ -327,6 +361,10 @@ if [ -n "$ci" ] && [ "$ci" != "127.0.0.1" ]; then
   env_set REACT_APP_WS_URL  "ws://${ci}:$(env_get API_PORT || echo 8000)"
 fi
 
+# Make sure the dashboard is reachable by IP (Django rejects unlisted Hosts).
+# Done before the stack starts so the api reads the final value on first boot.
+merge_allowed_hosts
+
 # Web UI ports: production (80/443) is the default; dev (3000/3443) or custom.
 echo "Web UI port configuration:"
 echo "  1) Production  — 80 (HTTP) / 443 (HTTPS)  [default]"
@@ -468,6 +506,8 @@ if yesno "Pull and start NetPulse now?" Y; then
   # Make sure the admin password we're about to display actually works — the
   # idempotent entrypoint seeder won't update an already-existing user.
   apply_admin_password
+  # Confirm the running api will accept browser requests to this server's IP.
+  verify_allowed_hosts
   echo
   if yesno "Install NetPulse as a systemd service to start on boot?" N; then
     install_systemd_service

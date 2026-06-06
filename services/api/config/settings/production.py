@@ -3,6 +3,14 @@ import os
 from .base import *  # noqa: F401, F403
 
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
+# Never start with an empty list — that rejects every request (a misconfigured
+# .env would otherwise lock everyone out, including the health checks).
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+# Development / troubleshooting escape hatch: DJANGO_DEBUG=true allows any host.
+# DEBUG is inherited from base.py. Keep DJANGO_DEBUG=false in production.
+if DEBUG:  # noqa: F405
+    ALLOWED_HOSTS = ["*"]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "false").lower() == "true"
