@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { networkSearch, type NetworkSearchResult } from '../api/client'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { networkSearch, searchFlows, type NetworkSearchResult } from '../api/client'
 import { detectQueryKind, relTime, latestCollected } from '../lib/ipmac'
+import FlowsTable from '../components/FlowsTable'
 
 const card = 'bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800'
 const th = 'text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-400'
@@ -171,6 +173,41 @@ export default function NetworkLookup() {
           )}
         </div>
       )}
+
+      {searched && !loading && result && detectQueryKind(result.query) === 'ip' && (
+        <IpFlows ip={result.query} />
+      )}
+    </div>
+  )
+}
+
+// "Recent flows involving this IP" — flows where the IP is source OR destination
+// (last 24h). Only shown for IP lookups.
+function IpFlows({ ip }: { ip: string }) {
+  const navigate = useNavigate()
+  const { data, isLoading } = useQuery({
+    queryKey: ['lookup-flows', ip],
+    queryFn: () => searchFlows(ip, '24h', 100),
+  })
+  const rows = data?.results ?? []
+
+  if (!isLoading && rows.length === 0) return null
+
+  return (
+    <div className={`${card}`}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent flows involving this IP</h3>
+        <button
+          onClick={() => navigate(`/flows`)}
+          className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          Open Flow Analytics →
+        </button>
+      </div>
+      <FlowsTable rows={rows} loading={isLoading} maxHeight="max-h-[24rem]" />
+      <div className="px-4 py-2 text-xs text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-800">
+        {rows.length.toLocaleString()} of {(data?.count ?? 0).toLocaleString()} flows · last 24h
+      </div>
     </div>
   )
 }

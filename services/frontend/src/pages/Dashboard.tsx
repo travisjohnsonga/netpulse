@@ -11,6 +11,7 @@ import {
   fetchChecks,
   fetchDeviceReachability,
   fetchReachabilitySummary,
+  fetchTopTalkers,
   reachabilityOf,
   type Device,
   type Alert,
@@ -18,8 +19,10 @@ import {
   type ServiceCheck,
   type DeviceReachability,
   type ReachabilitySummary,
+  type TopTalker,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { fmtBytes } from '../lib/bytes'
 import clsx from 'clsx'
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -61,24 +64,38 @@ function deviceStatusOption(summary: ReachabilitySummary | null): EChartsOption 
   }
 }
 
-const topTalkersChartOption: EChartsOption = {
-  title: { text: 'Top Talkers by Bytes', textStyle: { fontSize: 14, fontWeight: 600 } },
-  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-  grid: { left: 100, right: 20, top: 40, bottom: 30 },
-  xAxis: { type: 'value', axisLabel: { formatter: (v: number) => `${v}GB` } },
-  yAxis: {
-    type: 'category',
-    data: ['No data yet', '', '', '', ''],
-    axisLabel: { fontSize: 11 },
-  },
-  series: [
-    {
-      name: 'Bytes',
-      type: 'bar',
-      data: [0, 0, 0, 0, 0] as number[],
-      itemStyle: { color: '#3b82f6', borderRadius: [0, 4, 4, 0] },
+// "Top Talkers by Bytes" — real flow data (top source IPs by bytes, last 1h).
+// Falls back to a "No data yet" placeholder bar when no flows are present.
+function topTalkersChartOption(talkers: TopTalker[]): EChartsOption {
+  const hasData = talkers.length > 0
+  // ECharts category axis renders bottom→top, so reverse for descending top-down.
+  const rows = [...talkers].reverse()
+  return {
+    title: { text: 'Top Talkers by Bytes', textStyle: { fontSize: 14, fontWeight: 600 } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        return `${p.name}<br/>${fmtBytes(Number(p.value))}`
+      },
     },
-  ],
+    grid: { left: 110, right: 20, top: 40, bottom: 30 },
+    xAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtBytes(v) } },
+    yAxis: {
+      type: 'category',
+      data: hasData ? rows.map((t) => t.src_ip) : ['No data yet', '', '', '', ''],
+      axisLabel: { fontSize: 11 },
+    },
+    series: [
+      {
+        name: 'Bytes',
+        type: 'bar',
+        data: hasData ? rows.map((t) => t.bytes) : [0, 0, 0, 0, 0],
+        itemStyle: { color: '#3b82f6', borderRadius: [0, 4, 4, 0] },
+      },
+    ],
+  }
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -93,11 +110,14 @@ export default function Dashboard() {
   const [tlsChecks, setTlsChecks] = useState<ServiceCheck[]>([])
   const [reachData, setReachData] = useState<ReachabilitySummary | null>(null)
   const [reachPeriod, setReachPeriod] = useState<typeof REACH_PERIODS[number]>('1h')
+  const [topTalkers, setTopTalkers] = useState<TopTalker[]>([])
   const { connected } = useWebSocket('/ws/telemetry/')
 
   useEffect(() => {
     fetchCheckSummary().then(setCheckSummary).catch(() => {})
     fetchChecks({ check_type: 'tls' }).then(setTlsChecks).catch(() => {})
+    fetchTopTalkers({ window: '1h', by: 'bytes', limit: '5' })
+      .then((r) => setTopTalkers(r.results)).catch(() => {})
   }, [])
 
   // Device-status-over-time chart: real reachability summary, refetched on
@@ -313,9 +333,10 @@ export default function Dashboard() {
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
           <ReactECharts
-            option={topTalkersChartOption}
+            option={topTalkersChartOption(topTalkers)}
             style={{ height: 240 }}
             opts={{ renderer: 'svg' }}
+            notMerge
           />
         </div>
       </div>

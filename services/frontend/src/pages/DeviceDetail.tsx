@@ -7,6 +7,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import Overview from './device/Overview'
 import Telemetry, { TelemetryConfigPanel, Environment } from './device/Telemetry'
 import Logs from './device/Logs'
+import Flows from './device/Flows'
 import ArpMac from './device/ArpMac'
 import Configuration from './device/Configuration'
 import Compliance from './device/Compliance'
@@ -23,6 +24,7 @@ const TABS = [
   { id: 'telemetry', label: 'Telemetry' },
   { id: 'environment', label: 'Environment' },
   { id: 'logs', label: 'Logs' },
+  { id: 'flows', label: 'Flows' },
   { id: 'arpmac', label: 'ARP / MAC' },
   { id: 'configuration', label: 'Configuration' },
   { id: 'compliance', label: 'Compliance' },
@@ -205,6 +207,7 @@ export default function DeviceDetail() {
       {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} refreshSignal={telemetryRefresh} />}
       {tab === 'environment' && <Environment device={device} />}
       {tab === 'logs' && <Logs device={device} />}
+      {tab === 'flows' && <Flows device={device} />}
       {tab === 'arpmac' && <ArpMac device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}
       {tab === 'compliance' && <Compliance device={device} />}

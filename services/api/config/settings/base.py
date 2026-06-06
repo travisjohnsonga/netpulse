@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.configbackup",
     "apps.logs",
+    "apps.flows",
     "apps.tls",
     "apps.checks",
     "apps.alerting",

@@ -2519,3 +2519,89 @@ export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
 export async function completeOnboarding(): Promise<void> {
   await api.post('/onboarding/complete/', {})
 }
+
+// ── Flows (NetFlow / sFlow / IPFIX analytics) ───────────────────────────────────
+
+export interface FlowRecord {
+  id: string
+  timestamp: string
+  exporter_ip: string
+  protocol_version: string
+  src_ip: string
+  dst_ip: string
+  src_port: number
+  dst_port: number
+  ip_protocol: number
+  protocol: string          // resolved name: TCP / UDP / ICMP / …
+  service: string | null    // well-known service for the port, if any
+  bytes: number
+  packets: number
+  duration_ms: number | null
+  input_if: number | null
+  output_if: number | null
+  tcp_flags: number | null
+  tos: number | null
+}
+
+export interface FlowListResponse {
+  count: number
+  results: FlowRecord[]
+  ip?: string
+}
+
+export async function fetchFlows(params: Record<string, string>): Promise<FlowListResponse> {
+  const { data } = await api.get<FlowListResponse>('/flows/', { params })
+  return data
+}
+
+export async function searchFlows(ip: string, window = '24h', limit = 100): Promise<FlowListResponse> {
+  const { data } = await api.get<FlowListResponse>('/flows/search/', {
+    params: { ip, window, limit: String(limit) },
+  })
+  return data
+}
+
+export interface TopTalker {
+  src_ip: string
+  flows: number
+  bytes: number
+  packets: number
+}
+
+export interface TopTalkersResponse {
+  by: string
+  window: string
+  results: TopTalker[]
+}
+
+export async function fetchTopTalkers(params: Record<string, string>): Promise<TopTalkersResponse> {
+  const { data } = await api.get<TopTalkersResponse>('/flows/top-talkers/', { params })
+  return data
+}
+
+export interface FlowProtocol {
+  protocol: string
+  flows: number
+  bytes: number
+}
+
+export interface FlowTimePoint {
+  timestamp: string
+  bytes: number
+}
+
+export interface FlowSummary {
+  window: string
+  total_flows: number
+  total_bytes: number
+  total_packets: number
+  unique_src_ips: number
+  unique_dst_ips: number
+  top_protocols: FlowProtocol[]
+  bytes_over_time: FlowTimePoint[]
+}
+
+export async function fetchFlowSummary(params: Record<string, string>): Promise<FlowSummary> {
+  const { data } = await api.get<FlowSummary>('/flows/summary/', { params })
+  return data
+}

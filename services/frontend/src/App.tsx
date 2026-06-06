@@ -12,6 +12,7 @@ import SiteDetail from './pages/SiteDetail'
 import ConfigCompare from './pages/ConfigCompare'
 import Alerts from './pages/Alerts'
 import Logs from './pages/Logs'
+import Flows from './pages/Flows'
 import Checks from './pages/Checks'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
@@ -108,6 +109,7 @@ function AppRoutes() {
                 <Route path="/api-docs" element={<ApiDocs />} />
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/logs" element={<Logs />} />
+                <Route path="/flows" element={<Flows />} />
                 <Route path="/checks" element={<Checks />} />
                 <Route path="/network/lookup" element={<NetworkLookup />} />
                 <Route path="/lookup" element={<Navigate to="/network/lookup" replace />} />

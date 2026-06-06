@@ -24,6 +24,7 @@ const navItems: NavItem[] = [
   { label: 'Topology', href: '/topology', icon: '🌐' },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true },
   { label: 'Logs', href: '/logs', icon: '🧾' },
+  { label: 'Flows', href: '/flows', icon: '〰️' },
   { label: 'Checks', href: '/checks', icon: '✓' },
   { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍', divider: true },
   { label: 'CVE', href: '/cve', icon: '🛡' },

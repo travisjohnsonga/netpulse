@@ -48,6 +48,7 @@ urlpatterns = [
     path("api/settings/",     include("apps.configbackup.urls")),
     path("api/configbackup/",  include("apps.configbackup.urls")),
     path("api/logs/",         include("apps.logs.urls")),
+    path("api/flows/",        include("apps.flows.urls")),
     path("api/checks/",       include("apps.checks.urls")),
     path("api/alerting/",     include("apps.alerting.urls")),
     path("api/mibs/",         include("apps.mibs.urls")),
