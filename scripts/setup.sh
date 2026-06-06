@@ -116,6 +116,50 @@ yesno() { # yesno "Question" default(Y/n) → returns 0 for yes
   [[ "$reply" =~ ^[Yy] ]]
 }
 
+# Strip an inline "# comment" and surrounding whitespace from an .env value so a
+# commented value (e.g. "10.0.0.1  # collector") never leaks into the URL display.
+_clean_env_value() { printf '%s' "$1" | sed 's/[[:space:]]*#.*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
+
+# Best-effort detection of the host's primary IP. Prefer the source address the
+# kernel would use to reach the internet (skips docker bridge IPs like 172.18.x);
+# fall back to the first address from `hostname -I`.
+_detect_host_ip() {
+  local ip
+  ip="$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)"
+  [ -z "$ip" ] && ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | head -1)"
+  printf '%s' "$ip"
+}
+
+# Force the admin password from .env onto the running stack. ensure_superuser is
+# idempotent and leaves an EXISTING user's password untouched, so on a re-install
+# over a persisted DB the freshly shown password would not actually work. We pass
+# the password via STDIN (never argv) so any special characters survive intact.
+apply_admin_password() {
+  local user pass
+  user="$(_clean_env_value "$(env_get DJANGO_SUPERUSER_USERNAME)")"; [ -z "$user" ] && user="admin"
+  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"
+  [ -z "$pass" ] && return 0
+  if printf '%s' "$pass" | $COMPOSE exec -T -e NP_ADMIN_USER="$user" api \
+       python manage.py shell -c '
+import os, sys
+from django.contrib.auth import get_user_model
+U = get_user_model()
+name = os.environ["NP_ADMIN_USER"]
+pw = sys.stdin.read()
+u = U.objects.filter(username=name).first()
+if u is None:
+    U.objects.create_superuser(username=name, email="", password=pw, role="admin")
+else:
+    u.set_password(pw); u.is_active = True; u.save()
+print("ok")
+' >/dev/null 2>&1; then
+    ok "Admin password applied to the running stack"
+  else
+    warn "Could not apply the admin password automatically."
+    warn "After the stack is up, run: ./netpulse.sh reset-admin-password"
+  fi
+}
+
 # ── infrastructure secrets ──────────────────────────────────────────────────────
 # Secrets that can be batch auto-generated with gen_secret(). Order is cosmetic.
 INFRA_SECRETS=(
@@ -386,7 +430,9 @@ ok "SETUP_COMPLETE=true set in .env"
 echo
 
 # ── 6. start ──────────────────────────────────────────────────────────────────
-url_host="$(env_get COLLECTOR_IP)"; [ -z "$url_host" ] && url_host="localhost"
+url_host="$(_clean_env_value "$(env_get COLLECTOR_IP)")"
+[ -z "$url_host" ] && url_host="$(_detect_host_ip)"
+[ -z "$url_host" ] && url_host="localhost"
 if yesno "Pull and start NetPulse now?" Y; then
   info "pulling images (this can take a while)…"
   (cd "$ROOT_DIR" && $COMPOSE pull || warn "some images could not be pulled (will build on up)")
@@ -419,6 +465,10 @@ if yesno "Pull and start NetPulse now?" Y; then
     warn "Some health checks failed (see report above). Re-run later with: ./netpulse.sh health"
   fi
   echo
+  # Make sure the admin password we're about to display actually works — the
+  # idempotent entrypoint seeder won't update an already-existing user.
+  apply_admin_password
+  echo
   if yesno "Install NetPulse as a systemd service to start on boot?" N; then
     install_systemd_service
   else
@@ -435,12 +485,12 @@ fi
 # file — the api container creates the superuser from these .env values on start.
 show_credentials() {
   local host user pass https_port url cred_file
-  host="$(env_get COLLECTOR_IP)"
-  [ -z "$host" ] && host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  host="$(_clean_env_value "$(env_get COLLECTOR_IP)")"
+  [ -z "$host" ] && host="$(_detect_host_ip)"
   [ -z "$host" ] && host="localhost"
-  user="$(env_get DJANGO_SUPERUSER_USERNAME)"; [ -z "$user" ] && user="admin"
+  user="$(_clean_env_value "$(env_get DJANGO_SUPERUSER_USERNAME)")"; [ -z "$user" ] && user="admin"
   pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"
-  https_port="$(env_get FRONTEND_HTTPS_PORT || echo 443)"
+  https_port="$(_clean_env_value "$(env_get FRONTEND_HTTPS_PORT)")"; [ -z "$https_port" ] && https_port="443"
   if [ "$https_port" = "443" ]; then url="https://${host}"; else url="https://${host}:${https_port}"; fi
 
   echo

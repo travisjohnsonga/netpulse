@@ -118,20 +118,25 @@ case "$1" in
     ;;
   reset-admin-password)
     # Generate a new random password for the admin user and set it directly.
-    ADMIN_USER=$(grep -E '^DJANGO_SUPERUSER_USERNAME=' .env 2>/dev/null | head -1 | cut -d= -f2-)
+    # The password is delivered over STDIN (never argv / shell interpolation) so
+    # any special characters survive intact and it isn't exposed in `ps` output.
+    ADMIN_USER=$(grep -E '^DJANGO_SUPERUSER_USERNAME=' .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//')
     ADMIN_USER=${ADMIN_USER:-admin}
     NEW_PASS=$(openssl rand -base64 16 | tr -d '/+=')
-    if docker compose exec -T api python manage.py shell -c "
+    if printf '%s' "$NEW_PASS" | docker compose exec -T -e NP_ADMIN_USER="$ADMIN_USER" api python manage.py shell -c '
+import os, sys
 from django.contrib.auth import get_user_model
 User = get_user_model()
+name = os.environ["NP_ADMIN_USER"]
 try:
-    u = User.objects.get(username='${ADMIN_USER}')
+    u = User.objects.get(username=name)
 except User.DoesNotExist:
-    raise SystemExit('User ${ADMIN_USER} not found')
-u.set_password('${NEW_PASS}')
+    raise SystemExit("User %s not found" % name)
+u.set_password(sys.stdin.read())
+u.is_active = True
 u.save()
-print('Password reset successfully')
-"; then
+print("Password reset successfully")
+'; then
       echo ""
       echo "New password for '${ADMIN_USER}': ${NEW_PASS}"
       echo "Save this password securely!"
