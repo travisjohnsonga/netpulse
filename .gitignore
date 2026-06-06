@@ -13,6 +13,8 @@ openbao/data/
 # OpenBao auto-generated unseal key + root token — NEVER commit
 .init_keys
 **/.init_keys
+# Initial admin credentials written by setup.sh (also lives in ~/) — NEVER commit
+netpulse-credentials.txt
 
 # Operator-local notes — lab credentials, site-specific + testing notes.
 # NEVER commit (see the LOCAL_NOTES.md template referenced from CLAUDE.md/README).

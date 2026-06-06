@@ -103,8 +103,53 @@ case "$1" in
     # Pass --show-secrets to reveal values, --profile-id N for one profile.
     docker compose exec api python manage.py show_credentials "${@:2}"
     ;;
+  credentials-hint)
+    # Show the initial admin login saved by setup.sh (~/netpulse-credentials.txt).
+    CRED_FILE="$HOME/netpulse-credentials.txt"
+    if [ -f "$CRED_FILE" ]; then
+      echo "📋 NetPulse credentials ($CRED_FILE):"
+      echo ""
+      cat "$CRED_FILE"
+    else
+      echo "Credentials file not found ($CRED_FILE)."
+      echo "Check your password manager, or reset the admin password with:"
+      echo "  $0 reset-admin-password"
+    fi
+    ;;
+  reset-admin-password)
+    # Generate a new random password for the admin user and set it directly.
+    ADMIN_USER=$(grep -E '^DJANGO_SUPERUSER_USERNAME=' .env 2>/dev/null | head -1 | cut -d= -f2-)
+    ADMIN_USER=${ADMIN_USER:-admin}
+    NEW_PASS=$(openssl rand -base64 16 | tr -d '/+=')
+    if docker compose exec -T api python manage.py shell -c "
+from django.contrib.auth import get_user_model
+User = get_user_model()
+try:
+    u = User.objects.get(username='${ADMIN_USER}')
+except User.DoesNotExist:
+    raise SystemExit('User ${ADMIN_USER} not found')
+u.set_password('${NEW_PASS}')
+u.save()
+print('Password reset successfully')
+"; then
+      echo ""
+      echo "New password for '${ADMIN_USER}': ${NEW_PASS}"
+      echo "Save this password securely!"
+      # Keep the reference file in sync so credentials-hint stays accurate.
+      CRED_FILE="$HOME/netpulse-credentials.txt"
+      if [ -f "$CRED_FILE" ]; then
+        TMP=$(mktemp)
+        sed -e "s|^Password: .*|Password: ${NEW_PASS}|" -e "s|^Username: .*|Username: ${ADMIN_USER}|" "$CRED_FILE" > "$TMP" && mv "$TMP" "$CRED_FILE"
+        chmod 600 "$CRED_FILE"
+        echo "Updated ${CRED_FILE}"
+      fi
+    else
+      echo "Failed to reset password (is the api container running? './netpulse.sh start')" >&2
+      exit 1
+    fi
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
@@ -121,6 +166,8 @@ case "$1" in
     echo "  status             Show service status and health"
     echo "  health             Run full post-setup health checks (add --json/--fail-fast)"
     echo "  credentials        Show credential profile status (add --show-secrets to reveal values)"
+    echo "  credentials-hint   Show the initial admin login saved by setup.sh"
+    echo "  reset-admin-password  Set a new random admin password and print it"
     echo "  logs [service]     Follow logs (default: api)"
     exit 1
     ;;

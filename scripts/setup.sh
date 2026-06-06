@@ -293,8 +293,9 @@ case "${port_choice:-1}" in
   2) env_set FRONTEND_PORT 3000; env_set FRONTEND_HTTPS_PORT 3443 ;;
   3) ask FRONTEND_PORT       "HTTP port"  "$(env_get FRONTEND_PORT || echo 80)"
      ask FRONTEND_HTTPS_PORT "HTTPS port" "$(env_get FRONTEND_HTTPS_PORT || echo 443)" ;;
-  *) env_set FRONTEND_PORT "$(env_get FRONTEND_PORT || echo 80)"
-     env_set FRONTEND_HTTPS_PORT "$(env_get FRONTEND_HTTPS_PORT || echo 443)" ;;
+  # Production is the default: force the standard ports even when re-running over
+  # an existing .env that still has the old dev ports (3000/3443).
+  *) env_set FRONTEND_PORT 80; env_set FRONTEND_HTTPS_PORT 443 ;;
 esac
 ok "Web UI: HTTP $(env_get FRONTEND_PORT) (redirects to HTTPS) / HTTPS $(env_get FRONTEND_HTTPS_PORT)"
 echo
@@ -427,3 +428,47 @@ else
   info "skipped startup. When ready:  $COMPOSE up -d"
   echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 443)"
 fi
+
+# ── 7. credentials ────────────────────────────────────────────────────────────
+# The admin password is frequently auto-generated (the user left it blank), so
+# it would otherwise be unknown. Show it prominently and save a 0600 reference
+# file — the api container creates the superuser from these .env values on start.
+show_credentials() {
+  local host user pass https_port url cred_file
+  host="$(env_get COLLECTOR_IP)"
+  [ -z "$host" ] && host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -z "$host" ] && host="localhost"
+  user="$(env_get DJANGO_SUPERUSER_USERNAME)"; [ -z "$user" ] && user="admin"
+  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"
+  https_port="$(env_get FRONTEND_HTTPS_PORT || echo 443)"
+  if [ "$https_port" = "443" ]; then url="https://${host}"; else url="https://${host}:${https_port}"; fi
+
+  echo
+  echo "${BOLD}╔══════════════════════════════════════════════════════╗${N}"
+  echo "${BOLD}║              NETPULSE LOGIN CREDENTIALS              ║${N}"
+  echo "${BOLD}╚══════════════════════════════════════════════════════╝${N}"
+  echo "   URL:      ${url}"
+  echo "   Username: ${user}"
+  echo "   Password: ${BOLD}${pass}${N}"
+  echo
+  warn "Save this password — it won't be shown again!"
+  echo "   Change it after first login:  Settings → Users → ${user} → Change Password"
+  echo
+
+  cred_file="$HOME/netpulse-credentials.txt"
+  cat > "$cred_file" <<EOF
+NetPulse Initial Credentials
+Generated: $(date)
+URL: ${url}
+Username: ${user}
+Password: ${pass}
+
+IMPORTANT: Change this password after first login!
+Delete this file after saving the credentials securely.
+EOF
+  chmod 600 "$cred_file"
+  ok "Credentials also saved to: ${cred_file}"
+  echo "   View them again later with:  ./netpulse.sh credentials-hint"
+  echo
+}
+show_credentials
