@@ -179,7 +179,7 @@ credential UI. 5. Scrub credentials from all logs. 6. mTLS for internal service 
 for external. 8. Zero secrets in code or env vars in production.
 
 Implemented: H1 auth rate limiting (DRF ScopedRateThrottle, keyed per client IP via X-Forwarded-For);
-HTTPS enforced (nginx redirects :3000→:3443); OpenBao persistent secrets; OT/ICS exclusion in discovery;
+HTTPS enforced (nginx redirects :80→:443); OpenBao persistent secrets; OT/ICS exclusion in discovery;
 ASCII config sanitization before push; Dependabot weekly.
 
 ## RBAC Roles (seeded)

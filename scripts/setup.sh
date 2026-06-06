@@ -46,7 +46,7 @@ if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
 if [ "$INTERACTIVE" -eq 0 ]; then
   warn "Non-interactive mode (no TTY on stdin) — using safe defaults:"
   warn "  • all infrastructure + admin secrets auto-generated"
-  warn "  • development web ports (3000/3443)"
+  warn "  • standard web ports (80/443)"
   warn "  • optional integrations skipped"
   warn "Re-run interactively to customise:  cd \"$ROOT_DIR\" && ./scripts/setup.sh"
   echo
@@ -248,7 +248,7 @@ else
 fi
 if $COMPOSE version >/dev/null 2>&1; then ok "docker compose found"; else err "docker compose v2 not found"; exit 1; fi
 command -v openssl >/dev/null 2>&1 || warn "openssl not found — secret generation will fail"
-for p in 80 443 "${FRONTEND_PORT:-3000}" "${API_PORT:-8000}"; do
+for p in 80 443 "${FRONTEND_PORT:-80}" "${API_PORT:-8000}"; do
   if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${p} "; then
     warn "port ${p} is already in use"
   fi
@@ -283,18 +283,18 @@ if [ -n "$ci" ] && [ "$ci" != "127.0.0.1" ]; then
   env_set REACT_APP_WS_URL  "ws://${ci}:$(env_get API_PORT || echo 8000)"
 fi
 
-# Web UI ports: dev (3000/3443) vs production (80/443) vs custom.
+# Web UI ports: production (80/443) is the default; dev (3000/3443) or custom.
 echo "Web UI port configuration:"
-echo "  1) Development — 3000 (HTTP) / 3443 (HTTPS)  [default]"
-echo "  2) Production  — 80 (HTTP) / 443 (HTTPS)"
+echo "  1) Production  — 80 (HTTP) / 443 (HTTPS)  [default]"
+echo "  2) Development — 3000 (HTTP) / 3443 (HTTPS)"
 echo "  3) Custom"
 printf "Choose [1]: "; read -r port_choice || true
 case "${port_choice:-1}" in
-  2) env_set FRONTEND_PORT 80;  env_set FRONTEND_HTTPS_PORT 443 ;;
-  3) ask FRONTEND_PORT       "HTTP port"  "$(env_get FRONTEND_PORT || echo 3000)"
-     ask FRONTEND_HTTPS_PORT "HTTPS port" "$(env_get FRONTEND_HTTPS_PORT || echo 3443)" ;;
-  *) env_set FRONTEND_PORT "$(env_get FRONTEND_PORT || echo 3000)"
-     env_set FRONTEND_HTTPS_PORT "$(env_get FRONTEND_HTTPS_PORT || echo 3443)" ;;
+  2) env_set FRONTEND_PORT 3000; env_set FRONTEND_HTTPS_PORT 3443 ;;
+  3) ask FRONTEND_PORT       "HTTP port"  "$(env_get FRONTEND_PORT || echo 80)"
+     ask FRONTEND_HTTPS_PORT "HTTPS port" "$(env_get FRONTEND_HTTPS_PORT || echo 443)" ;;
+  *) env_set FRONTEND_PORT "$(env_get FRONTEND_PORT || echo 80)"
+     env_set FRONTEND_HTTPS_PORT "$(env_get FRONTEND_HTTPS_PORT || echo 443)" ;;
 esac
 ok "Web UI: HTTP $(env_get FRONTEND_PORT) (redirects to HTTPS) / HTTPS $(env_get FRONTEND_HTTPS_PORT)"
 echo
@@ -407,7 +407,7 @@ if yesno "Pull and start NetPulse now?" Y; then
     || warn "MIB download failed — run ./scripts/download_mibs.sh later"
   echo
   ok "NetPulse is starting!"
-  echo "   Web UI:   https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)  (HTTP :$(env_get FRONTEND_PORT || echo 3000) redirects here)"
+  echo "   Web UI:   https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 443)  (HTTP :$(env_get FRONTEND_PORT || echo 80) redirects here)"
   echo "   API docs: http://${url_host}:$(env_get API_PORT || echo 8000)/api/docs/"
   echo
   info "Waiting for services to come up, then running health checks…"
@@ -425,5 +425,5 @@ if yesno "Pull and start NetPulse now?" Y; then
   fi
 else
   info "skipped startup. When ready:  $COMPOSE up -d"
-  echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 3443)"
+  echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 443)"
 fi

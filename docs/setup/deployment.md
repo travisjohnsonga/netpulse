@@ -39,7 +39,7 @@ optional NVD key, Cisco PSIRT, SMTP. Reads `.env.example` as template, writes
 `docker compose pull` + `up -d` and prints access URLs.
 
 After `.env` is written it can pull images and start the stack, then prints:
-`NetPulse is available at http://{COLLECTOR_IP}:3000` and API docs at `:8000/api/docs/`.
+`NetPulse is available at http://{COLLECTOR_IP}` and API docs at `:8000/api/docs/`.
 
 ## Development workflow
 

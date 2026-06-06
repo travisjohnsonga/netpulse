@@ -166,5 +166,5 @@ else
   echo "=================================================="
 fi
 
-echo "Access:  http://localhost:3000  (redirects to https://localhost:3443)"
+echo "Access:  http://localhost  (redirects to https://localhost)"
 echo "Login:   admin / (DJANGO_SUPERUSER_PASSWORD from .env)"

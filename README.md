@@ -142,8 +142,8 @@ Ports that must be accessible on the NetPulse server:
 
 | Port  | Protocol | Service                    | Direction              |
 |-------|----------|----------------------------|------------------------|
-| 3443  | TCP      | HTTPS Web UI               | Inbound                |
-| 3000  | TCP      | HTTP (redirects to HTTPS)  | Inbound                |
+| 443   | TCP      | HTTPS Web UI               | Inbound                |
+| 80    | TCP      | HTTP (redirects to HTTPS)  | Inbound                |
 | 514   | UDP      | Syslog receiver            | Inbound from devices   |
 | 57400 | TCP      | gNMI/MDT streaming         | Inbound from devices   |
 | 2055  | UDP      | NetFlow/sFlow              | Inbound from devices   |
@@ -224,7 +224,7 @@ updates. Files are git-ignored (see the "SNMP MIBs" section below).
 
 ### 5. Access the UI
 ```
-https://YOUR_SERVER_IP:3443
+https://YOUR_SERVER_IP
 ```
 Log in with the admin credentials set during setup.
 
@@ -234,22 +234,24 @@ Log in with the admin credentials set during setup.
 
 ### Port Configuration
 
-Default (development):
+Default (standard ports):
 ```
-http://YOUR_IP:3000   → redirects to HTTPS
-https://YOUR_IP:3443  → NetPulse UI
+http://YOUR_IP    → redirects to HTTPS
+https://YOUR_IP   → NetPulse UI
 ```
+Binding 80/443 needs root or `CAP_NET_BIND_SERVICE` — Docker handles this when
+it publishes the ports, so no extra config is needed. Add a proper TLS cert
+(Settings → SSL/TLS) for internet-facing use.
 
-Production (standard ports) — set in `.env` (setup.sh can do this for you):
+Development (non-privileged ports) — set in `.env` (setup.sh can do this for
+you):
 ```
-FRONTEND_PORT=80
-FRONTEND_HTTPS_PORT=443
+FRONTEND_PORT=3000
+FRONTEND_HTTPS_PORT=3443
 ```
-then `docker compose down && docker compose up -d`. Access `http://YOUR_IP`
-(redirects) / `https://YOUR_IP`. Binding 80/443 needs root or
-`CAP_NET_BIND_SERVICE`, plus a proper TLS cert (Settings → SSL/TLS) for
-internet-facing use. The nginx container always listens on 80/443 internally;
-only the host port mapping changes.
+then `docker compose down && docker compose up -d`. Access
+`http://YOUR_IP:3000` (redirects) / `https://YOUR_IP:3443`. The nginx container
+always listens on 80/443 internally; only the host port mapping changes.
 
 ### 6. Add your first device
 1. Go to **Settings → Discovery**

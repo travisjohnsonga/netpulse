@@ -31,23 +31,23 @@
 
 ### Access UI
 ```
-https://{SERVER_IP}:3443
+https://{SERVER_IP}
 # Accept self-signed cert warning
 # Login: admin / {password set in setup.sh}
 ```
 
-### Production port testing (optional)
-Set standard ports before starting:
+### Development port testing (optional)
+Set non-privileged ports before starting:
 ```bash
 # in .env
-FRONTEND_PORT=80
-FRONTEND_HTTPS_PORT=443
+FRONTEND_PORT=3000
+FRONTEND_HTTPS_PORT=3443
 docker compose down && docker compose up -d
 ```
 Verify:
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}/    # 301/302 → HTTPS
-curl -sk -o /dev/null -w "%{http_code}\n" https://{SERVER_IP}/  # 200
+curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}:3000/    # 301/302 → HTTPS
+curl -sk -o /dev/null -w "%{http_code}\n" https://{SERVER_IP}:3443/  # 200
 ```
 
 ---
@@ -233,7 +233,7 @@ done
 
 ### 12.2 HTTPS Enforcement
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}:3000/
+curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}/
 # Expected: 301/302 redirect to HTTPS
 ```
 
