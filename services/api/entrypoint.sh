@@ -43,6 +43,11 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] seeding default device roles..."
     python manage.py seed_device_roles || echo "[entrypoint] device-role seed had issues (continuing)"
 
+    # Seed placeholder example sites (only when none exist) BEFORE hostname rules,
+    # so the example "Site N devices" rules can resolve their site FK.
+    echo "[entrypoint] seeding example sites..."
+    python manage.py seed_sites || echo "[entrypoint] site seed had issues (continuing)"
+
     # Seed example hostname rules (disabled by default — admin reviews + enables).
     echo "[entrypoint] seeding example hostname rules..."
     python manage.py seed_hostname_rules || echo "[entrypoint] hostname-rule seed had issues (continuing)"

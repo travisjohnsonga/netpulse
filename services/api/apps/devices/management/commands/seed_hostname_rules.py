@@ -1,17 +1,20 @@
 from django.core.management.base import BaseCommand
 
-# Example hostname rules seeded DISABLED by default — they are starting points an
-# admin can enable/edit (the wco2 lab naming convention). Idempotent: matched by
-# name, never overwrites an existing rule. Role/site FKs are resolved by slug/name
-# at seed time and silently skipped if the target doesn't exist.
+# Example hostname rules seeded DISABLED by default — generic starting points an
+# admin can enable/edit. Idempotent: matched by name, never overwrites an
+# existing rule. Role/site FKs are resolved by slug/name at seed time and
+# silently skipped if the target doesn't exist (the placeholder "Site 1"/"Site 2"
+# sites are seeded by seed_sites on a fresh install).
 EXAMPLE_RULES = [
-    # Site rule — match the site-code prefix.
-    {"name": "WCO2 Site", "pattern": r"^wco2-", "rule_type": "site",
-     "site_name": "WCO2", "priority": 10},
+    # Site rules — match a site-code prefix (rename to your own site codes).
+    {"name": "Site 1 devices", "pattern": r"^site1-", "rule_type": "site",
+     "site_name": "Site 1", "priority": 10},
+    {"name": "Site 2 devices", "pattern": r"^site2-", "rule_type": "site",
+     "site_name": "Site 2", "priority": 10},
     # Role rules — match the device-type code in the hostname.
     {"name": "Core/Distribution switches (crt/mdf/ddf)", "pattern": r"-(crt|mdf|ddf)-",
      "rule_type": "role", "role_slug": "core-switch", "priority": 20},
-    {"name": "IDF/Access switches", "pattern": r"-(idf|asw|acc)-",
+    {"name": "Access switches (idf/asw/acc)", "pattern": r"-(idf|asw|acc)-",
      "rule_type": "role", "role_slug": "access-switch", "priority": 20},
     {"name": "Firewalls (fw/fwl/pfw)", "pattern": r"-(fw|fwl|pfw|firewall)-",
      "rule_type": "role", "role_slug": "firewall", "priority": 20},
