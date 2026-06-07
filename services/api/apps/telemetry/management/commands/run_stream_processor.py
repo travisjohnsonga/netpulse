@@ -856,7 +856,7 @@ class Command(BaseCommand):
             if payload.get(key) is not None and key not in labels:
                 labels[key] = payload[key]
         annotations = dict(payload.get("annotations", {}))
-        for key in ("title", "message"):
+        for key in ("title", "message", "details", "alert_type"):
             if payload.get(key) is not None and key not in annotations:
                 annotations[key] = payload[key]
 

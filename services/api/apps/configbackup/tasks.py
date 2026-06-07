@@ -67,14 +67,21 @@ def collect_all_configs() -> dict:
 
 
 def publish_config_change_alert(device, result: dict) -> None:
-    """Best-effort NATS alert (rule 'Config Changed') with the diff summary."""
+    """Best-effort NATS alert (rule 'Config Changed') with the diff in `details`."""
     cfg = result.get("config")
-    summary = (getattr(cfg, "diff_summary", "") or "").strip() or "configuration changed"
+    diff = (getattr(cfg, "diff_summary", "") or "").strip()
+    # Count +/- lines for a short, readable message; the full unified diff goes
+    # in `details` so the UI can render it as a proper diff viewer.
+    added = sum(1 for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
+    removed = sum(1 for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---"))
+    short = f"{added} line(s) added, {removed} removed" if diff else "configuration changed"
     payload = {
         "source": "config_manager", "rule_name": "Config Changed",
+        "alert_type": "config_changed",
         "device_id": device.id, "hostname": device.hostname, "severity": "medium",
         "title": f"Config Changed: {device.hostname}",
-        "message": f"{device.hostname}: {summary}",
+        "message": f"{device.hostname}: {short}",
+        "details": diff,
     }
     try:
         asyncio.run(_publish_alert(payload))

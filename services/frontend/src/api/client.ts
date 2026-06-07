@@ -178,6 +178,9 @@ export interface Alert {
   fired_at: string
   state: 'firing' | 'acknowledged' | 'resolved'
   message: string
+  // Long-form detail (e.g. a config-change unified diff) + machine alert type.
+  details?: string
+  alert_type?: string
   is_resolved?: boolean
   resolved_by?: string
   resolved_at?: string | null

@@ -35,6 +35,10 @@ class AlertEventSerializer(serializers.ModelSerializer):
     downtime_seconds = serializers.SerializerMethodField()
     is_interface_alert = serializers.SerializerMethodField()
     is_resolved = serializers.SerializerMethodField()
+    # Long-form detail (e.g. a config-change unified diff) + a machine type so the
+    # UI can render the expanded panel appropriately.
+    details = serializers.SerializerMethodField()
+    alert_type = serializers.SerializerMethodField()
 
     class Meta:
         model = AlertEvent
@@ -54,6 +58,13 @@ class AlertEventSerializer(serializers.ModelSerializer):
 
     def get_message(self, obj):
         return (obj.annotations or {}).get("message") or ""
+
+    def get_details(self, obj):
+        return (obj.annotations or {}).get("details") or ""
+
+    def get_alert_type(self, obj):
+        return (obj.annotations or {}).get("alert_type") \
+            or (obj.labels or {}).get("alert_type") or ""
 
     def get_device(self, obj):
         return (obj.labels or {}).get("device") or ""

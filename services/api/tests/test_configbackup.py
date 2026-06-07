@@ -182,3 +182,24 @@ class TestConfigDiff:
             "left": 999999, "right": 888888,
         }, format="json")
         assert resp.status_code == 404
+
+
+class TestConfigChangeAlert:
+    def test_diff_goes_to_details_not_message(self, monkeypatch):
+        from apps.configbackup.tasks import publish_config_change_alert
+        from apps.devices.models import Device
+
+        captured = {}
+
+        async def fake_publish(payload):
+            captured.update(payload)
+
+        monkeypatch.setattr("apps.configbackup.tasks._publish_alert", fake_publish)
+        device = Device.objects.create(hostname="cfg-r1", ip_address="10.30.0.1")
+        cfg = type("C", (), {"diff_summary": "--- previous\n+++ current\n@@ -1,2 +1,2 @@\n-old\n+new"})()
+        publish_config_change_alert(device, {"config": cfg})
+
+        assert captured["alert_type"] == "config_changed"
+        assert "--- previous" in captured["details"]          # full diff in details
+        assert "--- previous" not in captured["message"]       # not jammed into message
+        assert "1 line(s) added, 1 removed" in captured["message"]

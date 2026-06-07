@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
+import AlertDetails from '../components/AlertDetails'
 import { Fragment } from 'react'
 import { fetchAlerts, acknowledgeAlert, resolveAlertEvent, fetchAlertNotifications, type Alert, type AlertNotificationRecord } from '../api/client'
 
@@ -311,8 +312,21 @@ export default function Alerts() {
                   </tr>
                   {open && (
                     <tr className="bg-gray-50/60 dark:bg-gray-900/40">
-                      <td colSpan={7} className="px-5 py-3">
-                        <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Notification timeline</p>
+                      <td colSpan={7} className="px-5 py-3 space-y-3">
+                        {/* Header: device / severity / fired / state */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          <div><span className="text-gray-400">Device:</span> <span className="text-gray-700 dark:text-gray-200">{alert.device || '—'}</span></div>
+                          <div><span className="text-gray-400">Severity:</span> <span className="text-gray-700 dark:text-gray-200 capitalize">{sev}</span></div>
+                          <div><span className="text-gray-400">Fired:</span> <span className="text-gray-700 dark:text-gray-200">{new Date(alert.fired_at).toLocaleString()}</span></div>
+                          <div><span className="text-gray-400">State:</span> <span className="text-gray-700 dark:text-gray-200 capitalize">{alert.state}</span></div>
+                        </div>
+                        {/* Type-aware details (diff viewer / summary / text) */}
+                        {(alert.details || alert.message) && (
+                          <div className="border-t border-gray-200 dark:border-gray-700 pt-2">
+                            <AlertDetails alert={alert} />
+                          </div>
+                        )}
+                        <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2 border-t border-gray-200 dark:border-gray-700 pt-2">Notification timeline</p>
                         <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
                           <li><span className="text-gray-400">{new Date(alert.fired_at).toLocaleString()}</span> — Alert created ({sev})</li>
                           {timeline[alert.id] === undefined && <li className="text-gray-400">Loading…</li>}

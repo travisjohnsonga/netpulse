@@ -254,11 +254,15 @@ class TestConfigTasks:
         monkeypatch.setattr(tasks, "_publish_alert", fake_publish)
 
         class Cfg:
-            diff_summary = "+3 -1"
+            diff_summary = "--- previous\n+++ current\n+added line\n-removed line"
         tasks.publish_config_change_alert(device, {"config": Cfg()})
         assert captured["rule_name"] == "Config Changed"
         assert captured["device_id"] == device.id
-        assert "+3 -1" in captured["message"]
+        assert captured["alert_type"] == "config_changed"
+        # Full diff lives in details; message is a short summary (not the diff).
+        assert "+added line" in captured["details"]
+        assert "+added line" not in captured["message"]
+        assert "added" in captured["message"]
 
 
 class TestConfigSchedule:
