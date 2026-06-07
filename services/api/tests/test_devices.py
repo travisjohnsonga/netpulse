@@ -247,6 +247,7 @@ class TestDeviceModel:
         for value, _ in Device.Platform.choices:
             assert value in ("ios", "ios_xe", "ios_xr", "nxos", "eos", "junos",
                              "fortios", "panos", "sonicwall", "aos_cx", "aruba",
+                             "unifi_ap", "unifi_sw", "unifi_gw", "unifi_udm",
                              "sonic", "other")
 
     def test_platforms_endpoint(self, auth_client):

@@ -85,3 +85,40 @@ class EmailSettings(TimestampedModel):
         if obj is None:
             obj = cls.objects.create()
         return obj
+
+
+class UnifiController(TimestampedModel):
+    """
+    A Ubiquiti UniFi controller (one per site is common). NetPulse polls each
+    enabled controller to import its managed devices (APs/switches/gateways).
+    The controller password lives in OpenBao at ``vault_path`` — never the DB.
+    """
+    name = models.CharField(max_length=128)
+    host = models.CharField(max_length=255, help_text="Controller hostname or IP")
+    port = models.IntegerField(default=8443)
+    username = models.CharField(max_length=128)
+    verify_ssl = models.BooleanField(default=False)
+    # UniFi site identifier on the controller (UniFi → Settings → System → Site
+    # ID). Named unifi_site_id to avoid clashing with the `site` FK's site_id.
+    unifi_site_id = models.CharField(max_length=64, default="default",
+                                     help_text="UniFi site ID (default=default)")
+    # Optional NetPulse Site that imported devices are assigned to.
+    site = models.ForeignKey(
+        "devices.Site", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="unifi_controllers",
+    )
+    enabled = models.BooleanField(default=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=512, blank=True)
+    device_count = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.host})"
+
+    @property
+    def vault_path(self) -> str:
+        """OpenBao path holding this controller's password (key 'password')."""
+        return f"netpulse/integrations/unifi/{self.id}"

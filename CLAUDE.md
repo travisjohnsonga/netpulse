@@ -80,8 +80,10 @@ DiscoveryJob, DiscoveredDevice) · credentials (CredentialProfile; secrets in Op
 templates, overrides) · alerts (AlertRule, AlertEvent, AlertChannel) · cve · lifecycle · security
 (DeviceRiskScore) · collectors · configbackup (ConfigBackupSettings, DeviceConfig) · integrations
 (NetBox/DNA import; EmailSettings — SMTP for alert email, provider presets, password in OpenBao at
-netpulse/integrations/smtp; GET/PUT /api/integrations/email/ + /test/) · logs (OpenSearch + LogFilter
-regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·
+netpulse/integrations/smtp; GET/PUT /api/integrations/email/ + /test/; UnifiController — multi-controller
+UniFi device import, password in OpenBao at netpulse/integrations/unifi/{id}, CRUD + /test//sync/
++ sync-all under /api/integrations/unifi/, 6h scheduler sync via UNIFI_SYNC_INTERVAL_S) · logs
+(OpenSearch + LogFilter regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·
 checks (ServiceCheck, CheckResult; http/https/tcp/icmp/dns/tls/smtp/ssh_banner) · alerting (Team,
 EscalationPolicy, AlertRoute — Stage 1: route matching + email) · sso (SSOProvider; Google OAuth2
 Stage 1) · arp_mac (ARPEntry, MACEntry, MACVendor — SSH collection + OUI lookup) · mibs.
@@ -93,7 +95,8 @@ openbao-data:ro). Celery/django-celery-beat are in requirements but UNUSED — d
 scheduler; add periodic work to run_scheduler. Startup one-shots (idempotent): seed alert rules,
 unseal OpenBao, load OUI registry if empty. Periodic (tick 300s): alert purge (daily), ARP/MAC
 collection (6h), MAC-vendor OUI refresh (weekly), hostname verification (24h,
-`HOSTNAME_CHECK_INTERVAL_S`); recurring tasks first fire one interval after start.
+`HOSTNAME_CHECK_INTERVAL_S`), UniFi controller sync (6h, `UNIFI_SYNC_INTERVAL_S`); recurring tasks
+first fire one interval after start.
 
 **Hostname verification** (`apps/devices/hostname_check.py`): re-checks active devices' hostnames via
 SNMP sysName (1.3.6.1.2.1.1.5.0) then DNS reverse lookup; on a change it updates the device, raises an

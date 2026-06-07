@@ -14,14 +14,61 @@ from . import netbox
 from .email import PROVIDER_PRESETS, send_test_email
 
 logger = logging.getLogger(__name__)
-from .models import EmailSettings, NetBoxImport
+from .models import EmailSettings, NetBoxImport, UnifiController
 from .serializers import (
     EmailSettingsSerializer,
     NetBoxImportRequestSerializer,
     NetBoxImportSerializer,
     NetBoxTestRequestSerializer,
     NetBoxTestResponseSerializer,
+    UnifiControllerSerializer,
 )
+
+
+class UnifiControllerViewSet(viewsets.ModelViewSet):
+    """CRUD for UniFi controllers (one per site) + test/sync actions."""
+
+    queryset = UnifiController.objects.all()
+    serializer_class = UnifiControllerSerializer
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def test(self, request, pk=None):
+        """Verify the connection; return available sites + device count."""
+        c = self.get_object()
+        from .unifi_client import UnifiClient, UnifiError
+        from .unifi_sync import _read_password
+        # Allow testing a just-typed password from the form, else use the stored one.
+        password = (request.data or {}).get("password") or _read_password(c)
+        try:
+            with UnifiClient(c.host, c.port, c.username, password,
+                             site_id=c.unifi_site_id, verify_ssl=c.verify_ssl) as client:
+                devices = client.get_devices()
+                sites = [s.get("name") or s.get("desc") or "" for s in client.get_sites()]
+            return Response({"connected": True, "sites": [s for s in sites if s],
+                             "device_count": len(devices)})
+        except UnifiError as exc:
+            return Response({"connected": False, "error": str(exc)},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="sync")
+    def sync(self, request, pk=None):
+        """Import this controller's managed devices into inventory."""
+        c = self.get_object()
+        from .unifi_client import UnifiError
+        from .unifi_sync import sync_controller
+        try:
+            return Response(sync_controller(c))
+        except UnifiError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="sync-all")
+    def sync_all(self, request):
+        """Sync every enabled controller (best-effort)."""
+        from .unifi_sync import sync_all_controllers
+        return Response(sync_all_controllers())
 
 
 class EmailSettingsView(APIView):

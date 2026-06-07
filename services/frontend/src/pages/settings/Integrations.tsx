@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Modal from '../../components/Modal'
 import NetBoxImportModal from '../../components/NetBoxImportModal'
 import EmailSettingsModal from '../../components/EmailSettingsModal'
+import UnifiSettingsModal from '../../components/UnifiSettingsModal'
 import { SectionHeader } from '../Settings'
 
 // Integration catalog. Connection state isn't persisted to a backend yet — the
@@ -70,6 +71,7 @@ export default function Integrations() {
   const [setup, setSetup] = useState<Integration | null>(null)
   const [netboxOpen, setNetboxOpen] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
+  const [unifiOpen, setUnifiOpen] = useState(false)
 
   const statusOf = (id: string): Status => (id in connected ? 'connected' : 'not_configured')
 
@@ -109,10 +111,10 @@ export default function Integrations() {
                         {status === 'connected' ? connected[it.id] : ''}
                       </span>
                       <button
-                        onClick={() => (it.id === 'netbox' ? setNetboxOpen(true) : it.id === 'email' ? setEmailOpen(true) : setSetup(it))}
+                        onClick={() => (it.id === 'netbox' ? setNetboxOpen(true) : it.id === 'email' ? setEmailOpen(true) : it.id === 'unifi' ? setUnifiOpen(true) : setSetup(it))}
                         className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300"
                       >
-                        {it.id === 'netbox' ? 'Import' : it.id === 'email' ? 'Configure' : status === 'connected' ? 'Configure' : 'Connect'}
+                        {it.id === 'netbox' ? 'Import' : it.id === 'email' || it.id === 'unifi' ? 'Configure' : status === 'connected' ? 'Configure' : 'Connect'}
                       </button>
                     </div>
                   </div>
@@ -141,6 +143,7 @@ export default function Integrations() {
 
       {netboxOpen && <NetBoxImportModal onClose={() => setNetboxOpen(false)} />}
       {emailOpen && <EmailSettingsModal onClose={() => setEmailOpen(false)} />}
+      {unifiOpen && <UnifiSettingsModal onClose={() => setUnifiOpen(false)} />}
     </div>
   )
 }

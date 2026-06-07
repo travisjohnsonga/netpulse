@@ -33,6 +33,7 @@ ALERT_PURGE_INTERVAL_S = 24 * 3600                                  # daily
 ARP_MAC_INTERVAL_S = int(os.environ.get("ARP_MAC_COLLECT_INTERVAL_S", str(6 * 3600)))
 MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7 * 24 * 3600)))
 HOSTNAME_CHECK_INTERVAL_S = int(os.environ.get("HOSTNAME_CHECK_INTERVAL_S", str(24 * 3600)))
+UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
 # Heartbeat the local collector frequently; with the default 300s tick it
 # effectively fires every tick (well under the 600s health window).
 COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
@@ -67,6 +68,7 @@ class Command(BaseCommand):
             ["arp_mac", ARP_MAC_INTERVAL_S, self._collect_arp_mac, False, None],
             ["mac_vendors", MAC_VENDOR_INTERVAL_S, self._update_mac_vendors, False, None],
             ["hostname_check", HOSTNAME_CHECK_INTERVAL_S, self._check_hostnames, False, None],
+            ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
         ]
         now = time.monotonic()
@@ -144,6 +146,11 @@ class Command(BaseCommand):
         logger.info("scheduler: verifying device hostnames (SNMP sysName / DNS)")
         from apps.devices.hostname_check import check_all_hostnames
         check_all_hostnames()
+
+    def _sync_unifi(self):
+        logger.info("scheduler: syncing enabled UniFi controllers")
+        from apps.integrations.unifi_sync import sync_all_controllers
+        sync_all_controllers()
 
     def _collector_heartbeat(self):
         # Refresh the local collector's last_seen_at so its health reflects a

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import EmailSettings, NetBoxImport, SMTP_VAULT_PATH
+from .models import EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiController
 
 
 class NetBoxImportSerializer(serializers.ModelSerializer):
@@ -61,4 +61,45 @@ class EmailSettingsSerializer(serializers.ModelSerializer):
         if password:
             from apps.credentials import vault
             vault.write_secret(SMTP_VAULT_PATH, {"password": password})
+        return instance
+
+
+class UnifiControllerSerializer(serializers.ModelSerializer):
+    # Write-only: written to OpenBao when supplied; never returned.
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    password_set = serializers.SerializerMethodField()
+    site_name = serializers.CharField(source="site.name", read_only=True, default=None)
+
+    class Meta:
+        model = UnifiController
+        fields = (
+            "id", "name", "host", "port", "username", "verify_ssl", "unifi_site_id",
+            "site", "site_name", "enabled", "last_sync", "last_error",
+            "device_count", "password", "password_set",
+        )
+        read_only_fields = ("id", "last_sync", "last_error", "device_count")
+
+    def get_password_set(self, obj) -> bool:
+        from apps.credentials import vault
+        try:
+            return bool((vault.read_secret(obj.vault_path) or {}).get("password"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        controller = UnifiController.objects.create(**validated_data)
+        if password:
+            from apps.credentials import vault
+            vault.write_secret(controller.vault_path, {"password": password})
+        return controller
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        if password:
+            from apps.credentials import vault
+            vault.write_secret(instance.vault_path, {"password": password})
         return instance

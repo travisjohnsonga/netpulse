@@ -1,10 +1,11 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import EmailSettingsView, EmailTestView, NetBoxImportViewSet
+from .views import EmailSettingsView, EmailTestView, NetBoxImportViewSet, UnifiControllerViewSet
 
 router = DefaultRouter()
 router.register("netbox", NetBoxImportViewSet, basename="netbox-import")
+router.register("unifi", UnifiControllerViewSet, basename="unifi-controller")
 
 urlpatterns = [
     path("email/", EmailSettingsView.as_view(), name="email-settings"),
