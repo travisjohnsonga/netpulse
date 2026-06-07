@@ -110,3 +110,33 @@ class TestNetBoxImport:
 
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/import/netbox/").status_code == 401
+
+
+class TestNetBoxPreview:
+    def test_preview_does_not_write(self, auth_client):
+        resp = auth_client.post("/api/import/netbox/preview/", {
+            "netbox_url": "https://n.example.com", "api_token": "t",
+        }, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["total"] == 2
+        assert body["summary"]["will_create"] == 1
+        assert body["summary"]["will_skip"] == 1     # nb-sw-02 has no primary IP
+        # Nothing persisted by a preview.
+        assert not Device.objects.filter(hostname="nb-rtr-01").exists()
+        assert not Site.objects.filter(name="DC-1").exists()
+
+    def test_preview_marks_update_and_credential(self, auth_client):
+        from apps.credentials.models import CredentialProfile, SiteCredential
+        # Pre-create the device + a site credential so preview shows update + cred.
+        site = Site.objects.create(name="DC-1")
+        cred = CredentialProfile.objects.create(name="dc1-creds")
+        SiteCredential.objects.create(site=site, credential_profile=cred, role=None)
+        Device.objects.create(hostname="nb-rtr-01", ip_address="10.10.0.1", site=site, platform="other")
+        body = auth_client.post("/api/import/netbox/preview/", {
+            "netbox_url": "https://n.example.com", "api_token": "t",
+        }, format="json").json()
+        rtr = next(d for d in body["devices"] if d["hostname"] == "nb-rtr-01")
+        assert rtr["action"] == "update" and "platform" in rtr["changes"]
+        assert rtr["credential"] == "dc1-creds"
+        assert body["credentials"]["assignments"].get("dc1-creds") == 1

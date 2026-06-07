@@ -69,6 +69,53 @@ class SiteViewSet(viewsets.ModelViewSet):
         devices = site.devices.all()
         return Response(DeviceListSerializer(devices, many=True).data)
 
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["get", "post"], url_path="credentials")
+    def credentials(self, request, pk=None):
+        """List (GET) or add (POST) credential-profile assignments for this site."""
+        from apps.credentials.models import SiteCredential
+        from apps.credentials.serializers import SiteCredentialSerializer
+        site = self.get_object()
+        if request.method == "GET":
+            qs = SiteCredential.objects.filter(site=site).select_related(
+                "credential_profile", "role").order_by("priority")
+            return Response(SiteCredentialSerializer(qs, many=True).data)
+        ser = SiteCredentialSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save(site=site)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["delete"], url_path=r"credentials/(?P<cred_id>[^/.]+)")
+    def delete_credential(self, request, pk=None, cred_id=None):
+        """Remove a credential assignment from this site."""
+        from apps.credentials.models import SiteCredential
+        site = self.get_object()
+        deleted, _ = SiteCredential.objects.filter(site=site, pk=cred_id).delete()
+        if not deleted:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["get"], url_path="suggest-credential")
+    def suggest_credential(self, request, pk=None):
+        """Suggest the credential a new device at this site (+ optional role) would
+        inherit. ``?role=<id>``. Returns {credential_profile, name, scope} or nulls."""
+        from apps.credentials.site_resolve import resolve_credential
+        site = self.get_object()
+        role_id = request.query_params.get("role") or None
+        profile = resolve_credential(site.id, role_id)
+        if not profile:
+            return Response({"credential_profile": None, "name": None, "scope": None})
+        # Describe the match for the UI hint.
+        from apps.credentials.models import SiteCredential
+        role_match = role_id and SiteCredential.objects.filter(
+            site=site, role_id=role_id, credential_profile=profile).exists()
+        return Response({
+            "credential_profile": profile.id, "name": profile.name,
+            "scope": "role" if role_match else "all roles",
+        })
+
 
 class DeviceGroupViewSet(viewsets.ModelViewSet):
     queryset = DeviceGroup.objects.all()
@@ -856,6 +903,11 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         # Auto-assign role/site from hostname rules (won't override the job's site).
         from .hostname_rules import apply_hostname_rules
         apply_hostname_rules(device)
+
+        # Inherit a site credential profile if none was set (now that role/site
+        # are resolved). Never overrides an explicit/job credential.
+        from apps.credentials.site_resolve import apply_site_credential
+        apply_site_credential(device)
 
         # Enrich in the background (SNMP/SSH device info → interfaces → LLDP).
         from .enrich import trigger_enrich

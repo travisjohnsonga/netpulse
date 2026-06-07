@@ -135,6 +135,21 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
                 exc, logger, "netbox test-connection",
                 public="Could not connect to NetBox. Check the URL and API token.")})
 
+    @extend_schema(request=NetBoxTestRequestSerializer, responses=None)
+    @action(detail=False, methods=["post"])
+    def preview(self, request):
+        """Dry-run an import — show create/update/skip + credential assignments, no writes."""
+        req = NetBoxImportRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        client = netbox.NetBoxClient(req.validated_data["netbox_url"], req.validated_data["api_token"])
+        try:
+            client.detect_version()
+            return Response(netbox.preview_import(client, req.validated_data.get("import_options") or {}))
+        except netbox.NetBoxError as exc:
+            return Response({"error": safe_detail(exc, logger, "netbox preview",
+                            public="Could not connect to NetBox. Check the URL and API token.")},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
     @extend_schema(request=NetBoxImportRequestSerializer, responses=NetBoxImportSerializer)
     def create(self, request):
         req = NetBoxImportRequestSerializer(data=request.data)

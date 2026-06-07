@@ -2,9 +2,16 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import Modal from './Modal'
 import {
-  netboxTestConnection, netboxImport, fetchNetboxImports,
-  type NetBoxImportRecord,
+  netboxTestConnection, netboxImport, fetchNetboxImports, netboxPreview,
+  type NetBoxImportRecord, type NetBoxPreview,
 } from '../api/client'
+import { parseApiErrors } from '../api/errors'
+
+const ACTION_META: Record<string, { icon: string; cls: string }> = {
+  create: { icon: '✅', cls: 'text-green-600 dark:text-green-400' },
+  update: { icon: '🔄', cls: 'text-blue-600 dark:text-blue-400' },
+  skip: { icon: '⏭️', cls: 'text-gray-400 dark:text-gray-500' },
+}
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:text-gray-100'
@@ -26,9 +33,20 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
   const [result, setResult] = useState<NetBoxImportRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<NetBoxImportRecord[]>([])
+  const [preview, setPreview] = useState<NetBoxPreview | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [filter, setFilter] = useState<'all' | 'create' | 'update' | 'skip'>('all')
 
   const loadHistory = () => fetchNetboxImports().then(setHistory).catch(() => {})
   useEffect(() => { loadHistory() }, [])
+
+  const runPreview = async () => {
+    if (!url || !token) { setError('NetBox URL and API token are required.'); return }
+    setPreviewing(true); setError(null); setPreview(null); setResult(null)
+    try { setPreview(await netboxPreview({ netbox_url: url, api_token: token, import_options: opts })) }
+    catch (e) { setError(parseApiErrors(e, 'Preview failed.')) }
+    finally { setPreviewing(false) }
+  }
 
   const test = async () => {
     setTesting(true); setTestResult(null); setError(null)
@@ -56,8 +74,9 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Close</button>
-          <button onClick={test} disabled={testing || !url || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{testing ? 'Testing…' : 'Test Connection'}</button>
-          <button onClick={runImport} disabled={importing || !url || !token} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{importing ? 'Importing…' : 'Import Now'}</button>
+          <button onClick={test} disabled={testing || !url || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{testing ? 'Testing…' : 'Test'}</button>
+          <button onClick={runPreview} disabled={previewing || !url || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{previewing ? 'Previewing…' : 'Preview'}</button>
+          <button onClick={runImport} disabled={importing || !url || !token} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{importing ? 'Importing…' : preview ? `Import ${preview.summary.will_create + preview.summary.will_update} devices` : 'Import Now'}</button>
         </>
       }
     >
@@ -89,6 +108,37 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
         {testResult && (
           <div className={clsx('rounded-lg px-3 py-2 text-sm border', testResult.ok ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700 text-green-800 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700 text-red-800 dark:text-red-400')}>
             {testResult.ok ? '✅' : '❌'} {testResult.message}
+          </div>
+        )}
+
+        {preview && (
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-green-600 dark:text-green-400 font-medium">{preview.summary.will_create} create</span>
+              <span className="text-blue-600 dark:text-blue-400 font-medium">{preview.summary.will_update} update</span>
+              <span className="text-gray-500 dark:text-gray-400 font-medium">{preview.summary.will_skip} skip</span>
+              <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)} className="ml-auto text-xs border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 dark:bg-gray-900 dark:text-gray-200">
+                <option value="all">All</option><option value="create">Create</option><option value="update">Update</option><option value="skip">Skip</option>
+              </select>
+            </div>
+            <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 border-t border-gray-100 dark:border-gray-700">
+              {preview.devices.filter((d) => filter === 'all' || d.action === filter).map((d, i) => (
+                <div key={i} className="py-1.5 text-xs flex items-center gap-2">
+                  <span className={ACTION_META[d.action]?.cls}>{ACTION_META[d.action]?.icon} {d.action.toUpperCase()}</span>
+                  <span className="font-mono text-gray-700 dark:text-gray-300">{d.hostname}</span>
+                  {d.role && <span className="text-gray-500">{d.role}</span>}
+                  {d.site && <span className="text-gray-400">{d.site}</span>}
+                  {d.credential && <span className="text-purple-600 dark:text-purple-400">🔑 {d.credential}</span>}
+                  {d.action === 'update' && d.changes && d.changes.length > 0 && <span className="text-gray-400">Δ {d.changes.join(', ')}</span>}
+                  {d.action === 'skip' && d.reason && <span className="text-gray-400 italic ml-auto">{d.reason}</span>}
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-gray-600 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700 pt-2">
+              <p className="font-medium mb-1">Credential assignments:</p>
+              {Object.entries(preview.credentials.assignments).map(([name, n]) => <div key={name}>🔑 {name} → {n} device(s)</div>)}
+              {preview.credentials.no_match > 0 && <div className="text-amber-600 dark:text-amber-400">⚠️ {preview.credentials.no_match} device(s) have no credential match</div>}
+            </div>
           </div>
         )}
 

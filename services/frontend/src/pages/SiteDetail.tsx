@@ -7,6 +7,7 @@ import {
 } from '../api/client'
 import SiteFormModal from '../components/SiteFormModal'
 import DeviceLink from '../components/DeviceLink'
+import SiteCredentialsSection from '../components/SiteCredentialsSection'
 
 const TYPE_ICON: Record<string, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
@@ -102,6 +103,7 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
 function Overview({ site }: { site: Site }) {
   const hasGeo = site.latitude && site.longitude
   return (
+    <div className="space-y-4">
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Location</h3>
@@ -138,6 +140,8 @@ function Overview({ site }: { site: Site }) {
           <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{site.notes || '—'}</p>
         </Card>
       </div>
+    </div>
+    <SiteCredentialsSection siteId={site.id} />
     </div>
   )
 }

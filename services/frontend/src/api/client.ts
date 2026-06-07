@@ -841,6 +841,54 @@ export async function fetchNetboxImports(): Promise<NetBoxImportRecord[]> {
   return unwrap(data)
 }
 
+export interface NetBoxPreviewDevice {
+  action: 'create' | 'update' | 'skip'
+  hostname: string
+  ip: string | null
+  platform?: string
+  site?: string | null
+  role?: string | null
+  credential?: string | null
+  reason?: string | null
+  existing_id?: number
+  changes?: string[]
+}
+export interface NetBoxPreview {
+  summary: { total: number; will_create: number; will_update: number; will_skip: number }
+  devices: NetBoxPreviewDevice[]
+  credentials: { assignments: Record<string, number>; no_match: number }
+}
+export async function netboxPreview(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean> }): Promise<NetBoxPreview> {
+  const { data } = await api.post<NetBoxPreview>('/import/netbox/preview/', payload)
+  return data
+}
+
+// ── Site credential assignments ───────────────────────────────────────────────
+export interface SiteCredential {
+  id: number
+  site: number
+  credential_profile: number
+  credential_profile_name: string
+  role: number | null
+  role_name: string | null
+  priority: number
+}
+export async function fetchSiteCredentials(siteId: number): Promise<SiteCredential[]> {
+  const { data } = await api.get<SiteCredential[]>(`/sites/${siteId}/credentials/`)
+  return data
+}
+export async function addSiteCredential(siteId: number, payload: { credential_profile: number; role: number | null; priority: number }): Promise<SiteCredential> {
+  const { data } = await api.post<SiteCredential>(`/sites/${siteId}/credentials/`, payload)
+  return data
+}
+export async function deleteSiteCredential(siteId: number, credId: number): Promise<void> {
+  await api.delete(`/sites/${siteId}/credentials/${credId}/`)
+}
+export async function suggestSiteCredential(siteId: number, roleId?: number | null): Promise<{ credential_profile: number | null; name: string | null; scope: string | null }> {
+  const { data } = await api.get(`/sites/${siteId}/suggest-credential/`, { params: roleId ? { role: roleId } : {} })
+  return data
+}
+
 // ── Email / SMTP settings (Settings → Integrations → Email) ───────────────────
 export interface EmailProviderPreset {
   host: string; port: number; use_tls: boolean; use_ssl: boolean; username?: string; help: string

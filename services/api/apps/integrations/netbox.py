@@ -102,6 +102,50 @@ def _device_role(nb_device: dict) -> str:
     return (role or {}).get("name", "") if isinstance(role, dict) else ""
 
 
+def _resolve_role_obj(role_name: str):
+    """Match a NetBox role name to an existing DeviceRole (None if unmatched)."""
+    if not role_name:
+        return None
+    from apps.devices.models import DeviceRole
+    return DeviceRole.objects.filter(name__iexact=role_name).first()
+
+
+def _compute_device(nb: dict, site_by_name: dict):
+    """
+    Extract NetPulse device fields from a NetBox device. Returns ``(info, reason)``:
+    ``info`` is None only when there's no hostname; ``reason`` is a skip message
+    (e.g. no IP). For preview, sites are resolved against existing rows only.
+    """
+    hostname = nb.get("name")
+    if not hostname:
+        return None, "No hostname in NetBox"
+    primary = nb.get("primary_ip") or {}
+    ip_cidr = primary.get("address") if isinstance(primary, dict) else None
+    ip = ip_cidr.split("/")[0] if ip_cidr else None
+
+    dtype = nb.get("device_type") or {}
+    manufacturer = (dtype.get("manufacturer") or {}).get("name", "") if isinstance(dtype, dict) else ""
+    model = dtype.get("model", "") if isinstance(dtype, dict) else ""
+    platform_obj = nb.get("platform") or {}
+    platform_name = (platform_obj or {}).get("name", "") if isinstance(platform_obj, dict) else ""
+    status_val = (nb.get("status") or {}).get("value", "active") if isinstance(nb.get("status"), dict) else "active"
+
+    nb_site = nb.get("site") or {}
+    site_name = nb_site.get("name") if isinstance(nb_site, dict) else None
+    site = site_by_name.get(site_name) if site_name else None
+    if site is None and site_name:
+        from apps.devices.models import Site
+        site = Site.objects.filter(name=site_name).first()
+
+    info = {
+        "hostname": hostname, "ip": ip, "vendor": manufacturer, "model": model,
+        "platform": map_platform(platform_name or model),
+        "status": _STATUS_MAP.get(status_val, "inactive"),
+        "site": site, "site_name": site_name, "role_name": _device_role(nb),
+    }
+    return info, (None if ip else "No IP address in NetBox")
+
+
 def run_import(client: NetBoxClient, options: dict) -> dict:
     """
     Import sites then devices from NetBox. Returns a summary dict. Skips devices
@@ -168,6 +212,7 @@ def run_import(client: NetBoxClient, options: dict) -> dict:
                     site = Site.objects.filter(name=site_name).first()
 
                 role = _device_role(nb)
+                role_obj = _resolve_role_obj(role)
                 tags = [t.get("name") for t in (nb.get("tags") or []) if isinstance(t, dict)]
                 notes_bits = []
                 if role:
@@ -176,19 +221,26 @@ def run_import(client: NetBoxClient, options: dict) -> dict:
                     notes_bits.append(f"Tags: {', '.join(tags)}")
                 notes_bits.append("Imported from NetBox")
 
-                _, created = Device.objects.update_or_create(
-                    hostname=hostname,
-                    defaults=dict(
-                        ip_address=ip,
-                        management_ip=ip,
-                        vendor=manufacturer,
-                        model=model,
-                        platform=map_platform(platform_name or model),
-                        status=_STATUS_MAP.get(status_val, "inactive"),
-                        site=site,
-                        notes="\n".join(notes_bits),
-                    ),
+                defaults = dict(
+                    ip_address=ip,
+                    management_ip=ip,
+                    vendor=manufacturer,
+                    model=model,
+                    platform=map_platform(platform_name or model),
+                    status=_STATUS_MAP.get(status_val, "inactive"),
+                    site=site,
+                    notes="\n".join(notes_bits),
                 )
+                # Only set role when it maps to an existing DeviceRole, so a
+                # re-import never nulls a manually-assigned role.
+                if role_obj:
+                    defaults["role"] = role_obj
+                device, created = Device.objects.update_or_create(
+                    hostname=hostname, defaults=defaults,
+                )
+                # Inherit a site credential profile if none is set.
+                from apps.credentials.site_resolve import apply_site_credential
+                apply_site_credential(device)
                 summary["devices_imported" if created else "devices_updated"] += 1
             except Exception as exc:  # never let one record abort the import
                 summary["errors"].append(f"{nb.get('name', '?')}: {exc}")
@@ -196,3 +248,81 @@ def run_import(client: NetBoxClient, options: dict) -> dict:
 
     summary["finished_at"] = timezone.now()
     return summary
+
+
+def preview_import(client: NetBoxClient, options: dict) -> dict:
+    """
+    Dry-run: compute what an import would create/update/skip — and which credential
+    each device would inherit — WITHOUT writing anything. Returns the preview dict
+    (``summary`` + per-device ``devices`` + ``credentials`` assignment counts).
+    """
+    from apps.credentials.site_resolve import resolve_credential
+    from apps.devices.models import Device
+
+    site_by_name: dict = {}   # preview never creates sites; resolve existing only
+    devices: list[dict] = []
+    will = {"create": 0, "update": 0, "skip": 0}
+    cred_counts: dict[str, int] = {}
+    no_cred = 0
+
+    for nb in client.get_devices():
+        info, reason = _compute_device(nb, site_by_name)
+        if info is None:
+            devices.append({"action": "skip", "hostname": nb.get("name") or "?",
+                            "ip": None, "platform": "unknown", "reason": reason})
+            will["skip"] += 1
+            continue
+        if reason:  # no IP
+            devices.append({"action": "skip", "hostname": info["hostname"], "ip": info["ip"],
+                            "platform": info["platform"], "reason": reason})
+            will["skip"] += 1
+            continue
+
+        ip, hostname = info["ip"], info["hostname"]
+        ip_owner = Device.objects.filter(ip_address=ip).exclude(hostname=hostname).first()
+        if ip_owner:
+            devices.append({"action": "skip", "hostname": hostname, "ip": ip,
+                            "platform": info["platform"],
+                            "reason": f"IP {ip} already used by {ip_owner.hostname}"})
+            will["skip"] += 1
+            continue
+
+        role_obj = _resolve_role_obj(info["role_name"])
+        cred = resolve_credential(info["site"].id if info["site"] else None,
+                                  role_obj.id if role_obj else None)
+        cred_name = cred.name if cred else None
+
+        existing = Device.objects.filter(hostname=hostname).first()
+        entry = {"hostname": hostname, "ip": ip, "platform": info["platform"],
+                 "site": info["site_name"], "role": info["role_name"] or None,
+                 "credential": cred_name, "reason": None}
+        if existing:
+            changes = []
+            if existing.platform != info["platform"]:
+                changes.append("platform")
+            if existing.site_id != (info["site"].id if info["site"] else None):
+                changes.append("site")
+            if role_obj and existing.role_id != role_obj.id:
+                changes.append("role")
+            if existing.status != info["status"]:
+                changes.append("status")
+            if (existing.model or "") != (info["model"] or ""):
+                changes.append("model")
+            entry.update(action="update", existing_id=existing.id, changes=changes)
+            will["update"] += 1
+        else:
+            entry["action"] = "create"
+            will["create"] += 1
+        devices.append(entry)
+
+        if cred_name:
+            cred_counts[cred_name] = cred_counts.get(cred_name, 0) + 1
+        else:
+            no_cred += 1
+
+    return {
+        "summary": {"total": len(devices), "will_create": will["create"],
+                    "will_update": will["update"], "will_skip": will["skip"]},
+        "devices": devices,
+        "credentials": {"assignments": cred_counts, "no_match": no_cred},
+    }

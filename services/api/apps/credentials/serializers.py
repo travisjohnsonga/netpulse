@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from . import vault
-from .models import CredentialProfile
+from .models import CredentialProfile, SiteCredential
 
 # Write-only secret inputs. Accepted on write, forwarded to OpenBao as one
 # object, never persisted to PostgreSQL and never echoed on read.
@@ -132,3 +132,15 @@ class CredentialProfileListSerializer(serializers.ModelSerializer):
             "id", "name", "enabled_protocols", "device_count",
             "last_tested", "last_test_result", "created_at",
         )
+
+
+class SiteCredentialSerializer(serializers.ModelSerializer):
+    """A site→credential mapping (optionally scoped to a role)."""
+    credential_profile_name = serializers.CharField(source="credential_profile.name", read_only=True)
+    role_name = serializers.CharField(source="role.name", read_only=True, default=None)
+
+    class Meta:
+        model = SiteCredential
+        fields = ("id", "site", "credential_profile", "credential_profile_name",
+                  "role", "role_name", "priority")
+        read_only_fields = ("id", "site")

@@ -124,3 +124,31 @@ class CredentialProfile(TimestampedModel):
     @property
     def device_count(self) -> int:
         return self.devices.count()
+
+
+class SiteCredential(models.Model):
+    """
+    Maps a CredentialProfile to a Site (optionally scoped to a DeviceRole), so a
+    device added/discovered into that site auto-inherits matching credentials.
+    Resolution prefers a role-specific rule, then a site-wide (role=None) rule;
+    lower ``priority`` wins. See apps.credentials.site_resolve.
+    """
+    site = models.ForeignKey(
+        "devices.Site", on_delete=models.CASCADE, related_name="site_credentials")
+    credential_profile = models.ForeignKey(
+        "credentials.CredentialProfile", on_delete=models.CASCADE,
+        related_name="site_credentials")
+    role = models.ForeignKey(
+        "devices.DeviceRole", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="site_credentials",
+        help_text="Leave blank to apply to all roles at this site")
+    priority = models.IntegerField(
+        default=100, help_text="Lower = higher priority. More specific rules win.")
+
+    class Meta:
+        ordering = ["priority"]
+        unique_together = [["site", "role", "credential_profile"]]
+
+    def __str__(self):
+        role = self.role.name if self.role else "All roles"
+        return f"{self.site.name} / {role} → {self.credential_profile.name}"
