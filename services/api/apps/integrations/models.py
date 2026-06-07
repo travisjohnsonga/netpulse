@@ -42,3 +42,46 @@ class NetBoxImport(TimestampedModel):
 
     def __str__(self):
         return f"NetBox import {self.netbox_url} ({self.status})"
+
+
+# OpenBao path holding the SMTP password (key "password"); never stored in the DB.
+SMTP_VAULT_PATH = "netpulse/integrations/smtp"
+
+
+class EmailSettings(TimestampedModel):
+    """
+    Singleton SMTP configuration for outbound alert email, editable from
+    Settings → Integrations. The password lives in OpenBao (SMTP_VAULT_PATH);
+    only non-secret connection settings are stored here. Use ``load()`` to fetch
+    the single row.
+    """
+    class Provider(models.TextChoices):
+        CUSTOM = "custom", "Custom SMTP"
+        GMAIL = "gmail", "Gmail"
+        MICROSOFT365 = "m365", "Microsoft 365"
+        SENDGRID = "sendgrid", "SendGrid"
+        MAILGUN = "mailgun", "Mailgun"
+
+    provider = models.CharField(max_length=20, choices=Provider.choices, default=Provider.CUSTOM)
+    host = models.CharField(max_length=255, blank=True)
+    port = models.IntegerField(default=587)
+    username = models.CharField(max_length=255, blank=True)
+    use_tls = models.BooleanField(default=True)
+    use_ssl = models.BooleanField(default=False)
+    from_email = models.CharField(max_length=255, blank=True)
+    from_name = models.CharField(max_length=128, default="NetPulse")
+    enabled = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Email Settings"
+        verbose_name_plural = "Email Settings"
+
+    def __str__(self):
+        return f"EmailSettings({self.provider}, {'enabled' if self.enabled else 'disabled'})"
+
+    @classmethod
+    def load(cls) -> "EmailSettings":
+        obj = cls.objects.first()
+        if obj is None:
+            obj = cls.objects.create()
+        return obj

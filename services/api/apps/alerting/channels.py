@@ -7,15 +7,29 @@ logger = logging.getLogger(__name__)
 
 
 def send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
-    """Send a plain-text alert email. Returns (ok, error). Never raises."""
+    """Send a plain-text alert email. Returns (ok, error). Never raises.
+
+    Prefers the UI-configured SMTP (Settings → Integrations → Email) when it's
+    enabled, otherwise falls back to the env-configured Django mail backend.
+    """
     from django.conf import settings
     from django.core.mail import send_mail
 
     if not to_email:
         return False, "no recipient"
+
+    connection = None
     from_email = getattr(settings, "EMAIL_FROM", None) or getattr(settings, "DEFAULT_FROM_EMAIL", "netpulse@localhost")
     try:
-        send_mail(subject, body, from_email, [to_email], fail_silently=False)
+        from apps.integrations.email import configured_connection
+        conn, frm = configured_connection()
+        if conn is not None:
+            connection, from_email = conn, frm
+    except Exception as exc:  # noqa: BLE001 — fall back to the env backend
+        logger.debug("EmailSettings unavailable, using env mail backend: %s", exc)
+
+    try:
+        send_mail(subject, body, from_email, [to_email], fail_silently=False, connection=connection)
         return True, ""
     except Exception as exc:
         logger.warning("alert email to %s failed: %s", to_email, exc)

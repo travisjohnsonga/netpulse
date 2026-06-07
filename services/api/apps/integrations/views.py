@@ -2,23 +2,62 @@ import logging
 
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
 from apps.credentials import vault
 
 from . import netbox
+from .email import PROVIDER_PRESETS, send_test_email
 
 logger = logging.getLogger(__name__)
-from .models import NetBoxImport
+from .models import EmailSettings, NetBoxImport
 from .serializers import (
+    EmailSettingsSerializer,
     NetBoxImportRequestSerializer,
     NetBoxImportSerializer,
     NetBoxTestRequestSerializer,
     NetBoxTestResponseSerializer,
 )
+
+
+class EmailSettingsView(APIView):
+    """GET / PUT the singleton SMTP configuration (Settings → Integrations → Email)."""
+
+    @extend_schema(responses=EmailSettingsSerializer)
+    def get(self, request):
+        data = EmailSettingsSerializer(EmailSettings.load()).data
+        data["provider_presets"] = PROVIDER_PRESETS
+        return Response(data)
+
+    @extend_schema(request=EmailSettingsSerializer, responses=EmailSettingsSerializer)
+    def put(self, request):
+        ser = EmailSettingsSerializer(EmailSettings.load(), data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(EmailSettingsSerializer(EmailSettings.load()).data)
+
+
+class EmailTestView(APIView):
+    """Send a test email with the saved settings to verify the configuration."""
+
+    @extend_schema(
+        request=drf_serializers.Serializer,
+        responses=drf_serializers.Serializer,
+    )
+    def post(self, request):
+        to = (request.data or {}).get("to", "")
+        if not to:
+            return Response({"error": "A recipient address ('to') is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        ok, err = send_test_email(to)
+        if ok:
+            return Response({"sent": True})
+        return Response({"sent": False, "error": err or "Failed to send test email."},
+                        status=status.HTTP_502_BAD_GATEWAY)
 
 
 class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):

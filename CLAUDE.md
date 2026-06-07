@@ -79,7 +79,9 @@ DiscoveryJob, DiscoveredDevice) · credentials (CredentialProfile; secrets in Op
 (TelemetryConfig, MonitoredInterface) · compliance (CompliancePolicy/Rule, ComplianceResult, +engine,
 templates, overrides) · alerts (AlertRule, AlertEvent, AlertChannel) · cve · lifecycle · security
 (DeviceRiskScore) · collectors · configbackup (ConfigBackupSettings, DeviceConfig) · integrations
-(NetBox/DNA import) · logs (OpenSearch + LogFilter regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·
+(NetBox/DNA import; EmailSettings — SMTP for alert email, provider presets, password in OpenBao at
+netpulse/integrations/smtp; GET/PUT /api/integrations/email/ + /test/) · logs (OpenSearch + LogFilter
+regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·
 checks (ServiceCheck, CheckResult; http/https/tcp/icmp/dns/tls/smtp/ssh_banner) · alerting (Team,
 EscalationPolicy, AlertRoute — Stage 1: route matching + email) · sso (SSOProvider; Google OAuth2
 Stage 1) · arp_mac (ARPEntry, MACEntry, MACVendor — SSH collection + OUI lookup) · mibs.

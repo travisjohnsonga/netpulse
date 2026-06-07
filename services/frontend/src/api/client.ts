@@ -841,6 +841,41 @@ export async function fetchNetboxImports(): Promise<NetBoxImportRecord[]> {
   return unwrap(data)
 }
 
+// ── Email / SMTP settings (Settings → Integrations → Email) ───────────────────
+export interface EmailProviderPreset {
+  host: string; port: number; use_tls: boolean; use_ssl: boolean; username?: string; help: string
+}
+export interface EmailSettings {
+  provider: string
+  host: string
+  port: number
+  username: string
+  use_tls: boolean
+  use_ssl: boolean
+  from_email: string
+  from_name: string
+  enabled: boolean
+  password_set?: boolean
+  provider_presets?: Record<string, EmailProviderPreset>
+}
+
+export async function fetchEmailSettings(): Promise<EmailSettings> {
+  const { data } = await api.get<EmailSettings>('/integrations/email/')
+  return data
+}
+
+export async function saveEmailSettings(
+  payload: Partial<EmailSettings> & { password?: string },
+): Promise<EmailSettings> {
+  const { data } = await api.put<EmailSettings>('/integrations/email/', payload)
+  return data
+}
+
+export async function sendTestEmail(to: string): Promise<{ sent: boolean; error?: string }> {
+  const { data } = await api.post<{ sent: boolean; error?: string }>('/integrations/email/test/', { to })
+  return data
+}
+
 // ── Config backup settings ───────────────────────────────────────────────────
 
 export interface ConfigBackupSettings {
