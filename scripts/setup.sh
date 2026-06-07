@@ -350,6 +350,16 @@ if [ -n "$ci" ] && [ "$ci" != "127.0.0.1" ]; then
   env_set REACT_APP_WS_URL  "ws://${ci}:$(env_get API_PORT || echo 8000)"
 fi
 
+# Record the HOST's IP for the containers. Detection inside a container returns
+# the container/bridge IP (172.x), so we capture the real host IP here (on the
+# host, before the stack starts); register_local_collector + config generation
+# use it so devices are pointed at the host, not a container.
+host_ip="$(_detect_host_ip)"
+if [ -n "$host_ip" ]; then
+  env_set NETPULSE_HOST_IP "$host_ip"
+  info "host IP for collectors: $host_ip"
+fi
+
 # Make sure the dashboard is reachable by IP (Django rejects unlisted Hosts).
 # Done before the stack starts so the api reads the final value on first boot.
 merge_allowed_hosts

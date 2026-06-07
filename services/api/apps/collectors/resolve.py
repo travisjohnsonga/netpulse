@@ -23,5 +23,7 @@ def effective_collector_ip(device) -> str:
     collector = effective_collector(device)
     if collector and collector.collector_ip:
         return collector.collector_ip
-    from django.conf import settings
-    return getattr(settings, "COLLECTOR_IP", "") or ""
+    # Fall back to the detected HOST IP (NETPULSE_HOST_IP / COLLECTOR_IP / allowed
+    # hosts) so generated configs never point devices at a container IP.
+    from .host_ip import get_host_ip
+    return get_host_ip() or ""

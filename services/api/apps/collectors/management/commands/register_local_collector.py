@@ -11,7 +11,6 @@ refresh the heartbeat (last_seen_at). See apps.collectors.models.Collector.
 """
 from __future__ import annotations
 
-import ipaddress
 import logging
 import socket
 
@@ -32,27 +31,13 @@ LOCAL_CAPABILITIES = {
 
 
 def _server_ip() -> str | None:
-    """Configured COLLECTOR_IP, else a best-effort primary IP, else None."""
-    from django.conf import settings
+    """The host's LAN IP (NETPULSE_HOST_IP / COLLECTOR_IP / allowed-hosts / route).
 
-    configured = (getattr(settings, "COLLECTOR_IP", "") or "").strip()
-    if configured:
-        # Only trust a configured value that's actually an IP — a corrupted
-        # COLLECTOR_IP (e.g. a stray shell comment) must not be written to the
-        # collector_ip inet column, which would raise and break registration.
-        try:
-            ipaddress.ip_address(configured)
-            return configured
-        except ValueError:
-            logger.warning("COLLECTOR_IP %r is not a valid IP address — ignoring and "
-                           "auto-detecting the server IP instead.", configured)
-    # Best-effort: the outbound-route source address (no traffic actually sent).
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except OSError:
-        return None
+    Devices must reach this IP, so it has to be the HOST IP — not the container
+    IP that bare socket detection returns inside Docker. See host_ip.get_host_ip.
+    """
+    from apps.collectors.host_ip import get_host_ip
+    return get_host_ip()
 
 
 def register_local_collector() -> Collector:
@@ -72,6 +57,17 @@ def register_local_collector() -> Collector:
     collector, _created = Collector.objects.update_or_create(
         collector_type=Collector.CollectorType.LOCAL, defaults=defaults,
     )
+    # Self-heal a stored Docker-bridge IP (172.16.0.0/12) left by an older build
+    # that detected the container IP — replace it with the real host IP if we can
+    # resolve one that isn't itself a container address.
+    from apps.collectors.host_ip import is_docker_ip
+    if is_docker_ip(collector.collector_ip):
+        real = _server_ip()
+        if real and not is_docker_ip(real):
+            logger.info("Corrected collector IP %s → %s (was a Docker bridge address)",
+                        collector.collector_ip, real)
+            collector.collector_ip = real
+            collector.save(update_fields=["collector_ip"])
     # Make the local server the global default when no other default exists, so
     # devices with no explicit collector resolve to it (see resolve.py).
     if not Collector.objects.filter(is_default=True).exclude(pk=collector.pk).exists():
