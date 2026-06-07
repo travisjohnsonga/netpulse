@@ -242,3 +242,31 @@ Before public v1.0:
 
 Collector deployment (post v1.0): `docker-compose.collector.yml`, role selection in setup.sh,
 collector-agent forwarding service (mTLS/buffer/replay), multi-collector test, docs.
+
+## Marketing Website (post v1.0)
+
+- [ ] Create marketing/docs website (separate from the ReadTheDocs technical docs).
+
+  Content:
+  - Hero section with screenshots/demo
+  - Feature highlights with visuals
+  - Quick install one-liner
+  - Platform support matrix
+  - Architecture overview diagram
+  - Getting started guide
+  - Screenshots of key UI pages: Dashboard · Device detail (telemetry) · Flow analytics + Sankey ·
+    CVE intelligence · Config compliance · Config diff viewer
+
+  Tech options:
+  - Static site: Astro, Hugo, or Jekyll (can live in a `/website` folder in the monorepo)
+  - Hosted: GitHub Pages (free, auto-deploy)
+  - Domain: whatever name we settle on
+
+  GitHub Pages setup:
+  - Branch: `gh-pages`
+  - Auto-deploy via GitHub Actions on push
+
+  Screenshots:
+  - Take screenshots of the running local lab
+  - Store in `/website/static/screenshots/`
+  - Use the dark-mode UI for marketing appeal
