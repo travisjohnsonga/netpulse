@@ -4,6 +4,7 @@ import {
   fetchMe, updateMe, savePreferences, changePassword,
   type Me, type UserPreferences,
 } from '../api/client'
+import { parseApiErrors } from '../api/errors'
 import { useThemeStore, type Theme } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
 
@@ -176,7 +177,7 @@ function AccountSection({ me, onSaved, onError }: { me: Me; onSaved: (m: Me) => 
     try {
       const updated = await updateMe({ email, first_name: first, last_name: last })
       onSaved(updated); setSaved(true); setTimeout(() => setSaved(false), 2000)
-    } catch { onError('Failed to save account info.') } finally { setSaving(false) }
+    } catch (e) { onError(parseApiErrors(e, 'Failed to save account info.')) } finally { setSaving(false) }
   }
 
   return (
@@ -226,9 +227,7 @@ function PasswordSection({ onError }: { onError: (e: string | null) => void }) {
       await changePassword(cur, next)
       setMsg('Password updated.'); setCur(''); setNext(''); setConfirm('')
     } catch (e: unknown) {
-      const data = (e as { response?: { data?: Record<string, string[] | string> } })?.response?.data
-      const detail = data ? Object.values(data).flat().join(' ') : 'Failed to update password.'
-      onError(detail)
+      onError(parseApiErrors(e, 'Failed to update password.'))
     } finally { setBusy(false) }
   }
 

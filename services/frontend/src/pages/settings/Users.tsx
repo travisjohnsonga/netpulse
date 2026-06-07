@@ -8,11 +8,10 @@ import {
   fetchUsers, createUser, updateUser, deleteUser,
   type AdminUser, type UserRole as RoleId,
 } from '../../api/client'
+import { parseApiErrors } from '../../api/errors'
 
 function apiError(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: { error?: string; detail?: string; password?: string[] } } }
-  const d = e?.response?.data
-  return d?.error || d?.detail || d?.password?.[0] || fallback
+  return parseApiErrors(err, fallback)
 }
 
 function relTime(iso: string | null): string {

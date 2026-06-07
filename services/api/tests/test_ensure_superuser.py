@@ -35,3 +35,27 @@ class TestEnsureSuperuser:
         monkeypatch.delenv("DJANGO_SUPERUSER_PASSWORD", raising=False)
         call_command("ensure_superuser")
         assert not User.objects.filter(is_superuser=True).exists()
+
+    def test_invalid_env_email_defaults_to_valid(self, monkeypatch):
+        _env(monkeypatch, DJANGO_SUPERUSER_USERNAME="root3",
+             DJANGO_SUPERUSER_PASSWORD="S3cure!pass1", DJANGO_SUPERUSER_EMAIL="admin@netpulse")
+        call_command("ensure_superuser")
+        assert User.objects.get(username="root3").email == "admin@netpulse.local"
+
+    def test_repairs_existing_invalid_email(self, monkeypatch):
+        u = User.objects.create_superuser(username="root4", email="x", password="orig!pass99", role="admin")
+        u.email = "admin@netpulse"  # bypass validation (no full_clean on save)
+        u.save(update_fields=["email"])
+        _env(monkeypatch, DJANGO_SUPERUSER_USERNAME="root4", DJANGO_SUPERUSER_PASSWORD="whatever!99")
+        call_command("ensure_superuser")
+        u.refresh_from_db()
+        assert u.email == "admin@netpulse.local"
+
+    def test_leaves_valid_and_blank_email_alone(self, monkeypatch):
+        good = User.objects.create_superuser(username="root5", email="ops@example.com", password="p!ass1234", role="admin")
+        blank = User.objects.create_superuser(username="root6", email="", password="p!ass1234", role="admin")
+        for name in ("root5", "root6"):
+            _env(monkeypatch, DJANGO_SUPERUSER_USERNAME=name, DJANGO_SUPERUSER_PASSWORD="x")
+            call_command("ensure_superuser")
+        good.refresh_from_db(); blank.refresh_from_db()
+        assert good.email == "ops@example.com" and blank.email == ""

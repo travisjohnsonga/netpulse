@@ -12,6 +12,7 @@ import {
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
   type CredentialProfileListItem, type DiscoveryProgress, type Site,
 } from '../../api/client'
+import { parseApiErrors } from '../../api/errors'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
@@ -43,8 +44,7 @@ const METHOD_DESC: Record<DiscoveryMethod, string> = {
 }
 
 function apiError(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: { error?: string; detail?: string } } }
-  return e?.response?.data?.error || e?.response?.data?.detail || fallback
+  return parseApiErrors(err, fallback)
 }
 
 // Device platforms offered when approving an unidentified device.

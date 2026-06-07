@@ -16,8 +16,22 @@ from __future__ import annotations
 import os
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand
+from django.core.validators import validate_email
 from django.db import IntegrityError
+
+# Valid default — Django's EmailField rejects address with no TLD (e.g.
+# "admin@netpulse"), which would otherwise block every profile save for the user.
+DEFAULT_ADMIN_EMAIL = "admin@netpulse.local"
+
+
+def _is_valid_email(value: str) -> bool:
+    try:
+        validate_email(value)
+        return True
+    except ValidationError:
+        return False
 
 
 class Command(BaseCommand):
@@ -26,15 +40,29 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         username = os.environ.get("DJANGO_SUPERUSER_USERNAME")
         password = os.environ.get("DJANGO_SUPERUSER_PASSWORD")
-        email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
+        email = (os.environ.get("DJANGO_SUPERUSER_EMAIL", "") or "").strip()
+        # Never seed an invalid email — Django would reject any later profile save.
+        if not _is_valid_email(email):
+            email = DEFAULT_ADMIN_EMAIL
 
         if not username or not password:
             self.stdout.write("DJANGO_SUPERUSER_USERNAME/PASSWORD not set — skipping superuser seed.")
             return
 
         User = get_user_model()
-        if User.objects.filter(username=username).exists():
-            self.stdout.write(f"Superuser '{username}' already exists — leaving it unchanged.")
+        existing = User.objects.filter(username=username).first()
+        if existing:
+            # Repair a non-blank INVALID stored email (e.g. "admin@netpulse") so
+            # the user isn't permanently blocked from saving their profile. A
+            # blank email is allowed by the serializer, so leave those alone.
+            if existing.email and not _is_valid_email(existing.email):
+                old = existing.email
+                existing.email = DEFAULT_ADMIN_EMAIL
+                existing.save(update_fields=["email"])
+                self.stdout.write(self.style.SUCCESS(
+                    f"Superuser '{username}': repaired invalid email {old!r} → {DEFAULT_ADMIN_EMAIL}."))
+            else:
+                self.stdout.write(f"Superuser '{username}' already exists — leaving it unchanged.")
             return
 
         try:
