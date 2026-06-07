@@ -481,6 +481,15 @@ def enrich_device(device_id: int) -> dict:
         logger.info("SNMP/SSH enrichment complete for %s: %s", device.hostname,
                     {f: getattr(device, f) for f in changed})
 
+    # Verify the hostname against the network (SNMP sysName / DNS) and update it
+    # if it changed — stamps hostname_verified_at, raises an info alert on change,
+    # and re-applies hostname rules. Best-effort.
+    try:
+        from .hostname_check import check_and_update_hostname
+        check_and_update_hostname(device)
+    except Exception as exc:  # noqa: BLE001 — never block enrichment
+        logger.warning("Hostname verification failed for %s: %s", device.hostname, exc)
+
     # Auto-assign role/site from hostname rules now that the hostname is known
     # (enrichment may have corrected it, e.g. AOS-CX/SonicWall REST). Best-effort:
     # only fills an unset role/site, never overrides an existing assignment.

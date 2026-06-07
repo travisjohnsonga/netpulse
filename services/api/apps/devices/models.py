@@ -165,6 +165,9 @@ class Device(TimestampedModel):
         OTHER = "other", "Other"
 
     hostname = models.CharField(max_length=255, unique=True, db_index=True)
+    # When the hostname was last verified against the network (SNMP sysName / DNS)
+    # by apps.devices.hostname_check. Null until the first verification.
+    hostname_verified_at = models.DateTimeField(null=True, blank=True)
     ip_address = models.GenericIPAddressField(unique=True, db_index=True)
     management_ip = models.GenericIPAddressField(null=True, blank=True)
     vendor = models.CharField(max_length=100, blank=True)

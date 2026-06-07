@@ -94,6 +94,8 @@ export interface Device {
   // Display-only hostname (domain suffix optionally stripped). The serializer
   // always returns it; use `display_hostname || hostname` when rendering.
   display_hostname: string
+  // When the hostname was last verified against the network (SNMP sysName / DNS).
+  hostname_verified_at?: string | null
   ip_address: string
   management_ip: string | null
   platform: string
@@ -498,6 +500,14 @@ export async function pollDeviceNow(deviceId: number): Promise<{ status: string;
 // Re-run SNMP/SSH enrichment + interface/LLDP discovery in the background.
 export async function enrichDevice(deviceId: number): Promise<{ status: string; device_id: number }> {
   const { data } = await api.post(`/devices/${deviceId}/enrich/`)
+  return data
+}
+
+// Re-verify the device hostname now (SNMP sysName / DNS). Updates if changed.
+export async function checkHostname(deviceId: number): Promise<{
+  hostname_changed: boolean; old_hostname: string; new_hostname: string
+}> {
+  const { data } = await api.post(`/devices/${deviceId}/check-hostname/`)
   return data
 }
 
@@ -1595,6 +1605,8 @@ export interface DeviceDetail {
   // Display-only hostname (domain suffix optionally stripped); SSH/SNMP/syslog
   // still use `hostname`. Always returned by the serializer.
   display_hostname: string
+  // When the hostname was last verified against the network (SNMP sysName / DNS).
+  hostname_verified_at?: string | null
   ip_address: string
   management_ip: string | null
   vendor: string

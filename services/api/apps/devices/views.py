@@ -1,7 +1,7 @@
 import logging
 
-from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework import status, viewsets
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -399,6 +399,22 @@ class DeviceViewSet(viewsets.ModelViewSet):
              "detail": None if scheduled else "No credential profile, or enrichment is disabled."},
             status=status.HTTP_202_ACCEPTED,
         )
+
+    @extend_schema(
+        summary="Re-verify the device's hostname (SNMP sysName / DNS) now",
+        request=None,
+        responses=inline_serializer("CheckHostnameResponse", {
+            "hostname_changed": serializers.BooleanField(),
+            "old_hostname": serializers.CharField(),
+            "new_hostname": serializers.CharField(),
+        }),
+    )
+    @action(detail=True, methods=["post"], url_path="check-hostname")
+    def check_hostname(self, request, pk=None):
+        """Synchronously re-check this device's hostname and update it if changed."""
+        from .hostname_check import check_and_update_hostname
+        device = self.get_object()
+        return Response(check_and_update_hostname(device))
 
     @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="poll-now")

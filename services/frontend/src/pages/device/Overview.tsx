@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
-  fetchDeviceMetrics, enrichDevice,
+  fetchDeviceMetrics, enrichDevice, checkHostname,
   type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig, type DeviceMetrics,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
@@ -79,6 +79,22 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
     setTimeout(() => onRefresh?.(), 5000)
   }
 
+  const [verifyingHostname, setVerifyingHostname] = useState(false)
+  const [verifyMsg, setVerifyMsg] = useState<string | null>(null)
+  const verifyHostname = async () => {
+    setVerifyingHostname(true); setVerifyMsg(null)
+    try {
+      const r = await checkHostname(device.id)
+      setVerifyMsg(r.hostname_changed ? `Updated: ${r.old_hostname} → ${r.new_hostname}` : 'Hostname is current')
+      if (r.hostname_changed) onRefresh?.()
+    } catch {
+      setVerifyMsg('Verification failed')
+    } finally {
+      setVerifyingHostname(false)
+      setTimeout(() => setVerifyMsg(null), 4000)
+    }
+  }
+
   const reachable = device.status === 'active'
 
   const m = metrics?.metrics
@@ -133,6 +149,14 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
             </dd>
           </div>
         </dl>
+        <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center gap-3 flex-wrap text-xs text-gray-500 dark:text-gray-400">
+          <span>Hostname last verified: <span className="text-gray-700 dark:text-gray-300">{hostnameVerifiedLabel(device.hostname_verified_at)}</span></span>
+          <button onClick={verifyHostname} disabled={verifyingHostname}
+            className="px-2 py-0.5 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 font-medium">
+            {verifyingHostname ? 'Verifying…' : 'Verify Now'}
+          </button>
+          {verifyMsg && <span className="text-blue-600 dark:text-blue-400">{verifyMsg}</span>}
+        </div>
       </Card>
 
       {/* Status indicators */}
@@ -257,6 +281,17 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
 
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={clsx('bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4', className)}>{children}</div>
+}
+
+// "2h ago" / "3d ago" / "just now" — or "never" when the hostname has not yet
+// been verified against the network.
+function hostnameVerifiedLabel(iso?: string | null): string {
+  if (!iso) return 'never'
+  const sec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (sec < 60) return 'just now'
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`
+  return `${Math.floor(sec / 86400)}d ago`
 }
 
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

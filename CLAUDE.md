@@ -90,7 +90,16 @@ ONE scheduler: the `run_scheduler` management-command loop (compose `scheduler` 
 openbao-data:ro). Celery/django-celery-beat are in requirements but UNUSED — do NOT add a second
 scheduler; add periodic work to run_scheduler. Startup one-shots (idempotent): seed alert rules,
 unseal OpenBao, load OUI registry if empty. Periodic (tick 300s): alert purge (daily), ARP/MAC
-collection (6h), MAC-vendor OUI refresh (weekly); 6h/weekly tasks first fire one interval after start.
+collection (6h), MAC-vendor OUI refresh (weekly), hostname verification (24h,
+`HOSTNAME_CHECK_INTERVAL_S`); recurring tasks first fire one interval after start.
+
+**Hostname verification** (`apps/devices/hostname_check.py`): re-checks active devices' hostnames via
+SNMP sysName (1.3.6.1.2.1.1.5.0) then DNS reverse lookup; on a change it updates the device, raises an
+INFO alert ("Device hostname changed", never auto-resolved), and re-applies hostname rules
+(role/site). Every check stamps `Device.hostname_verified_at`. Also runs during device enrichment
+(re-run enrichment / discovery approval) and on demand via `POST /api/devices/{id}/check-hostname/`
+(returns `{hostname_changed, old_hostname, new_hostname}`). Interval via `HOSTNAME_CHECK_INTERVAL_S`
+(default 86400s).
 
 ## Selected API Endpoints
 
