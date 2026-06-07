@@ -40,6 +40,7 @@ import Topology from './pages/Topology'
 import NetworkLookup from './pages/NetworkLookup'
 import ApiDocs from './pages/ApiDocs'
 import Login from './pages/Login'
+import ForcePasswordChange from './pages/ForcePasswordChange'
 import OnboardingWizard from './components/OnboardingWizard'
 import { useAuthStore } from './store/authStore'
 
@@ -54,6 +55,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 function AppRoutes() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const mustChangePassword = useAuthStore((s) => s.mustChangePassword)
   // Onboarding visibility is decided by the backend (no devices AND this user
   // hasn't dismissed it) — not a localStorage flag, which made the wizard
   // reappear on every new browser/session even on a configured system.
@@ -66,6 +68,19 @@ function AppRoutes() {
       .then((s) => setOnboarding(s.show_onboarding ? 'show' : 'skip'))
       .catch(() => setOnboarding('skip'))   // fail open → straight to the app
   }, [isAuthenticated])
+
+  // Forced password change takes precedence over onboarding and the app: an
+  // account on the default password (must_change_password) is confined to
+  // /change-password until it picks a new one (which mints fresh tokens that
+  // clear the flag). Placed after all hooks to keep their call order stable.
+  if (isAuthenticated && mustChangePassword) {
+    return (
+      <Routes>
+        <Route path="/change-password" element={<ForcePasswordChange />} />
+        <Route path="*" element={<Navigate to="/change-password" replace />} />
+      </Routes>
+    )
+  }
 
   if (isAuthenticated && onboarding === 'loading') {
     return (

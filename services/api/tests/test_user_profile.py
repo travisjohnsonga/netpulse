@@ -60,6 +60,8 @@ class TestChangePassword:
             "current_password": "oldpass123", "new_password": "BrandNew!pass99",
         }, format="json")
         assert resp.status_code == 200
+        # Fresh tokens are returned so the SPA can drop the forced-change gate.
+        assert "access" in resp.json() and "refresh" in resp.json()
         user.refresh_from_db()
         assert user.check_password("BrandNew!pass99")
 
@@ -76,3 +78,53 @@ class TestChangePassword:
             "current_password": "oldpass123", "new_password": "123",
         }, format="json")
         assert resp.status_code == 400
+
+    def test_change_clears_must_change_password(self, auth_client, user):
+        user.set_password("oldpass123"); user.must_change_password = True; user.save()
+        resp = auth_client.post("/api/users/me/change-password/", {
+            "current_password": "oldpass123", "new_password": "BrandNew!pass99",
+        }, format="json")
+        assert resp.status_code == 200
+        user.refresh_from_db()
+        assert user.must_change_password is False
+
+    def test_new_same_as_current_rejected(self, auth_client, user):
+        user.set_password("SamePass123"); user.save()
+        resp = auth_client.post("/api/users/me/change-password/", {
+            "current_password": "SamePass123", "new_password": "SamePass123",
+        }, format="json")
+        assert resp.status_code == 400
+
+    def test_default_password_rejected(self, auth_client, user):
+        user.set_password("oldpass123"); user.save()
+        resp = auth_client.post("/api/users/me/change-password/", {
+            "current_password": "oldpass123", "new_password": "NetPulse1!",
+        }, format="json")
+        assert resp.status_code == 400
+
+    def test_missing_uppercase_or_digit_rejected(self, auth_client, user):
+        user.set_password("oldpass123"); user.save()
+        # no uppercase
+        assert auth_client.post("/api/users/me/change-password/", {
+            "current_password": "oldpass123", "new_password": "lowercase99",
+        }, format="json").status_code == 400
+        # no digit
+        assert auth_client.post("/api/users/me/change-password/", {
+            "current_password": "oldpass123", "new_password": "NoDigitsHere",
+        }, format="json").status_code == 400
+
+
+class TestMustChangePasswordFlag:
+    def test_login_response_includes_flag(self, api_client, user):
+        user.set_password("loginpass123"); user.must_change_password = True; user.save()
+        resp = api_client.post("/api/auth/token/", {
+            "username": user.username, "password": "loginpass123",
+        }, format="json")
+        assert resp.status_code == 200
+        assert resp.json().get("must_change_password") is True
+
+    def test_me_exposes_flag(self, auth_client, user):
+        user.must_change_password = True; user.save()
+        resp = auth_client.get("/api/users/me/")
+        assert resp.status_code == 200
+        assert resp.json().get("must_change_password") is True

@@ -130,34 +130,23 @@ _detect_host_ip() {
   printf '%s' "$ip"
 }
 
-# Force the admin password from .env onto the running stack. ensure_superuser is
-# idempotent and leaves an EXISTING user's password untouched, so on a re-install
-# over a persisted DB the freshly shown password would not actually work. We pass
-# the password via STDIN (never argv) so any special characters survive intact.
-apply_admin_password() {
-  local user pass
+# Report the admin account's password state on the running stack. Echoes:
+#   default  – admin exists and still has the forced-change default password
+#   custom   – admin exists and has already changed its password
+#   missing  – admin row not found (stack not seeded yet)
+#   unknown  – could not query (stack not running)
+# ensure_superuser seeds the admin with the fixed default + must_change_password
+# on first start; we never reset an existing/changed password from here.
+admin_password_state() {
+  local user out
   user="$(_clean_env_value "$(env_get DJANGO_SUPERUSER_USERNAME)")"; [ -z "$user" ] && user="admin"
-  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"
-  [ -z "$pass" ] && return 0
-  if printf '%s' "$pass" | $COMPOSE exec -T -e NP_ADMIN_USER="$user" api \
-       python manage.py shell -c '
-import os, sys
+  out="$($COMPOSE exec -T -e NP_ADMIN_USER="$user" api python manage.py shell -c '
+import os
 from django.contrib.auth import get_user_model
-U = get_user_model()
-name = os.environ["NP_ADMIN_USER"]
-pw = sys.stdin.read()
-u = U.objects.filter(username=name).first()
-if u is None:
-    U.objects.create_superuser(username=name, email="", password=pw, role="admin")
-else:
-    u.set_password(pw); u.is_active = True; u.save()
-print("ok")
-' >/dev/null 2>&1; then
-    ok "Admin password applied to the running stack"
-  else
-    warn "Could not apply the admin password automatically."
-    warn "After the stack is up, run: ./netpulse.sh reset-admin-password"
-  fi
+u = get_user_model().objects.filter(username=os.environ["NP_ADMIN_USER"]).first()
+print("default" if (u and u.must_change_password) else ("custom" if u else "missing"))
+' 2>/dev/null | tr -d '\r' | grep -E '^(default|custom|missing)$' | tail -1)"
+  printf '%s' "${out:-unknown}"
 }
 
 # Ensure DJANGO_ALLOWED_HOSTS lets the dashboard be reached by IP. Django (in
@@ -383,10 +372,15 @@ ok "Web UI: HTTP $(env_get FRONTEND_PORT) (redirects to HTTPS) / HTTPS $(env_get
 echo
 
 # ── 2. credentials ────────────────────────────────────────────────────────────
+# The initial admin is seeded with a FIXED default password and flagged
+# must_change_password — the UI forces a change on first login. We don't prompt
+# for (or generate) a password here; the operator sets their own after logging in.
+DEFAULT_ADMIN_PASSWORD="NetPulse1!"
 echo "${BOLD}2. Admin credentials${N}"
-ask        DJANGO_SUPERUSER_USERNAME "Admin username" "$(env_get DJANGO_SUPERUSER_USERNAME)"
-ask        DJANGO_SUPERUSER_EMAIL    "Admin email"    "$(env_get DJANGO_SUPERUSER_EMAIL)"
-ask_secret DJANGO_SUPERUSER_PASSWORD "Admin password" 12
+ask DJANGO_SUPERUSER_USERNAME "Admin username" "$(env_get DJANGO_SUPERUSER_USERNAME)"
+ask DJANGO_SUPERUSER_EMAIL    "Admin email"    "$(env_get DJANGO_SUPERUSER_EMAIL)"
+env_set DJANGO_SUPERUSER_PASSWORD "$DEFAULT_ADMIN_PASSWORD"
+info "admin starts with the default password '${DEFAULT_ADMIN_PASSWORD}' — you'll be required to change it on first login"
 echo
 
 # ── 2b. infrastructure secrets ──────────────────────────────────────────────────
@@ -503,9 +497,6 @@ if yesno "Pull and start NetPulse now?" Y; then
     warn "Some health checks failed (see report above). Re-run later with: ./netpulse.sh health"
   fi
   echo
-  # Make sure the admin password we're about to display actually works — the
-  # idempotent entrypoint seeder won't update an already-existing user.
-  apply_admin_password
   # Confirm the running api will accept browser requests to this server's IP.
   verify_allowed_hosts
   echo
@@ -524,14 +515,30 @@ fi
 # it would otherwise be unknown. Show it prominently and save a 0600 reference
 # file — the api container creates the superuser from these .env values on start.
 show_credentials() {
-  local host user pass https_port url cred_file
+  local host user pass https_port url cred_file state
   host="$(_clean_env_value "$(env_get COLLECTOR_IP)")"
   [ -z "$host" ] && host="$(_detect_host_ip)"
   [ -z "$host" ] && host="localhost"
   user="$(_clean_env_value "$(env_get DJANGO_SUPERUSER_USERNAME)")"; [ -z "$user" ] && user="admin"
-  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"
+  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"   # the fixed default (NetPulse1!)
   https_port="$(_clean_env_value "$(env_get FRONTEND_HTTPS_PORT)")"; [ -z "$https_port" ] && https_port="443"
   if [ "$https_port" = "443" ]; then url="https://${host}"; else url="https://${host}:${https_port}"; fi
+
+  # If this admin already changed its password (re-install over a persisted DB),
+  # don't print the default — it would be wrong.
+  state="$(admin_password_state)"
+  if [ "$state" = "custom" ]; then
+    echo
+    echo "${BOLD}╔══════════════════════════════════════════════════════╗${N}"
+    echo "${BOLD}║              NETPULSE LOGIN                          ║${N}"
+    echo "${BOLD}╚══════════════════════════════════════════════════════╝${N}"
+    echo "   URL:      ${url}"
+    echo "   Username: ${user}"
+    ok "This admin already has a custom password (left unchanged)."
+    echo "   Forgot it?  ./netpulse.sh reset-admin-password"
+    echo
+    return
+  fi
 
   echo
   echo "${BOLD}╔══════════════════════════════════════════════════════╗${N}"
@@ -540,9 +547,7 @@ show_credentials() {
   echo "   URL:      ${url}"
   echo "   Username: ${user}"
   echo "   Password: ${BOLD}${pass}${N}"
-  echo
-  warn "Save this password — it won't be shown again!"
-  echo "   Change it after first login:  Settings → Users → ${user} → Change Password"
+  echo "${BOLD}   ⚠️  You will be required to change this password on first login.${N}"
   echo
 
   cred_file="$HOME/netpulse-credentials.txt"
@@ -553,8 +558,8 @@ URL: ${url}
 Username: ${user}
 Password: ${pass}
 
-IMPORTANT: Change this password after first login!
-Delete this file after saving the credentials securely.
+You will be required to change this password on first login.
+Delete this file after your first login.
 EOF
   chmod 600 "$cred_file"
   ok "Credentials also saved to: ${cred_file}"

@@ -68,9 +68,9 @@ export default function Login() {
     setLoading(true)
     setError(null)
     try {
-      const { access, refresh } = await login(username, password)
+      const { access, refresh, must_change_password } = await login(username, password)
       setTokens(access, refresh)
-      navigate(from, { replace: true })
+      navigate(must_change_password ? '/change-password' : from, { replace: true })
     } catch {
       setError('Invalid username or password.')
     } finally {

@@ -6,6 +6,7 @@ interface JWTPayload {
   role?: string
   name?: string
   email?: string
+  must_change_password?: boolean
   exp: number
 }
 
@@ -24,6 +25,7 @@ interface AuthState {
   role: string | null
   name: string | null
   email: string | null
+  mustChangePassword: boolean
   isAuthenticated: boolean
   setTokens: (access: string, refresh: string) => void
   setAccessToken: (access: string) => void
@@ -39,6 +41,7 @@ export const useAuthStore = create<AuthState>()(
       role: null,
       name: null,
       email: null,
+      mustChangePassword: false,
       isAuthenticated: false,
 
       setTokens: (access, refresh) => {
@@ -50,6 +53,7 @@ export const useAuthStore = create<AuthState>()(
           role: payload?.role ?? null,
           name: payload?.name || null,
           email: payload?.email || null,
+          mustChangePassword: payload?.must_change_password === true,
           isAuthenticated: true,
         })
       },
@@ -62,6 +66,7 @@ export const useAuthStore = create<AuthState>()(
           role: payload?.role ?? null,
           name: payload?.name || null,
           email: payload?.email || null,
+          mustChangePassword: payload?.must_change_password === true,
           isAuthenticated: true,
         })
       },
@@ -74,6 +79,7 @@ export const useAuthStore = create<AuthState>()(
           role: null,
           name: null,
           email: null,
+          mustChangePassword: false,
           isAuthenticated: false,
         }),
     }),
@@ -86,6 +92,7 @@ export const useAuthStore = create<AuthState>()(
         role: s.role,
         name: s.name,
         email: s.email,
+        mustChangePassword: s.mustChangePassword,
         isAuthenticated: s.isAuthenticated,
       }),
     },

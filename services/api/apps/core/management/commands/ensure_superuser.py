@@ -40,6 +40,9 @@ class Command(BaseCommand):
         try:
             User.objects.create_superuser(
                 username=username, email=email, password=password, role="admin",
+                # The initial admin starts on the fixed default password and must
+                # change it on first login (enforced by the SPA + change-password API).
+                must_change_password=True,
             )
         except IntegrityError:
             # Lost a create race with another process — fine, the user now exists.

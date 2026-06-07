@@ -343,8 +343,13 @@ export async function fetchConfigDiff(
 
 // ── API calls ────────────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string): Promise<{ access: string; refresh: string }> {
-  const { data } = await api.post<{ access: string; refresh: string }>('/auth/token/', { username, password })
+export async function login(
+  username: string,
+  password: string,
+): Promise<{ access: string; refresh: string; must_change_password?: boolean }> {
+  const { data } = await api.post<{ access: string; refresh: string; must_change_password?: boolean }>(
+    '/auth/token/', { username, password },
+  )
   return data
 }
 
@@ -1222,8 +1227,14 @@ export async function savePreferences(payload: Partial<UserPreferences>): Promis
   return data
 }
 
-export async function changePassword(current_password: string, new_password: string): Promise<void> {
-  await api.post('/users/me/change-password/', { current_password, new_password })
+export async function changePassword(
+  current_password: string,
+  new_password: string,
+): Promise<{ access?: string; refresh?: string }> {
+  const { data } = await api.post<{ access?: string; refresh?: string }>(
+    '/users/me/change-password/', { current_password, new_password },
+  )
+  return data
 }
 
 // ── Admin user management (Settings → Users) ─────────────────────────────────

@@ -23,6 +23,7 @@ from .serializers import (
     AdminUserSerializer,
     ChangePasswordSerializer,
     MeSerializer,
+    NetPulseTokenObtainPairSerializer,
     UserPreferencesSerializer,
 )
 
@@ -507,11 +508,22 @@ class ChangePasswordView(APIView):
 
     @extend_schema(
         request=ChangePasswordSerializer,
-        responses=inline_serializer("ChangePasswordResponse", {"detail": serializers.CharField()}),
+        responses=inline_serializer("ChangePasswordResponse", {
+            "detail": serializers.CharField(),
+            "access": serializers.CharField(),
+            "refresh": serializers.CharField(),
+        }),
         summary="Change current user's password",
     )
     def post(self, request):
         ser = ChangePasswordSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response({"detail": "Password updated."})
+        user = ser.save()
+        # Mint fresh tokens so the client's claims (notably must_change_password)
+        # reflect the change immediately without re-logging-in.
+        refresh = NetPulseTokenObtainPairSerializer.get_token(user)
+        return Response({
+            "detail": "Password updated.",
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+        })

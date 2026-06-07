@@ -33,7 +33,15 @@ class NetPulseTokenObtainPairSerializer(TokenObtainPairSerializer):
         # carry them too.
         token["email"]    = user.email or ""
         token["name"]     = f"{user.first_name} {user.last_name}".strip()
+        # Drives the forced-password-change gate in the SPA (also returned in the
+        # login response body below for convenience).
+        token["must_change_password"] = bool(getattr(user, "must_change_password", False))
         return token
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data["must_change_password"] = bool(getattr(self.user, "must_change_password", False))
+        return data
 
 
 class UserPreferencesSerializer(serializers.ModelSerializer):
@@ -52,6 +60,7 @@ class MeSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, allow_blank=True)
     role = serializers.CharField(read_only=True)
     is_superuser = serializers.BooleanField(read_only=True)
+    must_change_password = serializers.BooleanField(read_only=True)
     preferences = UserPreferencesSerializer(read_only=True)
 
     def update(self, instance, validated_data):
@@ -102,6 +111,11 @@ class AdminUserSerializer(serializers.ModelSerializer):
         return instance
 
 
+# The fixed default password the initial admin is seeded with — must be changed
+# on first login and may never be chosen as the new password.
+DEFAULT_ADMIN_PASSWORD = "NetPulse1!"
+
+
 class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
@@ -113,11 +127,29 @@ class ChangePasswordSerializer(serializers.Serializer):
         return value
 
     def validate_new_password(self, value):
+        # Explicit complexity rules (in addition to Django's configured
+        # AUTH_PASSWORD_VALIDATORS): >= 8 chars, an uppercase letter and a digit.
+        if len(value) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters.")
+        if not any(c.isupper() for c in value):
+            raise serializers.ValidationError("Password must contain an uppercase letter.")
+        if not any(c.isdigit() for c in value):
+            raise serializers.ValidationError("Password must contain a number.")
+        if value == DEFAULT_ADMIN_PASSWORD:
+            raise serializers.ValidationError("Choose a password other than the default.")
         password_validation.validate_password(value, self.context["request"].user)
         return value
+
+    def validate(self, attrs):
+        if attrs.get("new_password") == attrs.get("current_password"):
+            raise serializers.ValidationError(
+                {"new_password": "New password must be different from the current password."})
+        return attrs
 
     def save(self):
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
-        user.save(update_fields=["password"])
+        # Clear the forced-change gate now that they've chosen their own password.
+        user.must_change_password = False
+        user.save(update_fields=["password", "must_change_password"])
         return user

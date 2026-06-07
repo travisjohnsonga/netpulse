@@ -19,6 +19,8 @@ class TestEnsureSuperuser:
         u = User.objects.get(username="root1")
         assert u.is_superuser and u.is_staff and u.role == "admin"
         assert u.check_password("S3cure!pass1")
+        # Seeded admin must be forced to change the default password on first login.
+        assert u.must_change_password is True
 
     def test_idempotent_leaves_existing_untouched(self, monkeypatch):
         u = User.objects.create_superuser(username="root2", email="", password="orig!pass99", role="admin")

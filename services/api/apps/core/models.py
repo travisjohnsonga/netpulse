@@ -27,6 +27,10 @@ class NetPulseUser(AbstractUser):
         db_index=True,
     )
 
+    # Set on the seeded initial admin (default password) so the UI forces a
+    # password change on first login. Cleared once the user picks a new password.
+    must_change_password = models.BooleanField(default=False)
+
     class Meta(AbstractUser.Meta):
         swappable = "AUTH_USER_MODEL"
 
