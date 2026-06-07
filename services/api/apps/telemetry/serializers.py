@@ -55,16 +55,25 @@ class MonitoredInterfaceSerializer(serializers.ModelSerializer):
         # the many interfaces serialized in one response.
         cache = self.context.setdefault("_neighbor_device_ids", {})
         if name not in cache:
+            import ipaddress
+
             from django.db.models import Q
 
             from apps.devices.models import Device
 
+            # LLDP neighbor names are usually hostnames. Only compare against the
+            # IP columns (management_ip/ip_address are PostgreSQL inet) when the
+            # name is actually a valid IP — otherwise postgres raises ValueError
+            # ("… does not appear to be an IPv4 or IPv6 address") and 500s.
+            q = Q(hostname__iexact=name)
+            try:
+                ipaddress.ip_address(name)
+                q |= Q(management_ip=name) | Q(ip_address=name)
+            except ValueError:
+                pass
+
             cache[name] = (
-                Device.objects.filter(
-                    Q(hostname__iexact=name) | Q(management_ip=name) | Q(ip_address=name)
-                )
-                .values_list("id", flat=True)
-                .first()
+                Device.objects.filter(q).values_list("id", flat=True).first()
             )
         return cache[name]
 

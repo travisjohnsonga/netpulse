@@ -11,12 +11,16 @@ refresh the heartbeat (last_seen_at). See apps.collectors.models.Collector.
 """
 from __future__ import annotations
 
+import ipaddress
+import logging
 import socket
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.collectors.models import LOCAL_API_KEY_SENTINEL, Collector
+
+logger = logging.getLogger(__name__)
 
 LOCAL_CAPABILITIES = {
     "snmp": True,
@@ -31,9 +35,17 @@ def _server_ip() -> str | None:
     """Configured COLLECTOR_IP, else a best-effort primary IP, else None."""
     from django.conf import settings
 
-    configured = getattr(settings, "COLLECTOR_IP", "") or ""
+    configured = (getattr(settings, "COLLECTOR_IP", "") or "").strip()
     if configured:
-        return configured
+        # Only trust a configured value that's actually an IP — a corrupted
+        # COLLECTOR_IP (e.g. a stray shell comment) must not be written to the
+        # collector_ip inet column, which would raise and break registration.
+        try:
+            ipaddress.ip_address(configured)
+            return configured
+        except ValueError:
+            logger.warning("COLLECTOR_IP %r is not a valid IP address — ignoring and "
+                           "auto-detecting the server IP instead.", configured)
     # Best-effort: the outbound-route source address (no traffic actually sent).
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:

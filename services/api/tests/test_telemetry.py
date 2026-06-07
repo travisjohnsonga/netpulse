@@ -273,6 +273,24 @@ class TestInterfaces:
         assert rows["Gi0/1"]["lldp_neighbor_device_id"] is None
         assert rows["Gi0/2"]["lldp_neighbor_device_id"] is None
 
+    def test_neighbor_resolves_by_ip(self, auth_client, device):
+        # An LLDP neighbor name that's an IP resolves against the inet columns.
+        neighbor = Device.objects.create(hostname="edge1", ip_address="10.9.0.7", status="active")
+        MonitoredInterface.objects.create(device=device, if_name="Gi1/0", lldp_neighbor_hostname="10.9.0.7")
+        rows = {r["if_name"]: r for r in auth_client.get(f"/api/devices/{device.id}/interfaces/").json()}
+        assert rows["Gi1/0"]["lldp_neighbor_device_id"] == neighbor.id
+
+    def test_non_ip_neighbor_name_does_not_500(self, auth_client, device):
+        # A non-IP neighbor name (here a corrupted value) must not be compared
+        # against the inet columns — that raised ValueError / 500 on PostgreSQL.
+        MonitoredInterface.objects.create(
+            device=device, if_name="Gi2/0",
+            lldp_neighbor_hostname="# ─── Done ─────────────────")
+        resp = auth_client.get(f"/api/devices/{device.id}/interfaces/")
+        assert resp.status_code == 200
+        rows = {r["if_name"]: r for r in resp.json()}
+        assert rows["Gi2/0"]["lldp_neighbor_device_id"] is None
+
 
 # ── config generation + push ──────────────────────────────────────────────────
 
