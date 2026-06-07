@@ -7,7 +7,7 @@ import { SectionHeader } from '../Settings'
 import {
   fetchDiscoveryJobs, createDiscoveryJob, updateDiscoveryJob, runDiscoveryJob,
   restartDiscoveryJob, cancelDiscoveryJob, deleteDiscoveryJob,
-  fetchDiscoveredDevices, approveDiscoveredDevice, rejectDiscoveredDevice,
+  approveDiscoveredDevice, rejectDiscoveredDevice,
   fetchCredentials, fetchDiscoveryProgress, fetchJobDiscovered, fetchSites,
   type DiscoveryJob, type DiscoveryMethod, type DiscoveredDevice,
   type CredentialProfileListItem, type DiscoveryProgress, type Site,
@@ -72,34 +72,6 @@ function InventoryBadge({ deviceId }: { deviceId: number }) {
       className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-medium">
       Already in inventory →
     </Link>
-  )
-}
-
-// Device-category badge (network device / endpoint / printer / unknown).
-const CATEGORY_META: Record<DiscoveredDevice['device_category'], { icon: string; label: string; cls: string }> = {
-  network_device: { icon: '🔀', label: 'Network', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-  endpoint: { icon: '💻', label: 'Endpoint', cls: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' },
-  server: { icon: '🖥', label: 'Server', cls: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' },
-  printer: { icon: '🖨', label: 'Printer', cls: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' },
-  unknown: { icon: '?', label: 'Unknown', cls: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' },
-}
-
-function CategoryBadge({ category }: { category: DiscoveredDevice['device_category'] }) {
-  const m = CATEGORY_META[category] ?? CATEGORY_META.unknown
-  return (
-    <span className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', m.cls)}>
-      <span>{m.icon}</span>{m.label}
-    </span>
-  )
-}
-
-function OsDetected({ d }: { d: DiscoveredDevice }) {
-  if (!d.os_detected) return <span className="text-gray-400 dark:text-gray-500">—</span>
-  return (
-    <span className="text-gray-600 dark:text-gray-400">
-      {d.os_detected}
-      {d.os_accuracy != null && <span className="text-gray-400 dark:text-gray-500"> ({d.os_accuracy}%)</span>}
-    </span>
   )
 }
 
@@ -297,7 +269,6 @@ function BulkBar({ count, approving, progress, onApprove, onClear }: {
 
 export default function Discovery() {
   const [jobs, setJobs] = useState<DiscoveryJob[]>([])
-  const [pending, setPending] = useState<DiscoveredDevice[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
@@ -307,15 +278,10 @@ export default function Discovery() {
   const [sites, setSites] = useState<Site[]>([])
   const [approving, setApproving] = useState<DiscoveredDevice | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Hide endpoints/workstations from the pending queue (default on). When off,
-  // we fetch with show_all and render endpoint rows muted.
-  const [hideEndpoints, setHideEndpoints] = useState(true)
 
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(null), 3000) }
   const openNew = () => { setEditJob(null); setShowModal(true) }
   const openEdit = (j: DiscoveryJob) => { setEditJob(j); setShowModal(true) }
-
-  const bulk = useBulkApprove(pending, (s) => { flash(bulkResultMessage(s)); load(true) })
 
   const startJob = async (j: DiscoveryJob) => {
     setBusyId(j.id); setError(null)
@@ -344,13 +310,11 @@ export default function Discovery() {
   // and remount the expandable job rows (which would collapse them).
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true)
-    // Fetch endpoints too (show_all) when the hide-endpoints toggle is off, so
-    // they can be shown (muted); otherwise let the server filter them out.
-    Promise.all([fetchDiscoveryJobs(), fetchDiscoveredDevices('pending', !hideEndpoints)])
-      .then(([j, p]) => { setJobs(j); setPending(p); setError(null) })
+    fetchDiscoveryJobs()
+      .then((j) => { setJobs(j); setError(null) })
       .catch(() => setError('Failed to load discovery data.'))
       .finally(() => { if (!silent) setLoading(false) })
-  }, [hideEndpoints])
+  }, [])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { fetchCredentials().then(setProfiles).catch(() => {}) }, [])
@@ -417,97 +381,6 @@ export default function Discovery() {
               </div>
             )}
           </div>
-
-          {/* Pending discovered devices */}
-          {(() => {
-          // When hiding endpoints, drop endpoint rows from the view (the server
-          // already filters them out, but keep this defensive). When showing,
-          // render them muted via the row styling below.
-          const visiblePending = hideEndpoints
-            ? pending.filter((d) => d.device_category !== 'endpoint')
-            : pending
-          return (
-          <>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-              Pending approval {visiblePending.length > 0 && <span className="text-amber-600 dark:text-amber-400">({visiblePending.length})</span>}
-            </h3>
-            <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
-              <input type="checkbox" checked={hideEndpoints}
-                onChange={(e) => setHideEndpoints(e.target.checked)}
-                className="cursor-pointer" />
-              Hide endpoints / workstations
-            </label>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            {visiblePending.length === 0 ? (
-              <div className="px-5 py-8 text-center text-sm text-gray-400 dark:text-gray-500">No devices awaiting approval.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <div className="px-3 pt-3">
-                  <BulkBar count={bulk.selected.size} approving={bulk.approving} progress={bulk.progress}
-                    onApprove={bulk.approveSelected} onClear={bulk.clear} />
-                </div>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
-                      <th className="px-5 py-3 font-medium w-8">
-                        <input ref={bulk.headerRef} type="checkbox" checked={bulk.allChecked}
-                          disabled={bulk.eligibleCount === 0} onChange={bulk.toggleAll}
-                          className="cursor-pointer disabled:opacity-40" title="Select all approvable" />
-                      </th>
-                      <th className="px-5 py-3 font-medium">IP</th>
-                      <th className="px-5 py-3 font-medium">Hostname</th>
-                      <th className="px-5 py-3 font-medium">Category</th>
-                      <th className="px-5 py-3 font-medium">OS Detected</th>
-                      <th className="px-5 py-3 font-medium">Vendor / Platform</th>
-                      <th className="px-5 py-3 font-medium">Confidence</th>
-                      <th className="px-5 py-3 font-medium text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {visiblePending.map((d) => (
-                      <tr key={d.id} className={clsx('hover:bg-gray-50 dark:hover:bg-gray-700/50',
-                        busyId === d.id && 'opacity-50',
-                        d.device_category === 'endpoint' && 'text-gray-400 dark:text-gray-500 bg-gray-50/50 dark:bg-gray-900/20')}>
-                        <td className="px-5 py-3">
-                          <RowCheckbox d={d} checked={bulk.selected.has(d.id)} onToggle={() => bulk.toggle(d.id)} />
-                        </td>
-                        <td className="px-5 py-3 font-mono text-gray-700 dark:text-gray-300">{d.source_ip}</td>
-                        <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{d.discovered_hostname || '—'}</td>
-                        <td className="px-5 py-3"><CategoryBadge category={d.device_category} /></td>
-                        <td className="px-5 py-3"><OsDetected d={d} /></td>
-                        <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{[d.discovered_vendor, d.discovered_platform].filter(Boolean).join(' / ') || '—'}</td>
-                        <td className="px-5 py-3">
-                          <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium',
-                            d.confidence_score >= 60 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                              : d.confidence_score >= 30 ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                                : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')}>
-                            {d.confidence_score}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center justify-end gap-2">
-                            {d.already_exists && d.existing_device_id != null ? (
-                              <InventoryBadge deviceId={d.existing_device_id} />
-                            ) : (
-                              <>
-                                <button disabled={busyId === d.id} onClick={() => setApproving(d)} className="px-2.5 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50">Approve</button>
-                                <button disabled={busyId === d.id} onClick={() => reject(d)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">Reject</button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-          </>
-          )
-          })()}
         </>
       )}
 
@@ -529,16 +402,6 @@ export default function Discovery() {
           busy={busyId === approving.id}
           onClose={() => setApproving(null)}
           onConfirm={(cid, platform) => confirmApprove(approving, cid, platform)}
-        />
-      )}
-      {bulk.platformPrompt && (
-        <BulkPlatformModal
-          devices={bulk.platformPrompt}
-          choices={bulk.platformChoices}
-          busy={bulk.approving}
-          onChoose={bulk.setPlatformChoice}
-          onCancel={bulk.cancelPrompt}
-          onConfirm={bulk.confirmPrompt}
         />
       )}
     </div>

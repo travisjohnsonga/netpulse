@@ -1399,18 +1399,6 @@ export async function fetchJobDiscovered(jobId: number): Promise<DiscoveredDevic
   return unwrap(data)
 }
 
-export async function fetchDiscoveredDevices(
-  status = 'pending',
-  showAll = false,
-): Promise<DiscoveredDevice[]> {
-  // showAll=true also returns endpoints/workstations (hidden by default server-side).
-  const params = new URLSearchParams({ status })
-  if (showAll) params.set('show_all', 'true')
-  const { data } = await api.get<DiscoveredDevice[] | Paginated<DiscoveredDevice>>(
-    `/devices/discovery/discovered/?${params.toString()}`)
-  return unwrap(data)
-}
-
 export interface ApproveResult {
   device: { id: number; hostname: string }
   already_exists?: boolean
