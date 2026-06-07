@@ -491,9 +491,13 @@ MASQUERADE.
 - Device inventory (Device incl. reachability state: is_reachable, unreachable_since)
 - Sites, device groups, TopologyLink (LLDP), discovery jobs/results
 - CredentialProfile metadata (secrets live in OpenBao, never here)
+- SiteCredential — maps a CredentialProfile to a Site (optionally per DeviceRole, with priority);
+  devices added/discovered into a site auto-inherit the matching profile
 - CVE (CVE, DeviceCVE), LifecycleMilestone, DeviceRiskScore
 - Alert rules/events/channels, config backup settings + DeviceConfig metadata
 - ServiceCheck + CheckResult (agentless monitoring)
+- Integrations: NetBoxImport history, EmailSettings (SMTP), UnifiController / UnifiCloudAccount
+  (UniFi controllers + Site Manager cloud account) — all secrets in OpenBao, only references in PG
 
 ### InfluxDB OSS (Time-Series)
 - `telemetry` measurement — raw SNMP/gNMI fields per device (CPU/memory/uptime,
@@ -845,7 +849,10 @@ Protocol probe sequence per discovered IP:
 7. ICMP — last resort, expected to fail often
 
 ### Tier 4 — Import
-NetBox API, Cisco DNA Center, CSV bulk import, manual entry.
+NetBox API (with a dry-run preview), UniFi controllers (per-controller, or auto-discovered from a
+UniFi Site Manager cloud account), Cisco DNA Center, CSV bulk import, manual entry. Imported/
+discovered devices inherit a SiteCredential when their site has one. Integration secrets (NetBox
+token, UniFi/SMTP credentials, cloud API key) live in OpenBao, never the database.
 
 ### Confidence Scoring (0-100)
 | Score | Meaning |
@@ -907,7 +914,10 @@ Protocol probe sequence per discovered IP:
 7. ICMP — last resort, expected to fail often
 
 ### Tier 4 — Import
-NetBox API, Cisco DNA Center, CSV bulk import, manual entry.
+NetBox API (with a dry-run preview), UniFi controllers (per-controller, or auto-discovered from a
+UniFi Site Manager cloud account), Cisco DNA Center, CSV bulk import, manual entry. Imported/
+discovered devices inherit a SiteCredential when their site has one. Integration secrets (NetBox
+token, UniFi/SMTP credentials, cloud API key) live in OpenBao, never the database.
 
 ### Confidence Scoring (0-100)
 | Score | Meaning |

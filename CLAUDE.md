@@ -19,6 +19,31 @@ ECharts + Cytoscape.js + D3 + React Query + Zustand (frontend), Docker Compose (
 PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broker), NATS+JetStream
 (bus), OpenBao (secrets, Vault-compatible). Auth: JWT (SimpleJWT) + SSO (social-auth) minting same JWT.
 
+## Current State (June 2026)
+
+- Tests: ~1275 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
+  Django 6.0. Frontend: React + Vite.
+
+**Recently completed:** default admin password `NetPulse1!` + forced change on first login ·
+ALLOWED_HOSTS auto-detection in setup.sh · web UI defaults to ports 80/443 · CodeQL workflow + all
+HIGH alerts fixed · MkDocs docs on ReadTheDocs · Email/SMTP integration (Settings → Integrations →
+Email) · 24h periodic hostname re-check (SNMP sysName/DNS) · generic seeded hostname-rule + site
+examples · removed the top-level discovery pending-approval panel · profile page surfaces API field
+errors (parseApiErrors) · UniFi multi-controller support + Site Manager cloud auto-discovery ·
+SiteCredential assignments (per site, optional role) · NetBox import preview endpoint + UI · host-IP
+detection prefers NETPULSE_HOST_IP (not the container IP).
+
+**Pending / next session:** test UniFi against a real controller · UniFi device sync once local
+controller credentials are added · marketing website (post v1.0). NOTE: device IP fields were
+investigated for consolidation and intentionally KEPT BOTH — `ip_address` is the required/unique
+identity IP (dedup, ARP/flow correlation), `management_ip` is the optional OOB/management override
+(connection code uses `management_ip or ip_address`). They serve distinct purposes; not merged.
+
+**Known issues:** a fresh install can store the container IP as the collector IP if `NETPULSE_HOST_IP`
+isn't set (setup.sh now sets it; `register_local_collector` self-heals a 172.16/12 value) · SonicWall
+v7 config backup needs the built-in `admin` (named accounts get 401) · OpenBao token can be lost after
+a factory reset (re-unseal/re-init).
+
 ## Architecture (brief)
 
 Ingest services publish to NATS → stream-processor fans out to InfluxDB/OpenSearch/PostgreSQL.

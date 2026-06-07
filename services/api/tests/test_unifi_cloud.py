@@ -52,6 +52,38 @@ class TestDiscover:
             unifi_cloud.discover_controllers()
 
 
+class TestPagination:
+    def test_follows_next_token(self, monkeypatch):
+        # Two pages: first returns nextToken, second has none.
+        pages = [
+            {"data": [_host("h1", "a", "10.0.0.1")], "nextToken": "TOK2"},
+            {"data": [_host("h2", "b", "10.0.0.2")]},
+        ]
+        calls = {"n": 0}
+
+        class FakeResp:
+            def __init__(self, payload): self._p = payload
+            def raise_for_status(self): pass
+            def json(self): return self._p
+
+        class FakeSession:
+            trust_env = True
+            headers = {}
+            def update(self, *a, **k): pass
+            def get(self, url, params=None, timeout=None):
+                i = calls["n"]; calls["n"] += 1
+                # page 2 must be requested with the nextToken from page 1
+                if i == 1:
+                    assert params.get("nextToken") == "TOK2"
+                return FakeResp(pages[i])
+
+        sess = FakeSession(); sess.headers = {}
+        monkeypatch.setattr("requests.Session", lambda: sess)
+        client = unifi_cloud.UnifiCloudClient("key")
+        hosts = client.get_hosts()
+        assert len(hosts) == 2 and calls["n"] == 2
+
+
 class TestEndpoints:
     def test_get_put_cloud(self, auth_client, monkeypatch):
         writes = {}

@@ -41,6 +41,22 @@ optional NVD key, Cisco PSIRT, SMTP. Reads `.env.example` as template, writes
 After `.env` is written it can pull images and start the stack, then prints:
 `NetPulse is available at http://{COLLECTOR_IP}` and API docs at `:8000/api/docs/`.
 
+### First login
+
+The seeded admin starts with the fixed default password **`NetPulse1!`** and is
+flagged `must_change_password` — the UI **forces a password change on first
+login** before anything else is accessible. setup.sh prints (and saves to
+`~/netpulse-credentials.txt`, mode 0600) the URL / username / password.
+
+### Host IP for collectors (`NETPULSE_HOST_IP`)
+
+Inside a container, IP auto-detection returns the *container* IP (172.18.x), not
+the host IP that devices must send telemetry to. setup.sh therefore detects the
+real host IP on the host (before the stack starts) and writes it to
+`NETPULSE_HOST_IP` in `.env`; the local collector and generated device configs
+use it. Override it in `.env` if auto-detection is wrong. (`register_local_collector`
+also self-heals a stored 172.16.0.0/12 collector IP.)
+
 ## Development workflow
 
 Application code is **baked into the image** (`COPY . .`, no source bind mount), so

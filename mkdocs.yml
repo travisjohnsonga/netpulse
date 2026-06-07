@@ -21,6 +21,10 @@ nav:
     - SonicWall: platforms/sonicwall.md
     - AOS-CX: platforms/aos_cx.md
     - FortiOS: platforms/fortios.md
+  - Integrations:
+    - UniFi: integrations/unifi.md
+    - NetBox: integrations/netbox.md
+    - Email / SMTP: integrations/email.md
   - Testing: TESTING_PLAN.md
 
 markdown_extensions:
