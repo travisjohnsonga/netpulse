@@ -70,6 +70,47 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
         from .unifi_sync import sync_all_controllers
         return Response(sync_all_controllers())
 
+    # ── UniFi Site Manager (cloud) account ────────────────────────────────────
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["get", "put"], url_path="cloud")
+    def cloud(self, request):
+        """GET / PUT the singleton UniFi cloud (Site Manager) account."""
+        from .models import UnifiCloudAccount
+        from .serializers import UnifiCloudAccountSerializer
+        account = UnifiCloudAccount.load()
+        if request.method == "GET":
+            return Response(UnifiCloudAccountSerializer(account).data)
+        ser = UnifiCloudAccountSerializer(account, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(UnifiCloudAccountSerializer(UnifiCloudAccount.load()).data)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="cloud/test")
+    def cloud_test(self, request):
+        """Verify the cloud API key works; return the host count."""
+        from .unifi_cloud import UnifiCloudClient, UnifiCloudError, _read_api_key
+        api_key = (request.data or {}).get("api_key") or _read_api_key()
+        if not api_key:
+            return Response({"connected": False, "error": "No API key configured"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            hosts = UnifiCloudClient(api_key).get_hosts()
+            return Response({"connected": True, "host_count": len(hosts)})
+        except UnifiCloudError as exc:
+            return Response({"connected": False, "error": str(exc)},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="cloud/discover")
+    def cloud_discover(self, request):
+        """Auto-discover all controllers from the cloud account (upsert)."""
+        from .unifi_cloud import discover_controllers, UnifiCloudError
+        try:
+            return Response(discover_controllers())
+        except UnifiCloudError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
 
 class EmailSettingsView(APIView):
     """GET / PUT the singleton SMTP configuration (Settings → Integrations → Email)."""

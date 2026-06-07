@@ -970,6 +970,35 @@ export async function syncAllUnifi(): Promise<{ controllers: number; imported: n
   return data
 }
 
+// ── UniFi Site Manager (cloud) account ────────────────────────────────────────
+export interface UnifiCloudAccount {
+  name: string
+  enabled: boolean
+  last_sync: string | null
+  last_error: string
+  host_count: number
+  api_key_set?: boolean
+}
+export interface UnifiDiscoveredController {
+  name: string; host: string; port: number; model: string; version: string; status: 'created' | 'updated'
+}
+export async function fetchUnifiCloud(): Promise<UnifiCloudAccount> {
+  const { data } = await api.get<UnifiCloudAccount>('/integrations/unifi/cloud/')
+  return data
+}
+export async function saveUnifiCloud(payload: Partial<UnifiCloudAccount> & { api_key?: string }): Promise<UnifiCloudAccount> {
+  const { data } = await api.put<UnifiCloudAccount>('/integrations/unifi/cloud/', payload)
+  return data
+}
+export async function testUnifiCloud(apiKey?: string): Promise<{ connected: boolean; host_count?: number; error?: string }> {
+  const { data } = await api.post('/integrations/unifi/cloud/test/', apiKey ? { api_key: apiKey } : {})
+  return data
+}
+export async function discoverUnifiControllers(): Promise<{ discovered: number; controllers: UnifiDiscoveredController[] }> {
+  const { data } = await api.post('/integrations/unifi/cloud/discover/')
+  return data
+}
+
 // ── Config backup settings ───────────────────────────────────────────────────
 
 export interface ConfigBackupSettings {

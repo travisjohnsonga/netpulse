@@ -94,6 +94,9 @@ class UnifiController(TimestampedModel):
     The controller password lives in OpenBao at ``vault_path`` — never the DB.
     """
     name = models.CharField(max_length=128)
+    # Site Manager (cloud) host id, when this controller was auto-discovered
+    # from a UnifiCloudAccount. Blank for manually-added controllers.
+    cloud_host_id = models.CharField(max_length=128, blank=True, db_index=True)
     host = models.CharField(max_length=255, help_text="Controller hostname or IP")
     port = models.IntegerField(default=8443)
     username = models.CharField(max_length=128)
@@ -122,3 +125,34 @@ class UnifiController(TimestampedModel):
     def vault_path(self) -> str:
         """OpenBao path holding this controller's password (key 'password')."""
         return f"netpulse/integrations/unifi/{self.id}"
+
+
+# OpenBao path holding the UniFi Site Manager (cloud) API key (key "api_key").
+UNIFI_CLOUD_VAULT_PATH = "netpulse/integrations/unifi/cloud"
+
+
+class UnifiCloudAccount(TimestampedModel):
+    """
+    Singleton UniFi Site Manager (cloud) account. One API key auto-discovers all
+    the controllers/hosts on the UI.com account; the key lives in OpenBao at
+    UNIFI_CLOUD_VAULT_PATH. Use ``load()`` to fetch the single row.
+    """
+    name = models.CharField(max_length=128, default="UniFi Cloud Account")
+    enabled = models.BooleanField(default=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=512, blank=True)
+    host_count = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name = "UniFi Cloud Account"
+        verbose_name_plural = "UniFi Cloud Account"
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def load(cls) -> "UnifiCloudAccount":
+        obj = cls.objects.first()
+        if obj is None:
+            obj = cls.objects.create()
+        return obj

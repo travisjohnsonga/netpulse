@@ -82,7 +82,9 @@ templates, overrides) · alerts (AlertRule, AlertEvent, AlertChannel) · cve · 
 (NetBox/DNA import; EmailSettings — SMTP for alert email, provider presets, password in OpenBao at
 netpulse/integrations/smtp; GET/PUT /api/integrations/email/ + /test/; UnifiController — multi-controller
 UniFi device import, password in OpenBao at netpulse/integrations/unifi/{id}, CRUD + /test//sync/
-+ sync-all under /api/integrations/unifi/, 6h scheduler sync via UNIFI_SYNC_INTERVAL_S) · logs
++ sync-all under /api/integrations/unifi/, 6h scheduler sync via UNIFI_SYNC_INTERVAL_S;
+UnifiCloudAccount — UniFi Site Manager (api.ui.com) single-API-key auto-discovery of all controllers,
+key in OpenBao at netpulse/integrations/unifi/cloud, GET/PUT + cloud/test + cloud/discover) · logs
 (OpenSearch + LogFilter regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·
 checks (ServiceCheck, CheckResult; http/https/tcp/icmp/dns/tls/smtp/ssh_banner) · alerting (Team,
 EscalationPolicy, AlertRoute — Stage 1: route matching + email) · sso (SSOProvider; Google OAuth2

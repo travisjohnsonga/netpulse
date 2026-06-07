@@ -3,7 +3,8 @@ import Modal from './Modal'
 import {
   fetchUnifiControllers, createUnifiController, updateUnifiController, deleteUnifiController,
   testUnifiController, syncUnifiController, syncAllUnifi, fetchSites,
-  type UnifiController, type Site,
+  fetchUnifiCloud, saveUnifiCloud, testUnifiCloud, discoverUnifiControllers,
+  type UnifiController, type Site, type UnifiCloudAccount, type UnifiDiscoveredController,
 } from '../api/client'
 import { parseApiErrors } from '../api/errors'
 
@@ -27,8 +28,41 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
   const [msg, setMsg] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
 
+  const [cloud, setCloud] = useState<UnifiCloudAccount | null>(null)
+  const [cloudKey, setCloudKey] = useState('')
+  const [cloudMsg, setCloudMsg] = useState<string | null>(null)
+  const [discovered, setDiscovered] = useState<UnifiDiscoveredController[] | null>(null)
+
   const load = () => fetchUnifiControllers().then(setList).catch((e) => setError(parseApiErrors(e, 'Failed to load controllers.')))
-  useEffect(() => { load(); fetchSites().then(setSites).catch(() => {}) }, [])
+  const loadCloud = () => fetchUnifiCloud().then(setCloud).catch(() => {})
+  useEffect(() => { load(); loadCloud(); fetchSites().then(setSites).catch(() => {}) }, [])
+
+  const saveCloud = async () => {
+    setBusy(true); setCloudMsg(null); setError(null)
+    try { await saveUnifiCloud({ api_key: cloudKey || undefined, enabled: true }); setCloudKey(''); setCloudMsg('API key saved.'); loadCloud() }
+    catch (e) { setError(parseApiErrors(e, 'Failed to save API key.')) }
+    finally { setBusy(false) }
+  }
+  const testCloud = async () => {
+    setBusy(true); setCloudMsg(null); setError(null)
+    try {
+      if (cloudKey) await saveUnifiCloud({ api_key: cloudKey })
+      const r = await testUnifiCloud(cloudKey || undefined)
+      setCloudKey(''); loadCloud()
+      setCloudMsg(r.connected ? `✅ Connected · ${r.host_count} host(s) found` : `❌ ${r.error || 'Connection failed'}`)
+    } catch (e) { setCloudMsg(`❌ ${parseApiErrors(e, 'Connection failed')}`) }
+    finally { setBusy(false) }
+  }
+  const discover = async () => {
+    setBusy(true); setCloudMsg(null); setError(null); setDiscovered(null)
+    try {
+      if (cloudKey) await saveUnifiCloud({ api_key: cloudKey })
+      const r = await discoverUnifiControllers()
+      setCloudKey(''); setDiscovered(r.controllers); loadCloud(); load()
+      setCloudMsg(`Found ${r.discovered} controller(s). Add local credentials to each to enable device sync.`)
+    } catch (e) { setError(parseApiErrors(e, 'Discovery failed.')) }
+    finally { setBusy(false) }
+  }
 
   const flash = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 4000) }
 
@@ -132,6 +166,34 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
       <div className="space-y-3">
         {error && <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-300 whitespace-pre-line">{error}</div>}
         {msg && <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-900 rounded-lg px-3 py-2 text-sm text-green-700 dark:text-green-300">{msg}</div>}
+
+        {/* UniFi Cloud (Site Manager) account */}
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2 bg-gray-50/50 dark:bg-gray-900/30">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">UniFi Cloud Account</h4>
+            {cloud?.api_key_set && <span className="text-xs text-green-600 dark:text-green-400">✅ Key stored · {cloud.host_count} host(s)</span>}
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Generate an API key at <span className="font-mono">unifi.ui.com → Account → API Keys</span>. One key discovers all your controllers automatically.</p>
+          <div className="flex gap-2">
+            <input type="password" autoComplete="new-password" value={cloudKey} onChange={(e) => setCloudKey(e.target.value)}
+              placeholder={cloud?.api_key_set ? '•••••••• (leave blank to keep)' : 'X-API-Key'}
+              className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-gray-100" />
+            <button onClick={saveCloud} disabled={busy || !cloudKey} className="shrink-0 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-200">Save</button>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={testCloud} disabled={busy} className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">Test Connection</button>
+            <button onClick={discover} disabled={busy} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">Discover Controllers</button>
+          </div>
+          {cloudMsg && <div className="text-xs text-gray-700 dark:text-gray-200">{cloudMsg}</div>}
+          {discovered && discovered.length > 0 && (
+            <div className="text-xs space-y-0.5 border-t border-gray-200 dark:border-gray-700 pt-2">
+              {discovered.map((c, i) => (
+                <div key={i}>{c.status === 'created' ? '✅' : '🔄'} {c.name} ({c.host}) → {c.status === 'created' ? 'Created' : 'Updated'}</div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center justify-between">
           <button onClick={syncAll} disabled={busy || list.length === 0} className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">Sync All</button>
           <button onClick={() => { setError(null); setTestResult(null); setEditing({ ...BLANK }) }} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg">+ Add Controller</button>

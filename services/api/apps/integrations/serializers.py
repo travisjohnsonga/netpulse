@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiController
+from .models import EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiCloudAccount, UnifiController
 
 
 class NetBoxImportSerializer(serializers.ModelSerializer):
@@ -102,4 +102,34 @@ class UnifiControllerSerializer(serializers.ModelSerializer):
         if password:
             from apps.credentials import vault
             vault.write_secret(instance.vault_path, {"password": password})
+        return instance
+
+
+class UnifiCloudAccountSerializer(serializers.ModelSerializer):
+    api_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    api_key_set = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UnifiCloudAccount
+        fields = ("name", "enabled", "last_sync", "last_error", "host_count",
+                  "api_key", "api_key_set")
+        read_only_fields = ("last_sync", "last_error", "host_count")
+
+    def get_api_key_set(self, obj) -> bool:
+        from apps.credentials import vault
+        from .models import UNIFI_CLOUD_VAULT_PATH
+        try:
+            return bool((vault.read_secret(UNIFI_CLOUD_VAULT_PATH) or {}).get("api_key"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def update(self, instance, validated_data):
+        api_key = validated_data.pop("api_key", None)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        if api_key:
+            from apps.credentials import vault
+            from .models import UNIFI_CLOUD_VAULT_PATH
+            vault.write_secret(UNIFI_CLOUD_VAULT_PATH, {"api_key": api_key})
         return instance
