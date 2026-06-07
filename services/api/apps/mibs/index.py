@@ -29,6 +29,22 @@ def mibs_dir() -> Path:
     return Path(getattr(settings, "MIBS_DIR", os.environ.get("MIBS_DIR", "/app/mibs")))
 
 
+def safe_mib_path(base_dir, user_input: str) -> str:
+    """
+    Join ``base_dir`` with a user-supplied filename, guaranteeing the result
+    stays inside ``base_dir`` (prevents path traversal). Strips any directory
+    components, then verifies the resolved path is contained in the resolved
+    base before returning it.
+    """
+    safe_name = os.path.basename(user_input)
+    full_path = os.path.join(str(base_dir), safe_name)
+    real_base = os.path.realpath(str(base_dir))
+    real_path = os.path.realpath(full_path)
+    if real_path != real_base and not real_path.startswith(real_base + os.sep):
+        raise ValueError(f"Path traversal detected: {user_input!r}")
+    return full_path
+
+
 def _category(path: Path, root: Path) -> str:
     """Relative directory of a MIB file, e.g. 'vendor/cisco' or 'custom'."""
     rel = path.parent.relative_to(root)
@@ -129,13 +145,9 @@ def save_upload(filename: str, text: str) -> dict:
                 "warnings": result["warnings"]}
     custom = mibs_dir() / "custom"
     custom.mkdir(parents=True, exist_ok=True)
-    # Defence-in-depth against path traversal: basename() already strips any
-    # directory components, but verify the resolved target still lives inside
-    # custom/ before writing (rejects symlink/edge-case escapes too).
-    dest = (custom / name).resolve()
-    if dest.parent != custom.resolve():
-        raise ValueError("invalid MIB filename")
-    dest.write_text(text)
+    # Traversal-safe join: raises if `name` would escape custom/.
+    dest = safe_mib_path(custom, name)
+    Path(dest).write_text(text)
     reload()
     return {"success": True, "objects_loaded": result["objects"],
             "module": result["module"], "warnings": result["warnings"]}
