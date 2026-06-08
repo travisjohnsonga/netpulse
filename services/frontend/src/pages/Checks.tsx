@@ -6,10 +6,26 @@ import EmptyState from '../components/EmptyState'
 import Modal from '../components/Modal'
 import {
   fetchChecks, fetchCheckSummary, saveCheck, deleteCheck, runCheckNow, fetchCheckResults,
-  fetchDevices, fetchSites,
+  fetchDevices, fetchSites, fetchCollectors, addCheckCollector, removeCheckCollector,
   type ServiceCheck, type CheckStatus, type CheckType, type CheckSummary,
   type ServiceCheckPayload, type CheckResultsResponse, type Device, type Site,
+  type Collector, type CollectorMode, type CheckCollectorResult,
 } from '../api/client'
+
+const COLLECTOR_MODES: { value: CollectorMode; label: string; help: string }[] = [
+  { value: 'site', label: 'Same Site as Device', help: 'Run from collectors at the device’s site (recommended).' },
+  { value: 'all', label: 'All Collectors', help: 'Must pass from every active collector.' },
+  { value: 'any', label: 'Any One Collector', help: 'Passes if any collector succeeds.' },
+  { value: 'selected', label: 'Selected Collectors', help: 'Run from the collectors you choose.' },
+]
+
+// Per-collector result → badge colour + glyph.
+const COLLECTOR_RESULT_BADGE: Record<string, string> = {
+  passing: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  failing: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  unknown: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+}
+const COLLECTOR_RESULT_ICON: Record<string, string> = { passing: '✅', failing: '❌', unknown: '·' }
 
 const STATUS_BADGE: Record<CheckStatus, string> = {
   up: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
@@ -235,6 +251,9 @@ export default function Checks() {
                           {c.current_status}
                         </span>
                       </span>
+                      {c.collector_results && c.collector_results.length > 1 && (
+                        <div className="mt-1"><CollectorBadges results={c.collector_results} /></div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-300">
                       {c.check_type === 'tls' && typeof c.last_details?.days_remaining === 'number'
@@ -514,21 +533,28 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
     device: check.device, site: check.site, notes: check.notes,
     response_time_warning_ms: check.response_time_warning_ms,
     response_time_critical_ms: check.response_time_critical_ms,
+    collector_mode: check.collector_mode,
   } : {
     name: '', check_type: 'https', host: '', interval_seconds: 60, timeout_seconds: 10,
     failures_before_alert: 2,
     alert_on_down: true, alert_on_recovery: true, alert_on_degraded: false,
+    collector_mode: 'site',
   })
   // Free-form per-type config (path, query, warn_days, helo, …).
   const [cfg, setCfg] = useState<Record<string, unknown>>(check ? { ...(check.config || {}) } : { path: '/' })
   const [devices, setDevices] = useState<Device[]>([])
   const [sites, setSites] = useState<Site[]>([])
+  const [collectors, setCollectors] = useState<Collector[]>([])
+  // Collector IDs selected for the "selected" mode.
+  const [selectedColl, setSelectedColl] = useState<Set<number>>(
+    new Set((check?.collector_results || []).filter((r) => r.enabled).map((r) => r.collector)))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     fetchDevices().then((r) => setDevices(r.results)).catch(() => {})
     fetchSites().then(setSites).catch(() => {})
+    fetchCollectors().then(setCollectors).catch(() => {})
   }, [])
 
   const t = form.check_type
@@ -563,7 +589,16 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
           payload.response_time_critical_ms = rt.crit
         }
       }
-      await saveCheck(payload, check?.id)
+      const saved = await saveCheck(payload, check?.id)
+      // Sync "selected" collector assignments against the saved check.
+      if (form.collector_mode === 'selected') {
+        const existing = new Set((check?.collector_results || []).map((r) => r.collector))
+        const desired = selectedColl
+        await Promise.all([
+          ...[...desired].filter((id) => !existing.has(id)).map((id) => addCheckCollector(saved.id, id)),
+          ...[...existing].filter((id) => !desired.has(id)).map((id) => removeCheckCollector(saved.id, id)),
+        ])
+      }
       onSaved()
     } catch {
       setErr('Could not save the check.')
@@ -772,12 +807,75 @@ function CheckModal({ check, onClose, onSaved }: { check?: ServiceCheck; onClose
             </select>
           </div>
         </div>
+        {/* Collector assignment — where this check runs from */}
+        <div>
+          <label className={label}>Collector Assignment</label>
+          <div className="space-y-1.5">
+            {COLLECTOR_MODES.map((m) => (
+              <label key={m.value} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <input
+                  type="radio"
+                  name="collector_mode"
+                  className="mt-0.5"
+                  checked={(form.collector_mode ?? 'site') === m.value}
+                  onChange={() => setForm({ ...form, collector_mode: m.value })}
+                />
+                <span>
+                  <span className="font-medium">{m.label}</span>
+                  <span className="block text-xs text-gray-400">{m.help}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {form.collector_mode === 'selected' && (
+            <div className="mt-2 border border-gray-200 dark:border-gray-700 rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
+              {collectors.length === 0 && <p className="text-xs text-gray-400 px-1">No collectors registered.</p>}
+              {collectors.map((c) => (
+                <label key={c.id} className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 px-1 py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={selectedColl.has(c.id)}
+                    onChange={(e) => setSelectedColl((prev) => {
+                      const next = new Set(prev)
+                      if (e.target.checked) next.add(c.id); else next.delete(c.id)
+                      return next
+                    })}
+                  />
+                  {c.name}
+                  {c.collector_ip && <span className="text-xs text-gray-400">({c.collector_ip})</span>}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div>
           <label className={label}>Notes <span className="text-gray-400">(optional)</span></label>
           <textarea className={input} rows={2} value={form.notes ?? ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </div>
       </div>
     </Modal>
+  )
+}
+
+// Small per-collector status pill used in the list + device-detail.
+export function CollectorBadges({ results }: { results: CheckCollectorResult[] }) {
+  if (!results || results.length === 0) return <span className="text-xs text-gray-400">—</span>
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {results.map((r) => (
+        <span
+          key={r.id}
+          title={r.last_error || `${r.collector_name}: ${r.last_result}`}
+          className={clsx('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium', COLLECTOR_RESULT_BADGE[r.last_result])}
+        >
+          {COLLECTOR_RESULT_ICON[r.last_result]} {r.collector_name}
+          {r.last_result === 'passing' && r.last_latency_ms != null && (
+            <span className="text-gray-400">{Math.round(r.last_latency_ms)}ms</span>
+          )}
+        </span>
+      ))}
+    </span>
   )
 }
 

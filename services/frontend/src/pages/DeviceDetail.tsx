@@ -11,6 +11,7 @@ import Flows from './device/Flows'
 import ArpMac from './device/ArpMac'
 import Configuration from './device/Configuration'
 import Compliance from './device/Compliance'
+import ServiceChecks from './device/ServiceChecks'
 import CVE from './device/CVE'
 import Lifecycle from './device/Lifecycle'
 import Modal from '../components/Modal'
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'arpmac', label: 'ARP / MAC' },
   { id: 'configuration', label: 'Configuration' },
   { id: 'compliance', label: 'Compliance' },
+  { id: 'checks', label: 'Service Checks' },
   { id: 'cve', label: 'CVE' },
   { id: 'lifecycle', label: 'Lifecycle' },
 ] as const
@@ -211,6 +213,7 @@ export default function DeviceDetail() {
       {tab === 'arpmac' && <ArpMac device={device} />}
       {tab === 'configuration' && <Configuration device={device} />}
       {tab === 'compliance' && <Compliance device={device} />}
+      {tab === 'checks' && <ServiceChecks device={device} />}
       {tab === 'cve' && <CVE device={device} />}
       {tab === 'lifecycle' && <Lifecycle device={device} />}
 

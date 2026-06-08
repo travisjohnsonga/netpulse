@@ -38,6 +38,12 @@ class ServiceCheck(TimestampedModel):
         DEGRADED = "degraded", "Degraded"
         UNKNOWN = "unknown", "Unknown"
 
+    class CollectorMode(models.TextChoices):
+        ALL = "all", "All Collectors"          # must pass from every collector
+        ANY = "any", "Any One Collector"       # pass if any collector succeeds
+        SELECTED = "selected", "Selected Collectors"  # run from specific collectors
+        SITE = "site", "Same Site as Device"   # collectors at the device's site
+
     # Default port per check type (None → required in config / not port-based).
     DEFAULT_PORTS = {
         "http": 80, "https": 443, "ssh": 22, "ssh_banner": 22, "smtp": 25,
@@ -94,6 +100,19 @@ class ServiceCheck(TimestampedModel):
     tags = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True)
 
+    # Multi-vantage-point execution: which collectors run this check. The mode
+    # decides resolution + result aggregation (see apps.checks.collectors).
+    collector_mode = models.CharField(
+        max_length=20, choices=CollectorMode.choices, default=CollectorMode.SITE,
+        help_text="all=pass from every collector · any=pass if one passes · "
+                  "selected=specific collectors · site=collectors at device's site",
+    )
+    collectors = models.ManyToManyField(
+        "collectors.Collector", blank=True, through="ServiceCheckCollector",
+        related_name="service_checks",
+        help_text="Collectors that run this check (used by the 'selected' mode).",
+    )
+
     class Meta(TimestampedModel.Meta):
         indexes = [models.Index(fields=["check_type", "current_status"])]
 
@@ -108,10 +127,49 @@ class ServiceCheck(TimestampedModel):
         return self.DEFAULT_PORTS.get(self.check_type)
 
 
+class ServiceCheckCollector(TimestampedModel):
+    """Through model for ServiceCheck ↔ Collector, with per-collector state.
+
+    Each row is one vantage point's view of a check: its latest result, latency
+    and failure streak. Updated as each collector reports (centrally today; per
+    remote agent once distributed pollers land).
+    """
+
+    class Result(models.TextChoices):
+        PASSING = "passing", "Passing"
+        FAILING = "failing", "Failing"
+        UNKNOWN = "unknown", "Unknown"
+
+    service_check = models.ForeignKey(
+        ServiceCheck, on_delete=models.CASCADE, related_name="collector_assignments")
+    collector = models.ForeignKey(
+        "collectors.Collector", on_delete=models.CASCADE, related_name="check_assignments")
+    enabled = models.BooleanField(default=True)
+
+    # Per-collector result tracking.
+    last_result = models.CharField(max_length=20, choices=Result.choices, default=Result.UNKNOWN)
+    last_checked = models.DateTimeField(null=True, blank=True)
+    last_latency_ms = models.FloatField(null=True, blank=True)
+    last_error = models.CharField(max_length=512, blank=True)
+    consecutive_failures = models.IntegerField(default=0)
+
+    class Meta(TimestampedModel.Meta):
+        unique_together = [["service_check", "collector"]]
+        indexes = [models.Index(fields=["service_check", "collector"])]
+
+    def __str__(self):
+        return f"{self.service_check_id}@{self.collector_id}={self.last_result}"
+
+
 class CheckResult(TimestampedModel):
     # Named ``service_check`` (not ``check``) because Django reserves
     # Model.check(); the API still exposes it as "check" via the serializer.
     service_check = models.ForeignKey(ServiceCheck, on_delete=models.CASCADE, related_name="results")
+    # The collector (vantage point) that produced this result. Null for legacy
+    # rows and single-location checks executed by the central engine.
+    collector = models.ForeignKey(
+        "collectors.Collector", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="check_results")
     status = models.CharField(max_length=10, choices=ServiceCheck.Status.choices)
     response_time_ms = models.FloatField(null=True, blank=True)
     checked_at = models.DateTimeField(db_index=True)

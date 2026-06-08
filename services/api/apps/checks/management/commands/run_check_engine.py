@@ -112,7 +112,10 @@ class Command(BaseCommand):
     @staticmethod
     def _persist(check, result) -> str | None:
         from django.utils import timezone
-        return persist_result(check, result, timezone.now())
+
+        from apps.checks.collectors import engine_collector_for
+        collector = engine_collector_for(check)
+        return persist_result(check, result, timezone.now(), collector=collector)
 
     async def _maybe_alert(self, check, result, alert: str):
         # Respect the check's per-state alert toggles.
@@ -134,8 +137,25 @@ class Command(BaseCommand):
         elif alert == "degraded":
             title = f"Service Degraded: {check.name} ({target}) — {result.get('response_time_ms')}ms"
         else:
-            title = f"Service Down: {check.name} ({target}) — {result.get('error') or 'check failed'}"
+            # Name the collectors that detected the failure, for multi-vantage checks.
+            vantage = await sync_to_async(self._failing_vantage, thread_sensitive=True)(check)
+            detail = result.get('error') or 'check failed'
+            title = f"Service Down: {check.name} ({target}) — {detail}{vantage}"
         await self._publish_alert(severity, check, title)
+
+    @staticmethod
+    def _failing_vantage(check) -> str:
+        """A ' from N/M collectors: …' suffix when this check runs multi-vantage."""
+        from apps.checks.collectors import failing_collector_names
+        from apps.checks.models import ServiceCheckCollector
+
+        total = ServiceCheckCollector.objects.filter(service_check=check, enabled=True).count()
+        if total <= 1:
+            return ""
+        names = failing_collector_names(check)
+        if not names:
+            return ""
+        return f" — failed from {len(names)}/{total} collectors: {', '.join(names)}"
 
     @staticmethod
     def _device_reachable(device_id) -> bool:

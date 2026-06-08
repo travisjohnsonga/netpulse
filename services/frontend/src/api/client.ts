@@ -2261,6 +2261,22 @@ export type CheckType =
   | 'http' | 'https' | 'tcp' | 'udp' | 'icmp' | 'dns' | 'tls'
   | 'smtp' | 'ftp' | 'ssh' | 'ssh_banner' | 'ldap' | 'radius' | 'tacacs' | 'custom'
 export type CheckStatus = 'up' | 'down' | 'degraded' | 'unknown'
+export type CollectorMode = 'all' | 'any' | 'selected' | 'site'
+export type CollectorResult = 'passing' | 'failing' | 'unknown'
+
+export interface CheckCollectorResult {
+  id: number
+  collector: number
+  collector_name: string
+  collector_ip: string | null
+  collector_status: string
+  enabled: boolean
+  last_result: CollectorResult
+  last_checked: string | null
+  last_latency_ms: number | null
+  last_error: string
+  consecutive_failures: number
+}
 
 export interface ServiceCheck {
   id: number
@@ -2293,21 +2309,34 @@ export interface ServiceCheck {
   tags: string[]
   notes: string
   created_at: string
+  collector_mode: CollectorMode
+  collector_results: CheckCollectorResult[]
 }
 
 export type ServiceCheckPayload = Partial<Omit<ServiceCheck,
   'id' | 'effective_port' | 'device_hostname' | 'site_name' | 'current_status' |
-  'last_checked' | 'last_status_change' | 'consecutive_failures' | 'created_at'>>
+  'last_checked' | 'last_status_change' | 'consecutive_failures' | 'created_at' |
+  'collector_results'>>
   & { name: string; check_type: CheckType; host: string }
 
 export interface CheckResult {
   id: number
   check: number
+  collector: number | null
+  collector_name: string | null
   status: CheckStatus
   response_time_ms: number | null
   checked_at: string
   error: string
   details: Record<string, unknown>
+}
+
+export interface CollectorTally {
+  collector_id: number
+  collector_name: string
+  passing: number
+  failing: number
+  unknown: number
 }
 
 export interface CheckSummary {
@@ -2316,6 +2345,7 @@ export interface CheckSummary {
   degraded: number
   unknown: number
   total: number
+  by_collector: CollectorTally[]
 }
 
 export async function fetchChecks(params?: Record<string, string>): Promise<ServiceCheck[]> {
@@ -2349,12 +2379,32 @@ export interface CheckResultsResponse {
   check_name: string
   period: string
   summary: { total: number; up: number; down: number; degraded: number; uptime_pct: number | null }
+  aggregate_status: CheckStatus
+  collector_results: CheckCollectorResult[]
   results: CheckResult[]
 }
 
-export async function fetchCheckResults(id: number, period = '24h'): Promise<CheckResultsResponse> {
-  const { data } = await api.get<CheckResultsResponse>(`/checks/${id}/results/`, { params: { period } })
+export async function fetchCheckResults(id: number, period = '24h', collectorId?: number): Promise<CheckResultsResponse> {
+  const params: Record<string, string> = { period }
+  if (collectorId != null) params.collector_id = String(collectorId)
+  const { data } = await api.get<CheckResultsResponse>(`/checks/${id}/results/`, { params })
   return data
+}
+
+// ── Per-check collector assignments (multi-vantage-point) ────────────────────
+
+export async function fetchCheckCollectors(checkId: number): Promise<CheckCollectorResult[]> {
+  const { data } = await api.get<CheckCollectorResult[]>(`/checks/${checkId}/collectors/`)
+  return data
+}
+
+export async function addCheckCollector(checkId: number, collectorId: number, enabled = true): Promise<CheckCollectorResult> {
+  const { data } = await api.post<CheckCollectorResult>(`/checks/${checkId}/collectors/`, { collector_id: collectorId, enabled })
+  return data
+}
+
+export async function removeCheckCollector(checkId: number, collectorId: number): Promise<void> {
+  await api.delete(`/checks/${checkId}/collectors/${collectorId}/`)
 }
 
 // ── Alert routing (apps/alerting, Stage 1) ───────────────────────────────────
