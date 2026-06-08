@@ -621,7 +621,7 @@ class TestAosCxConfigGen:
 
         # Syslog: AOS-CX "logging <ip> severity ...".
         syslog = secs["syslog"]["config"]
-        assert "logging 10.0.0.50 severity informational" in syslog
+        assert "logging 10.0.0.50 severity info" in syslog
         assert "logging on" in syslog
 
         # The "netflow" slot carries sFlow (AOS-CX has no NetFlow).

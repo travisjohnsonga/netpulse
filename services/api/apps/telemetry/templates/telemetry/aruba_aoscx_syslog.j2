@@ -1,2 +1,11 @@
-logging {{ collector_ip }} severity informational
+{# AOS-CX (ArubaOS-CX) uses "severity info" — NOT the Cisco IOS keyword
+   "informational". Syslog severity keyword differs per platform:
+     Cisco IOS/IOS-XE : logging trap informational
+     Cisco IOS-XR     : logging ... severity info  (also "logging trap informational")
+     AOS-CX (Aruba)   : logging ... severity info        <- here
+     Arista EOS       : logging trap informational
+     FortiOS          : config log syslogd filter / set severity information
+     SonicWall        : GUI/REST API, no CLI template
+   Sending "informational" to AOS-CX is rejected by the CLI. #}
+logging {{ collector_ip }} severity info
 logging on
