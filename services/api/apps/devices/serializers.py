@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .models import (
     Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob,
-    HostnameRule, Site,
+    HostnameRule, LLDPNeighbor, Site,
 )
 
 
@@ -249,3 +249,39 @@ class DiscoveryJobSerializer(serializers.ModelSerializer):
         if cached is not None:
             return cached
         return obj.discovered_devices.filter(status=DiscoveredDevice.Status.PENDING).count()
+
+
+class LLDPNeighborSerializer(serializers.ModelSerializer):
+    """An LLDP neighbor row for the "Not in Inventory" page.
+
+    `in_inventory` and `guessed_platform` are computed in the view (passed via
+    serializer context) so the live re-check and platform guess happen once per
+    request, not per row.
+    """
+
+    seen_by_device_id = serializers.IntegerField(source="seen_by_id", read_only=True)
+    seen_by_device_hostname = serializers.CharField(source="seen_by.hostname", read_only=True)
+    seen_on_interface = serializers.CharField(source="local_interface", read_only=True)
+    in_inventory = serializers.SerializerMethodField()
+    guessed_platform = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LLDPNeighbor
+        fields = [
+            "id", "chassis_id", "chassis_id_type", "port_id", "port_description",
+            "system_name", "system_description", "management_address",
+            "capabilities", "seen_by_device_id", "seen_by_device_hostname",
+            "seen_on_interface", "first_seen", "last_seen", "in_inventory",
+            "guessed_platform",
+        ]
+
+    def get_in_inventory(self, obj) -> bool:
+        idx = self.context.get("inventory_index")
+        if idx is None:
+            return bool(obj.matched_device_id)
+        from .lldp import neighbor_in_inventory
+        return neighbor_in_inventory(obj, idx[0], idx[1])
+
+    def get_guessed_platform(self, obj) -> str:
+        from .lldp import guess_platform
+        return guess_platform(obj.system_description)

@@ -193,9 +193,14 @@ export interface TopologyNode {
   site: string | null
   status: string
   role?: string
+  role_color?: string | null
   risk_score: number
   ip?: string
   vendor?: string
+  is_reachable?: boolean
+  management_ip?: string | null
+  model?: string
+  last_seen?: string | null
 }
 
 export interface TopologyEdge {
@@ -2838,3 +2843,36 @@ export async function fetchFlowSankey(params: Record<string, string>): Promise<F
   const { data } = await api.get<FlowSankeyData>('/flows/sankey/', { params })
   return data
 }
+
+// ── LLDP neighbors (not yet in inventory) ────────────────────────────────────
+
+export interface UndiscoveredLldpNeighbor {
+  id: number
+  chassis_id: string
+  chassis_id_type: string
+  port_id: string
+  port_description: string
+  system_name: string
+  system_description: string
+  management_address: string | null
+  capabilities: string[]
+  seen_by_device_id: number
+  seen_by_device_hostname: string
+  seen_on_interface: string
+  first_seen: string | null
+  last_seen: string | null
+  in_inventory: boolean
+  guessed_platform: string
+}
+
+export async function fetchUndiscoveredLldp(): Promise<{ count: number; results: UndiscoveredLldpNeighbor[] }> {
+  const { data } = await api.get<{ count: number; results: UndiscoveredLldpNeighbor[] }>(
+    '/devices/lldp/undiscovered/')
+  return data
+}
+
+export async function fetchUndiscoveredLldpCount(): Promise<number> {
+  const { data } = await api.get<{ count: number }>('/devices/lldp/undiscovered/count/')
+  return data.count
+}
+

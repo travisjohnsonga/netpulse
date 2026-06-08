@@ -14,7 +14,7 @@ from apps.credentials.models import CredentialProfile
 from . import detect, fingerprint
 from .models import (
     Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob,
-    HostnameRule, Site,
+    HostnameRule, LLDPNeighbor, Site,
 )
 from .serializers import (
     DetectPlatformRequestSerializer,
@@ -27,6 +27,7 @@ from .serializers import (
     DiscoveryJobSerializer,
     HostnameRuleSerializer,
     HostnameRuleTestSerializer,
+    LLDPNeighborSerializer,
     SiteSerializer,
     TestConnectionRequestSerializer,
     TestConnectionResponseSerializer,
@@ -508,8 +509,14 @@ class DeviceViewSet(viewsets.ModelViewSet):
         from .models import TopologyLink
 
         params = request.query_params
-        devices = Device.objects.select_related("site").filter(
-            status__in=[Device.Status.ACTIVE, Device.Status.INACTIVE, Device.Status.MAINTENANCE]
+        # ALL inventory devices belong on the map — including unreachable ones
+        # (shown offline) and SNMP-only/newly-added devices with no LLDP links
+        # (shown as isolated nodes). Decommissioned devices are excluded.
+        devices = Device.objects.select_related("site", "role").filter(
+            status__in=[
+                Device.Status.ACTIVE, Device.Status.INACTIVE,
+                Device.Status.MAINTENANCE, Device.Status.UNREACHABLE,
+            ]
         )
         if params.get("site"):
             devices = devices.filter(site_id=params["site"])
@@ -549,8 +556,17 @@ class DeviceViewSet(viewsets.ModelViewSet):
             {
                 "id": str(d.id), "label": d.hostname, "type": d.platform,
                 "site": d.site.name if d.site else None, "status": d.status,
-                "role": role_of(d.notes), "risk_score": 0,
+                # Role + colour: prefer the structured Role FK, fall back to the
+                # legacy "Role:" notes convention.
+                "role": d.role.name if d.role else role_of(d.notes),
+                "role_color": d.role.color if d.role else None,
+                "risk_score": 0,
                 "ip": str(d.ip_address or ""), "vendor": d.vendor or "",
+                # Reachability + identity for offline styling and the tooltip.
+                "is_reachable": d.is_reachable,
+                "management_ip": str(d.management_ip) if d.management_ip else None,
+                "model": d.model or "",
+                "last_seen": d.last_seen.isoformat() if d.last_seen else None,
             }
             for d in devices
         ]
@@ -564,6 +580,40 @@ class DeviceViewSet(viewsets.ModelViewSet):
             for ln in links
         ]
         return Response({"nodes": nodes, "edges": edges})
+
+    def _undiscovered_lldp(self):
+        """LLDPNeighbor rows that don't (currently) map to any inventory device.
+
+        Re-checks live against the device index so a neighbor added since the
+        last LLDP scan drops off, and surfaces neighbors whose stored
+        matched_device was deleted. Returns (list[LLDPNeighbor], inventory_index).
+        """
+        from .lldp import device_identity_index, neighbor_in_inventory
+
+        devices = list(Device.objects.only("hostname", "ip_address", "management_ip"))
+        idx = device_identity_index(devices)
+        neighbors = (
+            LLDPNeighbor.objects.select_related("seen_by")
+            .order_by("seen_by__hostname", "local_interface")
+        )
+        undiscovered = [n for n in neighbors if not neighbor_in_inventory(n, idx[0], idx[1])]
+        return undiscovered, idx
+
+    @extend_schema(responses=LLDPNeighborSerializer(many=True))
+    @action(detail=False, methods=["get"], url_path="lldp/undiscovered")
+    def lldp_undiscovered(self, request):
+        """LLDP neighbors seen by managed devices but not yet in inventory."""
+        undiscovered, idx = self._undiscovered_lldp()
+        data = LLDPNeighborSerializer(
+            undiscovered, many=True, context={"inventory_index": idx}
+        ).data
+        return Response({"count": len(data), "results": data})
+
+    @action(detail=False, methods=["get"], url_path="lldp/undiscovered/count")
+    def lldp_undiscovered_count(self, request):
+        """Just the count — drives the sidebar badge (cheap, no serialization)."""
+        undiscovered, _ = self._undiscovered_lldp()
+        return Response({"count": len(undiscovered)})
 
 
 class HostnameRuleViewSet(viewsets.ModelViewSet):

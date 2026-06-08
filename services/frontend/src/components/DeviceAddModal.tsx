@@ -134,13 +134,25 @@ const DETECT_ERRORS: Record<string, string> = {
 // New order: Basic Info → Credentials → Platform → Telemetry → Confirm.
 const STEPS = ['Basic Info', 'Credentials', 'Platform', 'Telemetry', 'Confirm']
 
-export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+export interface DeviceAddPrefill {
+  hostname?: string
+  ip_address?: string
+  management_ip?: string
+  platform?: string
+}
+
+export default function DeviceAddModal({ onClose, onCreated, initial }: {
+  onClose: () => void
+  onCreated: () => void
+  // Optional pre-population (e.g. from an LLDP-discovered neighbor).
+  initial?: DeviceAddPrefill
+}) {
   const [step, setStep] = useState(0)
 
   // Step 1 — Basic info
-  const [hostname, setHostname] = useState('')
-  const [ip, setIp] = useState('')
-  const [mgmtIp, setMgmtIp] = useState('')
+  const [hostname, setHostname] = useState(initial?.hostname ?? '')
+  const [ip, setIp] = useState(initial?.ip_address ?? '')
+  const [mgmtIp, setMgmtIp] = useState(initial?.management_ip ?? '')
   const [siteId, setSiteId] = useState<number | ''>('')
   const [role, setRole] = useState('')
   const [tags, setTags] = useState<string[]>([])
@@ -166,7 +178,7 @@ export default function DeviceAddModal({ onClose, onCreated }: { onClose: () => 
   const [credErr, setCredErr] = useState<string | null>(null)
 
   // Step 3 — Platform
-  const [platform, setPlatform] = useState('other')
+  const [platform, setPlatform] = useState(initial?.platform ?? 'other')
   const [vendor, setVendor] = useState('')
   const [osVersion, setOsVersion] = useState('')
   const [model, setModel] = useState('')

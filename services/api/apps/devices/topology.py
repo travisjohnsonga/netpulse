@@ -72,7 +72,8 @@ def discover_links(device, interfaces=None) -> list[dict]:
     from django.db.models import Q
 
     from apps.telemetry import discovery
-    from .models import Device, TopologyLink
+    from . import lldp
+    from .models import Device, LLDPNeighbor, TopologyLink
 
     if interfaces is None:
         interfaces = discovery.discover_interfaces(device)
@@ -118,11 +119,37 @@ def discover_links(device, interfaces=None) -> list[dict]:
                     "last_seen": now,
                 },
             )
+        # Persist the raw neighbor (matched or not) so the "LLDP Neighbors — Not
+        # in Inventory" page can surface discovery gaps. Keyed per local port.
+        matched = match if (match and match.id != device.id) else None
+        chassis_id = iface.get("lldp_neighbor_chassis_id") or ""
+        LLDPNeighbor.objects.update_or_create(
+            seen_by=device,
+            local_interface=iface["if_name"],
+            defaults={
+                "chassis_id": chassis_id,
+                "chassis_id_type": iface.get("lldp_neighbor_chassis_type")
+                or lldp.infer_chassis_id_type(chassis_id),
+                "port_id": iface.get("lldp_neighbor_port") or "",
+                "port_description": iface.get("lldp_neighbor_desc") or "",
+                "system_name": neighbor or "",
+                "system_description": iface.get("lldp_neighbor_system_desc") or "",
+                "management_address": mgmt_ip or None,
+                "capabilities": lldp.normalize_capabilities(
+                    iface.get("lldp_neighbor_capabilities")),
+                "matched_device": matched,
+                "last_seen": now,
+            },
+        )
+        # Stamp first_seen once, on initial sighting.
+        LLDPNeighbor.objects.filter(
+            seen_by=device, local_interface=iface["if_name"], first_seen__isnull=True
+        ).update(first_seen=now)
         found.append({
             "neighbor_hostname": neighbor,
             "neighbor_mgmt_ip": mgmt_ip,
             "local_port": iface["if_name"],
             "remote_port": iface.get("lldp_neighbor_port"),
-            "matched_device_id": match.id if (match and match.id != device.id) else None,
+            "matched_device_id": matched.id if matched else None,
         })
     return found

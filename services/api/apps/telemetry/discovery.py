@@ -330,6 +330,11 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
                      or n.get("port_description") or ""),
             "mgmt_ip": (n.get("management_ip") or n.get("mgmt_address")
                         or n.get("mgmt_ip") or n.get("management_address") or ""),
+            "chassis_id": n.get("chassis_id") or "",
+            "system_desc": (n.get("system_description") or n.get("neighbor_system_description")
+                            or ""),
+            "capabilities": (n.get("capabilities") or n.get("system_capabilities")
+                             or n.get("enabled_capabilities") or ""),
         }
 
     rows = []
@@ -355,6 +360,9 @@ def _discover_via_ssh(device, profile, creds: dict) -> list[dict]:
             "lldp_neighbor_port": nb.get("port") or None,
             "lldp_neighbor_desc": nb.get("desc") or None,
             "lldp_neighbor_mgmt_ip": nb.get("mgmt_ip") or None,
+            "lldp_neighbor_chassis_id": nb.get("chassis_id") or None,
+            "lldp_neighbor_system_desc": nb.get("system_desc") or None,
+            "lldp_neighbor_capabilities": nb.get("capabilities") or None,
         })
     return rows
 

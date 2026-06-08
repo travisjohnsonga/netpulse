@@ -37,6 +37,7 @@ import SSO from './pages/settings/SSO'
 import System from './pages/settings/System'
 import PlatformStatus from './pages/settings/PlatformStatus'
 import Topology from './pages/Topology'
+import LldpNeighbors from './pages/LldpNeighbors'
 import NetworkLookup from './pages/NetworkLookup'
 import ApiDocs from './pages/ApiDocs'
 import Login from './pages/Login'
@@ -121,6 +122,7 @@ function AppRoutes() {
                 <Route path="/sites/:id" element={<SiteDetail />} />
                 <Route path="/configs/compare" element={<ConfigCompare />} />
                 <Route path="/topology" element={<Topology />} />
+                <Route path="/lldp-neighbors" element={<LldpNeighbors />} />
                 <Route path="/api-docs" element={<ApiDocs />} />
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/logs" element={<Logs />} />

@@ -381,3 +381,56 @@ class TopologyLink(TimestampedModel):
 
     def __str__(self):
         return f"{self.device_a.hostname}:{self.port_a} ↔ {self.device_b.hostname}:{self.port_b}"
+
+
+class LLDPNeighbor(TimestampedModel):
+    """A raw LLDP neighbor seen by a managed device.
+
+    Unlike TopologyLink (which only stores links between two *known* devices),
+    this records every neighbor advertised over LLDP — including ones not yet in
+    inventory. It backs the "LLDP Neighbors — Not in Inventory" page, surfacing
+    discovery gaps. One row per (seen_by, local_interface); refreshed on every
+    LLDP scan (see apps.devices.topology.discover_links).
+    """
+
+    # The managed device that observed this neighbor, and the local port it was
+    # seen on.
+    seen_by = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="lldp_neighbors")
+    local_interface = models.CharField(max_length=255)
+    # Neighbor identity as advertised over LLDP. All optional — a given platform
+    # may not advertise every TLV.
+    chassis_id = models.CharField(max_length=255, blank=True)
+    # chassis-id subtype: mac / network-address / interface-name / local / ...
+    chassis_id_type = models.CharField(max_length=32, blank=True)
+    port_id = models.CharField(max_length=255, blank=True)
+    port_description = models.CharField(max_length=255, blank=True)
+    system_name = models.CharField(max_length=255, blank=True)
+    system_description = models.TextField(blank=True)
+    management_address = models.GenericIPAddressField(null=True, blank=True)
+    # LLDP system capabilities, normalised to a list e.g. ["bridge", "router"].
+    capabilities = models.JSONField(default=list, blank=True)
+    # Set when this neighbor matched a Device in inventory at scan time (by
+    # hostname or management IP). SET_NULL so removing the matched device just
+    # re-surfaces the neighbor as undiscovered rather than deleting the record.
+    matched_device = models.ForeignKey(
+        Device, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="lldp_seen_as_neighbor",
+    )
+    first_seen = models.DateTimeField(null=True, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["seen_by", "local_interface"],
+                name="unique_lldp_neighbor_per_port",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["seen_by"]),
+            models.Index(fields=["matched_device"]),
+        ]
+
+    def __str__(self):
+        who = self.system_name or self.chassis_id or "unknown"
+        return f"{who} via {self.seen_by.hostname}:{self.local_interface}"

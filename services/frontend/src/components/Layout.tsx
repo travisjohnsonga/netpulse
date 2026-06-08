@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { fetchUndiscoveredLldpCount } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
@@ -14,11 +15,13 @@ interface NavItem {
   href: string
   icon: string
   divider?: boolean // render a section divider above this item
+  badge?: 'lldp'    // render a live count badge keyed by this source
 }
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: '▦' },
   { label: 'Network Devices', href: '/devices', icon: '⬡' },
+  { label: 'LLDP Neighbors', href: '/lldp-neighbors', icon: '📡', badge: 'lldp' },
   { label: 'Sites', href: '/sites', icon: '🏢' },
   { label: 'Compare', href: '/configs/compare', icon: '🔀' },
   { label: 'Topology', href: '/topology', icon: '🌐' },
@@ -48,6 +51,20 @@ export default function Layout({ children }: Props) {
 
   // Load preferences once (syncs theme from the backend) for the session.
   useEffect(() => { loadPrefs() }, [loadPrefs])
+
+  // Live count of LLDP neighbors not yet in inventory → sidebar badge.
+  // Refresh every 5 minutes; the badge hides itself when the count is 0.
+  const [lldpCount, setLldpCount] = useState(0)
+  useEffect(() => {
+    if (!isAuthenticated) return
+    let active = true
+    const tick = () => fetchUndiscoveredLldpCount().then((n) => { if (active) setLldpCount(n) }).catch(() => {})
+    tick()
+    const id = setInterval(tick, 5 * 60 * 1000)
+    return () => { active = false; clearInterval(id) }
+  }, [isAuthenticated])
+
+  const badgeFor = (item: NavItem): number => (item.badge === 'lldp' ? lldpCount : 0)
 
   // Works for both local and SSO users: prefer full name, then username, then
   // the email local-part. SSO tokens may not carry a username.
@@ -114,7 +131,15 @@ export default function Layout({ children }: Props) {
                 <span className="text-base w-5 text-center" aria-hidden>
                   {item.icon}
                 </span>
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {badgeFor(item) > 0 && (
+                  <span
+                    className="ml-auto min-w-[1.25rem] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-center rounded-full bg-red-500 text-white"
+                    title={`${badgeFor(item)} not in inventory`}
+                  >
+                    {badgeFor(item)}
+                  </span>
+                )}
               </NavLink>
             </div>
           ))}

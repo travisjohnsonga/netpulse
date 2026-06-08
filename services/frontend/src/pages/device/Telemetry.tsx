@@ -12,6 +12,7 @@ import {
 } from '../../api/client'
 import Modal from '../../components/Modal'
 import DeviceLink from '../../components/DeviceLink'
+import DeviceAddModal, { type DeviceAddPrefill } from '../../components/DeviceAddModal'
 import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
@@ -294,6 +295,8 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [discoverMsg, setDiscoverMsg] = useState<string | null>(null)
+  // Prefill for adding an LLDP neighbor (not yet in inventory) to the fleet.
+  const [lldpAdd, setLldpAdd] = useState<DeviceAddPrefill | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -429,7 +432,15 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
                     <td className="px-3 py-1.5">{r.lldp_neighbor_hostname
                       ? <span className="inline-flex flex-col">
                           <DeviceLink deviceId={r.lldp_neighbor_device_id} hostname={r.lldp_neighbor_hostname} className="text-blue-600" />
-                          <span className="text-[10px] text-green-600 dark:text-green-400" title="Network link — auto-selected for monitoring">● LLDP neighbor detected</span>
+                          {r.lldp_neighbor_device_id
+                            ? <span className="text-[10px] text-green-600 dark:text-green-400" title="In inventory — link to its device page">● in inventory</span>
+                            : <button
+                                onClick={() => setLldpAdd({ hostname: r.lldp_neighbor_hostname!.split('.')[0] })}
+                                className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline text-left"
+                                title="This neighbor is not in inventory — add it"
+                              >
+                                + Add to Inventory
+                              </button>}
                         </span>
                       : <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-1.5 text-gray-600">{formatSpeed(r.if_speed_mbps)}</td>
@@ -467,6 +478,13 @@ function InterfacePolling({ device, cfg }: { device: DeviceDetail; cfg: Telemetr
         Discovery uses this device's credential profile. Manage it under{' '}
         <Link to="/settings/credentials" className="text-blue-600 hover:text-blue-800">Settings → Credentials</Link>.
       </p>
+      {lldpAdd && (
+        <DeviceAddModal
+          initial={lldpAdd}
+          onClose={() => setLldpAdd(null)}
+          onCreated={() => { setLldpAdd(null); load() }}
+        />
+      )}
     </div>
   )
 }
