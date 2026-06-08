@@ -560,7 +560,7 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
       {!collectorIp && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800">
           ⚠️ Collector IP not configured — snippets use a blank target.{' '}
-          <Link to="/settings/general" className="text-blue-600 hover:text-blue-800">Configure it in Settings → General</Link>.
+          <Link to="/settings/system?tab=general" className="text-blue-600 hover:text-blue-800">Configure it in Settings → System → General</Link>.
         </div>
       )}
       {toast && (

@@ -8,28 +8,23 @@ interface SettingsNavItem {
   icon: string
 }
 
+// Grouped to cut clutter: related sections live as tabs under one entry.
+// Standalone entries below the divider are complex enough to stand alone.
 const SETTINGS_NAV: SettingsNavItem[] = [
-  { to: 'general',      label: 'General',        icon: '⚙' },
-  { to: 'polling',      label: 'Polling',        icon: '⏱' },
-  { to: 'users',        label: 'Users & Access', icon: '👥' },
-  { to: 'roles',        label: 'Device Roles',   icon: '🏷' },
-  { to: 'hostname-rules', label: 'Hostname Rules', icon: '🔤' },
-  { to: 'log-filters',  label: 'Log Filters',    icon: '📋' },
-  { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
-  { to: 'integrations', label: 'Integrations',   icon: '🔌' },
-  { to: 'compliance-templates', label: 'Compliance',  icon: '📐' },
-  { to: 'os-versions',  label: 'OS Versions',    icon: '🖥' },
-  { to: 'fleet-inventory', label: 'Fleet Inventory', icon: '📊' },
-  { to: 'alerting',     label: 'Alerting',       icon: '⚠' },
-  { to: 'alert-routing', label: 'Alert Routing', icon: '🧭' },
-  { to: 'discovery',    label: 'Discovery',      icon: '🔎' },
-  { to: 'collectors',   label: 'Collectors',     icon: '📡' },
-  { to: 'data-sources', label: 'Data Sources',   icon: '🗄' },
-  { to: 'mibs',         label: 'MIB Files',      icon: '📚' },
-  { to: 'certificates', label: 'Certificates',   icon: '🔒' },
-  { to: 'sso',          label: 'SSO / Login',    icon: '🔐' },
+  { to: 'users',           label: 'Users & Access',  icon: '👥' },
+  { to: 'alerting',        label: 'Alerting',        icon: '🔔' },
+  { to: 'network-devices', label: 'Network Devices', icon: '🖥' },
+  { to: 'integrations',    label: 'Integrations',    icon: '🔗' },
+  { to: 'compliance',      label: 'Compliance',      icon: '✅' },
+  { to: 'system',          label: 'System',          icon: '⚙' },
+  { to: 'collectors',      label: 'Collectors',      icon: '📡' },
+  { to: 'discovery',       label: 'Discovery',       icon: '🔍' },
+  { to: 'hostname-rules',  label: 'Hostname Rules',  icon: '📋' },
+  { to: 'log-filters',     label: 'Log Filters',     icon: '🔇' },
+  { to: 'credentials',     label: 'Credentials',     icon: '🔑' },
+  { to: 'polling',         label: 'Polling',         icon: '⏱' },
+  { to: 'data-sources',    label: 'Data Sources',    icon: '🗄' },
   { to: 'platform-status', label: 'Platform Status', icon: '🩺' },
-  { to: 'system',       label: 'System',         icon: '🖥' },
 ]
 
 export default function Settings() {

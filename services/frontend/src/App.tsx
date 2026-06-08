@@ -17,27 +17,19 @@ import Checks from './pages/Checks'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
 import Settings from './pages/Settings'
-import General from './pages/settings/General'
 import Polling from './pages/settings/Polling'
-import Users from './pages/settings/Users'
-import Roles from './pages/settings/Roles'
 import HostnameRules from './pages/settings/HostnameRules'
 import LogFilters from './pages/settings/LogFilters'
-import ComplianceTemplates from './pages/settings/ComplianceTemplates'
-import OSVersions from './pages/settings/OSVersions'
-import FleetInventory from './pages/settings/FleetInventory'
 import Credentials from './pages/settings/Credentials'
 import Integrations from './pages/settings/Integrations'
-import Alerting from './pages/settings/Alerting'
-import AlertRouting from './pages/settings/AlertRouting'
 import Discovery from './pages/settings/Discovery'
 import Collectors from './pages/settings/Collectors'
 import DataSources from './pages/settings/DataSources'
-import Mibs from './pages/settings/Mibs'
-import Certificates from './pages/settings/Certificates'
-import SSO from './pages/settings/SSO'
-import System from './pages/settings/System'
 import PlatformStatus from './pages/settings/PlatformStatus'
+import {
+  UsersAccessSettings, AlertingSettings, NetworkDeviceSettings,
+  ComplianceSettings, SystemSettings,
+} from './pages/settings/groups'
 import Topology from './pages/Topology'
 import LldpNeighbors from './pages/LldpNeighbors'
 import NetworkLookup from './pages/NetworkLookup'
@@ -135,28 +127,33 @@ function AppRoutes() {
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />
                 <Route path="/settings" element={<Settings />}>
-                  <Route index element={<Navigate to="general" replace />} />
-                  <Route path="general" element={<General />} />
-                  <Route path="polling" element={<Polling />} />
-                  <Route path="users" element={<Users />} />
-                  <Route path="roles" element={<Roles />} />
+                  <Route index element={<Navigate to="users" replace />} />
+                  {/* Grouped (tabbed) settings */}
+                  <Route path="users" element={<UsersAccessSettings />} />
+                  <Route path="alerting" element={<AlertingSettings />} />
+                  <Route path="network-devices" element={<NetworkDeviceSettings />} />
+                  <Route path="compliance" element={<ComplianceSettings />} />
+                  <Route path="system" element={<SystemSettings />} />
+                  {/* Standalone settings */}
+                  <Route path="integrations" element={<Integrations />} />
+                  <Route path="collectors" element={<Collectors />} />
+                  <Route path="discovery" element={<Discovery />} />
                   <Route path="hostname-rules" element={<HostnameRules />} />
                   <Route path="log-filters" element={<LogFilters />} />
                   <Route path="credentials" element={<Credentials />} />
-                  <Route path="integrations" element={<Integrations />} />
-                  <Route path="compliance-templates" element={<ComplianceTemplates />} />
-                  <Route path="os-versions" element={<OSVersions />} />
-                  <Route path="fleet-inventory" element={<FleetInventory />} />
-                  <Route path="alerting" element={<Alerting />} />
-                  <Route path="alert-routing" element={<AlertRouting />} />
-                  <Route path="discovery" element={<Discovery />} />
-                  <Route path="collectors" element={<Collectors />} />
+                  <Route path="polling" element={<Polling />} />
                   <Route path="data-sources" element={<DataSources />} />
-                  <Route path="mibs" element={<Mibs />} />
-                  <Route path="certificates" element={<Certificates />} />
-                  <Route path="sso" element={<SSO />} />
-                  <Route path="system" element={<System />} />
                   <Route path="platform-status" element={<PlatformStatus />} />
+                  {/* Redirects from old flat paths → grouped tabs (keep bookmarks working) */}
+                  <Route path="general" element={<Navigate to="/settings/system?tab=general" replace />} />
+                  <Route path="sso" element={<Navigate to="/settings/users?tab=sso" replace />} />
+                  <Route path="roles" element={<Navigate to="/settings/network-devices?tab=roles" replace />} />
+                  <Route path="mibs" element={<Navigate to="/settings/network-devices?tab=mibs" replace />} />
+                  <Route path="alert-routing" element={<Navigate to="/settings/alerting?tab=routing" replace />} />
+                  <Route path="compliance-templates" element={<Navigate to="/settings/compliance?tab=templates" replace />} />
+                  <Route path="os-versions" element={<Navigate to="/settings/compliance?tab=os-versions" replace />} />
+                  <Route path="fleet-inventory" element={<Navigate to="/settings/compliance?tab=fleet-inventory" replace />} />
+                  <Route path="certificates" element={<Navigate to="/settings/system?tab=certificates" replace />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
