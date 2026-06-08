@@ -31,8 +31,25 @@ def _refresh():
     transaction.on_commit(_run)
 
 
+def _note_new_version(instance):
+    if not getattr(settings, "OS_PLATFORM_REFRESH_ON_SAVE", True):
+        return
+
+    def _run():
+        from .os_policy import note_new_os_version
+        try:
+            note_new_os_version(instance)
+        except Exception as exc:  # noqa: BLE001 — never break a device save on this
+            logger.warning("OS policy: new-version detection failed: %s", exc)
+
+    transaction.on_commit(_run)
+
+
 @receiver(post_save, sender="devices.Device")
 def _on_device_saved(sender, instance, **kwargs):
+    # Record a placeholder + INFO alert when a never-seen OS version appears,
+    # then refresh the fleet inventory.
+    _note_new_version(instance)
     _refresh()
 
 

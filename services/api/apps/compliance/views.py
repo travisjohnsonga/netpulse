@@ -205,6 +205,18 @@ class ApprovedOSVersionViewSet(viewsets.ModelViewSet):
         instance.delete()
         self._recompute()
 
+    @action(detail=False, methods=["post"], url_path="sync-from-inventory")
+    def sync_from_inventory(self, request):
+        """Auto-create placeholder policies for every OS version in inventory."""
+        from .os_policy import seed_os_versions_from_inventory
+        result = seed_os_versions_from_inventory()
+        self._recompute()
+        result["message"] = (
+            f"Discovered {result['created']} new OS version(s) from "
+            f"{result['devices']} device(s) in inventory"
+        )
+        return Response(result)
+
 
 class DiscoveredPlatformModelViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """Read the fleet platform/model/version inventory. `refresh` rebuilds it

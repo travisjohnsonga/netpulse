@@ -2936,7 +2936,8 @@ export interface ApprovedOSVersion {
   platform: string
   version_pattern: string
   is_regex: boolean
-  status: OSPolicyStatus
+  // Auto-seeded placeholders carry 'unknown' until an admin sets a real status.
+  status: OSInventoryStatus
   notes: string
   created_at?: string
 }
@@ -2979,6 +2980,18 @@ export async function updateApprovedOSVersion(id: number, payload: Partial<Appro
 
 export async function deleteApprovedOSVersion(id: number): Promise<void> {
   await api.delete(`/compliance/os-versions/${id}/`)
+}
+
+export interface OSVersionSyncResult {
+  created: number
+  already_existed: number
+  devices: number
+  message: string
+}
+
+export async function syncOSVersionsFromInventory(): Promise<OSVersionSyncResult> {
+  const { data } = await api.post<OSVersionSyncResult>('/compliance/os-versions/sync-from-inventory/', {})
+  return data
 }
 
 export async function fetchDiscoveredPlatforms(): Promise<DiscoveredPlatformModel[]> {

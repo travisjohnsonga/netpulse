@@ -28,18 +28,30 @@ _PENALTIES = {
 }
 
 
+def _ranked_policies(platform: str):
+    """Real (non-placeholder) policies for a platform, most-urgent first.
+
+    'unknown'-status rows are auto-seeded placeholders awaiting review — they
+    are skipped so they neither match nor influence scoring.
+    """
+    from .models import ApprovedOSVersion
+
+    policies = [
+        p for p in ApprovedOSVersion.objects.filter(platform=platform)
+        if p.status != ApprovedOSVersion.Status.UNKNOWN
+    ]
+    policies.sort(key=lambda p: _STATUS_PRECEDENCE.index(p.status)
+                  if p.status in _STATUS_PRECEDENCE else len(_STATUS_PRECEDENCE))
+    return policies
+
+
 def get_os_compliance_status(platform: str, os_version: str) -> str:
     """Resolve (platform, os_version) → policy status string.
 
     Returns one of approved/preferred/deprecated/prohibited, or 'unknown' when
-    no policy for the platform matches the version.
+    no real policy for the platform matches the version.
     """
-    from .models import ApprovedOSVersion
-
-    policies = list(ApprovedOSVersion.objects.filter(platform=platform))
-    policies.sort(key=lambda p: _STATUS_PRECEDENCE.index(p.status)
-                  if p.status in _STATUS_PRECEDENCE else len(_STATUS_PRECEDENCE))
-    for policy in policies:
+    for policy in _ranked_policies(platform):
         if policy.matches(os_version or ""):
             return policy.status
     return "unknown"
@@ -47,12 +59,7 @@ def get_os_compliance_status(platform: str, os_version: str) -> str:
 
 def matching_policy(platform: str, os_version: str):
     """The ApprovedOSVersion that decides the status (or None), for UI display."""
-    from .models import ApprovedOSVersion
-
-    policies = list(ApprovedOSVersion.objects.filter(platform=platform))
-    policies.sort(key=lambda p: _STATUS_PRECEDENCE.index(p.status)
-                  if p.status in _STATUS_PRECEDENCE else len(_STATUS_PRECEDENCE))
-    for policy in policies:
+    for policy in _ranked_policies(platform):
         if policy.matches(os_version or ""):
             return policy
     return None
@@ -68,7 +75,12 @@ def os_compliance_findings(device) -> tuple[float, list[dict]]:
     """
     from .models import ApprovedOSVersion
 
-    if not ApprovedOSVersion.objects.exists():
+    # Feature is "active" only once a real (non-placeholder) policy exists. Until
+    # then — including a table full of auto-seeded 'unknown' rows — OS scoring is
+    # off so config-only compliance is unchanged.
+    if not ApprovedOSVersion.objects.exclude(
+        status=ApprovedOSVersion.Status.UNKNOWN
+    ).exists():
         return 0.0, []
     status = get_os_compliance_status(device.platform, device.os_version or "")
     if status in ("approved", "preferred"):
@@ -150,3 +162,108 @@ def os_summary() -> dict:
         counts[status] = counts.get(status, 0) + n
     counts["total_devices"] = total
     return counts
+
+
+def seed_os_versions_from_inventory() -> dict:
+    """Auto-create placeholder ApprovedOSVersion rows from inventory.
+
+    For each distinct (platform, os_version) in use that has no policy yet,
+    create an exact-match entry with status 'unknown' (needs review) so the
+    admin only has to set a status rather than type every version. Returns
+    {created, already_existed, devices}.
+    """
+    from django.db.models import Count
+
+    from apps.devices.models import Device
+    from .models import ApprovedOSVersion
+
+    combos = (
+        Device.objects.exclude(os_version="").exclude(os_version__isnull=True)
+        .exclude(platform="")
+        .values("platform", "os_version")
+        .annotate(device_count=Count("id"))
+        .order_by("platform", "os_version")
+    )
+    created = already = 0
+    devices = 0
+    for combo in combos:
+        devices += combo["device_count"]
+        _, was_created = ApprovedOSVersion.objects.get_or_create(
+            platform=combo["platform"], version_pattern=combo["os_version"],
+            defaults={
+                "is_regex": False,
+                "status": ApprovedOSVersion.Status.UNKNOWN,
+                "notes": f"Auto-discovered from {combo['device_count']} device(s) in inventory",
+            },
+        )
+        if was_created:
+            created += 1
+        else:
+            already += 1
+    return {"created": created, "already_existed": already, "devices": devices}
+
+
+def note_new_os_version(device) -> bool:
+    """If `device`'s OS version has no policy entry, seed a placeholder + alert.
+
+    Called from the device post-save signal. Returns True when a new version was
+    recorded (so the caller can avoid duplicate work). Raises no errors on the
+    save path — best effort.
+    """
+    from .models import ApprovedOSVersion
+
+    version = (device.os_version or "").strip()
+    platform = (device.platform or "").strip()
+    if not version or not platform:
+        return False
+    if ApprovedOSVersion.objects.filter(platform=platform, version_pattern=version).exists():
+        return False
+    ApprovedOSVersion.objects.create(
+        platform=platform, version_pattern=version, is_regex=False,
+        status=ApprovedOSVersion.Status.UNKNOWN,
+        notes=f"First seen on {device.hostname}",
+    )
+    _raise_new_os_version_alert(device, platform, version)
+    return True
+
+
+_NEW_OS_VERSION_RULE_NAME = "New OS Version Detected"
+
+
+def _new_os_version_rule():
+    """Get/create the system AlertRule for new-OS-version events (INFO)."""
+    from apps.alerts.models import AlertRule
+
+    rule, _ = AlertRule.objects.get_or_create(
+        name=_NEW_OS_VERSION_RULE_NAME,
+        defaults={
+            "description": "Informational alert when a never-before-seen OS version appears in inventory.",
+            "severity": AlertRule.Severity.INFO,
+            "condition": {"rule_type": "new_os_version_detected"},
+            "cooldown_minutes": 0,
+            "is_system": True,
+        },
+    )
+    return rule
+
+
+def _raise_new_os_version_alert(device, platform: str, version: str) -> None:
+    """Raise a standing INFO alert that a never-before-seen OS version showed up."""
+    from apps.alerts.models import AlertEvent
+
+    AlertEvent.objects.create(
+        rule=_new_os_version_rule(),
+        state=AlertEvent.State.FIRING,
+        labels={
+            "source": "os_policy", "device": device.hostname, "device_id": device.id,
+            "severity": "info", "alert_type": "new_os_version_detected",
+        },
+        annotations={
+            "title": f"New OS version detected: {platform} {version}",
+            "message": (
+                f"New OS version {version} ({platform}) seen on {device.hostname}. "
+                f"Review and set its approval status in Settings → Compliance → OS Versions."
+            ),
+            "severity": "info", "platform": platform, "os_version": version,
+        },
+    )

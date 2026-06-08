@@ -154,6 +154,10 @@ class ApprovedOSVersion(models.Model):
         PREFERRED  = "preferred",  "Preferred"
         DEPRECATED = "deprecated", "Deprecated - Update Soon"
         PROHIBITED = "prohibited", "Prohibited - Update Now"
+        # Placeholder for an auto-seeded version awaiting an admin decision. It
+        # does NOT match or affect scoring — it's a "needs review" to-do entry
+        # until the admin sets a real status.
+        UNKNOWN    = "unknown",    "Unset - Needs Review"
 
     platform = models.CharField(max_length=64, help_text="e.g. ios_xe, aos_cx, fortios")
     version_pattern = models.CharField(

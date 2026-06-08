@@ -35,6 +35,7 @@ MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7
 HOSTNAME_CHECK_INTERVAL_S = int(os.environ.get("HOSTNAME_CHECK_INTERVAL_S", str(24 * 3600)))
 UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
 OS_PLATFORM_REFRESH_INTERVAL_S = int(os.environ.get("OS_PLATFORM_REFRESH_INTERVAL_S", str(6 * 3600)))
+OS_VERSION_SEED_INTERVAL_S = int(os.environ.get("OS_VERSION_SEED_INTERVAL_S", str(24 * 3600)))
 # Heartbeat the local collector frequently; with the default 300s tick it
 # effectively fires every tick (well under the 600s health window).
 COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
@@ -71,6 +72,7 @@ class Command(BaseCommand):
             ["hostname_check", HOSTNAME_CHECK_INTERVAL_S, self._check_hostnames, False, None],
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
             ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
+            ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
         ]
         now = time.monotonic()
@@ -159,6 +161,12 @@ class Command(BaseCommand):
         from apps.compliance.os_policy import refresh_discovered_platforms
         n = refresh_discovered_platforms()
         logger.info("scheduler: OS-version fleet inventory — %d combos tracked", n)
+
+    def _seed_os_versions(self):
+        from apps.compliance.os_policy import seed_os_versions_from_inventory
+        r = seed_os_versions_from_inventory()
+        if r["created"]:
+            logger.info("scheduler: seeded %d new OS-version placeholder(s) from inventory", r["created"])
 
     def _collector_heartbeat(self):
         # Refresh the local collector's last_seen_at so its health reflects a
