@@ -273,6 +273,11 @@ SETUP_COMPLETE = os.environ.get("SETUP_COMPLETE", "false").lower() == "true"
 # ingest-snmp poller learns about devices. Disabled in tests (no NATS).
 SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "true"
 
+# Rebuild the DiscoveredPlatformModel fleet inventory (OS-version compliance) on
+# every Device save/delete. Disabled in tests to keep device-creation cheap; the
+# scheduler refreshes it every 6h regardless.
+OS_PLATFORM_REFRESH_ON_SAVE = os.environ.get("OS_PLATFORM_REFRESH_ON_SAVE", "true").lower() == "true"
+
 # Auto-execute active-scan / topology discovery jobs in a background thread on
 # creation (run_discovery). Disabled in tests so creating a job doesn't spawn a
 # real network scan.

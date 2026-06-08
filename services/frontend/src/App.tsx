@@ -24,6 +24,8 @@ import Roles from './pages/settings/Roles'
 import HostnameRules from './pages/settings/HostnameRules'
 import LogFilters from './pages/settings/LogFilters'
 import ComplianceTemplates from './pages/settings/ComplianceTemplates'
+import OSVersions from './pages/settings/OSVersions'
+import FleetInventory from './pages/settings/FleetInventory'
 import Credentials from './pages/settings/Credentials'
 import Integrations from './pages/settings/Integrations'
 import Alerting from './pages/settings/Alerting'
@@ -143,6 +145,8 @@ function AppRoutes() {
                   <Route path="credentials" element={<Credentials />} />
                   <Route path="integrations" element={<Integrations />} />
                   <Route path="compliance-templates" element={<ComplianceTemplates />} />
+                  <Route path="os-versions" element={<OSVersions />} />
+                  <Route path="fleet-inventory" element={<FleetInventory />} />
                   <Route path="alerting" element={<Alerting />} />
                   <Route path="alert-routing" element={<AlertRouting />} />
                   <Route path="discovery" element={<Discovery />} />

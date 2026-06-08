@@ -140,3 +140,74 @@ class ComplianceTemplateResult(models.Model):
 
     def __str__(self):
         return f"{self.device} / {self.template} = {self.status} ({self.score})"
+
+
+# ── OS version policy & fleet inventory ──────────────────────────────────────
+
+class ApprovedOSVersion(models.Model):
+    """An OS-version policy entry: which versions of a platform are approved,
+    preferred, deprecated, or prohibited. Drives OS-version compliance scoring.
+    """
+
+    class Status(models.TextChoices):
+        APPROVED   = "approved",   "Approved"
+        PREFERRED  = "preferred",  "Preferred"
+        DEPRECATED = "deprecated", "Deprecated - Update Soon"
+        PROHIBITED = "prohibited", "Prohibited - Update Now"
+
+    platform = models.CharField(max_length=64, help_text="e.g. ios_xe, aos_cx, fortios")
+    version_pattern = models.CharField(
+        max_length=128,
+        help_text='Exact version or regex pattern. e.g. "17.12.*" or "10.13.1000"',
+    )
+    is_regex = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.APPROVED)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["platform", "version_pattern"]
+
+    def __str__(self):
+        return f"{self.platform} {self.version_pattern} ({self.status})"
+
+    def matches(self, version: str) -> bool:
+        """True if `version` matches this policy's pattern."""
+        version = version or ""
+        if self.is_regex:
+            import re
+            try:
+                return bool(re.match(self.version_pattern, version))
+            except re.error:
+                return False
+        return self.version_pattern == version
+
+
+class DiscoveredPlatformModel(models.Model):
+    """Every unique platform+model+version combo seen across the fleet.
+
+    Auto-populated from device inventory (see
+    apps.compliance.os_policy.refresh_discovered_platforms). `os_status` caches
+    the computed OS-version compliance status for the combo.
+    """
+
+    class Status(models.TextChoices):
+        APPROVED   = "approved",   "Approved"
+        PREFERRED  = "preferred",  "Preferred"
+        DEPRECATED = "deprecated", "Deprecated"
+        PROHIBITED = "prohibited", "Prohibited"
+        UNKNOWN    = "unknown",    "Not in policy"
+
+    platform = models.CharField(max_length=64)
+    model = models.CharField(max_length=128, blank=True)
+    os_version = models.CharField(max_length=128, blank=True)
+    device_count = models.IntegerField(default=0)
+    last_seen = models.DateTimeField(auto_now=True)
+    os_status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNKNOWN)
+
+    class Meta:
+        unique_together = [["platform", "model", "os_version"]]
+        ordering = ["platform", "model"]
+
+    def __str__(self):
+        return f"{self.platform}/{self.model}/{self.os_version} (x{self.device_count})"

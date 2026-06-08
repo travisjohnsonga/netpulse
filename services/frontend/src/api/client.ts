@@ -2876,3 +2876,77 @@ export async function fetchUndiscoveredLldpCount(): Promise<number> {
   return data.count
 }
 
+// ── OS version policy & fleet inventory ──────────────────────────────────────
+
+export type OSPolicyStatus = 'approved' | 'preferred' | 'deprecated' | 'prohibited'
+export type OSInventoryStatus = OSPolicyStatus | 'unknown'
+
+export interface ApprovedOSVersion {
+  id: number
+  platform: string
+  version_pattern: string
+  is_regex: boolean
+  status: OSPolicyStatus
+  notes: string
+  created_at?: string
+}
+
+export type ApprovedOSVersionPayload = Omit<ApprovedOSVersion, 'id' | 'created_at'>
+
+export interface DiscoveredPlatformModel {
+  id: number
+  platform: string
+  model: string
+  os_version: string
+  device_count: number
+  os_status: OSInventoryStatus
+  last_seen: string
+}
+
+export interface OSComplianceSummary {
+  approved: number
+  preferred: number
+  deprecated: number
+  prohibited: number
+  unknown: number
+  total_devices: number
+}
+
+export async function fetchApprovedOSVersions(): Promise<ApprovedOSVersion[]> {
+  const { data } = await api.get<ApprovedOSVersion[] | Paginated<ApprovedOSVersion>>('/compliance/os-versions/')
+  return unwrap(data)
+}
+
+export async function createApprovedOSVersion(payload: ApprovedOSVersionPayload): Promise<ApprovedOSVersion> {
+  const { data } = await api.post<ApprovedOSVersion>('/compliance/os-versions/', payload)
+  return data
+}
+
+export async function updateApprovedOSVersion(id: number, payload: Partial<ApprovedOSVersionPayload>): Promise<ApprovedOSVersion> {
+  const { data } = await api.patch<ApprovedOSVersion>(`/compliance/os-versions/${id}/`, payload)
+  return data
+}
+
+export async function deleteApprovedOSVersion(id: number): Promise<void> {
+  await api.delete(`/compliance/os-versions/${id}/`)
+}
+
+export async function fetchDiscoveredPlatforms(): Promise<DiscoveredPlatformModel[]> {
+  const { data } = await api.get<DiscoveredPlatformModel[] | Paginated<DiscoveredPlatformModel>>('/compliance/discovered-platforms/')
+  return unwrap(data)
+}
+
+export async function refreshDiscoveredPlatforms(): Promise<{ combos: number }> {
+  const { data } = await api.post<{ combos: number }>('/compliance/discovered-platforms/refresh/', {})
+  return data
+}
+
+export async function fetchDiscoveredPlatformDevices(id: number): Promise<Device[]> {
+  const { data } = await api.get<Device[]>(`/compliance/discovered-platforms/${id}/devices/`)
+  return data
+}
+
+export async function fetchOSComplianceSummary(): Promise<OSComplianceSummary> {
+  const { data } = await api.get<OSComplianceSummary>('/compliance/os-summary/')
+  return data
+}

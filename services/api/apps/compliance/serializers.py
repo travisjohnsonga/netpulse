@@ -1,11 +1,13 @@
 from rest_framework import serializers
 
 from .models import (
+    ApprovedOSVersion,
     CompliancePolicy,
     CompliancePolicyRule,
     ComplianceResult,
     ComplianceTemplate,
     ComplianceTemplateResult,
+    DiscoveredPlatformModel,
 )
 
 
@@ -60,3 +62,35 @@ class ComplianceTemplateResultSerializer(serializers.ModelSerializer):
             "missing_count", "extra_count", "drift_count", "remediation",
         )
         read_only_fields = fields
+
+
+class ApprovedOSVersionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ApprovedOSVersion
+        fields = (
+            "id", "platform", "version_pattern", "is_regex", "status",
+            "notes", "created_at",
+        )
+        read_only_fields = ("created_at",)
+
+    def validate(self, attrs):
+        # Validate regex patterns up-front so a bad pattern fails the request
+        # rather than silently never-matching at scoring time.
+        is_regex = attrs.get("is_regex", getattr(self.instance, "is_regex", False))
+        pattern = attrs.get("version_pattern", getattr(self.instance, "version_pattern", ""))
+        if is_regex:
+            import re
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise serializers.ValidationError({"version_pattern": f"Invalid regex: {exc}"})
+        return attrs
+
+
+class DiscoveredPlatformModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiscoveredPlatformModel
+        fields = (
+            "id", "platform", "model", "os_version", "device_count",
+            "os_status", "last_seen",
+        )

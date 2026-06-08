@@ -10,18 +10,22 @@ from rest_framework.viewsets import GenericViewSet
 
 from apps.core.errors import safe_detail
 from .models import (
+    ApprovedOSVersion,
     CompliancePolicy,
     CompliancePolicyRule,
     ComplianceResult,
     ComplianceTemplate,
     ComplianceTemplateResult,
+    DiscoveredPlatformModel,
 )
 from .serializers import (
+    ApprovedOSVersionSerializer,
     CompliancePolicyRuleSerializer,
     CompliancePolicySerializer,
     ComplianceResultSerializer,
     ComplianceTemplateResultSerializer,
     ComplianceTemplateSerializer,
+    DiscoveredPlatformModelSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,3 +175,70 @@ class ComplianceCheckView(APIView):
             result = engine._error_result(device, template, str(exc))
         result.save()
         return result
+
+
+class ApprovedOSVersionViewSet(viewsets.ModelViewSet):
+    """CRUD over OS-version policy entries. Recomputes cached fleet statuses on
+    any change so the inventory page reflects the new policy immediately."""
+
+    queryset = ApprovedOSVersion.objects.all()
+    serializer_class = ApprovedOSVersionSerializer
+    filterset_fields = ["platform", "status", "is_regex"]
+    ordering_fields = ["platform", "version_pattern", "status", "created_at"]
+
+    def _recompute(self):
+        from .os_policy import recompute_statuses
+        try:
+            recompute_statuses()
+        except Exception as exc:  # noqa: BLE001 — never fail the write on a refresh hiccup
+            logger.warning("OS policy: recompute_statuses failed: %s", exc)
+
+    def perform_create(self, serializer):
+        serializer.save()
+        self._recompute()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        self._recompute()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        self._recompute()
+
+
+class DiscoveredPlatformModelViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+    """Read the fleet platform/model/version inventory. `refresh` rebuilds it
+    from current devices; the detail `devices` action lists matching devices."""
+
+    queryset = DiscoveredPlatformModel.objects.all()
+    serializer_class = DiscoveredPlatformModelSerializer
+    filterset_fields = ["platform", "os_status"]
+    ordering_fields = ["platform", "model", "os_version", "device_count"]
+
+    @action(detail=False, methods=["post"], url_path="refresh")
+    def refresh(self, request):
+        from .os_policy import refresh_discovered_platforms
+        count = refresh_discovered_platforms()
+        return Response({"combos": count})
+
+    @action(detail=True, methods=["get"], url_path="devices")
+    def devices(self, request, pk=None):
+        """Devices running this exact platform/model/version combo."""
+        from apps.devices.models import Device
+        from apps.devices.serializers import DeviceListSerializer
+
+        combo = self.get_object()
+        devices = Device.objects.filter(
+            platform=combo.platform, model=combo.model or "",
+            os_version=combo.os_version or "",
+        ).select_related("site", "role")
+        return Response(DeviceListSerializer(devices, many=True).data)
+
+
+class OSComplianceSummaryView(APIView):
+    """Fleet-wide OS-version compliance tallies for the dashboard donut."""
+
+    @extend_schema(request=None, responses=None, summary="OS compliance summary")
+    def get(self, request):
+        from .os_policy import os_summary
+        return Response(os_summary())

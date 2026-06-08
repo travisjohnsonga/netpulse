@@ -34,6 +34,7 @@ ARP_MAC_INTERVAL_S = int(os.environ.get("ARP_MAC_COLLECT_INTERVAL_S", str(6 * 36
 MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7 * 24 * 3600)))
 HOSTNAME_CHECK_INTERVAL_S = int(os.environ.get("HOSTNAME_CHECK_INTERVAL_S", str(24 * 3600)))
 UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
+OS_PLATFORM_REFRESH_INTERVAL_S = int(os.environ.get("OS_PLATFORM_REFRESH_INTERVAL_S", str(6 * 3600)))
 # Heartbeat the local collector frequently; with the default 300s tick it
 # effectively fires every tick (well under the 600s health window).
 COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
@@ -69,6 +70,7 @@ class Command(BaseCommand):
             ["mac_vendors", MAC_VENDOR_INTERVAL_S, self._update_mac_vendors, False, None],
             ["hostname_check", HOSTNAME_CHECK_INTERVAL_S, self._check_hostnames, False, None],
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
+            ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
         ]
         now = time.monotonic()
@@ -151,6 +153,12 @@ class Command(BaseCommand):
         logger.info("scheduler: syncing enabled UniFi controllers")
         from apps.integrations.unifi_sync import sync_all_controllers
         sync_all_controllers()
+
+    def _refresh_os_platforms(self):
+        logger.info("scheduler: refreshing OS-version fleet inventory")
+        from apps.compliance.os_policy import refresh_discovered_platforms
+        n = refresh_discovered_platforms()
+        logger.info("scheduler: OS-version fleet inventory — %d combos tracked", n)
 
     def _collector_heartbeat(self):
         # Refresh the local collector's last_seen_at so its health reflects a

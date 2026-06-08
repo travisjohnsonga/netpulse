@@ -18,6 +18,8 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'credentials',  label: 'Credentials',    icon: '🔑' },
   { to: 'integrations', label: 'Integrations',   icon: '🔌' },
   { to: 'compliance-templates', label: 'Compliance',  icon: '📐' },
+  { to: 'os-versions',  label: 'OS Versions',    icon: '🖥' },
+  { to: 'fleet-inventory', label: 'Fleet Inventory', icon: '📊' },
   { to: 'alerting',     label: 'Alerting',       icon: '⚠' },
   { to: 'alert-routing', label: 'Alert Routing', icon: '🧭' },
   { to: 'discovery',    label: 'Discovery',      icon: '🔎' },

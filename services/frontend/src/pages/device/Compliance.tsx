@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchComplianceResults, fetchDeviceCompliance, runComplianceCheck,
+  fetchApprovedOSVersions,
   type DeviceDetail, type ComplianceResult,
   type ComplianceTemplateResult, type ComplianceFinding,
+  type ApprovedOSVersion, type OSInventoryStatus,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
 import EmptyState from '../../components/EmptyState'
+import OSStatusBadge from '../../components/OSStatusBadge'
 
 const OUTCOME_BADGE: Record<string, string> = {
   pass: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
@@ -76,6 +79,7 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
         <div className="flex justify-end">
           <RunButton running={running} onClick={runCheck} />
         </div>
+        <OSVersionCard device={device} />
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
           <EmptyState title="No compliance checks"
             description="This device hasn't been evaluated against any compliance template yet. Define templates under Settings → Compliance, then run a check."
@@ -91,6 +95,8 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Configuration Compliance</h2>
         <RunButton running={running} onClick={runCheck} />
       </div>
+
+      <OSVersionCard device={device} />
 
       {hasTemplates && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -213,4 +219,60 @@ function Spinner() {
 }
 function Banner({ text }: { text: string }) {
   return <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400">{text}</div>
+}
+
+// Matches a version string against a policy pattern the same way the backend
+// does (Python re.match → anchored at the start only).
+function policyMatches(p: ApprovedOSVersion, version: string): boolean {
+  if (p.is_regex) {
+    try { return new RegExp(`^(?:${p.version_pattern})`).test(version) }
+    catch { return false }
+  }
+  return p.version_pattern === version
+}
+
+// Most-urgent status wins, mirroring the backend precedence.
+const OS_PRECEDENCE = ['prohibited', 'deprecated', 'preferred', 'approved']
+
+function OSVersionCard({ device }: { device: DeviceDetail }) {
+  const [policies, setPolicies] = useState<ApprovedOSVersion[] | null>(null)
+
+  useEffect(() => {
+    fetchApprovedOSVersions()
+      .then((all) => setPolicies(all.filter((p) => p.platform === device.platform)))
+      .catch(() => setPolicies([]))
+  }, [device.platform])
+
+  // Don't render until loaded; hide entirely when OS policy isn't in use at all.
+  if (policies === null) return null
+
+  const version = device.os_version || ''
+  const sorted = [...policies].sort(
+    (a, b) => OS_PRECEDENCE.indexOf(a.status) - OS_PRECEDENCE.indexOf(b.status))
+  const match = sorted.find((p) => policyMatches(p, version))
+  const status: OSInventoryStatus = match ? match.status : 'unknown'
+
+  // Nothing to show if there are no policies for this platform — keeps the tab
+  // uncluttered until an admin defines OS policies.
+  if (policies.length === 0) return null
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">OS Version Compliance</h3>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm max-w-md">
+        <dt className="text-gray-500 dark:text-gray-400">Version</dt>
+        <dd className="font-mono text-gray-800 dark:text-gray-200">{version || '—'}</dd>
+        <dt className="text-gray-500 dark:text-gray-400">Platform</dt>
+        <dd className="font-mono text-gray-800 dark:text-gray-200">{device.platform}</dd>
+        <dt className="text-gray-500 dark:text-gray-400">Status</dt>
+        <dd><OSStatusBadge status={status} /></dd>
+        <dt className="text-gray-500 dark:text-gray-400">Policy</dt>
+        <dd className="text-gray-700 dark:text-gray-300">
+          {match
+            ? <span className="font-mono text-xs">{match.version_pattern}</span>
+            : <span className="text-gray-400">No matching policy</span>}
+        </dd>
+      </dl>
+    </div>
+  )
 }

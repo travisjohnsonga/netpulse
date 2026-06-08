@@ -85,6 +85,14 @@ class ComplianceEngine:
         issues = len(findings)
         score = max(0.0, 100.0 * ((total - issues) / total)) if total > 0 else 100.0
 
+        # OS-version compliance component (device-level): prepend any OS findings
+        # and fold the penalty into this device's score, clamped to [0, 100].
+        from .os_policy import os_compliance_findings
+        os_delta, os_findings = os_compliance_findings(device)
+        if os_findings:
+            findings = os_findings + findings
+            score = max(0.0, min(100.0, score + os_delta))
+
         return ComplianceTemplateResult(
             device=device,
             template=template,
