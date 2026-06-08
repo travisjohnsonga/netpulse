@@ -16,6 +16,8 @@ import FleetInventory from './FleetInventory'
 import General from './General'
 import Certificates from './Certificates'
 import System from './System'
+import AuditLog from './AuditLog'
+import DataRetention from './DataRetention'
 
 export function UsersAccessSettings() {
   return <TabbedSettingsPage tabs={[
@@ -50,6 +52,8 @@ export function SystemSettings() {
   return <TabbedSettingsPage tabs={[
     { id: 'general', label: 'General', element: <General /> },
     { id: 'certificates', label: 'Certificates', element: <Certificates /> },
+    { id: 'audit-log', label: 'Audit Log', element: <AuditLog /> },
+    { id: 'data-retention', label: 'Data Retention', element: <DataRetention /> },
     { id: 'info', label: 'System Info', element: <System /> },
   ]} />
 }

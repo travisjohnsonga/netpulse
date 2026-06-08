@@ -154,6 +154,8 @@ function AppRoutes() {
                   <Route path="os-versions" element={<Navigate to="/settings/compliance?tab=os-versions" replace />} />
                   <Route path="fleet-inventory" element={<Navigate to="/settings/compliance?tab=fleet-inventory" replace />} />
                   <Route path="certificates" element={<Navigate to="/settings/system?tab=certificates" replace />} />
+                  <Route path="audit-log" element={<Navigate to="/settings/system?tab=audit-log" replace />} />
+                  <Route path="data-retention" element={<Navigate to="/settings/system?tab=data-retention" replace />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>

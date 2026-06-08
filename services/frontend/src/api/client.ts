@@ -3013,3 +3013,71 @@ export async function fetchOSComplianceSummary(): Promise<OSComplianceSummary> {
   const { data } = await api.get<OSComplianceSummary>('/compliance/os-summary/')
   return data
 }
+
+// ── Audit log ────────────────────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: number
+  event_type: string
+  event_label: string
+  user: number | null
+  username: string
+  ip_address: string | null
+  user_agent: string
+  target_type: string
+  target_id: string
+  target_name: string
+  description: string
+  metadata: Record<string, unknown>
+  success: boolean
+  error_message: string
+  created_at: string
+}
+
+export interface AuditLogPage {
+  count: number
+  next: string | null
+  previous: string | null
+  results: AuditLogEntry[]
+}
+
+export interface AuditStats {
+  today: number
+  this_week: number
+  by_event_type: Record<string, number>
+  by_user: { username: string; count: number }[]
+  failed_logins_24h: number
+}
+
+export async function fetchAuditLog(params?: Record<string, string>): Promise<AuditLogPage> {
+  const { data } = await api.get<AuditLogPage>('/audit-log/', { params })
+  return data
+}
+
+export async function fetchAuditStats(): Promise<AuditStats> {
+  const { data } = await api.get<AuditStats>('/audit-log/stats/')
+  return data
+}
+
+export async function downloadAuditCsv(params?: Record<string, string>): Promise<void> {
+  const resp = await api.get('/audit-log/export/', { params, responseType: 'blob' })
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'audit-log.csv'; a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function fetchDeviceAudit(deviceId: number, limit = 10): Promise<AuditLogEntry[]> {
+  const { data } = await api.get<AuditLogEntry[]>(`/devices/${deviceId}/audit/`, { params: { limit: String(limit) } })
+  return data
+}
+
+export async function fetchAuditRetention(): Promise<number> {
+  const { data } = await api.get<{ audit_log_retention_days: number }>('/settings/audit-retention/')
+  return data.audit_log_retention_days
+}
+
+export async function saveAuditRetention(days: number): Promise<number> {
+  const { data } = await api.put<{ audit_log_retention_days: number }>('/settings/audit-retention/', { audit_log_retention_days: days })
+  return data.audit_log_retention_days
+}

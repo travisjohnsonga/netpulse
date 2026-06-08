@@ -36,6 +36,8 @@ HOSTNAME_CHECK_INTERVAL_S = int(os.environ.get("HOSTNAME_CHECK_INTERVAL_S", str(
 UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
 OS_PLATFORM_REFRESH_INTERVAL_S = int(os.environ.get("OS_PLATFORM_REFRESH_INTERVAL_S", str(6 * 3600)))
 OS_VERSION_SEED_INTERVAL_S = int(os.environ.get("OS_VERSION_SEED_INTERVAL_S", str(24 * 3600)))
+AUDIT_PURGE_INTERVAL_S = int(os.environ.get("AUDIT_PURGE_INTERVAL_S", str(24 * 3600)))
+AUDIT_LOG_RETENTION_DAYS = int(os.environ.get("AUDIT_LOG_RETENTION_DAYS", "90"))
 # Heartbeat the local collector frequently; with the default 300s tick it
 # effectively fires every tick (well under the 600s health window).
 COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
@@ -73,6 +75,7 @@ class Command(BaseCommand):
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
             ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
             ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
+            ["audit_purge", AUDIT_PURGE_INTERVAL_S, self._purge_audit_log, False, None],
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
         ]
         now = time.monotonic()
@@ -167,6 +170,24 @@ class Command(BaseCommand):
         r = seed_os_versions_from_inventory()
         if r["created"]:
             logger.info("scheduler: seeded %d new OS-version placeholder(s) from inventory", r["created"])
+
+    def _purge_audit_log(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.core.models import AuditLog, SystemSetting
+        # Retention is configurable at runtime; falls back to the env default.
+        try:
+            days = int(SystemSetting.get("audit_log_retention_days", AUDIT_LOG_RETENTION_DAYS))
+        except (TypeError, ValueError):
+            days = AUDIT_LOG_RETENTION_DAYS
+        if days <= 0:
+            return
+        cutoff = timezone.now() - timedelta(days=days)
+        deleted, _ = AuditLog.objects.filter(created_at__lt=cutoff).delete()
+        if deleted:
+            logger.info("scheduler: purged %d audit-log rows older than %dd", deleted, days)
 
     def _collector_heartbeat(self):
         # Refresh the local collector's last_seen_at so its health reflects a

@@ -153,3 +153,17 @@ class ChangePasswordSerializer(serializers.Serializer):
         user.must_change_password = False
         user.save(update_fields=["password", "must_change_password"])
         return user
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(source="get_event_type_display", read_only=True)
+
+    class Meta:
+        from .models import AuditLog
+        model = AuditLog
+        fields = (
+            "id", "event_type", "event_label", "user", "username", "ip_address",
+            "user_agent", "target_type", "target_id", "target_name",
+            "description", "metadata", "success", "error_message", "created_at",
+        )
+        read_only_fields = fields

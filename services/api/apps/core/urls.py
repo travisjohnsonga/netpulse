@@ -4,6 +4,7 @@ from rest_framework.routers import SimpleRouter
 from .chatops import webhook_discord, webhook_gchat, webhook_slack, webhook_teams
 from .version import version, version_check
 from .views import (
+    AuditLogViewSet,
     ChangePasswordView,
     MeView,
     MyPreferencesView,
@@ -17,6 +18,7 @@ from .views import (
 
 router = SimpleRouter()
 router.register("users", UserViewSet)
+router.register("audit-log", AuditLogViewSet, basename="audit-log")
 
 urlpatterns = [
     path("health/", health, name="health"),

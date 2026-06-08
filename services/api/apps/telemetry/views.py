@@ -283,3 +283,12 @@ class PushConfigView(APIView):
             pushed_by=request.user if request.user.is_authenticated else None,
             sections=sections, success=success, output=output, errors=errors,
         )
+        # Mirror into the unified audit trail.
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(
+            AuditLog.EventType.CONFIG_PUSHED, request=request, target=device,
+            description=f"Configuration pushed to {device.hostname}",
+            metadata={"sections": sections}, success=success,
+            error_message="; ".join(errors)[:512] if errors else "",
+        )

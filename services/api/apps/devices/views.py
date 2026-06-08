@@ -190,11 +190,34 @@ class DeviceViewSet(viewsets.ModelViewSet):
         # validators exclude the instance and the PK is preserved.
         serializer = self.get_serializer(instance=existing, data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        device = serializer.save()
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(
+            AuditLog.EventType.DEVICE_UPDATED if existing else AuditLog.EventType.DEVICE_CREATED,
+            request=request, target=device,
+            description=f"Device {device.hostname} {'updated' if existing else 'created'}",
+            metadata={"ip": str(device.management_ip or device.ip_address), "platform": device.platform},
+        )
         return Response(
             serializer.data,
             status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,
         )
+
+    def perform_update(self, serializer):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        device = serializer.save()
+        log_event(AuditLog.EventType.DEVICE_UPDATED, request=self.request, target=device,
+                  description=f"Device {device.hostname} updated")
+
+    def perform_destroy(self, instance):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        name = instance.hostname
+        log_event(AuditLog.EventType.DEVICE_DELETED, request=self.request, target=instance,
+                  description=f"Device {name} deleted")
+        instance.delete()
 
     @extend_schema(
         request=TestConnectionRequestSerializer,
@@ -429,6 +452,18 @@ class DeviceViewSet(viewsets.ModelViewSet):
             "overall_score": overall,
             "results": ComplianceTemplateResultSerializer(results, many=True).data,
         })
+
+    @action(detail=True, methods=["get"], url_path="audit")
+    def audit(self, request, pk=None):
+        """Recent audit events that target this device (most recent first)."""
+        from apps.core.models import AuditLog
+        from apps.core.serializers import AuditLogSerializer
+        device = self.get_object()
+        limit = min(int(request.query_params.get("limit", 10)), 100)
+        rows = AuditLog.objects.filter(
+            target_type="Device", target_id=str(device.id)
+        ).select_related("user")[:limit]
+        return Response(AuditLogSerializer(rows, many=True).data)
 
     @extend_schema(summary="Re-run SNMP/SSH enrichment + interface/LLDP discovery", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="enrich")
@@ -699,6 +734,11 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
         job = serializer.save(created_by=user)
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.DISCOVERY_STARTED, request=self.request, target=job,
+                  description=f"Discovery job '{job.name}' started",
+                  metadata={"method": job.method, "subnets": job.subnets, "job_id": job.id})
         self._start_discovery(job)
 
     def update(self, request, *args, **kwargs):
@@ -963,6 +1003,12 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         from .enrich import trigger_enrich
         trigger_enrich(device)
 
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.DEVICE_APPROVED, request=request, target=device,
+                  description=f"Device {device.hostname} approved from discovery job {dd.job_id}",
+                  metadata={"job_id": dd.job_id, "source_ip": str(dd.source_ip)})
+
         return Response(
             {"device": DeviceSerializer(device).data,
              "discovered": DiscoveredDeviceSerializer(dd).data},
@@ -975,4 +1021,8 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         dd = self.get_object()
         dd.status = DiscoveredDevice.Status.REJECTED
         dd.save(update_fields=["status", "updated_at"])
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.DEVICE_REJECTED, request=request, target=dd,
+                  description=f"Discovered device {dd.source_ip} rejected")
         return Response(DiscoveredDeviceSerializer(dd).data)

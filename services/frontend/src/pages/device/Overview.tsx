@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
-  fetchDeviceMetrics, enrichDevice, checkHostname,
+  fetchDeviceMetrics, enrichDevice, checkHostname, fetchDeviceAudit,
   type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig, type DeviceMetrics,
+  type AuditLogEntry,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
 import DeviceEditModal from '../../components/DeviceEditModal'
@@ -30,8 +31,10 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
   const [configs, setConfigs] = useState<RecentConfig[] | null>(null)
   const [credName, setCredName] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
+  const [audit, setAudit] = useState<AuditLogEntry[] | null>(null)
 
   useEffect(() => {
+    fetchDeviceAudit(device.id, 10).then(setAudit).catch(() => setAudit([]))
     fetchDeviceRiskScore(device.id).then(setRisk).catch(() => setRisk(null))
     fetchDeviceAlerts(device.id, device.hostname)
       .then((a) => setAlerts(a.slice(0, 5)))
@@ -265,6 +268,27 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
             </ul>
             <button onClick={() => onTab('configuration')} className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800">View configuration →</button>
           </>
+        )}
+      </Card>
+
+      {/* Audit history (config pushes/backups, edits, discovery) */}
+      <Card>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Audit History</h3>
+        {audit === null ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500">Loading…</p>
+        ) : audit.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500">No audit events for this device yet.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {audit.map((a) => (
+              <li key={a.id} className="flex items-center gap-2">
+                <span aria-hidden>{a.success ? '✅' : '❌'}</span>
+                <span className="text-gray-700 dark:text-gray-300">{a.event_label}</span>
+                {a.username && <span className="text-xs text-gray-400">by {a.username}</span>}
+                <span className="ml-auto text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">{relTime(a.created_at)}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 

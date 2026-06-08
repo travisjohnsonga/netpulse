@@ -9,9 +9,10 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.models import Q
 from django.db.utils import OperationalError
+from django_filters import rest_framework as _df
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, serializers, status, viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -21,6 +22,7 @@ from .models import Role, SystemSetting, UserPreferences
 from .permissions import AdminOnly
 from .serializers import (
     AdminUserSerializer,
+    AuditLogSerializer,
     ChangePasswordSerializer,
     MeSerializer,
     NetPulseTokenObtainPairSerializer,
@@ -489,9 +491,20 @@ class UserViewSet(viewsets.ModelViewSet):
             )
         return super().destroy(request, *args, **kwargs)
 
+    def perform_create(self, serializer):
+        from .audit import log_event
+        from .models import AuditLog
+        user = serializer.save()
+        log_event(AuditLog.EventType.USER_CREATED, request=self.request, target=user,
+                  description=f"User {user.username} created",
+                  metadata={"role": user.role})
+
     def perform_update(self, serializer):
         """Block changes that would remove the last administrator."""
+        from .audit import log_event
+        from .models import AuditLog
         user = serializer.instance
+        old_role = user.role
         if self._is_last_admin(user):
             new_role = serializer.validated_data.get("role", user.role)
             new_active = serializer.validated_data.get("is_active", user.is_active)
@@ -500,7 +513,22 @@ class UserViewSet(viewsets.ModelViewSet):
                 raise ValidationError(
                     {"error": "Cannot demote or deactivate the last administrator."}
                 )
-        serializer.save()
+        user = serializer.save()
+        role_changed = user.role != old_role
+        log_event(
+            AuditLog.EventType.USER_ROLE_CHANGED if role_changed else AuditLog.EventType.USER_UPDATED,
+            request=self.request, target=user,
+            description=(f"User {user.username} role changed {old_role} → {user.role}"
+                         if role_changed else f"User {user.username} updated"),
+        )
+
+    def perform_destroy(self, instance):
+        from .audit import log_event
+        from .models import AuditLog
+        name = instance.username
+        log_event(AuditLog.EventType.USER_DELETED, request=self.request, target=instance,
+                  description=f"User {name} deleted")
+        instance.delete()
 
 
 class ChangePasswordView(APIView):
@@ -516,9 +544,13 @@ class ChangePasswordView(APIView):
         summary="Change current user's password",
     )
     def post(self, request):
+        from .audit import log_event
+        from .models import AuditLog
         ser = ChangePasswordSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
         user = ser.save()
+        log_event(AuditLog.EventType.PASSWORD_CHANGED, request=request, user=user,
+                  description="Password changed")
         # Mint fresh tokens so the client's claims (notably must_change_password)
         # reflect the change immediately without re-logging-in.
         refresh = NetPulseTokenObtainPairSerializer.get_token(user)
@@ -527,3 +559,121 @@ class ChangePasswordView(APIView):
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         })
+
+
+# ── Audit log ────────────────────────────────────────────────────────────────
+
+class AuditLogFilter(_df.FilterSet):
+    user_id = _df.NumberFilter(field_name="user_id")
+    start = _df.IsoDateTimeFilter(field_name="created_at", lookup_expr="gte")
+    end = _df.IsoDateTimeFilter(field_name="created_at", lookup_expr="lte")
+
+    class Meta:
+        from .models import AuditLog
+        model = AuditLog
+        fields = ["event_type", "user_id", "target_type", "target_id", "success"]
+
+
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only access to the audit trail (admin only). Supports filtering by
+    event_type / user_id / target / success / date range, free-text search,
+    CSV export, and a stats summary."""
+
+    permission_classes = [AdminOnly]
+    filterset_class = AuditLogFilter
+    search_fields = ["username", "description", "target_name"]
+    ordering_fields = ["created_at", "event_type"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        from .models import AuditLog
+        return AuditLog.objects.select_related("user").all()
+
+    def get_serializer_class(self):
+        return AuditLogSerializer
+
+    @extend_schema(responses=None, summary="Export audit log as CSV")
+    @action(detail=False, methods=["get"])
+    def export(self, request):
+        import csv
+
+        from django.http import HttpResponse
+
+        qs = self.filter_queryset(self.get_queryset())[:10000]
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = 'attachment; filename="audit-log.csv"'
+        w = csv.writer(resp)
+        w.writerow(["Time", "Event", "User", "IP", "Target", "Target Name",
+                    "Success", "Description", "Error"])
+        for r in qs:
+            w.writerow([
+                r.created_at.isoformat(), r.event_type, r.username, r.ip_address or "",
+                f"{r.target_type} {r.target_id}".strip(), r.target_name,
+                "yes" if r.success else "no", r.description, r.error_message,
+            ])
+        return resp
+
+    @extend_schema(responses=None, summary="Audit log stats")
+    @action(detail=False, methods=["get"])
+    def stats(self, request):
+        from datetime import timedelta
+
+        from django.db.models import Count
+        from django.utils import timezone
+
+        from .models import AuditLog
+
+        now = timezone.now()
+        day_ago = now - timedelta(days=1)
+        week_ago = now - timedelta(days=7)
+        qs = AuditLog.objects.all()
+        by_type = dict(
+            qs.values_list("event_type").annotate(n=Count("id")).values_list("event_type", "n"))
+        by_user = list(
+            qs.exclude(username="").values("username").annotate(count=Count("id"))
+            .order_by("-count")[:10])
+        return Response({
+            "today": qs.filter(created_at__gte=day_ago).count(),
+            "this_week": qs.filter(created_at__gte=week_ago).count(),
+            "by_event_type": by_type,
+            "by_user": by_user,
+            "failed_logins_24h": qs.filter(
+                event_type=AuditLog.EventType.LOGIN_FAILED, created_at__gte=day_ago).count(),
+        })
+
+
+class AuditRetentionView(APIView):
+    """Get/set how many days audit-log rows are kept (admin to change)."""
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return super().get_permissions()
+        return [AdminOnly()]
+
+    def _days(self) -> int:
+        try:
+            return int(SystemSetting.get("audit_log_retention_days",
+                                         os.environ.get("AUDIT_LOG_RETENTION_DAYS", "90")))
+        except (TypeError, ValueError):
+            return 90
+
+    @extend_schema(summary="Audit-log retention (days)", responses=None)
+    def get(self, request):
+        return Response({"audit_log_retention_days": self._days()})
+
+    @extend_schema(summary="Set audit-log retention (days)", request=None, responses=None)
+    def put(self, request):
+        raw = request.data.get("audit_log_retention_days")
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            raise ValidationError({"audit_log_retention_days": "Must be an integer number of days."})
+        if days < 0 or days > 3650:
+            raise ValidationError({"audit_log_retention_days": "Must be between 0 and 3650."})
+        SystemSetting.set("audit_log_retention_days", str(days))
+        from .audit import log_event
+        from .models import AuditLog
+        log_event(AuditLog.EventType.SETTINGS_CHANGED, request=request,
+                  description=f"Audit-log retention set to {days} days",
+                  metadata={"audit_log_retention_days": days})
+        return Response({"audit_log_retention_days": days})

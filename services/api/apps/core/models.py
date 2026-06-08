@@ -148,3 +148,95 @@ class UserPreferences(TimestampedModel):
     def for_user(cls, user):
         obj, _ = cls.objects.get_or_create(user=user)
         return obj
+
+
+class AuditLog(models.Model):
+    """An immutable record of a security/operationally-significant action.
+
+    Written via apps.core.audit.log_event from views, signals and tasks. Never
+    edited after creation; pruned by retention (see run_scheduler).
+    """
+
+    class EventType(models.TextChoices):
+        # Auth
+        LOGIN_SUCCESS = "login_success", "Login Success"
+        LOGIN_FAILED = "login_failed", "Login Failed"
+        LOGOUT = "logout", "Logout"
+        PASSWORD_CHANGED = "password_changed", "Password Changed"
+        PASSWORD_RESET = "password_reset", "Password Reset"
+        # User management
+        USER_CREATED = "user_created", "User Created"
+        USER_UPDATED = "user_updated", "User Updated"
+        USER_DELETED = "user_deleted", "User Deleted"
+        USER_ROLE_CHANGED = "user_role_changed", "User Role Changed"
+        # Device management
+        DEVICE_CREATED = "device_created", "Device Created"
+        DEVICE_UPDATED = "device_updated", "Device Updated"
+        DEVICE_DELETED = "device_deleted", "Device Deleted"
+        DEVICE_APPROVED = "device_approved", "Device Approved"
+        DEVICE_REJECTED = "device_rejected", "Device Rejected"
+        # Configuration
+        CONFIG_PUSHED = "config_pushed", "Config Pushed to Device"
+        CONFIG_BACKUP = "config_backup", "Config Backup Taken"
+        CONFIG_RESTORED = "config_restored", "Config Restored"
+        COMPLIANCE_RUN = "compliance_run", "Compliance Check Run"
+        # Credentials
+        CREDENTIAL_CREATED = "credential_created", "Credential Created"
+        CREDENTIAL_UPDATED = "credential_updated", "Credential Updated"
+        CREDENTIAL_DELETED = "credential_deleted", "Credential Deleted"
+        CREDENTIAL_ACCESSED = "credential_accessed", "Credential Accessed"
+        # Discovery
+        DISCOVERY_STARTED = "discovery_started", "Discovery Started"
+        DISCOVERY_COMPLETED = "discovery_completed", "Discovery Completed"
+        # Integrations
+        NETBOX_IMPORT = "netbox_import", "NetBox Import"
+        UNIFI_SYNC = "unifi_sync", "UniFi Sync"
+        # System
+        SETTINGS_CHANGED = "settings_changed", "Settings Changed"
+        API_KEY_CREATED = "api_key_created", "API Key Created"
+        API_KEY_DELETED = "api_key_deleted", "API Key Deleted"
+        SSO_CONFIG_CHANGED = "sso_config_changed", "SSO Config Changed"
+        # Alerts
+        ALERT_ACKNOWLEDGED = "alert_acknowledged", "Alert Acknowledged"
+        ALERT_RESOLVED = "alert_resolved", "Alert Resolved"
+        ALERT_RULE_CREATED = "alert_rule_created", "Alert Rule Created"
+        ALERT_RULE_UPDATED = "alert_rule_updated", "Alert Rule Updated"
+
+    event_type = models.CharField(max_length=64, choices=EventType.choices, db_index=True)
+
+    # Actor
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="audit_logs")
+    username = models.CharField(max_length=150, blank=True,
+                                help_text="Snapshot of the username at event time.")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=256, blank=True)
+
+    # Target
+    target_type = models.CharField(max_length=64, blank=True, db_index=True,
+                                   help_text="e.g. Device, User, Credential")
+    target_id = models.CharField(max_length=64, blank=True, db_index=True)
+    target_name = models.CharField(max_length=256, blank=True,
+                                   help_text="Snapshot of the target's name.")
+
+    # Detail
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    # Outcome
+    success = models.BooleanField(default=True, db_index=True)
+    error_message = models.CharField(max_length=512, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["event_type", "-created_at"]),
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["target_type", "target_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.created_at} {self.username or 'system'} {self.event_type}"
