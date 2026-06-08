@@ -534,6 +534,30 @@ class DeviceViewSet(viewsets.ModelViewSet):
             "neighbors": found,
         })
 
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="collect-lldp")
+    def collect_lldp(self, request, pk=None):
+        """Collect this device's LLDP neighbors now and persist them.
+
+        Same scan as topology/discover, framed around neighbor persistence:
+        returns the number of LLDPNeighbor rows refreshed for this device.
+        """
+        from apps.telemetry.discovery import DiscoveryError
+
+        from . import topology as topo
+        device = self.get_object()
+        try:
+            found = topo.discover_links(device)
+        except DiscoveryError as exc:
+            return Response({"error": safe_detail(exc, logger, "collect lldp",
+                            public="LLDP collection failed."), "count": 0},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        return Response({
+            "device_id": device.id,
+            "count": len(found),
+            "matched": sum(1 for f in found if f["matched_device_id"]),
+        })
+
     @action(detail=False, methods=["get"], url_path="topology")
     def topology(self, request):
         """

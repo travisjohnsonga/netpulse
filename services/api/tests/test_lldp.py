@@ -108,6 +108,69 @@ class TestPersistence:
         # first_seen is stable across re-scans.
         assert LLDPNeighbor.objects.get(seen_by=a, local_interface="Gi1").first_seen == first
 
+    def test_stale_neighbor_pruned(self, devices, monkeypatch):
+        # A port that stops advertising a neighbor (re-cabled / removed) drops its
+        # stale LLDPNeighbor row on the next scan.
+        a, _ = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi1", "lldp_neighbor_hostname": "ghost", "lldp_neighbor_port": "Gi1"},
+            {"if_name": "Gi2", "lldp_neighbor_hostname": "keep", "lldp_neighbor_port": "Gi2"}])
+        topology.discover_links(a)
+        assert LLDPNeighbor.objects.filter(seen_by=a).count() == 2
+        # Gi1's neighbor is gone next scan.
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi2", "lldp_neighbor_hostname": "keep", "lldp_neighbor_port": "Gi2"}])
+        topology.discover_links(a)
+        remaining = list(LLDPNeighbor.objects.filter(seen_by=a))
+        assert len(remaining) == 1 and remaining[0].local_interface == "Gi2"
+
+    def test_failed_scan_does_not_prune(self, devices, monkeypatch):
+        # A collection failure (DiscoveryError) must NOT wipe existing rows.
+        a, _ = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi1", "lldp_neighbor_hostname": "ghost", "lldp_neighbor_port": "Gi1"}])
+        topology.discover_links(a)
+        def boom(d):
+            raise discovery.DiscoveryError("unreachable")
+        monkeypatch.setattr(discovery, "discover_interfaces", boom)
+        with pytest.raises(discovery.DiscoveryError):
+            topology.discover_links(a)
+        assert LLDPNeighbor.objects.filter(seen_by=a).count() == 1
+
+
+class TestCollectAll:
+    def test_collects_only_reachable_active_by_default(self, monkeypatch):
+        live = Device.objects.create(hostname="live", ip_address="10.1.0.1",
+                                     status="active", is_reachable=True)
+        Device.objects.create(hostname="down", ip_address="10.1.0.2",
+                              status="active", is_reachable=False)
+        Device.objects.create(hostname="off", ip_address="10.1.0.3",
+                              status="inactive", is_reachable=True)
+        scanned = []
+
+        def fake_discover(d):
+            scanned.append(d.hostname)
+            return [{"if_name": "Gi1", "lldp_neighbor_hostname": "x", "lldp_neighbor_port": "Gi1",
+                     "matched_device_id": None}]
+
+        monkeypatch.setattr(topology, "discover_links", fake_discover)
+        summary = topology.collect_all_lldp()
+        assert scanned == ["live"]
+        assert summary == {"devices": 1, "neighbors": 1, "failed": 0}
+
+    def test_one_failure_does_not_abort_sweep(self, monkeypatch):
+        a = Device.objects.create(hostname="a", ip_address="10.2.0.1", status="active", is_reachable=True)
+        b = Device.objects.create(hostname="b", ip_address="10.2.0.2", status="active", is_reachable=True)
+
+        def fake_discover(d):
+            if d.id == a.id:
+                raise discovery.DiscoveryError("no creds")
+            return [{"if_name": "Gi1", "matched_device_id": None}]
+
+        monkeypatch.setattr(topology, "discover_links", fake_discover)
+        summary = topology.collect_all_lldp()
+        assert summary["devices"] == 2 and summary["failed"] == 1 and summary["neighbors"] == 1
+
 
 class TestUndiscoveredEndpoint:
     def _seed(self, seen_by, **kw):

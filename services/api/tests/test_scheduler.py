@@ -26,6 +26,8 @@ class TestScheduler:
         # 6h / weekly tasks fire one interval after startup, not immediately.
         calls = _run_once(monkeypatch)
         assert "collect_arp_mac" not in calls
+        # LLDP collection (30m) likewise defers to one interval after startup.
+        assert "collect_lldp" not in calls
 
     def test_seeds_oui_when_table_empty(self, monkeypatch):
         calls = _run_once(monkeypatch)
