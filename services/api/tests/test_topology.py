@@ -150,6 +150,25 @@ class TestTopologyEndpoint:
         assert e["source"] == str(a.id) and e["target"] == str(b.id)
         assert e["port_a"] == "Gi4" and e["speed_mbps"] == 1000
 
+    def test_topology_includes_all_devices_with_status_fields(self, auth_client):
+        # An unreachable, link-less device must still appear as an isolated node
+        # carrying status/reachability fields for offline styling.
+        from apps.devices.models import DeviceRole
+        role = DeviceRole.objects.create(name="Router", color="#e74c3c")
+        Device.objects.create(hostname="online-rtr", ip_address="10.5.0.1", platform="ios_xe",
+                              status="active", is_reachable=True, role=role, management_ip="10.5.0.1",
+                              model="CSR1000V")
+        Device.objects.create(hostname="offline-rtr", ip_address="10.5.0.2", platform="ios_xe",
+                              status="unreachable", is_reachable=False, role=role)
+        body = auth_client.get("/api/devices/topology/").json()
+        nodes = {n["label"]: n for n in body["nodes"]}
+        assert set(nodes) == {"online-rtr", "offline-rtr"}
+        on, off = nodes["online-rtr"], nodes["offline-rtr"]
+        assert on["status"] == "active" and on["is_reachable"] is True
+        assert on["role_color"] == "#e74c3c" and on["role"] == "Router"
+        assert on["management_ip"] == "10.5.0.1" and on["model"] == "CSR1000V"
+        assert off["status"] == "unreachable" and off["is_reachable"] is False
+
     def test_topology_depth_filter(self, auth_client):
         # a — b — c (chain). depth=1 from a → {a,b}.
         from django.utils import timezone

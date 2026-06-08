@@ -12,9 +12,27 @@ type Popup =
   | { kind: 'edge'; data: TopologyEdge; x: number; y: number }
   | null
 
-const STATUS_COLORS: Record<string, string> = {
-  active: '#22c55e', inactive: '#6b7280', maintenance: '#f59e0b',
-  decommissioned: '#ef4444', pending: '#f59e0b', unreachable: '#ef4444',
+const OFFLINE_COLOR = '#e74c3c'
+const DEFAULT_ROLE_COLOR = '#6b7280'
+
+// A device is "offline" if it's unreachable, marked inactive, or its
+// reachability probe last failed. Offline nodes are drawn red regardless of role.
+function isOffline(n: TopologyNode): boolean {
+  return n.is_reachable === false || n.status === 'inactive' || n.status === 'unreachable'
+}
+// Node fill: red when offline, otherwise the device's role colour.
+function nodeColor(n: TopologyNode): string {
+  if (isOffline(n)) return OFFLINE_COLOR
+  return n.role_color || DEFAULT_ROLE_COLOR
+}
+function relativeTime(iso?: string | null): string {
+  if (!iso) return 'never'
+  const then = new Date(iso).getTime()
+  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000))
+  if (secs < 60) return `${secs}s ago`
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
+  return `${Math.floor(secs / 86400)}d ago`
 }
 const UTILIZATION_COLORS: Record<string, string> = {
   green: '#22c55e', yellow: '#eab308', orange: '#f97316', red: '#ef4444', gray: '#9ca3af',
@@ -61,6 +79,7 @@ export default function Topology() {
   const [center, setCenter] = useState('')
   const [depth, setDepth] = useState('all')
   const [role, setRole] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
   const [discovering, setDiscovering] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -69,9 +88,17 @@ export default function Topology() {
     fetchSites().then(setSites).catch(() => {})
   }, [])
 
-  const buildGraph = (nodes: TopologyNode[], edges: TopologyEdge[]) => {
+  const buildGraph = (allNodes: TopologyNode[], allEdges: TopologyEdge[]) => {
     if (!containerRef.current) return
     cyRef.current?.destroy()
+
+    // Online/Offline filter: drop non-matching nodes and any edge that loses an
+    // endpoint, so isolated and offline devices honour the toolbar selection.
+    const nodes = statusFilter === 'all'
+      ? allNodes
+      : allNodes.filter((n) => (statusFilter === 'offline' ? isOffline(n) : !isOffline(n)))
+    const keep = new Set(nodes.map((n) => n.id))
+    const edges = allEdges.filter((e) => keep.has(e.source) && keep.has(e.target))
 
     const labelById: Record<string, string> = Object.fromEntries(nodes.map((n) => [n.id, n.label]))
     // Group edges by unordered device pair to detect parallel links.
@@ -82,7 +109,10 @@ export default function Topology() {
     const cy = cytoscape({
       container: containerRef.current,
       elements: [
-        ...nodes.map((n) => ({ data: { id: n.id, label: `${typeIcon(n.type)} ${n.label}`, status: n.status, raw: n } })),
+        ...nodes.map((n) => ({
+          data: { id: n.id, label: `${typeIcon(n.type)} ${n.label}`, status: n.status, color: nodeColor(n), raw: n },
+          classes: isOffline(n) ? 'offline' : '',
+        })),
         ...edges.map((e, i) => {
           const group = groups[pairKey(e)]
           const count = group.length
@@ -100,11 +130,15 @@ export default function Topology() {
       layout: { name: 'cose', animate: false, padding: 40, nodeRepulsion: 6000 },
       style: [
         { selector: 'node', style: {
-          'background-color': (n: NodeSingular) => STATUS_COLORS[n.data('status') as string] ?? '#6b7280',
+          'background-color': 'data(color)',
           label: 'data(label)', 'font-size': 11, color: '#1f2937',
           'text-valign': 'bottom', 'text-margin-y': 5,
           'text-background-color': '#ffffff', 'text-background-opacity': 0.85, 'text-background-padding': '2px',
           width: 45, height: 45, 'border-width': 2, 'border-color': '#ffffff',
+        } },
+        // Offline devices: red dashed border + faded, so they read as "down" at a glance.
+        { selector: 'node.offline', style: {
+          'border-color': OFFLINE_COLOR, 'border-width': 3, 'border-style': 'dashed', opacity: 0.6,
         } },
         { selector: 'edge', style: {
           width: 'data(width)', 'line-color': 'data(color)', 'curve-style': 'bezier', 'target-arrow-shape': 'none',
@@ -129,10 +163,14 @@ export default function Topology() {
     cy.on('mouseover', 'node', (ev) => {
       const n = (ev.target as NodeSingular).data('raw') as TopologyNode
       const p = ev.renderedPosition
-      setHover({ x: p.x, y: p.y, title: n.label, lines: [
-        `Platform: ${n.type || '—'}`, `Vendor: ${n.vendor || '—'}`,
-        `Status: ${n.status}`, `Site: ${n.site || '—'}`, `IP: ${n.ip || '—'}`,
-      ] })
+      const offline = isOffline(n)
+      const lines = [
+        `Platform: ${n.type || '—'}`,
+        `IP: ${n.management_ip || n.ip || '—'}`,
+        offline ? '🔴 Offline' : '✅ Online',
+      ]
+      if (offline) lines.push(`Last seen: ${relativeTime(n.last_seen)}`)
+      setHover({ x: p.x, y: p.y, title: n.label, lines })
     })
     cy.on('mouseover', 'edge', (ev) => {
       const e = (ev.target as EdgeSingular).data('raw') as TopologyEdge
@@ -158,7 +196,10 @@ export default function Topology() {
       .then(({ nodes, edges }) => { buildGraph(nodes, edges); setError(null) })
       .catch(() => setError('Could not load topology. Check that the API is running.'))
       .finally(() => setLoading(false))
-  }, [site, center, depth, role])
+    // statusFilter is applied client-side inside buildGraph; included so toggling
+    // it re-renders the graph.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site, center, depth, role, statusFilter])
 
   useEffect(() => { reload(); return () => { cyRef.current?.destroy() } }, [reload])
 
@@ -226,6 +267,11 @@ export default function Topology() {
           <option value="">All Roles</option>
           {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
+        <select className={selCls} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'online' | 'offline')}>
+          <option value="all">All Devices</option>
+          <option value="online">Online Only</option>
+          <option value="offline">Offline Only</option>
+        </select>
         <button onClick={discoverAll} disabled={discovering} className="ml-auto px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium">
           {discovering ? 'Discovering…' : '🔍 Discover Links'}
         </button>
@@ -236,9 +282,12 @@ export default function Topology() {
       <div className="flex flex-wrap gap-4 text-xs flex-shrink-0">
         <div className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2">
           <span className="font-medium text-gray-600 dark:text-gray-400">Status:</span>
-          {Object.entries(STATUS_COLORS).slice(0, 4).map(([k, c]) => (
-            <span key={k} className="flex items-center gap-1.5 capitalize text-gray-600 dark:text-gray-400"><span className="w-3 h-3 rounded-full" style={{ background: c }} />{k}</span>
-          ))}
+          <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
+            <span className="w-3 h-3 rounded-full" style={{ background: '#22c55e' }} />Online (role color)
+          </span>
+          <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
+            <span className="w-3 h-3 rounded-full border-2 border-dashed" style={{ background: OFFLINE_COLOR, borderColor: OFFLINE_COLOR, opacity: 0.6 }} />Offline
+          </span>
         </div>
         <div className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2">
           <span className="font-medium text-gray-600 dark:text-gray-400">Link util:</span>
@@ -280,11 +329,16 @@ export default function Topology() {
                 <p className="font-semibold text-gray-900 dark:text-gray-100 pr-4">{popup.data.label}</p>
                 <p className="text-gray-500 dark:text-gray-400 text-xs mt-0.5 mb-3">{popup.data.type}{popup.data.role ? ` · ${popup.data.role}` : ''}</p>
                 <div className="space-y-1.5">
-                  <Row k="Status" v={<span className="capitalize font-medium" style={{ color: STATUS_COLORS[popup.data.status] ?? '#6b7280' }}>{popup.data.status}</span>} />
+                  <Row k="Status" v={
+                    <span className="font-medium" style={{ color: isOffline(popup.data) ? OFFLINE_COLOR : '#22c55e' }}>
+                      {isOffline(popup.data) ? '🔴 Offline' : '✅ Online'}
+                    </span>
+                  } />
+                  {isOffline(popup.data) && <Row k="Last seen" v={relativeTime(popup.data.last_seen)} />}
                   {popup.data.vendor && <Row k="Vendor" v={popup.data.vendor} />}
-                  {popup.data.ip && <Row k="IP" v={<span className="font-mono text-xs">{popup.data.ip}</span>} />}
+                  {(popup.data.management_ip || popup.data.ip) && <Row k="IP" v={<span className="font-mono text-xs">{popup.data.management_ip || popup.data.ip}</span>} />}
+                  {popup.data.model && <Row k="Model" v={popup.data.model} />}
                   {popup.data.site && <Row k="Site" v={popup.data.site} />}
-                  <Row k="Risk score" v={popup.data.risk_score} />
                 </div>
                 <button onClick={() => navigate(`/devices/${popup.data.id}`)} className="mt-3 w-full py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium">View Device →</button>
               </>
