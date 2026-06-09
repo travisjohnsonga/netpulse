@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from . import aos_cx, fortios
+from . import aos_cx, fortios, unifi
 
 # ── Lookup tables ─────────────────────────────────────────────────────────────
 
@@ -122,9 +122,13 @@ def parse(
     # so stored + displayed text is the actual log content. raw is preserved.
     result["message"] = clean_syslog_message(result.get("message") or "", result.get("hostname"))
 
+    # UniFi controllers emit CEF; detect on raw (RFC 3164 splits the leading
+    # "CEF:" token into app_name, so it's not on the cleaned message).
+    if unifi.is_unifi_log(result.get("raw", "")):
+        unifi.normalize(result, SEVERITIES)
     # FortiOS sends structured key=value logs (not Cisco mnemonics) — detect and
     # rewrite to a clean message + correct severity/program. raw stays original.
-    if fortios.is_fortios_log(result["message"]):
+    elif fortios.is_fortios_log(result["message"]):
         fortios.normalize(result, SEVERITIES)
     # AOS-CX emits a pipe-delimited "Event|id|LOG_…|module|-|msg" format.
     elif aos_cx.is_aos_cx_log(result["message"]):
