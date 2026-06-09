@@ -55,6 +55,7 @@ def test_unifi_controller_login_rejected_body_no_password_in_log(caplog, monkeyp
     c = UnifiClient("unifi.example.com", 443, "admin", SENTINEL)
 
     class _Resp:
+        status_code = 401  # login() treats any non-200 as a rejected attempt
         def raise_for_status(self):
             return None
         def json(self):

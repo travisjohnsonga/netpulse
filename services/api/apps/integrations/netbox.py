@@ -67,8 +67,13 @@ class NetBoxClient:
             "Authorization": f"Token {self.token}",
             "Accept": "application/json",
         })
+        # Only pass context when verification is disabled; for the default
+        # (full verification) omit it so urlopen uses its standard signature.
+        kwargs = {"timeout": self.timeout}
+        if self._ssl_ctx is not None:
+            kwargs["context"] = self._ssl_ctx
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout, context=self._ssl_ctx) as resp:
+            with urllib.request.urlopen(req, **kwargs) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             raise NetBoxError(f"NetBox returned HTTP {exc.code} for {path}") from exc
