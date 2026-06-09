@@ -34,6 +34,8 @@ const isGroup = (e: NavEntry): e is NavGroup => 'children' in e
 // current route matches one of its children.
 const navEntries: NavEntry[] = [
   { label: 'Dashboard', href: '/dashboard', icon: '▦' },
+  // Sites is a top-level organizational concept, not a network-monitoring view.
+  { label: 'Sites', href: '/sites', icon: '🏢' },
   {
     label: 'Network', icon: '🌐', children: [
       { label: 'Devices', href: '/devices', icon: '⬡' },
@@ -41,7 +43,6 @@ const navEntries: NavEntry[] = [
       { label: 'Topology', href: '/topology', icon: '🗺️' },
       { label: 'LLDP Neighbors', href: '/lldp-neighbors', icon: '📡', badge: 'lldp' },
       { label: 'Flow Analytics', href: '/flows', icon: '〰️' },
-      { label: 'Sites', href: '/sites', icon: '🏢' },
       { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍' },
       { label: 'Compare', href: '/configs/compare', icon: '🔀' },
     ],

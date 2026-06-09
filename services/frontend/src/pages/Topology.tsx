@@ -85,59 +85,79 @@ function apRadioSummary(n: TopologyNode): string {
   return n.radios.filter((r) => r.channel != null).map((r) => `${r.band} ch${r.channel}`).join(' / ')
 }
 
-// Group-aware hierarchical layout. Instead of spreading every tier evenly
-// across the full width (which scatters APs far from their switch and creates
-// long crossing lines), this lays the graph out as a tidy forest: each child is
-// placed beneath its upstream parent and a parent is centred over its children.
-// APs therefore cluster directly under their uplink switch.
+// Group-aware hierarchical layout. Upper tiers (routers/core/distribution/
+// access) are spread evenly across their row, ordered by their parent's x so
+// each group stays in the same left-right order as its upstream. The deepest
+// tier (APs) is clustered tightly *under* its parent switch — so each AP sits
+// directly below the switch it uplinks to and lines don't cross between groups.
 function buildHierarchyLayout(
   nodes: TopologyNode[],
   edges: TopologyEdge[],
   tierOf: (n: TopologyNode) => number,
 ): Record<string, { x: number; y: number }> {
-  const COL_GAP = 110, ROW_H = 170
+  const CANVAS_W = 1400
+  const TIER_Y: Record<number, number> = { 0: 80, 1: 240, 2: 400, 3: 560, 4: 740 }
+  const yFor = (t: number) => TIER_Y[t] ?? 80 + t * 160
+
   const byId: Record<string, TopologyNode> = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const tier: Record<string, number> = Object.fromEntries(nodes.map((n) => [n.id, tierOf(n)]))
 
   // Orient each edge parent→child by tier (lower tier number = upstream). Each
-  // child keeps a single primary parent (first seen) so the result is a forest;
-  // same-tier links are peer connections, not hierarchy.
-  const children = new Map<string, string[]>()
+  // child keeps a single primary parent (first seen); same-tier links are peers.
   const parent = new Map<string, string>()
   for (const e of edges) {
     const a = e.source, b = e.target
     if (!(a in tier) || !(b in tier) || tier[a] === tier[b]) continue
     const [p, c] = tier[a] < tier[b] ? [a, b] : [b, a]
-    if (parent.has(c)) continue
-    parent.set(c, p)
-    if (!children.has(p)) children.set(p, [])
-    children.get(p)!.push(c)
+    if (!parent.has(c)) parent.set(c, p)
   }
 
   const cmpLabel = (x: string, y: string) => (byId[x]?.label || '').localeCompare(byId[y]?.label || '')
-  // Roots: parentless nodes (top tier, or isolated / peer-only). Stable order.
-  const roots = nodes.map((n) => n.id).filter((id) => !parent.has(id))
-    .sort((x, y) => (tier[x] - tier[y]) || cmpLabel(x, y))
+  const tiers: Record<number, TopologyNode[]> = {}
+  nodes.forEach((n) => { (tiers[tier[n.id]] ||= []).push(n) })
+  const tierKeys = Object.keys(tiers).map(Number).sort((a, b) => a - b)
+  const apTier = tierKeys.length ? tierKeys[tierKeys.length - 1] : 0
 
-  // Post-order walk: leaves take consecutive x slots; an internal node centres
-  // over its placed children. Visiting a parent's whole subtree before the next
-  // keeps each group contiguous.
-  const xPos: Record<string, number> = {}
-  const seen = new Set<string>()
-  let nextSlot = 0
-  const place = (id: string) => {
-    if (seen.has(id)) return
-    seen.add(id)
-    const kids = (children.get(id) || []).filter((k) => !seen.has(k)).sort(cmpLabel)
-    if (kids.length === 0) { xPos[id] = nextSlot++ * COL_GAP; return }
-    kids.forEach(place)
-    const placed = kids.filter((k) => k in xPos)
-    xPos[id] = placed.reduce((s, k) => s + xPos[k], 0) / placed.length
+  const pos: Record<string, { x: number; y: number }> = {}
+  const spreadEven = (arr: TopologyNode[], y: number, yOffset = 0) =>
+    arr.forEach((n, i) => { pos[n.id] = { x: (CANVAS_W / (arr.length + 1)) * (i + 1), y: y + yOffset } })
+
+  // Upper tiers, top-down: order by parent x (already placed), then spread evenly.
+  for (const t of tierKeys) {
+    if (t === apTier) continue
+    const arr = [...tiers[t]].sort((a, b) => {
+      const pa = parent.get(a.id), pb = parent.get(b.id)
+      const xa = pa && pos[pa] ? pos[pa].x : 0
+      const xb = pb && pos[pb] ? pos[pb].x : 0
+      return (xa - xb) || cmpLabel(a.id, b.id)
+    })
+    spreadEven(arr, yFor(t))
   }
-  roots.forEach(place)
-  nodes.forEach((n) => { if (!(n.id in xPos)) xPos[n.id] = nextSlot++ * COL_GAP })
 
-  return Object.fromEntries(nodes.map((n) => [n.id, { x: xPos[n.id], y: tier[n.id] * ROW_H + 60 }]))
+  // Deepest tier (APs): cluster each group centred under its parent switch.
+  const groups = new Map<string, TopologyNode[]>()
+  const orphans: TopologyNode[] = []
+  for (const ap of tiers[apTier] || []) {
+    const p = parent.get(ap.id)
+    if (p && pos[p]) {
+      if (!groups.has(p)) groups.set(p, [])
+      groups.get(p)!.push(ap)
+    } else {
+      orphans.push(ap)
+    }
+  }
+  groups.forEach((aps, switchId) => {
+    const sx = pos[switchId].x
+    const sorted = [...aps].sort((a, b) => cmpLabel(a.id, b.id))
+    const spacing = Math.min(44, 220 / Math.max(1, sorted.length))
+    const startX = sx - (spacing * (sorted.length - 1)) / 2
+    sorted.forEach((ap, i) => { pos[ap.id] = { x: startX + spacing * i, y: yFor(apTier) } })
+  })
+  // Orphan APs (no matched uplink) spread on a row just below their tier.
+  spreadEven(orphans.sort((a, b) => cmpLabel(a.id, b.id)), yFor(apTier), 60)
+
+  nodes.forEach((n) => { if (!(n.id in pos)) pos[n.id] = { x: CANVAS_W / 2, y: yFor(tier[n.id]) } })
+  return pos
 }
 
 const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
@@ -246,7 +266,7 @@ export default function Topology() {
         })),
       ],
       layout: layoutMode === 'hier'
-        ? { name: 'preset', padding: 40, fit: true }
+        ? { name: 'preset', padding: 70, fit: true }
         : { name: 'cose', animate: false, padding: 40, nodeRepulsion: 6000 },
       style: [
         { selector: 'node', style: {
@@ -418,7 +438,7 @@ export default function Topology() {
       {toast && <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-800 flex-shrink-0">{toast}</div>}
 
       {/* Graph */}
-      <div className="relative flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden" style={{ minHeight: 460 }}>
+      <div className="relative flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden" style={{ minHeight: 600 }}>
         {loading && <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-800 z-10"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}
         {error && <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-800 z-10 text-center"><div><p className="text-5xl mb-3">🗺</p><p className="text-sm text-gray-500 dark:text-gray-400 max-w-xs">{error}</p></div></div>}
         {!loading && !error && nodeCount === 0 && (
