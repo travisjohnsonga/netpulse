@@ -179,6 +179,92 @@ class TestAOSCXClient:
         assert by["1/1/2"]["neighbor_mgmt_ip"] == ""
         assert by["1/1/3"]["neighbor_mgmt_ip"] == "192.0.2.7"
 
+    def test_aos_cx_lldp_mgmt_ip_rejects_mac_in_list(self):
+        """A MAC advertised in mgmt_ip_list must never become the mgmt IP."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/lldp_neighbors_info": {
+            # neighbour advertises only a MAC where an IP belongs
+            "1/1/4": {"port": "1/1/4", "neighbor_info": {
+                "mgmt_ip_list": "40:5b:7f:66:05:e1",
+                "chassis_id": "40:5b:7f:66:05:e1"}},
+            # a real IP after a MAC in the list → the IP wins
+            "1/1/5": {"port": "1/1/5", "neighbor_info": {
+                "mgmt_ip_list": "40:5b:7f:66:05:e1, 10.150.0.15"}},
+        }})
+        by = {n["local_port"]: n for n in client.get_lldp_neighbors()}
+        assert by["1/1/4"]["neighbor_mgmt_ip"] == ""
+        assert by["1/1/5"]["neighbor_mgmt_ip"] == "10.150.0.15"
+
+    def test_aos_cx_lldp_falls_back_to_interface_walk(self):
+        """FL.10.13 returns HTTP 400 for lldp_neighbors_info → walk interfaces.
+
+        The fallback reads ``system/interfaces`` at depth 4 where each port's
+        ``lldp_neighbors`` child is expanded inline to ``{key: detail}``; the
+        detail carries ``chassis_id``/``port_id`` at the top level and the rest
+        of the TLVs under ``neighbor_info`` (shape verified on an HPE 6100).
+        """
+        routes = {
+            # aggregated endpoint is gone on FL.10.13 → 400 forces the fallback
+            "system/lldp_neighbors_info": (400, {}),
+            "system/interfaces": (200, {
+                "1/1/1": {"name": "1/1/1", "lldp_neighbors": {}},   # no neighbour
+                "1/1/49": {"name": "1/1/49", "lldp_neighbors": {
+                    "14:ab:ec:fb:e9:c0,1/1/49": {
+                        "chassis_id": "14:ab:ec:fb:e9:c0",
+                        "port_id": "1/1/49",
+                        "neighbor_info": {
+                            "chassis_name": "wco2-mdf-asw-01",
+                            "chassis_description": "HPE ANW, ArubaOS-CX",
+                            "chassis_id_subtype": "link_local_addr",
+                            "port_description": "Connected to the Core Switch",
+                            "mgmt_ip_list": "10.150.0.12",
+                            "chassis_capability_available": "Bridge, Router",
+                            "vlan_id_list": "1,10,20,30",
+                        },
+                    },
+                }},
+            }),
+        }
+
+        class _Resp:
+            def __init__(self, status, data):
+                self.status_code, self._data = status, data
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class _RouteSession:
+            verify = True
+
+            def get(self, url, **kwargs):
+                path = url.split("/rest/v10.09/", 1)[-1]
+                return _Resp(*routes.get(path, (200, {})))
+
+            def close(self):
+                pass
+
+        client = AOSCXClient("10.0.0.5")
+        client._session = _RouteSession()
+
+        nbrs = client.get_lldp_neighbors()
+
+        assert len(nbrs) == 1                      # only 1/1/49 has a neighbour
+        nb = nbrs[0]
+        assert nb["local_port"] == "1/1/49"
+        assert nb["neighbor_hostname"] == "wco2-mdf-asw-01"
+        assert nb["neighbor_port"] == "1/1/49"
+        assert nb["neighbor_port_description"] == "Connected to the Core Switch"
+        assert nb["neighbor_mgmt_ip"] == "10.150.0.12"
+        assert nb["chassis_id"] == "14:ab:ec:fb:e9:c0"
+        assert nb["chassis_id_type"] == "link_local_addr"
+        assert nb["system_description"] == "HPE ANW, ArubaOS-CX"
+        # capabilities returned raw (delimited string) — normalised downstream
+        assert nb["capabilities"] == "Bridge, Router"
+
 
 # ── SNMP sysDescr fallback parsing ──────────────────────────────────────────────
 

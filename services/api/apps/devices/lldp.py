@@ -6,6 +6,7 @@ inventory).
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 
@@ -83,6 +84,20 @@ def infer_chassis_id_type(chassis_id: str | None) -> str:
     if _IP_RE.match(cid):
         return "network-address"
     return ""
+
+
+def valid_ip(value: str | None) -> bool:
+    """True if ``value`` parses as an IPv4/IPv6 address.
+
+    LLDP neighbours sometimes advertise a MAC in a management-address field;
+    callers use this to keep such values out of inet columns. An optional CIDR
+    suffix is tolerated. Rejects MACs (6 hex groups is never a valid IPv6).
+    """
+    try:
+        ipaddress.ip_address(str(value or "").strip().split("/", 1)[0])
+        return True
+    except ValueError:
+        return False
 
 
 # Single-letter LLDP capability codes (e.g. from an SNMP-style "B, R" string).

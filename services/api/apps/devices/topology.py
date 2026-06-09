@@ -82,6 +82,11 @@ def discover_links(device, interfaces=None) -> list[dict]:
     for iface in interfaces:
         neighbor = iface.get("lldp_neighbor_hostname")
         mgmt_ip = iface.get("lldp_neighbor_mgmt_ip")
+        # Some neighbours advertise a MAC (or other junk) where an IP belongs;
+        # drop it so it can't crash the management_address inet write and abort
+        # the whole device's collection.
+        if mgmt_ip and not lldp.valid_ip(mgmt_ip):
+            mgmt_ip = None
         if not neighbor and not mgmt_ip:
             continue
         # Match by stripped hostname (drop the domain suffix) first, then by the

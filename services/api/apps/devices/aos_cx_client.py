@@ -26,7 +26,7 @@ import re
 import requests
 import urllib3
 
-from .lldp import infer_chassis_id_type
+from .lldp import valid_ip
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,16 @@ class AOSCXClient:
             neighbor_port_description, neighbor_mgmt_ip, chassis_id,
             chassis_id_type, system_description, capabilities}]``.
 
+        Two firmware-dependent API shapes are supported transparently:
+
+        * **Aggregated** — ``GET /system/lldp_neighbors_info`` returns every
+          neighbour in one call (later firmware).
+        * **Per-interface walk** — AOS-CX FL.10.13 and earlier do NOT expose
+          that top-level collection (it returns HTTP 400); the neighbours are
+          only reachable under each interface's ``lldp_neighbors`` child
+          resource. We fall back to walking the interfaces when the aggregated
+          endpoint errors or returns nothing.
+
         AOS-CX nests the advertised TLVs under ``neighbor_info``; field names
         differ slightly across firmware (e.g. ``chassis_name`` vs ``system_name``,
         ``chassis_description`` vs ``system_description``), so each value is read
@@ -147,7 +157,18 @@ class AOSCXClient:
         keyed by capability, a list, or a delimited string) and normalised
         downstream by ``topology.discover_links`` via ``lldp.normalize_capabilities``.
         """
-        data = self._get("system/lldp_neighbors_info", params={"depth": 2})
+        try:
+            data = self._get("system/lldp_neighbors_info", params={"depth": 2})
+        except Exception as exc:  # noqa: BLE001 — endpoint absent on FL.10.13
+            logger.debug("AOS-CX %s: lldp_neighbors_info unavailable (%s); "
+                         "falling back to per-interface walk", self.ip, exc)
+            data = None
+        if data:
+            return self._parse_lldp_neighbors_info(data)
+        return self._get_lldp_via_interfaces()
+
+    def _parse_lldp_neighbors_info(self, data) -> list[dict]:
+        """Normalise the aggregated ``system/lldp_neighbors_info`` payload."""
         out: list[dict] = []
         for key, obj in _iter_named(data):
             if not isinstance(obj, dict):
@@ -176,6 +197,71 @@ class AOSCXClient:
                     or info.get("system_capabilities") or ""),
             })
         return out
+
+    def _get_lldp_via_interfaces(self) -> list[dict]:
+        """
+        Collect LLDP neighbours by walking the interfaces tree — used when the
+        aggregated ``lldp_neighbors_info`` collection is absent (AOS-CX FL.10.13
+        and earlier return HTTP 400 for it).
+
+        On those firmwares LLDP data lives under each interface's
+        ``lldp_neighbors`` child. A single
+        ``GET /system/interfaces?depth=4&attributes=name,lldp_neighbors``
+        expands that child all the way to the per-neighbour detail, so the
+        whole table comes back in one request — only ports that actually have a
+        neighbour carry data, keeping the response small. (Verified on HPE 6100
+        / FL.10.13.) Returns an empty list if the payload shape is unexpected.
+        """
+        out: list[dict] = []
+        data = self._get("system/interfaces",
+                         params={"depth": 4, "attributes": "name,lldp_neighbors"})
+        if not isinstance(data, dict):
+            return out
+        for port_name, iface in data.items():
+            if not isinstance(iface, dict):
+                continue
+            neighbors = iface.get("lldp_neighbors")
+            if not isinstance(neighbors, dict):
+                continue
+            local_port = iface.get("name") or port_name
+            for detail in neighbors.values():
+                parsed = self._parse_neighbor(local_port, detail)
+                if parsed:
+                    out.append(parsed)
+        return out
+
+    def _parse_neighbor(self, local_port: str, data) -> dict | None:
+        """
+        Normalise one per-interface ``lldp_neighbors`` detail response. The
+        per-interface form carries ``chassis_id``/``port_id`` at the top level
+        and the remaining TLVs under ``neighbor_info``.
+        """
+        if not isinstance(data, dict):
+            return None
+        info = data.get("neighbor_info")
+        if not isinstance(info, dict):
+            info = {}
+        return {
+            "local_port": local_port,
+            "neighbor_hostname": (
+                info.get("chassis_name") or info.get("system_name") or ""),
+            "neighbor_port": (
+                data.get("port_id") or info.get("port_id") or ""),
+            "neighbor_port_description": info.get("port_description", "") or "",
+            "neighbor_mgmt_ip": _first_mgmt_ip(info),
+            "chassis_id": (
+                data.get("chassis_id") or info.get("chassis_id") or ""),
+            "chassis_id_type": (
+                info.get("chassis_id_subtype")
+                or info.get("chassis_id_type") or ""),
+            "system_description": (
+                info.get("chassis_description")
+                or info.get("system_description") or ""),
+            "capabilities": (
+                info.get("chassis_capability_available")
+                or info.get("chassis_capability_enabled")
+                or info.get("capabilities") or ""),
+        }
 
     # ── internals ─────────────────────────────────────────────────────────────
     def _url(self, path: str) -> str:
@@ -220,18 +306,19 @@ def _first_mgmt_ip(info: dict) -> str:
     """
     Best management IP from an AOS-CX ``neighbor_info`` block.
 
-    AOS-CX may advertise a single ``mgmt_ip`` or a delimited ``mgmt_ip_list``;
-    fall back to ``chassis_id`` only when it itself looks like an IP. chassis_id
-    is usually a MAC, which must never land in the ``management_address`` inet
-    column.
+    AOS-CX may advertise a single ``mgmt_ip`` or a delimited ``mgmt_ip_list``,
+    and some neighbours put a MAC there instead of an IP; each candidate is
+    validated so only a real address is returned. Falls back to ``chassis_id``
+    only when it itself is an IP (it is usually a MAC, which must never land in
+    the ``management_address`` inet column).
     """
     raw = info.get("mgmt_ip") or info.get("mgmt_ip_list") or ""
     for cand in re.split(r"[,;\s]+", str(raw)):
         cand = cand.strip()
-        if cand:
+        if cand and valid_ip(cand):
             return cand
     cid = str(info.get("chassis_id") or "").strip()
-    return cid if infer_chassis_id_type(cid) == "network-address" else ""
+    return cid if valid_ip(cid) else ""
 
 
 def _last_segment(key: str) -> str:
