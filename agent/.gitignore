@@ -1,0 +1,5 @@
+dist/
+*.exe
+agent.key
+agent.crt
+ca.crt
