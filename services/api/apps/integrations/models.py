@@ -22,6 +22,13 @@ class NetBoxImport(TimestampedModel):
     # OpenBao path holding the API token (never the token itself).
     vault_path = models.CharField(max_length=512, blank=True)
     options = models.JSONField(default=dict)
+    verify_ssl = models.BooleanField(
+        default=True,
+        help_text=(
+            "Verify the NetBox server's SSL certificate. Disable only for "
+            "internal NetBox instances with self-signed certificates."
+        ),
+    )
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
 
     sites_imported = models.PositiveIntegerField(default=0)

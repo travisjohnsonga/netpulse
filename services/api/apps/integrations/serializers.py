@@ -10,7 +10,7 @@ class NetBoxImportSerializer(serializers.ModelSerializer):
     class Meta:
         model = NetBoxImport
         fields = (
-            "id", "netbox_url", "netbox_version", "status", "options",
+            "id", "netbox_url", "netbox_version", "status", "options", "verify_ssl",
             "sites_imported", "devices_imported", "devices_updated", "skipped", "errors",
             "started_at", "finished_at", "created_at",
         )
@@ -21,11 +21,13 @@ class NetBoxImportRequestSerializer(serializers.Serializer):
     netbox_url = serializers.URLField()
     api_token = serializers.CharField(write_only=True)
     import_options = serializers.DictField(required=False, default=dict)
+    verify_ssl = serializers.BooleanField(required=False, default=True)
 
 
 class NetBoxTestRequestSerializer(serializers.Serializer):
     netbox_url = serializers.URLField()
     api_token = serializers.CharField(write_only=True)
+    verify_ssl = serializers.BooleanField(required=False, default=True)
 
 
 class NetBoxTestResponseSerializer(serializers.Serializer):

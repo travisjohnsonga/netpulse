@@ -27,6 +27,7 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
   const [opts, setOpts] = useState<Record<string, boolean>>({ sites: true, devices: true })
+  const [verifySsl, setVerifySsl] = useState(true)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [testing, setTesting] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -43,14 +44,14 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
   const runPreview = async () => {
     if (!url || !token) { setError('NetBox URL and API token are required.'); return }
     setPreviewing(true); setError(null); setPreview(null); setResult(null)
-    try { setPreview(await netboxPreview({ netbox_url: url, api_token: token, import_options: opts })) }
+    try { setPreview(await netboxPreview({ netbox_url: url, api_token: token, import_options: opts, verify_ssl: verifySsl })) }
     catch (e) { setError(parseApiErrors(e, 'Preview failed.')) }
     finally { setPreviewing(false) }
   }
 
   const test = async () => {
     setTesting(true); setTestResult(null); setError(null)
-    try { setTestResult(await netboxTestConnection(url, token)) }
+    try { setTestResult(await netboxTestConnection(url, token, verifySsl)) }
     catch { setTestResult({ ok: false, message: 'Test request failed.' }) }
     finally { setTesting(false) }
   }
@@ -59,7 +60,7 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
     if (!url || !token) { setError('NetBox URL and API token are required.'); return }
     setImporting(true); setError(null); setResult(null)
     try {
-      const rec = await netboxImport({ netbox_url: url, api_token: token, import_options: opts })
+      const rec = await netboxImport({ netbox_url: url, api_token: token, import_options: opts, verify_ssl: verifySsl })
       setResult(rec)
       loadHistory()
     } catch (e) {
@@ -91,6 +92,19 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Token</label>
           <input type="password" autoComplete="off" className={inputCls} value={token} onChange={(e) => setToken(e.target.value)} placeholder="••••••••" />
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">🔒 Stored securely in OpenBao. NetBox v3.x and v4.x are auto-detected.</p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">SSL verification</label>
+          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <input type="checkbox" checked={verifySsl} onChange={(e) => setVerifySsl(e.target.checked)} />
+            Verify SSL certificate
+          </label>
+          {!verifySsl && (
+            <div className="mt-2 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2 text-xs text-amber-800 dark:text-amber-400">
+              ⚠️ Disabling SSL verification is insecure. Only use for internal NetBox instances with self-signed certificates.
+            </div>
+          )}
         </div>
 
         <div>

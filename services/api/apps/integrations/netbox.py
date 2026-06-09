@@ -11,6 +11,7 @@ logic can be unit-tested with a fake client (no network).
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,10 +46,20 @@ class NetBoxError(Exception):
 
 
 class NetBoxClient:
-    def __init__(self, url: str, token: str, timeout: float = 15.0):
+    def __init__(self, url: str, token: str, timeout: float = 15.0, verify_ssl: bool = True):
         self.base = url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.verify_ssl = verify_ssl
+        # When verification is disabled (internal NetBox with a self-signed
+        # cert) pass an unverified TLS context to urlopen; HTTP URLs ignore it.
+        # verify_ssl=True keeps the default (context=None → full verification).
+        self._ssl_ctx: ssl.SSLContext | None = None
+        if not verify_ssl:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            self._ssl_ctx = ctx
 
     def _get(self, path: str) -> dict:
         url = f"{self.base}{path}"
@@ -57,7 +68,7 @@ class NetBoxClient:
             "Accept": "application/json",
         })
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self._ssl_ctx) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             raise NetBoxError(f"NetBox returned HTTP {exc.code} for {path}") from exc

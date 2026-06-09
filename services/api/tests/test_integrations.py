@@ -3,6 +3,9 @@ import pytest
 from apps.devices.models import Device, Site
 from apps.integrations import netbox as netbox_mod
 from apps.integrations.models import NetBoxImport
+# Bound before the autouse patch_client fixture swaps netbox_mod.NetBoxClient
+# for FakeClient — these SSL tests need the real client.
+from apps.integrations.netbox import NetBoxClient as RealNetBoxClient
 
 pytestmark = pytest.mark.django_db
 
@@ -11,8 +14,10 @@ pytestmark = pytest.mark.django_db
 
 
 class FakeClient:
+    last_kwargs: dict = {}
+
     def __init__(self, *args, **kwargs):
-        pass
+        FakeClient.last_kwargs = kwargs
 
     def detect_version(self):
         return "4.1.3"
@@ -110,6 +115,48 @@ class TestNetBoxImport:
 
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/import/netbox/").status_code == 401
+
+    def test_verify_ssl_defaults_true(self, auth_client):
+        resp = auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_token": "t",
+        }, format="json")
+        assert resp.status_code == 201
+        assert resp.json()["verify_ssl"] is True
+        assert FakeClient.last_kwargs.get("verify_ssl") is True
+        assert NetBoxImport.objects.latest("created_at").verify_ssl is True
+
+    def test_verify_ssl_disabled_threads_through(self, auth_client):
+        resp = auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_token": "t", "verify_ssl": False,
+        }, format="json")
+        assert resp.status_code == 201
+        assert resp.json()["verify_ssl"] is False
+        # Passed to the client and recorded on the import row.
+        assert FakeClient.last_kwargs.get("verify_ssl") is False
+        assert NetBoxImport.objects.latest("created_at").verify_ssl is False
+
+    def test_test_connection_passes_verify_ssl(self, auth_client):
+        auth_client.post("/api/import/netbox/test-connection/", {
+            "netbox_url": "https://n.example.com", "api_token": "t", "verify_ssl": False,
+        }, format="json")
+        assert FakeClient.last_kwargs.get("verify_ssl") is False
+
+
+class TestNetBoxClientSSL:
+    """The real client builds an unverified TLS context only when disabled."""
+
+    def test_verify_true_uses_default_context(self):
+        c = RealNetBoxClient("https://n.example.com", "t", verify_ssl=True)
+        assert c.verify_ssl is True
+        assert c._ssl_ctx is None  # None → urlopen does full verification
+
+    def test_verify_false_disables_checks(self):
+        import ssl
+        c = RealNetBoxClient("https://n.example.com", "t", verify_ssl=False)
+        assert c.verify_ssl is False
+        assert c._ssl_ctx is not None
+        assert c._ssl_ctx.verify_mode == ssl.CERT_NONE
+        assert c._ssl_ctx.check_hostname is False
 
 
 class TestNetBoxPreview:

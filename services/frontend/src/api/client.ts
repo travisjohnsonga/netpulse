@@ -974,6 +974,7 @@ export interface NetBoxImportRecord {
   netbox_version: string
   status: 'pending' | 'running' | 'completed' | 'failed'
   options: Record<string, boolean>
+  verify_ssl: boolean
   sites_imported: number
   devices_imported: number
   skipped: number
@@ -983,12 +984,12 @@ export interface NetBoxImportRecord {
   created_at: string
 }
 
-export async function netboxTestConnection(netbox_url: string, api_token: string): Promise<{ ok: boolean; version: string; message: string }> {
-  const { data } = await api.post<{ ok: boolean; version: string; message: string }>('/import/netbox/test-connection/', { netbox_url, api_token })
+export async function netboxTestConnection(netbox_url: string, api_token: string, verify_ssl = true): Promise<{ ok: boolean; version: string; message: string }> {
+  const { data } = await api.post<{ ok: boolean; version: string; message: string }>('/import/netbox/test-connection/', { netbox_url, api_token, verify_ssl })
   return data
 }
 
-export async function netboxImport(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean> }): Promise<NetBoxImportRecord> {
+export async function netboxImport(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean>; verify_ssl?: boolean }): Promise<NetBoxImportRecord> {
   const { data } = await api.post<NetBoxImportRecord>('/import/netbox/', payload)
   return data
 }
@@ -1015,7 +1016,7 @@ export interface NetBoxPreview {
   devices: NetBoxPreviewDevice[]
   credentials: { assignments: Record<string, number>; no_match: number }
 }
-export async function netboxPreview(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean> }): Promise<NetBoxPreview> {
+export async function netboxPreview(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean>; verify_ssl?: boolean }): Promise<NetBoxPreview> {
   const { data } = await api.post<NetBoxPreview>('/import/netbox/preview/', payload)
   return data
 }

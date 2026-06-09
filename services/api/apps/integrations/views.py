@@ -174,7 +174,9 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
     def test_connection(self, request):
         req = NetBoxTestRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
-        client = netbox.NetBoxClient(req.validated_data["netbox_url"], req.validated_data["api_token"])
+        client = netbox.NetBoxClient(
+            req.validated_data["netbox_url"], req.validated_data["api_token"],
+            verify_ssl=req.validated_data["verify_ssl"])
         try:
             version = client.detect_version()
             return Response({"ok": True, "version": version, "message": f"Connected to NetBox {version}."})
@@ -189,7 +191,9 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         """Dry-run an import — show create/update/skip + credential assignments, no writes."""
         req = NetBoxImportRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
-        client = netbox.NetBoxClient(req.validated_data["netbox_url"], req.validated_data["api_token"])
+        client = netbox.NetBoxClient(
+            req.validated_data["netbox_url"], req.validated_data["api_token"],
+            verify_ssl=req.validated_data["verify_ssl"])
         try:
             client.detect_version()
             return Response(netbox.preview_import(client, req.validated_data.get("import_options") or {}))
@@ -205,10 +209,12 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         url = req.validated_data["netbox_url"]
         token = req.validated_data["api_token"]
         options = req.validated_data.get("import_options") or {}
+        verify_ssl = req.validated_data["verify_ssl"]
 
         record = NetBoxImport.objects.create(
             netbox_url=url,
             options=options,
+            verify_ssl=verify_ssl,
             status=NetBoxImport.Status.RUNNING,
             started_at=timezone.now(),
             created_by=request.user if request.user.is_authenticated else None,
@@ -218,7 +224,7 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         record.save(update_fields=["vault_path"])
         vault.write_secret(record.vault_path, {"api_token": token})
 
-        client = netbox.NetBoxClient(url, token)
+        client = netbox.NetBoxClient(url, token, verify_ssl=verify_ssl)
         try:
             record.netbox_version = client.detect_version()
             summary = netbox.run_import(client, options)
