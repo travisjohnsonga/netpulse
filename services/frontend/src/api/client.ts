@@ -639,6 +639,22 @@ export async function saveHostnameDisplay(payload: HostnameDisplay): Promise<Hos
   return data
 }
 
+export interface LldpSettings {
+  exclude_capabilities: string[]
+  available_capabilities: string[]
+  default_exclude_capabilities: string[]
+}
+
+export async function fetchLldpSettings(): Promise<LldpSettings> {
+  const { data } = await api.get<LldpSettings>('/settings/lldp/')
+  return data
+}
+
+export async function saveLldpSettings(exclude_capabilities: string[]): Promise<LldpSettings> {
+  const { data } = await api.put<LldpSettings>('/settings/lldp/', { exclude_capabilities })
+  return data
+}
+
 export async function fetchDevices(params?: Record<string, string>): Promise<DeviceListResponse> {
   const { data } = await api.get<DeviceListResponse>('/devices/', { params })
   return data

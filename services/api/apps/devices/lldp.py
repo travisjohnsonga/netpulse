@@ -9,11 +9,18 @@ from __future__ import annotations
 import os
 import re
 
+# Canonical LLDP capability tokens (the normalised values stored on
+# LLDPNeighbor.capabilities), in display order — backs the LLDP settings UI.
+KNOWN_CAPABILITIES = (
+    "router", "bridge", "wlan-ap", "telephone", "station", "repeater",
+    "docsis", "other",
+)
+
 # LLDP capabilities that usually denote unmanaged endpoints (IP phones, PCs,
 # cable modems) rather than infrastructure worth adding to inventory. Hidden
-# from the undiscovered-neighbors list by default; override with the
-# LLDP_EXCLUDE_CAPABILITIES env var (comma-separated; empty disables the
-# default exclusion).
+# from the undiscovered-neighbors list by default; override per-request, via the
+# LLDP_EXCLUDE_CAPABILITIES env var, or in Settings → Network Devices → LLDP
+# (comma-separated; empty disables the default exclusion).
 DEFAULT_UNMANAGED_CAPABILITIES = ("telephone", "station", "docsis")
 
 # Ordered most-specific → least-specific: "Cisco IOS XE" must be tested before
@@ -78,21 +85,38 @@ def infer_chassis_id_type(chassis_id: str | None) -> str:
     return ""
 
 
+# Single-letter LLDP capability codes (e.g. from an SNMP-style "B, R" string).
+_CAP_CODES = {
+    "b": "bridge", "r": "router", "w": "wlan-ap", "a": "wlan-ap",
+    "t": "telephone", "c": "docsis", "s": "station", "o": "other",
+    "p": "repeater", "d": "docsis",
+}
+
+# Full-name variants (AOS-CX dict keys, vendor strings, OpenConfig names) →
+# canonical token, so the same capability lands on one token regardless of how
+# the platform spells it (e.g. "wlan-access-point" and code "w" both → wlan-ap).
+_CAP_ALIASES = {
+    "mac-bridge": "bridge", "mac_bridge": "bridge",
+    "wlan-access-point": "wlan-ap", "wlan_access_point": "wlan-ap",
+    "wlan-ap": "wlan-ap", "access-point": "wlan-ap", "accesspoint": "wlan-ap",
+    "station-only": "station",
+    "docsis-cable-device": "docsis", "cable": "docsis",
+    "phone": "telephone",
+}
+
+
 def normalize_capabilities(raw) -> list[str]:
-    """Normalise LLDP capabilities to a lowercase token list.
+    """Normalise LLDP capabilities to a canonical lowercase token list.
 
     Accepts a list already, a delimited string like ``"B, R"`` /
     ``"bridge router"``, or a dict keyed by capability with truthy values
-    (e.g. AOS-CX's ``{"bridge": True, "router": False}``). Single-letter LLDP
-    codes are expanded to full names.
+    (e.g. AOS-CX's ``{"bridge": True, "router": False}``). Single-letter codes
+    are expanded and full-name spelling variants (``wlan-access-point`` →
+    ``wlan-ap``, ``mac-bridge`` → ``bridge``, …) are folded to one token so the
+    UI capability filters match across every platform.
     """
     if raw is None:
         return []
-    codes = {
-        "b": "bridge", "r": "router", "w": "wlan-ap", "a": "wlan-ap",
-        "t": "telephone", "c": "docsis", "s": "station", "o": "other",
-        "p": "repeater", "d": "docsis",
-    }
     if isinstance(raw, dict):
         raw = [k for k, v in raw.items() if v]
     if isinstance(raw, (list, tuple)):
@@ -104,7 +128,7 @@ def normalize_capabilities(raw) -> list[str]:
         t = tok.strip().lower()
         if not t:
             continue
-        t = codes.get(t, t)
+        t = _CAP_CODES.get(t) or _CAP_ALIASES.get(t, t)
         if t not in out:
             out.append(t)
     return out
@@ -151,13 +175,23 @@ def neighbor_in_inventory(neighbor, hostnames: set[str], ips: set[str]) -> bool:
 
 
 def default_excluded_capabilities() -> list[str]:
-    """Capabilities excluded from the undiscovered list unless overridden.
+    """Capabilities excluded from the undiscovered list unless a request overrides them.
 
-    Read from ``LLDP_EXCLUDE_CAPABILITIES`` (comma-separated, lowercased); an
-    explicitly empty value disables the default exclusion. Falls back to
-    :data:`DEFAULT_UNMANAGED_CAPABILITIES` when the var is unset.
+    Precedence: the admin-configurable ``lldp_exclude_capabilities``
+    SystemSetting (settable from Settings → Network Devices → LLDP; an empty
+    value means exclude nothing), then the ``LLDP_EXCLUDE_CAPABILITIES`` env
+    default, then :data:`DEFAULT_UNMANAGED_CAPABILITIES`. Resilient to DB errors
+    during early migration so the endpoint never breaks.
     """
-    raw = os.environ.get("LLDP_EXCLUDE_CAPABILITIES")
+    raw = None
+    try:
+        from apps.core.models import SystemSetting
+
+        raw = SystemSetting.get("lldp_exclude_capabilities", None)
+    except Exception:  # noqa: BLE001 — never break the endpoint on a DB issue
+        raw = None
+    if raw is None:
+        raw = os.environ.get("LLDP_EXCLUDE_CAPABILITIES")
     if raw is None:
         return list(DEFAULT_UNMANAGED_CAPABILITIES)
     return [c.strip().lower() for c in raw.split(",") if c.strip()]

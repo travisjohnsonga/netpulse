@@ -7,22 +7,7 @@ import {
 } from '../api/client'
 import DeviceAddModal, { type DeviceAddPrefill } from '../components/DeviceAddModal'
 import EmptyState from '../components/EmptyState'
-
-// LLDP capability token → display icon + friendly label.
-const CAP_META: Record<string, { icon: string; label: string }> = {
-  router: { icon: '🔁', label: 'Router' },
-  bridge: { icon: '🔀', label: 'Switch/Bridge' },
-  'wlan-ap': { icon: '📶', label: 'Wireless AP' },
-  telephone: { icon: '☎️', label: 'IP Phone' },
-  station: { icon: '💻', label: 'Workstation/PC' },
-  repeater: { icon: '📍', label: 'Repeater/Hub' },
-  docsis: { icon: '📡', label: 'Cable/DOCSIS' },
-  other: { icon: '•', label: 'Other' },
-}
-
-// Capability toggles shown in the filter bar, in display order.
-const CAP_OPTIONS = ['router', 'bridge', 'wlan-ap', 'telephone', 'station',
-  'repeater', 'docsis', 'other'] as const
+import { CAP_META, CAP_OPTIONS } from '../lib/lldpCapabilities'
 
 // Infrastructure-ish capabilities visible by default; phones/PCs/cable modems
 // are hidden until the user opts in (they're rarely worth adding to inventory).

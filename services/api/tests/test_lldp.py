@@ -51,6 +51,17 @@ class TestCapabilities:
         assert lldp.normalize_capabilities(None) == []
         assert lldp.normalize_capabilities("") == []
 
+    def test_dict_input_truthy_keys(self):
+        assert lldp.normalize_capabilities(
+            {"bridge": True, "router": True, "wlan-access-point": False}
+        ) == ["bridge", "router"]
+
+    def test_fullname_variants_canonicalised(self):
+        # AOS-CX / OpenConfig spellings fold onto the same tokens as letter codes.
+        assert lldp.normalize_capabilities(
+            ["wlan-access-point", "mac-bridge", "docsis-cable-device"]
+        ) == ["wlan-ap", "bridge", "docsis"]
+
 
 class TestChassisType:
     def test_mac(self):
@@ -273,3 +284,48 @@ class TestUndiscoveredFilters:
         resp = auth_client.get("/api/devices/lldp/undiscovered/")
         # Now the AP is hidden but phones/PCs return.
         assert self._names(resp) == ["alices-pc", "core-sw", "desk-phone", "mystery"]
+
+    def test_setting_overrides_env(self, seeded, auth_client, monkeypatch):
+        from apps.core.models import SystemSetting
+
+        monkeypatch.setenv("LLDP_EXCLUDE_CAPABILITIES", "wlan-ap")
+        SystemSetting.set("lldp_exclude_capabilities", "telephone")  # persisted wins
+        resp = auth_client.get("/api/devices/lldp/undiscovered/")
+        assert self._names(resp) == ["alices-pc", "ap-lobby", "core-sw", "mystery"]
+
+
+class TestLldpSettingsEndpoint:
+    def test_get_defaults(self, auth_client):
+        resp = auth_client.get("/api/settings/lldp/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["exclude_capabilities"] == ["telephone", "station", "docsis"]
+        assert "wlan-ap" in body["available_capabilities"]
+        assert body["default_exclude_capabilities"] == ["telephone", "station", "docsis"]
+
+    def test_put_persists_and_canonicalises(self, auth_client):
+        # full-name + letter variants fold to canonical tokens; dupes dropped.
+        resp = auth_client.put(
+            "/api/settings/lldp/",
+            {"exclude_capabilities": ["wlan-access-point", "T", "telephone"]},
+            format="json")
+        assert resp.status_code == 200
+        assert resp.json()["exclude_capabilities"] == ["wlan-ap", "telephone"]
+        # GET reflects the persisted value.
+        assert auth_client.get("/api/settings/lldp/").json()[
+            "exclude_capabilities"] == ["wlan-ap", "telephone"]
+
+    def test_put_empty_disables_exclusion(self, auth_client):
+        resp = auth_client.put(
+            "/api/settings/lldp/", {"exclude_capabilities": []}, format="json")
+        assert resp.json()["exclude_capabilities"] == []
+
+    def test_put_requires_admin(self, viewer_client):
+        resp = viewer_client.put(
+            "/api/settings/lldp/", {"exclude_capabilities": []}, format="json")
+        assert resp.status_code in (401, 403)
+
+    def test_put_rejects_non_list(self, auth_client):
+        resp = auth_client.put(
+            "/api/settings/lldp/", {"exclude_capabilities": "telephone"}, format="json")
+        assert resp.status_code == 400

@@ -10,6 +10,7 @@ import Alerting from './Alerting'
 import AlertRouting from './AlertRouting'
 import Roles from './Roles'
 import Mibs from './Mibs'
+import LldpSettings from './LldpSettings'
 import ComplianceTemplates from './ComplianceTemplates'
 import OSVersions from './OSVersions'
 import FleetInventory from './FleetInventory'
@@ -37,6 +38,7 @@ export function NetworkDeviceSettings() {
   return <TabbedSettingsPage tabs={[
     { id: 'roles', label: 'Device Roles', element: <Roles /> },
     { id: 'mibs', label: 'MIB Files', element: <Mibs /> },
+    { id: 'lldp', label: 'LLDP', element: <LldpSettings /> },
   ]} />
 }
 
