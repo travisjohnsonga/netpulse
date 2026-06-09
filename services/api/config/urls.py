@@ -45,6 +45,7 @@ urlpatterns = [
     path("api/lifecycle/",  include("apps.lifecycle.urls")),
     path("api/security/",   include("apps.security.urls")),
     path("api/collectors/", include("apps.collectors.urls")),
+    path("api/agents/",     include("apps.agents.urls")),
     path("api/import/",        include("apps.integrations.urls")),
     path("api/integrations/",  include("apps.integrations.urls")),
     path("api/wireless/",      include("apps.integrations.wireless_urls")),

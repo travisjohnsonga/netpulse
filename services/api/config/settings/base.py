@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.cve",
     "apps.lifecycle",
     "apps.security",
+    "apps.agents",
     "apps.collectors",
     "apps.integrations",
     "apps.configbackup",

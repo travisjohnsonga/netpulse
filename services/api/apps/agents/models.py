@@ -1,0 +1,137 @@
+"""
+NetPulse Agent — lightweight server-monitoring agents.
+
+An ``Agent`` is a Go process running on a Linux/Windows server that enrolls
+(via a one-time ``AgentEnrollmentToken``), receives an OpenBao-issued client
+certificate, and pushes metrics + role-check results over mTLS. Each agent is
+linked to a ``devices.Device`` so agent-monitored servers appear in inventory
+alongside SNMP/REST devices. ``ServerRole`` profiles define which services /
+ports / custom checks a role-tagged agent should monitor.
+"""
+from __future__ import annotations
+
+import secrets
+import uuid
+
+from django.conf import settings
+from django.db import models
+
+from apps.core.models import TimestampedModel
+
+
+def _generate_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+class AgentEnrollmentToken(TimestampedModel):
+    """One-time (or N-use) token an admin generates to enroll agents."""
+
+    token = models.CharField(max_length=64, unique=True, default=_generate_token, db_index=True)
+    description = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="agent_tokens",
+    )
+    expires_at = models.DateTimeField(null=True, blank=True)
+    max_uses = models.IntegerField(default=1, help_text="0 = unlimited")
+    use_count = models.IntegerField(default=0)
+    site = models.ForeignKey(
+        "devices.Site", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="agent_tokens",
+    )
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.description or self.token[:12]
+
+    def is_valid(self) -> bool:
+        from django.utils import timezone
+        if not self.is_active:
+            return False
+        if self.max_uses and self.use_count >= self.max_uses:
+            return False
+        if self.expires_at and timezone.now() > self.expires_at:
+            return False
+        return True
+
+
+class ServerRole(TimestampedModel):
+    """A server-role profile: the services/ports/custom checks to monitor."""
+
+    class RoleType(models.TextChoices):
+        DHCP = "dhcp", "DHCP Server"
+        DNS = "dns", "DNS Server"
+        NPS = "nps", "Network Policy Server"
+        DC = "dc", "Domain Controller"
+        WEB = "web", "Web Server"
+        DB = "db", "Database Server"
+        FILE = "file", "File Server"
+        PRINT = "print", "Print Server"
+        SYSLOG = "syslog", "Syslog Server"
+        MONITORING = "monitoring", "Monitoring Server"
+        CUSTOM = "custom", "Custom"
+
+    name = models.CharField(max_length=128)
+    role_type = models.CharField(max_length=32, choices=RoleType.choices, db_index=True)
+    description = models.TextField(blank=True)
+    windows_services = models.JSONField(default=list, help_text="Windows service names to monitor")
+    linux_services = models.JSONField(default=list, help_text="systemd unit names to monitor")
+    port_checks = models.JSONField(default=list, help_text='[{"port": 53, "proto": "udp", "name": "DNS"}]')
+    custom_checks = models.JSONField(default=list)
+    is_builtin = models.BooleanField(default=False)
+
+    class Meta(TimestampedModel.Meta):
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Agent(TimestampedModel):
+    """A server-monitoring agent and its enrollment/certificate state."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        INACTIVE = "inactive", "Inactive"
+        REVOKED = "revoked", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    hostname = models.CharField(max_length=255, db_index=True)
+    device = models.OneToOneField(
+        "devices.Device", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="agent",
+    )
+    os = models.CharField(max_length=64, blank=True)
+    arch = models.CharField(max_length=32, blank=True)
+    version = models.CharField(max_length=32, blank=True)
+    cert_serial = models.CharField(max_length=128, blank=True, db_index=True)
+    cert_expires_at = models.DateTimeField(null=True, blank=True)
+    enrollment_token = models.ForeignKey(
+        AgentEnrollmentToken, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="agents",
+    )
+    server_roles = models.ManyToManyField(ServerRole, blank=True, related_name="agents")
+    last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+    collection_interval = models.IntegerField(default=30, help_text="seconds")
+
+    def __str__(self):
+        return f"{self.hostname} ({self.id})"
+
+
+class AgentRoleStatus(TimestampedModel):
+    """Latest role-check result for one (agent, role_type) — services/ports/custom."""
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="role_statuses")
+    role_type = models.CharField(max_length=32)
+    services = models.JSONField(default=list)
+    ports = models.JSONField(default=list)
+    custom = models.JSONField(default=list)
+    collected_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        unique_together = [("agent", "role_type")]
+        ordering = ["role_type"]
+
+    def __str__(self):
+        return f"{self.agent_id}/{self.role_type}"
