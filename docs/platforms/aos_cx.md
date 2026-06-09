@@ -95,7 +95,17 @@ endpoint shape vary by firmware:
 - **PL.10.16** (HPE 6100): login returns 400/401 — **no REST**, SNMP only.
 - **FL.10.13** (verified on `wco2-mdf-crt-01`): REST works.
 
-**Confirmed working endpoint:** `GET /system?depth=1` ✅ (system info).
+**Confirmed working endpoints (FL.10.13):**
+
+| Endpoint                               | Returns           |
+|----------------------------------------|-------------------|
+| `GET /system?depth=1`                  | ✅ system info     |
+| `GET /system/interfaces?depth=1`       | ✅ interfaces (71 ports) |
+| `GET /system/vrfs/default/neighbors`   | ✅ ARP table       |
+| `GET /system/subsystems?depth=1`       | ✅ subsystems / environment |
+
+**Not available on FL.10.13:** `GET /system/lldp_neighbors_info` ❌ (400) — use
+the per-interface LLDP method below instead.
 
 > ⚠️ **Next session — REST migration.** Interfaces, ARP, environment/sensors,
 > VLANs, and PoE are still collected via SNMP/SSH. The plan is to migrate them to
