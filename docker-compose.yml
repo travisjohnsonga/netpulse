@@ -8,10 +8,9 @@ name: netpulse
 # `<<: *internal-dns`.
 x-internal-dns: &internal-dns
   dns:
-    - ${INTERNAL_DNS:-172.20.1.7}
     - 8.8.8.8
   dns_search:
-    - ${INTERNAL_DOMAIN:-vantran.local}
+    - ${INTERNAL_DOMAIN:-}
 
 services:
 
