@@ -148,8 +148,12 @@ def _discover_via_aos_cx_rest(device, profile, creds: dict) -> list[dict]:
             "admin_status": "up" if (i.get("admin_state") or "").lower() == "up" else "down",
             "lldp_neighbor_hostname": nb.get("neighbor_hostname") or None,
             "lldp_neighbor_port": nb.get("neighbor_port") or None,
-            "lldp_neighbor_desc": nb.get("neighbor_port") or None,
+            "lldp_neighbor_desc": nb.get("neighbor_port_description") or None,
             "lldp_neighbor_mgmt_ip": nb.get("neighbor_mgmt_ip") or None,
+            "lldp_neighbor_chassis_id": nb.get("chassis_id") or None,
+            "lldp_neighbor_chassis_type": nb.get("chassis_id_type") or None,
+            "lldp_neighbor_system_desc": nb.get("system_description") or None,
+            "lldp_neighbor_capabilities": nb.get("capabilities") or None,
         })
     return rows
 

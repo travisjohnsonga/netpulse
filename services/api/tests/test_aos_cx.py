@@ -134,6 +134,51 @@ class TestAOSCXClient:
         assert by_name["1/1/2"]["admin_state"] == "down"
         assert by_name["1/1/2"]["ip"] == ""
 
+    def test_aos_cx_lldp_neighbor_parse_full(self):
+        """Every advertised TLV is captured from the neighbor_info block."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/lldp_neighbors_info": {
+            "1/1/1": {
+                "port": "1/1/1",
+                "neighbor_info": {
+                    "chassis_id": "aa:bb:cc:dd:ee:ff",
+                    "chassis_id_subtype": "link_local_addr",
+                    "chassis_name": "spine-1",
+                    "chassis_description": "ArubaOS-CX 10.10, Aruba8325",
+                    "port_id": "1/1/24",
+                    "port_description": "to leaf-1",
+                    "mgmt_ip_list": "10.0.0.9, fe80::1",
+                    "chassis_capability_available": {"bridge": True, "router": True,
+                                                     "wlan-access-point": False},
+                },
+            },
+        }})
+        nb = client.get_lldp_neighbors()[0]
+        assert nb["local_port"] == "1/1/1"
+        assert nb["neighbor_hostname"] == "spine-1"
+        assert nb["neighbor_port"] == "1/1/24"
+        assert nb["neighbor_port_description"] == "to leaf-1"
+        assert nb["neighbor_mgmt_ip"] == "10.0.0.9"          # first of the list
+        assert nb["chassis_id"] == "aa:bb:cc:dd:ee:ff"
+        assert nb["chassis_id_type"] == "link_local_addr"
+        assert nb["system_description"] == "ArubaOS-CX 10.10, Aruba8325"
+        # capabilities returned raw (dict) — normalised downstream
+        assert nb["capabilities"] == {"bridge": True, "router": True,
+                                      "wlan-access-point": False}
+
+    def test_aos_cx_lldp_mgmt_ip_falls_back_to_chassis_only_when_ip(self):
+        """chassis_id is used for mgmt IP only when it actually looks like one."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/lldp_neighbors_info": {
+            "1/1/2": {"port": "1/1/2", "neighbor_info": {
+                "chassis_id": "11:22:33:44:55:66"}},          # a MAC → not an IP
+            "1/1/3": {"port": "1/1/3", "neighbor_info": {
+                "chassis_id": "192.0.2.7"}},                  # an IP → usable
+        }})
+        by = {n["local_port"]: n for n in client.get_lldp_neighbors()}
+        assert by["1/1/2"]["neighbor_mgmt_ip"] == ""
+        assert by["1/1/3"]["neighbor_mgmt_ip"] == "192.0.2.7"
+
 
 # ── SNMP sysDescr fallback parsing ──────────────────────────────────────────────
 

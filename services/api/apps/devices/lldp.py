@@ -73,8 +73,10 @@ def infer_chassis_id_type(chassis_id: str | None) -> str:
 def normalize_capabilities(raw) -> list[str]:
     """Normalise LLDP capabilities to a lowercase token list.
 
-    Accepts a list already, or a delimited string like ``"B, R"`` /
-    ``"bridge router"``. Single-letter LLDP codes are expanded to full names.
+    Accepts a list already, a delimited string like ``"B, R"`` /
+    ``"bridge router"``, or a dict keyed by capability with truthy values
+    (e.g. AOS-CX's ``{"bridge": True, "router": False}``). Single-letter LLDP
+    codes are expanded to full names.
     """
     if raw is None:
         return []
@@ -83,6 +85,8 @@ def normalize_capabilities(raw) -> list[str]:
         "t": "telephone", "c": "docsis", "s": "station", "o": "other",
         "p": "repeater", "d": "docsis",
     }
+    if isinstance(raw, dict):
+        raw = [k for k, v in raw.items() if v]
     if isinstance(raw, (list, tuple)):
         tokens = [str(t).strip() for t in raw]
     else:

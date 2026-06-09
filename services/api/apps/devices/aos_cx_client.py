@@ -21,9 +21,12 @@ to off.
 from __future__ import annotations
 
 import logging
+import re
 
 import requests
 import urllib3
+
+from .lldp import infer_chassis_id_type
 
 logger = logging.getLogger(__name__)
 
@@ -132,20 +135,45 @@ class AOSCXClient:
     # ── LLDP neighbours (wired into enrichment in Stage 2) ───────────────────
     def get_lldp_neighbors(self) -> list[dict]:
         """
-        Return LLDP neighbours as
-        ``[{local_port, neighbor_hostname, neighbor_port}]``.
+        Return LLDP neighbours with every TLV AOS-CX advertises:
+        ``[{local_port, neighbor_hostname, neighbor_port,
+            neighbor_port_description, neighbor_mgmt_ip, chassis_id,
+            chassis_id_type, system_description, capabilities}]``.
+
+        AOS-CX nests the advertised TLVs under ``neighbor_info``; field names
+        differ slightly across firmware (e.g. ``chassis_name`` vs ``system_name``,
+        ``chassis_description`` vs ``system_description``), so each value is read
+        with fallbacks. ``capabilities`` is returned raw (AOS-CX gives a dict
+        keyed by capability, a list, or a delimited string) and normalised
+        downstream by ``topology.discover_links`` via ``lldp.normalize_capabilities``.
         """
         data = self._get("system/lldp_neighbors_info", params={"depth": 2})
         out: list[dict] = []
         for key, obj in _iter_named(data):
             if not isinstance(obj, dict):
                 continue
-            info = obj.get("neighbor_info") if isinstance(obj.get("neighbor_info"), dict) else {}
+            info = obj.get("neighbor_info")
+            if not isinstance(info, dict):
+                info = {}
             out.append({
                 "local_port": obj.get("port") or _last_segment(key),
-                "neighbor_hostname": info.get("chassis_name", "") or "",
-                "neighbor_port": (info.get("port_id") or obj.get("port_id", "")) or "",
-                "neighbor_mgmt_ip": (info.get("mgmt_ip") or info.get("chassis_id", "")) or "",
+                "neighbor_hostname": (
+                    info.get("chassis_name") or info.get("system_name") or ""),
+                "neighbor_port": (
+                    info.get("port_id") or obj.get("port_id") or ""),
+                "neighbor_port_description": info.get("port_description", "") or "",
+                "neighbor_mgmt_ip": _first_mgmt_ip(info),
+                "chassis_id": info.get("chassis_id", "") or "",
+                "chassis_id_type": (
+                    info.get("chassis_id_subtype")
+                    or info.get("chassis_id_type") or ""),
+                "system_description": (
+                    info.get("chassis_description")
+                    or info.get("system_description") or ""),
+                "capabilities": (
+                    info.get("chassis_capability_available")
+                    or info.get("capabilities")
+                    or info.get("system_capabilities") or ""),
             })
         return out
 
@@ -186,6 +214,24 @@ def _speed_mbps(link_speed):
     if val <= 0:
         return None
     return val // 1_000_000 if val >= 1_000_000 else val
+
+
+def _first_mgmt_ip(info: dict) -> str:
+    """
+    Best management IP from an AOS-CX ``neighbor_info`` block.
+
+    AOS-CX may advertise a single ``mgmt_ip`` or a delimited ``mgmt_ip_list``;
+    fall back to ``chassis_id`` only when it itself looks like an IP. chassis_id
+    is usually a MAC, which must never land in the ``management_address`` inet
+    column.
+    """
+    raw = info.get("mgmt_ip") or info.get("mgmt_ip_list") or ""
+    for cand in re.split(r"[,;\s]+", str(raw)):
+        cand = cand.strip()
+        if cand:
+            return cand
+    cid = str(info.get("chassis_id") or "").strip()
+    return cid if infer_chassis_id_type(cid) == "network-address" else ""
 
 
 def _last_segment(key: str) -> str:
