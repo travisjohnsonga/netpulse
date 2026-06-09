@@ -2915,9 +2915,11 @@ export interface UndiscoveredLldpNeighbor {
   guessed_platform: string
 }
 
-export async function fetchUndiscoveredLldp(): Promise<{ count: number; results: UndiscoveredLldpNeighbor[] }> {
+export async function fetchUndiscoveredLldp(
+  params?: Record<string, string>,
+): Promise<{ count: number; results: UndiscoveredLldpNeighbor[] }> {
   const { data } = await api.get<{ count: number; results: UndiscoveredLldpNeighbor[] }>(
-    '/devices/lldp/undiscovered/')
+    '/devices/lldp/undiscovered/', { params })
   return data
 }
 

@@ -8,19 +8,53 @@ import {
 import DeviceAddModal, { type DeviceAddPrefill } from '../components/DeviceAddModal'
 import EmptyState from '../components/EmptyState'
 
-// LLDP capability token → display icon + label.
+// LLDP capability token → display icon + friendly label.
 const CAP_META: Record<string, { icon: string; label: string }> = {
   router: { icon: '🔁', label: 'Router' },
-  bridge: { icon: '🔀', label: 'Switch' },
-  'wlan-ap': { icon: '📶', label: 'Access Point' },
-  telephone: { icon: '☎️', label: 'Phone' },
-  docsis: { icon: '📡', label: 'DOCSIS' },
-  repeater: { icon: '📍', label: 'Repeater' },
-  station: { icon: '💻', label: 'Station' },
+  bridge: { icon: '🔀', label: 'Switch/Bridge' },
+  'wlan-ap': { icon: '📶', label: 'Wireless AP' },
+  telephone: { icon: '☎️', label: 'IP Phone' },
+  station: { icon: '💻', label: 'Workstation/PC' },
+  repeater: { icon: '📍', label: 'Repeater/Hub' },
+  docsis: { icon: '📡', label: 'Cable/DOCSIS' },
+  other: { icon: '•', label: 'Other' },
 }
 
-type CapFilter = 'all' | 'router' | 'bridge' | 'wlan-ap' | 'other'
+// Capability toggles shown in the filter bar, in display order.
+const CAP_OPTIONS = ['router', 'bridge', 'wlan-ap', 'telephone', 'station',
+  'repeater', 'docsis', 'other'] as const
+
+// Infrastructure-ish capabilities visible by default; phones/PCs/cable modems
+// are hidden until the user opts in (they're rarely worth adding to inventory).
+const DEFAULT_SHOW_CAPS = ['router', 'bridge', 'wlan-ap', 'repeater', 'other']
+
 type IpFilter = 'all' | 'has-ip' | 'no-ip'
+
+type LldpFilters = {
+  search: string
+  showCaps: string[]
+  showNoCaps: boolean
+  ipFilter: IpFilter
+}
+
+const DEFAULT_FILTERS: LldpFilters = {
+  search: '',
+  showCaps: DEFAULT_SHOW_CAPS,
+  showNoCaps: true,
+  ipFilter: 'all',
+}
+
+const FILTERS_KEY = 'lldp_filters'
+
+function loadFilters(): LldpFilters {
+  try {
+    const saved = localStorage.getItem(FILTERS_KEY)
+    if (saved) return { ...DEFAULT_FILTERS, ...JSON.parse(saved) }
+  } catch {
+    /* corrupt/unavailable storage → fall back to defaults */
+  }
+  return DEFAULT_FILTERS
+}
 
 function capIcons(caps: string[]) {
   if (!caps.length) return <span className="text-gray-300 dark:text-gray-600">—</span>
@@ -49,16 +83,31 @@ export default function LldpNeighbors() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState<LldpFilters>(loadFilters)
   const [seenBy, setSeenBy] = useState<string>('all')
-  const [capFilter, setCapFilter] = useState<CapFilter>('all')
-  const [ipFilter, setIpFilter] = useState<IpFilter>('all')
   const [expanded, setExpanded] = useState<number | null>(null)
   const [addPrefill, setAddPrefill] = useState<DeviceAddPrefill | null>(null)
 
+  const { search, showCaps, showNoCaps, ipFilter } = filters
+  const patch = useCallback(
+    (p: Partial<LldpFilters>) => setFilters((f) => ({ ...f, ...p })), [])
+  const toggleCap = useCallback((cap: string) => setFilters((f) => ({
+    ...f,
+    showCaps: f.showCaps.includes(cap)
+      ? f.showCaps.filter((c) => c !== cap)
+      : [...f.showCaps, cap],
+  })), [])
+
+  // Persist filter selection across page loads.
+  useEffect(() => {
+    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(filters)) } catch { /* ignore */ }
+  }, [filters])
+
   const load = useCallback(() => {
     setLoading(true)
-    fetchUndiscoveredLldp()
+    // Fetch the full set (override the server-side default exclusion) and apply
+    // the user's capability filters client-side so toggling never refetches.
+    fetchUndiscoveredLldp({ exclude_capabilities: '' })
       .then((data) => { setRows(data.results); setError(null) })
       .catch(() => setError('Failed to load LLDP neighbors.'))
       .finally(() => setLoading(false))
@@ -75,22 +124,26 @@ export default function LldpNeighbors() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
+    const show = new Set(showCaps)
     return rows.filter((r) => {
       if (q) {
         const hay = `${r.system_name} ${r.management_address ?? ''} ${r.chassis_id} ${r.seen_by_device_hostname}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       if (seenBy !== 'all' && String(r.seen_by_device_id) !== seenBy) return false
-      if (capFilter !== 'all') {
-        if (capFilter === 'other') {
-          if (r.capabilities.some((c) => c === 'router' || c === 'bridge' || c === 'wlan-ap')) return false
-        } else if (!r.capabilities.includes(capFilter)) return false
+      // Capability filter: a row with no capabilities is governed by showNoCaps
+      // (unknown could be anything); otherwise at least one of its capabilities
+      // must be in the selected set.
+      if (r.capabilities.length === 0) {
+        if (!showNoCaps) return false
+      } else if (!r.capabilities.some((c) => show.has(c))) {
+        return false
       }
       if (ipFilter === 'has-ip' && !r.management_address) return false
       if (ipFilter === 'no-ip' && r.management_address) return false
       return true
     })
-  }, [rows, search, seenBy, capFilter, ipFilter])
+  }, [rows, search, seenBy, showCaps, showNoCaps, ipFilter])
 
   // Other ports/devices the same neighbor was seen on (matched by chassis or name).
   const sightingsOf = useCallback((r: UndiscoveredLldpNeighbor) => {
@@ -154,33 +207,57 @@ export default function LldpNeighbors() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 flex flex-col sm:flex-row gap-3">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, IP, MAC…"
-          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <select value={seenBy} onChange={(e) => setSeenBy(e.target.value)}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm">
-          <option value="all">All devices</option>
-          {seenByOptions.map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
-        </select>
-        <select value={capFilter} onChange={(e) => setCapFilter(e.target.value as CapFilter)}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm">
-          <option value="all">Any capability</option>
-          <option value="router">Router</option>
-          <option value="bridge">Switch</option>
-          <option value="wlan-ap">Access Point</option>
-          <option value="other">Other</option>
-        </select>
-        <select value={ipFilter} onChange={(e) => setIpFilter(e.target.value as IpFilter)}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm">
-          <option value="all">Any IP</option>
-          <option value="has-ip">Has IP</option>
-          <option value="no-ip">No IP</option>
-        </select>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => patch({ search: e.target.value })}
+            placeholder="Search hostname / IP / MAC…"
+            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <select value={seenBy} onChange={(e) => setSeenBy(e.target.value)}
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm">
+            <option value="all">All devices</option>
+            {seenByOptions.map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
+          </select>
+          <select value={ipFilter} onChange={(e) => patch({ ipFilter: e.target.value as IpFilter })}
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-900 rounded-lg text-sm">
+            <option value="all">Any IP</option>
+            <option value="has-ip">Has mgmt IP</option>
+            <option value="no-ip">No mgmt IP</option>
+          </select>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-gray-400">Show:</span>
+          {CAP_OPTIONS.map((cap) => (
+            <label key={cap} className="inline-flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showCaps.includes(cap)}
+                onChange={() => toggleCap(cap)}
+                className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+              />
+              <span title={CAP_META[cap]?.label}>{CAP_META[cap]?.icon}</span>
+              {CAP_META[cap]?.label ?? cap}
+            </label>
+          ))}
+          <label className="inline-flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showNoCaps}
+              onChange={() => patch({ showNoCaps: !showNoCaps })}
+              className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+            />
+            Unknown
+          </label>
+          <button
+            onClick={() => setFilters(DEFAULT_FILTERS)}
+            className="ml-auto text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            Reset filters
+          </button>
+        </div>
       </div>
 
       {error && <div className="text-sm text-red-600 dark:text-red-400">{error}</div>}

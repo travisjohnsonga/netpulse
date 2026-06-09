@@ -213,3 +213,63 @@ class TestUndiscoveredEndpoint:
     def test_requires_auth(self, devices, api_client):
         resp = api_client.get("/api/devices/lldp/undiscovered/count/")
         assert resp.status_code in (401, 403)
+
+
+class TestUndiscoveredFilters:
+    def _seed(self, seen_by, iface, **kw):
+        return LLDPNeighbor.objects.create(
+            seen_by=seen_by, local_interface=iface, **kw)
+
+    @pytest.fixture
+    def seeded(self, devices):
+        a, _ = devices
+        self._seed(a, "Gi1", system_name="core-sw", management_address="10.9.0.1",
+                   capabilities=["bridge", "router"])
+        self._seed(a, "Gi2", system_name="desk-phone", management_address="10.9.0.2",
+                   capabilities=["telephone"])
+        self._seed(a, "Gi3", system_name="alices-pc", management_address="10.9.0.3",
+                   capabilities=["station"])
+        self._seed(a, "Gi4", system_name="ap-lobby", capabilities=["wlan-ap", "bridge"])
+        self._seed(a, "Gi5", system_name="mystery", capabilities=[])  # no caps
+        return a
+
+    def _names(self, resp):
+        return sorted(r["system_name"] for r in resp.json()["results"])
+
+    def test_default_excludes_unmanaged(self, seeded, auth_client):
+        # Phones + workstations hidden by default; no-cap row always shown.
+        resp = auth_client.get("/api/devices/lldp/undiscovered/")
+        assert self._names(resp) == ["ap-lobby", "core-sw", "mystery"]
+
+    def test_count_respects_default_exclusion(self, seeded, auth_client):
+        resp = auth_client.get("/api/devices/lldp/undiscovered/count/")
+        assert resp.json() == {"count": 3}
+
+    def test_empty_exclude_shows_all(self, seeded, auth_client):
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/?exclude_capabilities=")
+        assert self._names(resp) == [
+            "alices-pc", "ap-lobby", "core-sw", "desk-phone", "mystery"]
+
+    def test_include_capabilities(self, seeded, auth_client):
+        # Only routers — plus the no-cap row, which is never dropped by caps.
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/"
+            "?exclude_capabilities=&capabilities=router")
+        assert self._names(resp) == ["core-sw", "mystery"]
+
+    def test_has_ip_filter(self, seeded, auth_client):
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/?exclude_capabilities=&has_ip=false")
+        assert self._names(resp) == ["ap-lobby", "mystery"]
+
+    def test_search_filter(self, seeded, auth_client):
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/?exclude_capabilities=&search=phone")
+        assert self._names(resp) == ["desk-phone"]
+
+    def test_env_override_excluded_caps(self, seeded, auth_client, monkeypatch):
+        monkeypatch.setenv("LLDP_EXCLUDE_CAPABILITIES", "wlan-ap")
+        resp = auth_client.get("/api/devices/lldp/undiscovered/")
+        # Now the AP is hidden but phones/PCs return.
+        assert self._names(resp) == ["alices-pc", "core-sw", "desk-phone", "mystery"]
