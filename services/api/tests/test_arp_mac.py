@@ -140,6 +140,70 @@ class TestParsing:
                         "protocol": "Internet", "entry_type": "dynamic"}]
 
 
+class TestAOSCXRest:
+    """AOS-CX collection prefers the REST API and falls back to SSH on failure."""
+
+    class _FakeRestClient:
+        def __init__(self, arp, mac):
+            self._arp, self._mac = arp, mac
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, u, p):
+            return {}
+
+        def get_arp_table(self):
+            return [dict(r) for r in self._arp]
+
+        def get_mac_table(self):
+            return [dict(r) for r in self._mac]
+
+    def test_rest_preferred_no_ssh(self, device, monkeypatch):
+        from apps.arp_mac import collector
+        arp = [{"ip_address": "10.150.0.1", "mac_address": "1A:C2:41:2C:0B:0C",
+                "interface": "vlan1", "vlan": 1, "age_minutes": None,
+                "protocol": "Internet", "entry_type": "dynamic"}]
+        mac = [{"mac_address": "00:09:01:12:A6:C3", "vlan": 1,
+                "interface": "lag2", "entry_type": "dynamic"}]
+        monkeypatch.setattr("apps.devices.aos_cx_client.AOSCXClient",
+                            lambda host, **kw: self._FakeRestClient(arp, mac))
+
+        arp_out, mac_out = collector.collect_arp_mac(
+            device, {"ssh_password": "pw"}, "travis-admin")
+
+        assert arp_out[0]["ip_address"] == "10.150.0.1"
+        assert arp_out[0]["mac_address"] == "1a:c2:41:2c:0b:0c"   # normalized
+        assert mac_out[0]["mac_address"] == "00:09:01:12:a6:c3"   # normalized
+
+    def test_rest_failure_falls_back_to_ssh(self, device, monkeypatch):
+        from apps.arp_mac import collector
+
+        def _boom(host, username, password):
+            return None   # REST unusable → SSH fallback
+        monkeypatch.setattr(collector, "_collect_aos_cx_rest", _boom)
+
+        called = {}
+
+        class _Conn:
+            def send_command(self, *a, **k):
+                return []
+
+            def disconnect(self):
+                called["disconnected"] = True
+
+        import netmiko
+        monkeypatch.setattr(netmiko, "ConnectHandler", lambda **kw: _Conn())
+
+        arp_out, mac_out = collector.collect_arp_mac(
+            device, {"ssh_password": "pw"}, "travis-admin")
+        assert arp_out == [] and mac_out == []
+        assert called.get("disconnected") is True
+
+
 # ── persistence ───────────────────────────────────────────────────────────────
 class TestStore:
     def test_arp_upsert_and_mac_replace(self, device):

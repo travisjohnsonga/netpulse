@@ -294,6 +294,35 @@ def _collect_sonicwall_arp(host: str, username: str, password: str, port: int) -
     return _parse_sonicwall_arp(out)
 
 
+def _collect_aos_cx_rest(host: str, username: str, password: str):
+    """
+    Collect ARP + MAC over the AOS-CX REST API.
+
+    Returns ``(arp, mac)`` on success (MAC addresses normalised to the common
+    form), or ``None`` when REST is unusable so the caller falls back to SSH.
+    Reuses the device's SSH credentials — the same local account works for REST
+    on AOS-CX. An empty-but-successful read returns ``([], [])`` (not ``None``)
+    so we don't double-collect over SSH for a device that genuinely has no
+    entries.
+    """
+    if not (username and password):
+        return None
+    try:
+        from apps.devices.aos_cx_client import AOSCXClient
+        with AOSCXClient(host) as client:
+            client.login(username, password)
+            arp = client.get_arp_table()
+            mac = client.get_mac_table()
+    except Exception as exc:  # noqa: BLE001 — any REST failure → SSH fallback
+        logger.warning("arp_mac: AOS-CX REST to %s failed: %s", host, exc)
+        return None
+    for e in arp:
+        e["mac_address"] = normalize_mac(e.get("mac_address", ""))
+    for e in mac:
+        e["mac_address"] = normalize_mac(e.get("mac_address", ""))
+    return arp, mac
+
+
 def _textfsm_parse(output: str, template_name: str) -> list[dict]:
     """Parse raw output with a bundled custom TextFSM template → list of dicts."""
     path = os.path.join(_TEMPLATE_DIR, template_name)
@@ -347,6 +376,18 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
             return [], []
         logger.info("arp_mac: %s — %d ARP, %d MAC", device.hostname, len(arp_entries), 0)
         return arp_entries, []
+
+    if platform == "aos_cx":
+        # AOS-CX exposes ARP + the MAC table over the REST API (structured JSON,
+        # a single authenticated session — more reliable than SSH/TextFSM). Try
+        # REST first; fall through to the Netmiko/SSH path on any failure.
+        rest = _collect_aos_cx_rest(host, username, password)
+        if rest is not None:
+            arp_entries, mac_entries = rest
+            logger.info("arp_mac: %s — %d ARP, %d MAC (REST)",
+                        device.hostname, len(arp_entries), len(mac_entries))
+            return arp_entries, mac_entries
+        logger.info("arp_mac: %s — AOS-CX REST unavailable, falling back to SSH", device.hostname)
 
     from netmiko import ConnectHandler  # lazy import
 

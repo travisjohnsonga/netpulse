@@ -14,6 +14,7 @@ Periodic (each on its own cadence; the loop wakes every --tick seconds):
   - resolved-alert purge      — daily   (runs on startup)
   - ARP/MAC table collection  — every 6h (ARP_MAC_COLLECT_INTERVAL_S)
   - MAC-vendor OUI refresh     — weekly  (MAC_VENDOR_UPDATE_INTERVAL_S)
+  - LLDP neighbor collection  — every 30m (LLDP_COLLECT_INTERVAL_S)
 
 The 6h/weekly tasks first fire one interval after startup so a restart doesn't
 stampede the fleet (SSH) or re-download the OUI registry every boot.
@@ -33,6 +34,7 @@ ALERT_PURGE_INTERVAL_S = 24 * 3600                                  # daily
 ARP_MAC_INTERVAL_S = int(os.environ.get("ARP_MAC_COLLECT_INTERVAL_S", str(6 * 3600)))
 MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7 * 24 * 3600)))
 HOSTNAME_CHECK_INTERVAL_S = int(os.environ.get("HOSTNAME_CHECK_INTERVAL_S", str(24 * 3600)))
+LLDP_COLLECT_INTERVAL_S = int(os.environ.get("LLDP_COLLECT_INTERVAL_S", str(30 * 60)))
 UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
 OS_PLATFORM_REFRESH_INTERVAL_S = int(os.environ.get("OS_PLATFORM_REFRESH_INTERVAL_S", str(6 * 3600)))
 OS_VERSION_SEED_INTERVAL_S = int(os.environ.get("OS_VERSION_SEED_INTERVAL_S", str(24 * 3600)))
@@ -74,6 +76,7 @@ class Command(BaseCommand):
             ["arp_mac", ARP_MAC_INTERVAL_S, self._collect_arp_mac, False, None],
             ["mac_vendors", MAC_VENDOR_INTERVAL_S, self._update_mac_vendors, False, None],
             ["hostname_check", HOSTNAME_CHECK_INTERVAL_S, self._check_hostnames, False, None],
+            ["lldp_collect", LLDP_COLLECT_INTERVAL_S, self._collect_lldp, False, None],
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
             ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
             ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
@@ -156,6 +159,10 @@ class Command(BaseCommand):
         logger.info("scheduler: verifying device hostnames (SNMP sysName / DNS)")
         from apps.devices.hostname_check import check_all_hostnames
         check_all_hostnames()
+
+    def _collect_lldp(self):
+        logger.info("scheduler: collecting LLDP neighbors")
+        call_command("collect_lldp")
 
     def _sync_unifi(self):
         logger.info("scheduler: syncing enabled UniFi controllers")

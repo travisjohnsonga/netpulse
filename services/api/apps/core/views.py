@@ -449,6 +449,73 @@ class HostnameDisplayView(APIView):
         return Response(self._state())
 
 
+class LldpSettingsView(APIView):
+    """Get or update the default capability exclusions for the LLDP
+    "Not in Inventory" list.
+
+    These capabilities are hidden from the undiscovered-neighbors list by
+    default (admins rarely add IP phones / PCs / cable modems to inventory).
+    Persisted in SystemSetting so it overrides the env default at runtime. PUT
+    requires admin.
+    """
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return super().get_permissions()
+        return [AdminOnly()]
+
+    def _state(self):
+        from apps.devices.lldp import (
+            DEFAULT_UNMANAGED_CAPABILITIES, KNOWN_CAPABILITIES,
+            default_excluded_capabilities,
+        )
+
+        return {
+            "exclude_capabilities": default_excluded_capabilities(),
+            "available_capabilities": list(KNOWN_CAPABILITIES),
+            "default_exclude_capabilities": list(DEFAULT_UNMANAGED_CAPABILITIES),
+        }
+
+    @extend_schema(
+        summary="LLDP undiscovered-neighbor default capability exclusions",
+        responses=inline_serializer(
+            "LldpSettings",
+            {
+                "exclude_capabilities": serializers.ListField(child=serializers.CharField()),
+                "available_capabilities": serializers.ListField(child=serializers.CharField()),
+                "default_exclude_capabilities": serializers.ListField(child=serializers.CharField()),
+            },
+        ),
+    )
+    def get(self, request):
+        return Response(self._state())
+
+    @extend_schema(
+        request=inline_serializer(
+            "LldpSettingsUpdate",
+            {"exclude_capabilities": serializers.ListField(child=serializers.CharField())},
+        ),
+        responses=inline_serializer(
+            "LldpSettings",
+            {
+                "exclude_capabilities": serializers.ListField(child=serializers.CharField()),
+                "available_capabilities": serializers.ListField(child=serializers.CharField()),
+                "default_exclude_capabilities": serializers.ListField(child=serializers.CharField()),
+            },
+        ),
+    )
+    def put(self, request):
+        from apps.devices.lldp import normalize_capabilities
+
+        caps = request.data.get("exclude_capabilities", [])
+        if not isinstance(caps, list):
+            raise ValidationError({"exclude_capabilities": "Must be a list of capability tokens."})
+        # Canonicalise + de-dupe so stored tokens match what the filter compares.
+        tokens = normalize_capabilities([str(c) for c in caps])
+        SystemSetting.set("lldp_exclude_capabilities", ",".join(tokens))
+        return Response(self._state())
+
+
 def _active_admin_q():
     """Users who count as active administrators (admin role or superuser)."""
     return Q(is_active=True) & (Q(role=Role.ADMIN) | Q(is_superuser=True))

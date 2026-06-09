@@ -534,6 +534,30 @@ class DeviceViewSet(viewsets.ModelViewSet):
             "neighbors": found,
         })
 
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="collect-lldp")
+    def collect_lldp(self, request, pk=None):
+        """Collect this device's LLDP neighbors now and persist them.
+
+        Same scan as topology/discover, framed around neighbor persistence:
+        returns the number of LLDPNeighbor rows refreshed for this device.
+        """
+        from apps.telemetry.discovery import DiscoveryError
+
+        from . import topology as topo
+        device = self.get_object()
+        try:
+            found = topo.discover_links(device)
+        except DiscoveryError as exc:
+            return Response({"error": safe_detail(exc, logger, "collect lldp",
+                            public="LLDP collection failed."), "count": 0},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        return Response({
+            "device_id": device.id,
+            "count": len(found),
+            "matched": sum(1 for f in found if f["matched_device_id"]),
+        })
+
     @action(detail=False, methods=["get"], url_path="topology")
     def topology(self, request):
         """
@@ -616,14 +640,29 @@ class DeviceViewSet(viewsets.ModelViewSet):
         ]
         return Response({"nodes": nodes, "edges": edges})
 
-    def _undiscovered_lldp(self):
+    @staticmethod
+    def _csv_param(params, key):
+        """Multi-value query param, accepting repeated keys and/or comma lists."""
+        out = []
+        for raw in params.getlist(key):
+            out.extend(p.strip() for p in raw.split(",") if p.strip())
+        return out
+
+    def _undiscovered_lldp(self, request=None):
         """LLDPNeighbor rows that don't (currently) map to any inventory device.
 
         Re-checks live against the device index so a neighbor added since the
         last LLDP scan drops off, and surfaces neighbors whose stored
-        matched_device was deleted. Returns (list[LLDPNeighbor], inventory_index).
+        matched_device was deleted. When `request` is given, applies the list
+        filters (search / capabilities / exclude_capabilities / has_ip /
+        platform); unmanaged capabilities are excluded by default unless an
+        explicit `exclude_capabilities` param is sent. Returns
+        (list[LLDPNeighbor], inventory_index).
         """
-        from .lldp import device_identity_index, neighbor_in_inventory
+        from .lldp import (
+            default_excluded_capabilities, device_identity_index,
+            filter_undiscovered, neighbor_in_inventory,
+        )
 
         devices = list(Device.objects.only("hostname", "ip_address", "management_ip"))
         idx = device_identity_index(devices)
@@ -632,13 +671,32 @@ class DeviceViewSet(viewsets.ModelViewSet):
             .order_by("seen_by__hostname", "local_interface")
         )
         undiscovered = [n for n in neighbors if not neighbor_in_inventory(n, idx[0], idx[1])]
+
+        if request is not None:
+            params = request.query_params
+            # exclude_capabilities: present (even empty) overrides the default;
+            # absent → fall back to the configured unmanaged set.
+            if "exclude_capabilities" in params:
+                exclude = self._csv_param(params, "exclude_capabilities")
+            else:
+                exclude = default_excluded_capabilities()
+            has_ip_raw = (params.get("has_ip") or "").strip().lower()
+            has_ip = {"true": True, "false": False}.get(has_ip_raw)
+            undiscovered = filter_undiscovered(
+                undiscovered,
+                search=params.get("search", ""),
+                include_caps=self._csv_param(params, "capabilities"),
+                exclude_caps=exclude,
+                has_ip=has_ip,
+                platforms=self._csv_param(params, "platform"),
+            )
         return undiscovered, idx
 
     @extend_schema(responses=LLDPNeighborSerializer(many=True))
     @action(detail=False, methods=["get"], url_path="lldp/undiscovered")
     def lldp_undiscovered(self, request):
         """LLDP neighbors seen by managed devices but not yet in inventory."""
-        undiscovered, idx = self._undiscovered_lldp()
+        undiscovered, idx = self._undiscovered_lldp(request)
         data = LLDPNeighborSerializer(
             undiscovered, many=True, context={"inventory_index": idx}
         ).data
@@ -646,8 +704,12 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="lldp/undiscovered/count")
     def lldp_undiscovered_count(self, request):
-        """Just the count — drives the sidebar badge (cheap, no serialization)."""
-        undiscovered, _ = self._undiscovered_lldp()
+        """Just the count — drives the sidebar badge (cheap, no serialization).
+
+        Honours the same filters (and the default unmanaged-capability
+        exclusion) so the badge tracks the actionable, in-inventory-worthy set.
+        """
+        undiscovered, _ = self._undiscovered_lldp(request)
         return Response({"count": len(undiscovered)})
 
 

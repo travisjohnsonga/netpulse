@@ -20,8 +20,9 @@ PSU) in NetPulse — all over SNMP.
 | Config backup   | ✅                                                    |
 | ARP/MAC         | ✅ (ntc-templates ships `aruba_aoscx`)                |
 | Environment     | ✅ (SNMP — see below)                                 |
+| LLDP neighbors  | ✅ (REST on FL.10.13; persisted to `LLDPNeighbor`)    |
 | gNMI            | 📋 OpenConfig dial-out on port 8443 (planned)        |
-| REST API        | ⚠️ not on the 6100 (login 400/401); higher-end may   |
+| REST API        | ✅ on FL.10.13 (verified); ⚠️ not on the 6100 (PL.10.16, login 400/401) |
 
 ---
 
@@ -78,10 +79,69 @@ Stream-processor emits scalars `cpu_pct`, `memory_used_pct`, `memory_*_bytes`,
   `entPhysicalHardwareRev`, not a status). Fan/PSU is reported as
   **presence/count** only; reliable status exists only for sensors
   (`entPhySensorOperStatus`). Higher-end models (8xxx) may expose more.
-- **REST API** is **not** supported on the 6100 (login 400/401) — SNMP only.
-  Higher-end models may support the AOS-CX REST API
-  (`apps/devices/aos_cx_client.py`, used as the preferred enrichment path when
-  available).
+- **REST API** is **not** supported on the 6100 running **PL.10.16** (login
+  400/401) — SNMP only. Switches on **FL.10.13** firmware (e.g.
+  `wco2-mdf-crt-01`, 10.150.0.15) **do** expose the REST API and are the
+  preferred enrichment path — see below.
+
+---
+
+## REST API (FL.10.13, verified)
+
+`apps/devices/aos_cx_client.py` is the **preferred enrichment path** on firmware
+that supports REST; SNMP remains the automatic fallback. REST availability and
+endpoint shape vary by firmware:
+
+- **PL.10.16** (HPE 6100): login returns 400/401 — **no REST**, SNMP only.
+- **FL.10.13** (verified on `wco2-mdf-crt-01`): REST works.
+
+**Confirmed working endpoints (FL.10.13):**
+
+| Endpoint                               | Returns           |
+|----------------------------------------|-------------------|
+| `GET /system?depth=1`                  | ✅ system info     |
+| `GET /system/interfaces?depth=1`       | ✅ interfaces (71 ports) |
+| `GET /system/vrfs/default/neighbors`   | ✅ ARP table       |
+| `GET /system/subsystems?depth=1`       | ✅ subsystems / environment |
+
+**Not available on FL.10.13:** `GET /system/lldp_neighbors_info` ❌ (400) — use
+the per-interface LLDP method below instead.
+
+> ⚠️ **Next session — REST migration.** Interfaces, ARP, environment/sensors,
+> VLANs, and PoE are still collected via SNMP/SSH. The plan is to migrate them to
+> REST (SNMP kept as fallback) in priority order: (1) system info, (2) interface
+> list + stats, (3) ARP table, (4) environment/sensors, (5) VLANs, PoE, routes.
+
+## LLDP neighbors
+
+NetPulse collects LLDP neighbors and persists them to the `LLDPNeighbor` table
+(scheduler every 30 min, plus the manual `collect_lldp` management command). The
+**Network → LLDP Neighbors** page lists neighbors; the **undiscovered-neighbors**
+view filters by capability and hostname and excludes phones/workstations by
+default.
+
+**FL.10.13 collection method (per-interface, with auto-fallback).** FL.10.13 does
+**not** serve the aggregate `/lldp_neighbors_info` endpoint, so the client uses
+the per-interface API and falls back automatically:
+
+```text
+GET /system/interfaces/{port}                       → lldp_neighbors: {key: uri}
+GET /system/interfaces/{port}/lldp_neighbors/{key}  → full neighbor (neighbor_info)
+```
+
+`neighbor_info` fields: `chassis_id`, `chassis_name`,
+`chassis_capability_available` (comma-separated string), `chassis_description`,
+`mgmt_ip_list`, `port_description`, `port_id_subtype`, `vlan_id_list`,
+`vlan_name_list`.
+
+- **Capabilities**: `"Bridge, Router"` → split on comma, strip, lowercase →
+  `["bridge", "router"]`.
+- **Management IP**: `mgmt_ip_list` is comma-separated — take the **first** entry.
+
+## Syslog severity
+
+AOS-CX emits the severity keyword **`info`**, not `informational` — the syslog
+normalizer must match `info` for these events to map to the correct severity.
 
 ---
 

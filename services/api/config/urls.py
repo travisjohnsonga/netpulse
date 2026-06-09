@@ -5,7 +5,9 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenVerifyView
 
 from apps.core.throttled_auth import ThrottledTokenObtainPairView, ThrottledTokenRefreshView
-from apps.core.views import AuditRetentionView, HostnameDisplayView, SystemSettingsView
+from apps.core.views import (
+    AuditRetentionView, HostnameDisplayView, LldpSettingsView, SystemSettingsView,
+)
 from apps.devices.views import SiteViewSet
 from apps.telemetry.views import PollingSettingsView
 
@@ -57,6 +59,7 @@ urlpatterns = [
     path("api/settings/system/",  SystemSettingsView.as_view(),  name="system-settings"),
     path("api/settings/audit-retention/", AuditRetentionView.as_view(), name="audit-retention"),
     path("api/settings/hostname-display/", HostnameDisplayView.as_view(), name="hostname-display"),
+    path("api/settings/lldp/", LldpSettingsView.as_view(), name="lldp-settings"),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),

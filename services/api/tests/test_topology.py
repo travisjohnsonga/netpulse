@@ -136,6 +136,26 @@ class TestTopologyEndpoint:
         resp = auth_client.post(f"/api/devices/{a.id}/topology/discover/")
         assert resp.status_code == 502
 
+    def test_collect_lldp_endpoint(self, auth_client, devices, monkeypatch):
+        a, b = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi4", "lldp_neighbor_hostname": "router2", "lldp_neighbor_port": "Gi4"},
+            {"if_name": "Gi5", "lldp_neighbor_hostname": "ghost", "lldp_neighbor_port": "Gi1"}])
+        resp = auth_client.post(f"/api/devices/{a.id}/collect-lldp/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == {"device_id": a.id, "count": 2, "matched": 1}
+        from apps.devices.models import LLDPNeighbor
+        assert LLDPNeighbor.objects.filter(seen_by=a).count() == 2
+
+    def test_collect_lldp_error(self, auth_client, devices, monkeypatch):
+        a, _ = devices
+        def boom(d):
+            raise discovery.DiscoveryError("no SNMP/SSH")
+        monkeypatch.setattr(discovery, "discover_interfaces", boom)
+        resp = auth_client.post(f"/api/devices/{a.id}/collect-lldp/")
+        assert resp.status_code == 502 and resp.json()["count"] == 0
+
     def test_topology_includes_edges(self, auth_client, devices):
         a, b = devices
         from django.utils import timezone

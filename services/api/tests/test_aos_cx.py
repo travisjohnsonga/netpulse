@@ -134,6 +134,348 @@ class TestAOSCXClient:
         assert by_name["1/1/2"]["admin_state"] == "down"
         assert by_name["1/1/2"]["ip"] == ""
 
+    def test_aos_cx_lldp_neighbor_parse_full(self):
+        """Every advertised TLV is captured from the neighbor_info block."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/lldp_neighbors_info": {
+            "1/1/1": {
+                "port": "1/1/1",
+                "neighbor_info": {
+                    "chassis_id": "aa:bb:cc:dd:ee:ff",
+                    "chassis_id_subtype": "link_local_addr",
+                    "chassis_name": "spine-1",
+                    "chassis_description": "ArubaOS-CX 10.10, Aruba8325",
+                    "port_id": "1/1/24",
+                    "port_description": "to leaf-1",
+                    "mgmt_ip_list": "10.0.0.9, fe80::1",
+                    "chassis_capability_available": {"bridge": True, "router": True,
+                                                     "wlan-access-point": False},
+                },
+            },
+        }})
+        nb = client.get_lldp_neighbors()[0]
+        assert nb["local_port"] == "1/1/1"
+        assert nb["neighbor_hostname"] == "spine-1"
+        assert nb["neighbor_port"] == "1/1/24"
+        assert nb["neighbor_port_description"] == "to leaf-1"
+        assert nb["neighbor_mgmt_ip"] == "10.0.0.9"          # first of the list
+        assert nb["chassis_id"] == "aa:bb:cc:dd:ee:ff"
+        assert nb["chassis_id_type"] == "link_local_addr"
+        assert nb["system_description"] == "ArubaOS-CX 10.10, Aruba8325"
+        # capabilities returned raw (dict) — normalised downstream
+        assert nb["capabilities"] == {"bridge": True, "router": True,
+                                      "wlan-access-point": False}
+
+    def test_aos_cx_lldp_mgmt_ip_falls_back_to_chassis_only_when_ip(self):
+        """chassis_id is used for mgmt IP only when it actually looks like one."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/lldp_neighbors_info": {
+            "1/1/2": {"port": "1/1/2", "neighbor_info": {
+                "chassis_id": "11:22:33:44:55:66"}},          # a MAC → not an IP
+            "1/1/3": {"port": "1/1/3", "neighbor_info": {
+                "chassis_id": "192.0.2.7"}},                  # an IP → usable
+        }})
+        by = {n["local_port"]: n for n in client.get_lldp_neighbors()}
+        assert by["1/1/2"]["neighbor_mgmt_ip"] == ""
+        assert by["1/1/3"]["neighbor_mgmt_ip"] == "192.0.2.7"
+
+    def test_aos_cx_lldp_mgmt_ip_rejects_mac_in_list(self):
+        """A MAC advertised in mgmt_ip_list must never become the mgmt IP."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/lldp_neighbors_info": {
+            # neighbour advertises only a MAC where an IP belongs
+            "1/1/4": {"port": "1/1/4", "neighbor_info": {
+                "mgmt_ip_list": "40:5b:7f:66:05:e1",
+                "chassis_id": "40:5b:7f:66:05:e1"}},
+            # a real IP after a MAC in the list → the IP wins
+            "1/1/5": {"port": "1/1/5", "neighbor_info": {
+                "mgmt_ip_list": "40:5b:7f:66:05:e1, 10.150.0.15"}},
+        }})
+        by = {n["local_port"]: n for n in client.get_lldp_neighbors()}
+        assert by["1/1/4"]["neighbor_mgmt_ip"] == ""
+        assert by["1/1/5"]["neighbor_mgmt_ip"] == "10.150.0.15"
+
+    def test_aos_cx_interface_stats_captured(self):
+        """depth-2 interfaces carry statistics + rate_statistics + mtu."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces": {
+            "1/1/1": {
+                "name": "1/1/1", "admin_state": "up", "link_state": "up",
+                "link_speed": 10_000_000_000, "mtu": 1500, "description": "uplink",
+                "statistics": {"rx_bytes": 1000, "tx_bytes": 2000,
+                               "rx_packets": 10, "tx_packets": 20,
+                               "if_in_errors": 1, "fe_if_in_discard_packets": 3},
+                "rate_statistics": {"rx_bytes_per_second": 100, "tx_bytes_per_second": 200,
+                                    "rx_packets_per_second": 5, "tx_packets_per_second": 6},
+            },
+        }})
+        from apps.devices.aos_cx_client import interface_counters
+        iface = client.get_interfaces()[0]
+        assert iface["mtu"] == 1500
+        assert iface["speed_mbps"] == 10_000
+        c = interface_counters(iface)
+        assert c["rx_bytes"] == 1000 and c["tx_bytes"] == 2000
+        assert c["rx_packets"] == 10 and c["tx_packets"] == 20
+        assert c["rx_errors"] == 1 and c["rx_discards"] == 3
+        assert c["rx_bps"] == 100 and c["tx_bps"] == 200
+        assert c["rx_pps"] == 5 and c["tx_pps"] == 6
+        assert c["tx_errors"] is None   # firmware doesn't expose if_out_errors
+
+    def test_aos_cx_interface_counters_falls_back_to_hc_keys(self):
+        """rx/tx bytes fall back to the if_hc_* high-capacity counters."""
+        from apps.devices.aos_cx_client import interface_counters
+        c = interface_counters({"statistics": {"if_hc_in_bytes": 42, "if_hc_out_bytes": 43}})
+        assert c["rx_bytes"] == 42 and c["tx_bytes"] == 43
+
+    def test_aos_cx_system_info_serial_and_base_mac(self):
+        """get_system_info reads serial/base-MAC off the chassis product_info."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={
+            "system": {"hostname": "wco2-mdf-crt-01", "platform_name": "6300",
+                       "software_version": "FL.10.13.1160"},
+            "system/subsystems": {"chassis,1": "/rest/v10.09/system/subsystems/chassis,1",
+                                  "fan_tray,1/1": "/uri"},
+            "system/subsystems/chassis,1": {"product_info": {
+                "base_mac_address": "9c:37:08:25:f3:40", "serial_number": "SG44LMP040",
+                "product_name": "6300M 24SFP+ 4SFP56 Swch", "part_number": "JL658A"}},
+        })
+        info = client.get_system_info()
+        assert info["hostname"] == "wco2-mdf-crt-01"
+        assert info["os_version"] == "FL.10.13.1160"
+        assert info["model"] == "6300"
+        assert info["serial_number"] == "SG44LMP040"
+        assert info["base_mac"] == "9c:37:08:25:f3:40"
+        assert info["part_number"] == "JL658A"
+
+    def test_aos_cx_arp_table_across_vrfs(self):
+        """ARP comes from per-VRF neighbors; IPv6 ND is skipped, MAC kept raw."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={
+            "system/vrfs": {"default": "/uri", "mgmt": "/uri"},
+            "system/vrfs/default/neighbors": {
+                "10.150.0.1,vlan1": {
+                    "address_family": "ipv4", "from": "dynamic", "ip_address": "10.150.0.1",
+                    "mac": "1a:c2:41:2c:0b:0c", "state": "reachable",
+                    "port": {"vlan1": "/rest/v10.09/system/interfaces/vlan1"}},
+                "fe80::1,vlan1": {  # IPv6 ND — must be skipped
+                    "address_family": "ipv6", "ip_address": "fe80::1",
+                    "mac": "1a:c2:41:2c:0b:0d"},
+                "10.150.0.2,vlan5": {  # static
+                    "address_family": "ipv4", "from": "static", "ip_address": "10.150.0.2",
+                    "mac": "aa:bb:cc:dd:ee:ff",
+                    "port": {"vlan5": "/rest/v10.09/system/interfaces/vlan5"}},
+            },
+            "system/vrfs/mgmt/neighbors": {},
+        })
+        rows = client.get_arp_table()
+        by_ip = {r["ip_address"]: r for r in rows}
+        assert set(by_ip) == {"10.150.0.1", "10.150.0.2"}   # IPv6 excluded
+        assert by_ip["10.150.0.1"]["mac_address"] == "1a:c2:41:2c:0b:0c"  # raw
+        assert by_ip["10.150.0.1"]["interface"] == "vlan1"
+        assert by_ip["10.150.0.1"]["vlan"] == 1
+        assert by_ip["10.150.0.1"]["entry_type"] == "dynamic"
+        assert by_ip["10.150.0.2"]["entry_type"] == "static"
+        assert by_ip["10.150.0.2"]["vlan"] == 5
+
+    def test_aos_cx_mac_table_from_vlans(self):
+        """MAC table is read from each VLAN's macs child (keyed selector,mac)."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/vlans": {
+            "1": {"id": 1, "macs": {
+                "dynamic,00:09:01:12:a6:c3": {
+                    "mac_addr": "00:09:01:12:a6:c3", "from": "dynamic",
+                    "port": {"lag2": "/rest/v10.09/system/interfaces/lag2"}},
+            }},
+            "5": {"id": 5, "macs": {
+                "static,aa:bb:cc:00:11:22": {
+                    "mac_addr": "aa:bb:cc:00:11:22", "from": "static",
+                    "port": {"1/1/3": "/rest/v10.09/system/interfaces/1%2F1%2F3"}},
+            }},
+        }})
+        rows = client.get_mac_table()
+        by_mac = {r["mac_address"]: r for r in rows}
+        assert by_mac["00:09:01:12:a6:c3"]["vlan"] == 1
+        assert by_mac["00:09:01:12:a6:c3"]["interface"] == "lag2"
+        assert by_mac["00:09:01:12:a6:c3"]["entry_type"] == "dynamic"
+        assert by_mac["aa:bb:cc:00:11:22"]["vlan"] == 5
+        assert by_mac["aa:bb:cc:00:11:22"]["interface"] == "1/1/3"
+        assert by_mac["aa:bb:cc:00:11:22"]["entry_type"] == "static"
+
+    def test_aos_cx_environment_sensors(self):
+        """Temp/fan/PSU sensors aggregate across subsystems; temp → °C."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/subsystems": {
+            "line_card,1/1": {"temp_sensors": {
+                "1/1-ASIC": {"name": "1/1-ASIC", "location": "asic",
+                             "temperature": 61375, "status": "normal"}}},
+            "fan_tray,1/1": {"fans": {
+                "Tray-1/1/1": {"name": "Tray-1/1/1", "rpm": 6941, "speed": "slow",
+                               "status": "ok"}}},
+            "chassis,1": {"power_supplies": {
+                "1/1": {"name": "1/1", "status": "ok",
+                        "characteristics": {"instantaneous_power": 27, "maximum_power": 250},
+                        "identity": {"product_name": "JL085A", "serial_number": "TH46"}}}},
+        }})
+        env = client.get_environment()
+        assert env["temperatures"][0]["temperature_c"] == 61.375
+        assert env["temperatures"][0]["status"] == "normal"
+        assert env["fans"][0]["rpm"] == 6941 and env["fans"][0]["status"] == "ok"
+        psu = env["power_supplies"][0]
+        assert psu["status"] == "ok" and psu["maximum_power"] == 250
+        assert psu["model"] == "JL085A"
+
+    def test_aos_cx_vlans(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/vlans": {
+            "1": {"id": 1, "name": "DEFAULT_VLAN_1", "admin": "up",
+                  "oper_state": "up", "type": "static"},
+            "20": {"id": 20, "name": "DATA", "admin": "up", "oper_state": "down"},
+        }})
+        by_id = {v["id"]: v for v in client.get_vlans()}
+        assert by_id[1]["name"] == "DEFAULT_VLAN_1" and by_id[1]["oper_state"] == "up"
+        assert by_id[20]["name"] == "DATA" and by_id[20]["oper_state"] == "down"
+
+    def test_aos_cx_interface_lacp_bond_and_vlan(self):
+        """get_interfaces exposes LACP/LAG state and interface VLAN membership."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces": {
+            "1/1/1": {"name": "1/1/1", "vlan_mode": "access",
+                      "vlan_tag": {"1": "/rest/v10.09/system/vlans/1"},
+                      "lacp_status": {"actor_key": "1", "actor_state": "Activ:1"},
+                      "bond_status": {"state": "up"}},
+            "lag256": {"name": "lag256", "vlan_mode": "native-untagged",
+                       "vlan_trunks": {"1": "/uri", "100": "/uri"},
+                       "bond_status": {"state": "up", "bond_speed": 20_000_000_000}},
+        }})
+        by = {i["name"]: i for i in client.get_interfaces()}
+        assert by["1/1/1"]["vlan_mode"] == "access"
+        assert by["1/1/1"]["vlan_tag"] == "1"
+        assert by["1/1/1"]["lacp_status"]["actor_key"] == "1"
+        assert by["1/1/1"]["bond_status"]["state"] == "up"
+        assert sorted(by["lag256"]["vlan_trunks"]) == ["1", "100"]
+        assert by["lag256"]["bond_status"]["bond_speed"] == 20_000_000_000
+
+    def test_aos_cx_get_interface_stats_single_port(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces/1%2F1%2F1": {
+            "name": "1/1/1",
+            "statistics": {"rx_bytes": 100, "tx_bytes": 200},
+            "rate_statistics": {"rx_bytes_per_second": 7},
+        }})
+        c = client.get_interface_stats("1/1/1")
+        assert c["rx_bytes"] == 100 and c["tx_bytes"] == 200 and c["rx_bps"] == 7
+
+    def test_aos_cx_poe_status_skips_non_poe_ports(self):
+        """PoE-capable ports return data; SFP+ ports 404 and are skipped."""
+        routes = {
+            "system/interfaces": (200, {"1/1/1": "/uri", "1/1/2": "/uri", "lag1": "/uri"}),
+            "system/interfaces/1%2F1%2F1/poe_interface": (200, {
+                "config": {"admin_disable": False},
+                "status": {"poe_oper_status": "delivering", "pd_class_actual": "class3",
+                           "power_drawn_in_watts": 7}}),
+            "system/interfaces/1%2F1%2F2/poe_interface": (404, {}),
+        }
+
+        class _Resp:
+            def __init__(self, status, data):
+                self.status_code, self._data = status, data
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class _RouteSession:
+            verify = True
+
+            def get(self, url, **kwargs):
+                path = url.split("/rest/v10.09/", 1)[-1]
+                return _Resp(*routes.get(path, (404, {})))
+
+            def close(self):
+                pass
+
+        client = AOSCXClient("10.0.0.5")
+        client._session = _RouteSession()
+        poe = client.get_poe_status()
+        assert len(poe) == 1                       # only 1/1/1 has PoE (lag1 not physical)
+        assert poe[0]["port"] == "1/1/1"
+        assert poe[0]["poe_status"] == "delivering"
+        assert poe[0]["pd_class"] == "class3"
+        assert poe[0]["power_drawn"] == 7
+
+    def test_aos_cx_lldp_falls_back_to_interface_walk(self):
+        """FL.10.13 returns HTTP 400 for lldp_neighbors_info → walk interfaces.
+
+        The fallback reads ``system/interfaces`` at depth 4 where each port's
+        ``lldp_neighbors`` child is expanded inline to ``{key: detail}``; the
+        detail carries ``chassis_id``/``port_id`` at the top level and the rest
+        of the TLVs under ``neighbor_info`` (shape verified on an HPE 6100).
+        """
+        routes = {
+            # aggregated endpoint is gone on FL.10.13 → 400 forces the fallback
+            "system/lldp_neighbors_info": (400, {}),
+            "system/interfaces": (200, {
+                "1/1/1": {"name": "1/1/1", "lldp_neighbors": {}},   # no neighbour
+                "1/1/49": {"name": "1/1/49", "lldp_neighbors": {
+                    "14:ab:ec:fb:e9:c0,1/1/49": {
+                        "chassis_id": "14:ab:ec:fb:e9:c0",
+                        "port_id": "1/1/49",
+                        "neighbor_info": {
+                            "chassis_name": "wco2-mdf-asw-01",
+                            "chassis_description": "HPE ANW, ArubaOS-CX",
+                            "chassis_id_subtype": "link_local_addr",
+                            "port_description": "Connected to the Core Switch",
+                            "mgmt_ip_list": "10.150.0.12",
+                            "chassis_capability_available": "Bridge, Router",
+                            "vlan_id_list": "1,10,20,30",
+                        },
+                    },
+                }},
+            }),
+        }
+
+        class _Resp:
+            def __init__(self, status, data):
+                self.status_code, self._data = status, data
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class _RouteSession:
+            verify = True
+
+            def get(self, url, **kwargs):
+                path = url.split("/rest/v10.09/", 1)[-1]
+                return _Resp(*routes.get(path, (200, {})))
+
+            def close(self):
+                pass
+
+        client = AOSCXClient("10.0.0.5")
+        client._session = _RouteSession()
+
+        nbrs = client.get_lldp_neighbors()
+
+        assert len(nbrs) == 1                      # only 1/1/49 has a neighbour
+        nb = nbrs[0]
+        assert nb["local_port"] == "1/1/49"
+        assert nb["neighbor_hostname"] == "wco2-mdf-asw-01"
+        assert nb["neighbor_port"] == "1/1/49"
+        assert nb["neighbor_port_description"] == "Connected to the Core Switch"
+        assert nb["neighbor_mgmt_ip"] == "10.150.0.12"
+        assert nb["chassis_id"] == "14:ab:ec:fb:e9:c0"
+        assert nb["chassis_id_type"] == "link_local_addr"
+        assert nb["system_description"] == "HPE ANW, ArubaOS-CX"
+        # capabilities returned raw (delimited string) — normalised downstream
+        assert nb["capabilities"] == "Bridge, Router"
+
 
 # ── SNMP sysDescr fallback parsing ──────────────────────────────────────────────
 
@@ -270,8 +612,11 @@ class TestAOSCXLLDPDiscovery:
 class TestAOSCXEnrichmentPipeline:
     def test_aos_cx_enrichment_pipeline(self, aos_device, monkeypatch):
         _no_network(monkeypatch)
-        rest = {"hostname": "core-sw-1", "version": "FL.10.10.1010",
-                "model": "Aruba6300M-48G", "serial": "SG12345678", "raw": {}}
+        # get_system_info() shape: os_version/serial_number + product_name model.
+        rest = {"hostname": "core-sw-1", "os_version": "FL.10.10.1010",
+                "model": "6300", "product_name": "Aruba6300M-48G",
+                "serial_number": "SG12345678", "base_mac": "9c:37:08:25:f3:40",
+                "raw": {}}
         monkeypatch.setattr(enrich, "_aos_cx_collect", lambda ip, p, s: rest)
         # If REST succeeds, SNMP must not be consulted.
         monkeypatch.setattr(enrich, "_snmp_collect",

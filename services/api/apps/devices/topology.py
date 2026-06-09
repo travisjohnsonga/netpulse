@@ -82,6 +82,11 @@ def discover_links(device, interfaces=None) -> list[dict]:
     for iface in interfaces:
         neighbor = iface.get("lldp_neighbor_hostname")
         mgmt_ip = iface.get("lldp_neighbor_mgmt_ip")
+        # Some neighbours advertise a MAC (or other junk) where an IP belongs;
+        # drop it so it can't crash the management_address inet write and abort
+        # the whole device's collection.
+        if mgmt_ip and not lldp.valid_ip(mgmt_ip):
+            mgmt_ip = None
         if not neighbor and not mgmt_ip:
             continue
         # Match by stripped hostname (drop the domain suffix) first, then by the
@@ -152,4 +157,43 @@ def discover_links(device, interfaces=None) -> list[dict]:
             "remote_port": iface.get("lldp_neighbor_port"),
             "matched_device_id": matched.id if matched else None,
         })
+    # Drop neighbor rows for local ports that no longer advertise an LLDP
+    # neighbor (re-cabled, neighbor removed, port shut). Only reached on a
+    # successful scan — discover_interfaces raises DiscoveryError on a
+    # collection failure, so a transient outage never wipes the table.
+    seen_local = [f["local_port"] for f in found]
+    LLDPNeighbor.objects.filter(seen_by=device).exclude(
+        local_interface__in=seen_local).delete()
     return found
+
+
+def collect_all_lldp(devices=None) -> dict:
+    """Refresh LLDP neighbors across the fleet, persisting LLDPNeighbor rows.
+
+    Runs discover_links per device. Defaults to reachable active devices; pass an
+    explicit queryset/iterable to override. Per-device collection failures are
+    logged and skipped so one unreachable device never aborts the sweep. Returns
+    a ``{devices, neighbors, failed}`` summary.
+    """
+    from apps.telemetry.discovery import DiscoveryError
+
+    from .models import Device
+
+    if devices is None:
+        devices = Device.objects.filter(
+            status=Device.Status.ACTIVE, is_reachable=True)
+    summary = {"devices": 0, "neighbors": 0, "failed": 0}
+    for device in devices:
+        summary["devices"] += 1
+        try:
+            found = discover_links(device)
+            summary["neighbors"] += len(found)
+        except DiscoveryError as exc:
+            summary["failed"] += 1
+            logger.debug("LLDP collection failed for %s: %s", device.hostname, exc)
+        except Exception as exc:  # noqa: BLE001 — one bad device mustn't abort the sweep
+            summary["failed"] += 1
+            logger.warning("LLDP collection error for %s: %s", device.hostname, exc)
+    logger.info("LLDP collection: %d device(s), %d neighbor(s), %d failed",
+                summary["devices"], summary["neighbors"], summary["failed"])
+    return summary

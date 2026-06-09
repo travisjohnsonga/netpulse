@@ -51,6 +51,17 @@ class TestCapabilities:
         assert lldp.normalize_capabilities(None) == []
         assert lldp.normalize_capabilities("") == []
 
+    def test_dict_input_truthy_keys(self):
+        assert lldp.normalize_capabilities(
+            {"bridge": True, "router": True, "wlan-access-point": False}
+        ) == ["bridge", "router"]
+
+    def test_fullname_variants_canonicalised(self):
+        # AOS-CX / OpenConfig spellings fold onto the same tokens as letter codes.
+        assert lldp.normalize_capabilities(
+            ["wlan-access-point", "mac-bridge", "docsis-cable-device"]
+        ) == ["wlan-ap", "bridge", "docsis"]
+
 
 class TestChassisType:
     def test_mac(self):
@@ -108,6 +119,69 @@ class TestPersistence:
         # first_seen is stable across re-scans.
         assert LLDPNeighbor.objects.get(seen_by=a, local_interface="Gi1").first_seen == first
 
+    def test_stale_neighbor_pruned(self, devices, monkeypatch):
+        # A port that stops advertising a neighbor (re-cabled / removed) drops its
+        # stale LLDPNeighbor row on the next scan.
+        a, _ = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi1", "lldp_neighbor_hostname": "ghost", "lldp_neighbor_port": "Gi1"},
+            {"if_name": "Gi2", "lldp_neighbor_hostname": "keep", "lldp_neighbor_port": "Gi2"}])
+        topology.discover_links(a)
+        assert LLDPNeighbor.objects.filter(seen_by=a).count() == 2
+        # Gi1's neighbor is gone next scan.
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi2", "lldp_neighbor_hostname": "keep", "lldp_neighbor_port": "Gi2"}])
+        topology.discover_links(a)
+        remaining = list(LLDPNeighbor.objects.filter(seen_by=a))
+        assert len(remaining) == 1 and remaining[0].local_interface == "Gi2"
+
+    def test_failed_scan_does_not_prune(self, devices, monkeypatch):
+        # A collection failure (DiscoveryError) must NOT wipe existing rows.
+        a, _ = devices
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "Gi1", "lldp_neighbor_hostname": "ghost", "lldp_neighbor_port": "Gi1"}])
+        topology.discover_links(a)
+        def boom(d):
+            raise discovery.DiscoveryError("unreachable")
+        monkeypatch.setattr(discovery, "discover_interfaces", boom)
+        with pytest.raises(discovery.DiscoveryError):
+            topology.discover_links(a)
+        assert LLDPNeighbor.objects.filter(seen_by=a).count() == 1
+
+
+class TestCollectAll:
+    def test_collects_only_reachable_active_by_default(self, monkeypatch):
+        live = Device.objects.create(hostname="live", ip_address="10.1.0.1",
+                                     status="active", is_reachable=True)
+        Device.objects.create(hostname="down", ip_address="10.1.0.2",
+                              status="active", is_reachable=False)
+        Device.objects.create(hostname="off", ip_address="10.1.0.3",
+                              status="inactive", is_reachable=True)
+        scanned = []
+
+        def fake_discover(d):
+            scanned.append(d.hostname)
+            return [{"if_name": "Gi1", "lldp_neighbor_hostname": "x", "lldp_neighbor_port": "Gi1",
+                     "matched_device_id": None}]
+
+        monkeypatch.setattr(topology, "discover_links", fake_discover)
+        summary = topology.collect_all_lldp()
+        assert scanned == ["live"]
+        assert summary == {"devices": 1, "neighbors": 1, "failed": 0}
+
+    def test_one_failure_does_not_abort_sweep(self, monkeypatch):
+        a = Device.objects.create(hostname="a", ip_address="10.2.0.1", status="active", is_reachable=True)
+        b = Device.objects.create(hostname="b", ip_address="10.2.0.2", status="active", is_reachable=True)
+
+        def fake_discover(d):
+            if d.id == a.id:
+                raise discovery.DiscoveryError("no creds")
+            return [{"if_name": "Gi1", "matched_device_id": None}]
+
+        monkeypatch.setattr(topology, "discover_links", fake_discover)
+        summary = topology.collect_all_lldp()
+        assert summary["devices"] == 2 and summary["failed"] == 1 and summary["neighbors"] == 1
+
 
 class TestUndiscoveredEndpoint:
     def _seed(self, seen_by, **kw):
@@ -150,3 +224,108 @@ class TestUndiscoveredEndpoint:
     def test_requires_auth(self, devices, api_client):
         resp = api_client.get("/api/devices/lldp/undiscovered/count/")
         assert resp.status_code in (401, 403)
+
+
+class TestUndiscoveredFilters:
+    def _seed(self, seen_by, iface, **kw):
+        return LLDPNeighbor.objects.create(
+            seen_by=seen_by, local_interface=iface, **kw)
+
+    @pytest.fixture
+    def seeded(self, devices):
+        a, _ = devices
+        self._seed(a, "Gi1", system_name="core-sw", management_address="10.9.0.1",
+                   capabilities=["bridge", "router"])
+        self._seed(a, "Gi2", system_name="desk-phone", management_address="10.9.0.2",
+                   capabilities=["telephone"])
+        self._seed(a, "Gi3", system_name="alices-pc", management_address="10.9.0.3",
+                   capabilities=["station"])
+        self._seed(a, "Gi4", system_name="ap-lobby", capabilities=["wlan-ap", "bridge"])
+        self._seed(a, "Gi5", system_name="mystery", capabilities=[])  # no caps
+        return a
+
+    def _names(self, resp):
+        return sorted(r["system_name"] for r in resp.json()["results"])
+
+    def test_default_excludes_unmanaged(self, seeded, auth_client):
+        # Phones + workstations hidden by default; no-cap row always shown.
+        resp = auth_client.get("/api/devices/lldp/undiscovered/")
+        assert self._names(resp) == ["ap-lobby", "core-sw", "mystery"]
+
+    def test_count_respects_default_exclusion(self, seeded, auth_client):
+        resp = auth_client.get("/api/devices/lldp/undiscovered/count/")
+        assert resp.json() == {"count": 3}
+
+    def test_empty_exclude_shows_all(self, seeded, auth_client):
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/?exclude_capabilities=")
+        assert self._names(resp) == [
+            "alices-pc", "ap-lobby", "core-sw", "desk-phone", "mystery"]
+
+    def test_include_capabilities(self, seeded, auth_client):
+        # Only routers — plus the no-cap row, which is never dropped by caps.
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/"
+            "?exclude_capabilities=&capabilities=router")
+        assert self._names(resp) == ["core-sw", "mystery"]
+
+    def test_has_ip_filter(self, seeded, auth_client):
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/?exclude_capabilities=&has_ip=false")
+        assert self._names(resp) == ["ap-lobby", "mystery"]
+
+    def test_search_filter(self, seeded, auth_client):
+        resp = auth_client.get(
+            "/api/devices/lldp/undiscovered/?exclude_capabilities=&search=phone")
+        assert self._names(resp) == ["desk-phone"]
+
+    def test_env_override_excluded_caps(self, seeded, auth_client, monkeypatch):
+        monkeypatch.setenv("LLDP_EXCLUDE_CAPABILITIES", "wlan-ap")
+        resp = auth_client.get("/api/devices/lldp/undiscovered/")
+        # Now the AP is hidden but phones/PCs return.
+        assert self._names(resp) == ["alices-pc", "core-sw", "desk-phone", "mystery"]
+
+    def test_setting_overrides_env(self, seeded, auth_client, monkeypatch):
+        from apps.core.models import SystemSetting
+
+        monkeypatch.setenv("LLDP_EXCLUDE_CAPABILITIES", "wlan-ap")
+        SystemSetting.set("lldp_exclude_capabilities", "telephone")  # persisted wins
+        resp = auth_client.get("/api/devices/lldp/undiscovered/")
+        assert self._names(resp) == ["alices-pc", "ap-lobby", "core-sw", "mystery"]
+
+
+class TestLldpSettingsEndpoint:
+    def test_get_defaults(self, auth_client):
+        resp = auth_client.get("/api/settings/lldp/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["exclude_capabilities"] == ["telephone", "station", "docsis"]
+        assert "wlan-ap" in body["available_capabilities"]
+        assert body["default_exclude_capabilities"] == ["telephone", "station", "docsis"]
+
+    def test_put_persists_and_canonicalises(self, auth_client):
+        # full-name + letter variants fold to canonical tokens; dupes dropped.
+        resp = auth_client.put(
+            "/api/settings/lldp/",
+            {"exclude_capabilities": ["wlan-access-point", "T", "telephone"]},
+            format="json")
+        assert resp.status_code == 200
+        assert resp.json()["exclude_capabilities"] == ["wlan-ap", "telephone"]
+        # GET reflects the persisted value.
+        assert auth_client.get("/api/settings/lldp/").json()[
+            "exclude_capabilities"] == ["wlan-ap", "telephone"]
+
+    def test_put_empty_disables_exclusion(self, auth_client):
+        resp = auth_client.put(
+            "/api/settings/lldp/", {"exclude_capabilities": []}, format="json")
+        assert resp.json()["exclude_capabilities"] == []
+
+    def test_put_requires_admin(self, viewer_client):
+        resp = viewer_client.put(
+            "/api/settings/lldp/", {"exclude_capabilities": []}, format="json")
+        assert resp.status_code in (401, 403)
+
+    def test_put_rejects_non_list(self, auth_client):
+        resp = auth_client.put(
+            "/api/settings/lldp/", {"exclude_capabilities": "telephone"}, format="json")
+        assert resp.status_code == 400

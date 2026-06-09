@@ -273,20 +273,26 @@ def _aos_cx_collect(ip: str, profile, secrets) -> dict:
         from .aos_cx_client import AOSCXClient
         with AOSCXClient(ip) as client:
             client.login(username, password)
-            return client.get_system()
+            # get_system_info() additionally resolves the serial number and base
+            # MAC off the chassis subsystem (the bare get_system() can't see them).
+            return client.get_system_info()
     except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
         logger.warning("AOS-CX REST enrichment failed for %s: %s", ip, exc)
         return {}
 
 
 def _parse_aos_cx(info: dict, updates: dict) -> None:
-    """Map a normalized AOS-CX ``get_system()`` dict onto device-field updates."""
+    """Map a normalized AOS-CX ``get_system_info()`` dict onto device-field
+    updates. Accepts the older ``get_system()`` keys too (``version``/``serial``)
+    so either source works. ``product_name`` (the chassis SKU description, e.g.
+    "6300M 24SFP+ 4SFP56 Swch") is preferred for the model over the terse
+    ``platform_name`` ("6300")."""
     if not info:
         return
     hostname = _clean(info.get("hostname"))
-    version = _clean(info.get("version"))
-    model = _clean(info.get("model"))
-    serial = _clean(info.get("serial"))
+    version = _clean(info.get("os_version") or info.get("version"))
+    model = _clean(info.get("product_name") or info.get("model"))
+    serial = _clean(info.get("serial_number") or info.get("serial"))
     if hostname:
         updates["hostname"] = hostname
     if version:
