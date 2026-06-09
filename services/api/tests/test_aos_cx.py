@@ -612,8 +612,11 @@ class TestAOSCXLLDPDiscovery:
 class TestAOSCXEnrichmentPipeline:
     def test_aos_cx_enrichment_pipeline(self, aos_device, monkeypatch):
         _no_network(monkeypatch)
-        rest = {"hostname": "core-sw-1", "version": "FL.10.10.1010",
-                "model": "Aruba6300M-48G", "serial": "SG12345678", "raw": {}}
+        # get_system_info() shape: os_version/serial_number + product_name model.
+        rest = {"hostname": "core-sw-1", "os_version": "FL.10.10.1010",
+                "model": "6300", "product_name": "Aruba6300M-48G",
+                "serial_number": "SG12345678", "base_mac": "9c:37:08:25:f3:40",
+                "raw": {}}
         monkeypatch.setattr(enrich, "_aos_cx_collect", lambda ip, p, s: rest)
         # If REST succeeds, SNMP must not be consulted.
         monkeypatch.setattr(enrich, "_snmp_collect",
