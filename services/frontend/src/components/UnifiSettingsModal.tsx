@@ -12,6 +12,24 @@ const input =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 const label = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
 
+function relTime(iso: string | null): string {
+  if (!iso) return 'Never'
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (secs < 60) return 'Just now'
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
+  return `${Math.floor(secs / 86400)}d ago`
+}
+
+// Connection state → colored dot. Green = synced OK, red = error, grey =
+// disabled or never synced.
+function statusDot(c: UnifiController): { cls: string; title: string } {
+  if (!c.enabled) return { cls: 'bg-gray-400', title: 'Disabled' }
+  if (c.last_error) return { cls: 'bg-red-500', title: c.last_error }
+  if (c.last_sync) return { cls: 'bg-green-500', title: 'Connected' }
+  return { cls: 'bg-gray-300 dark:bg-gray-600', title: 'Never synced' }
+}
+
 type Draft = Partial<UnifiController> & { password?: string }
 
 const BLANK: Draft = {
@@ -161,7 +179,7 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
 
   // ── Controller list ──────────────────────────────────────────────────────────
   return (
-    <Modal title="UniFi Controllers" onClose={onClose}
+    <Modal title="UniFi Controllers" onClose={onClose} size="xl"
       footer={<button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Close</button>}>
       <div className="space-y-3">
         {error && <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-300 whitespace-pre-line">{error}</div>}
@@ -204,27 +222,40 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
           <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
             <table className="w-full text-sm">
               <thead><tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left">
-                <th className="px-3 py-2 font-medium">Name</th><th className="px-3 py-2 font-medium">Host</th>
-                <th className="px-3 py-2 font-medium">Site</th><th className="px-3 py-2 font-medium">Devices</th>
-                <th className="px-3 py-2 font-medium">Status</th><th className="px-3 py-2 font-medium text-right">Actions</th>
+                <th className="px-3 py-2 font-medium">Name</th>
+                <th className="px-3 py-2 font-medium">Address</th>
+                <th className="px-3 py-2 font-medium text-right">Devices</th>
+                <th className="px-3 py-2 font-medium">Last Sync</th>
+                <th className="px-3 py-2 font-medium text-right sticky right-0 bg-gray-50 dark:bg-gray-900/50">Actions</th>
               </tr></thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {list.map((c) => (
-                  <tr key={c.id} className="text-gray-700 dark:text-gray-300">
-                    <td className="px-3 py-2 font-medium">{c.name}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{c.host}:{c.port}</td>
-                    <td className="px-3 py-2">{c.site_name || '—'}</td>
-                    <td className="px-3 py-2">{c.device_count}</td>
-                    <td className="px-3 py-2">{!c.enabled ? <span className="text-gray-400">Disabled</span> : c.last_error ? <span title={c.last_error} className="text-red-600 dark:text-red-400">❌ Error</span> : c.last_sync ? <span className="text-green-600 dark:text-green-400">✅ OK</span> : <span className="text-gray-400">Never synced</span>}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={() => syncOne(c)} disabled={busy} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">Sync</button>
-                        <button onClick={() => { setError(null); setTestResult(null); setEditing({ ...c, password: '' }) }} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Edit</button>
-                        <button onClick={() => remove(c)} className="px-2 py-0.5 text-xs border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {list.map((c) => {
+                  const dot = statusDot(c)
+                  const sub = [c.model, c.version && `v${c.version}`, c.site_name].filter(Boolean).join(' · ')
+                  return (
+                    <tr key={c.id} className="text-gray-700 dark:text-gray-300">
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span title={dot.title} className={`shrink-0 w-2 h-2 rounded-full ${dot.cls}`} />
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{c.name}</div>
+                            {sub && <div className="text-xs text-gray-400 dark:text-gray-500 truncate">{sub}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{c.host}:{c.port}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{c.device_count}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-gray-400" title={c.last_sync || undefined}>{relTime(c.last_sync)}</td>
+                      <td className="px-3 py-2 sticky right-0 bg-white dark:bg-gray-800">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => syncOne(c)} disabled={busy} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">Sync</button>
+                          <button onClick={() => { setError(null); setTestResult(null); setEditing({ ...c, password: '' }) }} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Edit</button>
+                          <button onClick={() => remove(c)} className="px-2 py-0.5 text-xs border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
