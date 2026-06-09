@@ -24,6 +24,7 @@ import Credentials from './pages/settings/Credentials'
 import Integrations from './pages/settings/Integrations'
 import Discovery from './pages/settings/Discovery'
 import Collectors from './pages/settings/Collectors'
+import Agents from './pages/settings/Agents'
 import DataSources from './pages/settings/DataSources'
 import PlatformStatus from './pages/settings/PlatformStatus'
 import {
@@ -139,6 +140,7 @@ function AppRoutes() {
                   {/* Standalone settings */}
                   <Route path="integrations" element={<Integrations />} />
                   <Route path="collectors" element={<Collectors />} />
+                  <Route path="agents" element={<Agents />} />
                   <Route path="discovery" element={<Discovery />} />
                   <Route path="hostname-rules" element={<HostnameRules />} />
                   <Route path="log-filters" element={<LogFilters />} />

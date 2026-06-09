@@ -272,6 +272,34 @@ DB + secret from OpenBao at request time. Pipeline enforces `allowed_domains`, a
 (`SSO_ALLOW_LOCAL_LOGIN=true`). Stage 1 = Google OAuth2 backend; Azure AD/Okta (2), SAML (3), LDAP (4),
 login buttons + settings UI (5) are planned.
 
+## NetPulse Agent (server monitoring)
+
+Lightweight Go agent for Linux/Windows server monitoring (`agent/`). Secure by
+design: mTLS outbound only (443), no inbound ports, low-privilege user, unique
+OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
+
+- **Built (this session):** `apps/agents` backend (Agent, AgentEnrollmentToken,
+  ServerRole + 7 built-in role profiles seeded, AgentRoleStatus) · APIs under
+  `/api/agents/`: `enroll/` (public, token-authed → OpenBao-PKI-signed cert +
+  auto-created Device), `{id}/metrics/` + `{id}/role-checks/` (client-cert authed
+  via the `X-Agent-Cert-Serial` header the proxy sets), `{id}/roles/`, agent
+  list/revoke, `tokens/` CRUD, `roles/` CRUD, `download/` · metrics → InfluxDB
+  reusing cpu/memory/disk/interface measurements · Go agent source (Linux /proc
+  collectors + Windows WMI/x-sys collectors, role port/service checks, mTLS
+  transport, enrollment, systemd + Windows-service installers, `build.sh`,
+  `build-agent.yml` CI) · frontend Settings → Agents (tokens + agents + role
+  profiles).
+- **Enrollment flow:** admin generates a token in the UI → one-line installer
+  (`curl …/agent/install | sudo bash -s -- --token …` / `install.ps1`) → agent
+  generates a keypair + CSR → server signs via OpenBao PKI → agent appears in
+  inventory.
+- **Cert issuance** is behind a mockable abstraction (`apps/agents/pki.py`).
+- **Infra follow-up (NOT built):** nginx mTLS termination passing the verified
+  client-cert serial to Django; OpenBao PKI engine enablement
+  (`bao secrets enable pki` + `pki/roles/agent`); CI-published binary serving at
+  `/agent/download/<platform>`; Windows Phase-2 polish (event-log forwarding,
+  custom PowerShell role checks). The Go binaries are built by CI, not in-repo.
+
 ## Planned Features (NOT built — specs in docs/)
 
 ChatOps · network topology auto-map + utilization overlay + circuit capacity overrides · availability/

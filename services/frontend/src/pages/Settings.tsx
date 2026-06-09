@@ -18,6 +18,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { to: 'compliance',      label: 'Compliance',      icon: '✅' },
   { to: 'system',          label: 'System',          icon: '⚙' },
   { to: 'collectors',      label: 'Collectors',      icon: '📡' },
+  { to: 'agents',          label: 'Agents',          icon: '🤖' },
   { to: 'discovery',       label: 'Discovery',       icon: '🔍' },
   { to: 'hostname-rules',  label: 'Hostname Rules',  icon: '📋' },
   { to: 'log-filters',     label: 'Log Filters',     icon: '🔇' },

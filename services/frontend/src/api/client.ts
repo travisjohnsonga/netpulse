@@ -1021,6 +1021,99 @@ export async function netboxPreview(payload: { netbox_url: string; api_token: st
   return data
 }
 
+// ── NetPulse Agents ───────────────────────────────────────────────────────────
+
+export interface Agent {
+  id: string
+  hostname: string
+  device_id: number | null
+  site_name: string | null
+  os: string
+  arch: string
+  version: string
+  cert_serial: string
+  cert_expires_at: string | null
+  status: 'active' | 'inactive' | 'revoked'
+  collection_interval: number
+  role_types: string[]
+  last_seen: string | null
+  created_at: string
+}
+
+export interface AgentToken {
+  id: number
+  token: string
+  description: string
+  expires_at: string | null
+  max_uses: number
+  use_count: number
+  site: number | null
+  site_name: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface ServerRole {
+  id: number
+  name: string
+  role_type: string
+  description: string
+  windows_services: string[]
+  linux_services: string[]
+  port_checks: { port: number; proto: string; name: string; optional?: boolean }[]
+  custom_checks: Record<string, unknown>[]
+  is_builtin: boolean
+  agent_count: number
+  created_at: string
+}
+
+export interface AgentRoleStatus {
+  role_type: string
+  services: { name: string; state?: string; start_type?: string; running?: boolean }[]
+  ports: { port: number; proto: string; name: string; open: boolean; latency_ms?: number }[]
+  custom: Record<string, unknown>[]
+  collected_at: string | null
+}
+
+export async function fetchAgents(): Promise<Agent[]> {
+  const { data } = await api.get<Agent[] | Paginated<Agent>>('/agents/')
+  return unwrap(data)
+}
+
+export async function revokeAgent(id: string): Promise<void> {
+  await api.delete(`/agents/${id}/`)
+}
+
+export async function fetchAgentRoles(id: string): Promise<AgentRoleStatus[]> {
+  const { data } = await api.get<AgentRoleStatus[]>(`/agents/${id}/roles/`)
+  return data
+}
+
+export async function fetchAgentTokens(): Promise<AgentToken[]> {
+  const { data } = await api.get<AgentToken[] | Paginated<AgentToken>>('/agents/tokens/')
+  return unwrap(data)
+}
+
+export async function createAgentToken(payload: {
+  description?: string; max_uses?: number; expires_at?: string | null; site?: number | null
+}): Promise<AgentToken> {
+  const { data } = await api.post<AgentToken>('/agents/tokens/', payload)
+  return data
+}
+
+export async function deleteAgentToken(id: number): Promise<void> {
+  await api.delete(`/agents/tokens/${id}/`)
+}
+
+export async function fetchServerRoles(): Promise<ServerRole[]> {
+  const { data } = await api.get<ServerRole[] | Paginated<ServerRole>>('/agents/roles/')
+  return unwrap(data)
+}
+
+export async function deleteServerRole(id: number): Promise<void> {
+  await api.delete(`/agents/roles/${id}/`)
+}
+
 // ── Site credential assignments ───────────────────────────────────────────────
 export interface SiteCredential {
   id: number
