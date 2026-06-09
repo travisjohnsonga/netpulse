@@ -1,0 +1,14 @@
+{
+  "name": "HUB_TELEMETRY",
+  "subjects": [],
+  "retention": "limits",
+  "storage": "file",
+  "num_replicas": 1,
+  "discard": "old",
+  "sources": [
+    {
+      "name": "EDGE_TELEMETRY",
+      "external": { "api": "$JS.edge.API", "deliver": "" }
+    }
+  ]
+}

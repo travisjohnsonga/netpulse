@@ -1,0 +1,50 @@
+# Isolated T2 harness — inter-NATS account-mapped telemetry path. Throwaway.
+#   colhub (operator) ── leaf(AGG) ──[interproxy]── internal (simple auth)
+#   COLL1 pub → AGG import → AGG.HUB_TELEMETRY (JS buffer) → internal TELEMETRY (source) → consumer
+name: netpulse-t2
+
+networks: { t2net: {} }
+volumes: { colhubdata: {}, internaldata: {} }
+
+services:
+  colhub:
+    image: nats:2.10-alpine
+    working_dir: /data
+    command: ["-c", "/etc/nats/colhub.conf"]
+    volumes:
+      - ./colhub.conf:/etc/nats/colhub.conf:ro
+      - ./out/resolver.conf:/etc/nats/resolver.conf:ro
+      - colhubdata:/data
+    networks: [t2net]
+
+  # Cuttable inter-NATS link (internal → colhub). stop/start = cut/restore.
+  interproxy:
+    image: alpine/socat
+    command: ["TCP-LISTEN:7422,fork,reuseaddr", "TCP:colhub:7422"]
+    networks: [t2net]
+    depends_on: [colhub]
+
+  internal:
+    image: nats:2.10-alpine
+    command: ["-c", "/etc/nats/internal.conf"]
+    volumes:
+      - ./internal.conf:/etc/nats/internal.conf:ro
+      - ./creds:/creds:ro
+      - internaldata:/data
+    networks: [t2net]
+    depends_on: [interproxy]
+
+  driver:
+    image: natsio/nats-box:latest
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./:/work
+      - ./nsc:/nsc
+      - ./creds:/creds:ro
+    environment:
+      NSC_HOME: /nsc
+      XDG_DATA_HOME: /nsc/data
+      XDG_CONFIG_HOME: /nsc/config
+      NKEYS_PATH: /nsc/keys
+    networks: [t2net]
+    depends_on: [internal]

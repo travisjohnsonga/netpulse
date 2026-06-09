@@ -1,0 +1,5 @@
+# Throwaway T1 identity + transport material — never commit keys/creds.
+certs/
+creds/
+nsc/
+out/

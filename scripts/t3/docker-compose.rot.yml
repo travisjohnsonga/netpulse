@@ -1,0 +1,38 @@
+name: netpulse-rot
+networks: { rotnet: {} }
+volumes: { colhubdata: {} }
+services:
+  colhub:
+    image: nats:2.10-alpine
+    working_dir: /data
+    command: ["-c", "/etc/nats/colhub.conf"]
+    volumes:
+      - ./colhub.conf:/etc/nats/colhub.conf:ro
+      - ./out/resolver_rot.conf:/etc/nats/resolver_rot.conf:ro
+      - ./state:/state               # operator.jwt (rewritten by the rotation actor)
+      - colhubdata:/data
+    networks: [rotnet]
+  interproxy:
+    image: alpine/socat
+    command: ["TCP-LISTEN:7422,fork,reuseaddr", "TCP:colhub:7422"]
+    networks: [rotnet]
+    depends_on: [colhub]
+  internal:
+    image: nats:2.10-alpine
+    command: ["-c", "/etc/nats/internal.conf"]
+    volumes:
+      - ./internal.conf:/etc/nats/internal.conf:ro
+      - ./creds:/creds:ro
+    networks: [rotnet]
+    depends_on: [interproxy]
+  driver:
+    image: natsio/nats-box:latest
+    command: ["sleep","infinity"]
+    volumes:
+      - ./:/work
+      - ./nsc:/nsc
+      - ./creds:/creds:ro
+      - ./state:/state
+    environment: { NSC_HOME: /nsc, XDG_DATA_HOME: /nsc/data, XDG_CONFIG_HOME: /nsc/config, NKEYS_PATH: /nsc/keys }
+    networks: [rotnet]
+    depends_on: [internal]

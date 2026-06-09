@@ -278,6 +278,14 @@ SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "
 # server still polls directly regardless.
 COLLECTOR_CONFIG_PUBLISH = os.environ.get("COLLECTOR_CONFIG_PUBLISH", "true").lower() == "true"
 
+# OpenBao PKI for per-collector mTLS *transport* certs (distinct from the
+# operator/JWT *bus* identity). The intermediate CA lives at COLLECTOR_PKI_MOUNT,
+# signed by a NetPulse collector root; the `collector` role issues client certs.
+COLLECTOR_PKI_MOUNT = os.environ.get("COLLECTOR_PKI_MOUNT", "pki_int")
+COLLECTOR_PKI_ROOT_MOUNT = os.environ.get("COLLECTOR_PKI_ROOT_MOUNT", "pki_root")
+COLLECTOR_PKI_ROLE = os.environ.get("COLLECTOR_PKI_ROLE", "collector")
+COLLECTOR_CERT_TTL = os.environ.get("COLLECTOR_CERT_TTL", "720h")
+
 # Rebuild the DiscoveredPlatformModel fleet inventory (OS-version compliance) on
 # every Device save/delete. Disabled in tests to keep device-creation cheap; the
 # scheduler refreshes it every 6h regardless.
