@@ -1,0 +1,4 @@
+# Throwaway T2 identity material — never commit keys/creds.
+creds/
+nsc/
+out/

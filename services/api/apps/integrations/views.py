@@ -55,8 +55,11 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
             return Response({"connected": True, "sites": [s for s in sites if s],
                              "device_count": len(devices)})
         except UnifiError as exc:
-            return Response({"connected": False, "error": str(exc)},
-                            status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {"connected": False, "error": safe_detail(
+                    exc, logger, "unifi test-connection",
+                    public="Could not connect to the UniFi controller.")},
+                status=status.HTTP_502_BAD_GATEWAY)
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="sync")
@@ -68,7 +71,9 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
         try:
             return Response(sync_controller(c))
         except UnifiError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response({"error": safe_detail(exc, logger, "unifi sync",
+                                                  public="UniFi sync failed.")},
+                            status=status.HTTP_502_BAD_GATEWAY)
 
     @extend_schema(request=None, responses=None)
     @action(detail=False, methods=["post"], url_path="sync-all")
@@ -105,8 +110,11 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
             hosts = UnifiCloudClient(api_key).get_hosts()
             return Response({"connected": True, "host_count": len(hosts)})
         except UnifiCloudError as exc:
-            return Response({"connected": False, "error": str(exc)},
-                            status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {"connected": False, "error": safe_detail(
+                    exc, logger, "unifi cloud test",
+                    public="Could not connect to UniFi Site Manager.")},
+                status=status.HTTP_502_BAD_GATEWAY)
 
     @extend_schema(request=None, responses=None)
     @action(detail=False, methods=["post"], url_path="cloud/discover")
@@ -116,7 +124,9 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
         try:
             return Response(discover_controllers())
         except UnifiCloudError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response({"error": safe_detail(exc, logger, "unifi cloud discover",
+                                                  public="UniFi discovery failed.")},
+                            status=status.HTTP_502_BAD_GATEWAY)
 
 
 class EmailSettingsView(APIView):
@@ -236,7 +246,8 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
             record.status = NetBoxImport.Status.COMPLETED
         except netbox.NetBoxError as exc:
             record.status = NetBoxImport.Status.FAILED
-            record.errors = [str(exc)]
+            record.errors = [safe_detail(exc, logger, "netbox import",
+                                         public="NetBox import failed.")]
         record.finished_at = timezone.now()
         record.save()
 

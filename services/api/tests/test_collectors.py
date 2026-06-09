@@ -48,15 +48,20 @@ class TestCollectorEndpoints:
         assert resp.status_code == 200
         assert resp.json()["name"] == "Poller-DC1"
 
-    def test_api_key_hash_in_response(self, auth_client, collector):
+    def test_api_key_hash_not_in_response(self, auth_client, collector):
         resp = auth_client.get(f"/api/collectors/{collector.pk}/")
-        # The hash is present (read-only), but it's the bcrypt hash — never plaintext
-        assert "api_key_hash" in resp.json()
+        # The hashes are the bootstrap trust root — never serialised outward.
+        assert "api_key_hash" not in resp.json()
+        assert "enrollment_token_hash" not in resp.json()
 
-    def test_update_collector_status(self, auth_client, collector):
+    def test_update_collector_status_is_ignored(self, auth_client, collector):
+        # status is lifecycle-managed (enroll/heartbeat/scheduler/revoke), not
+        # hand-PATCHable — a status in the payload is silently ignored.
         resp = auth_client.patch(f"/api/collectors/{collector.pk}/", {"status": "offline"})
         assert resp.status_code == 200
-        assert resp.json()["status"] == "offline"
+        assert resp.json()["status"] == "active"
+        collector.refresh_from_db()
+        assert collector.status == "active"
 
     def test_update_collector_version(self, auth_client, collector):
         resp = auth_client.patch(f"/api/collectors/{collector.pk}/", {"version": "1.3.0"})
@@ -94,15 +99,18 @@ class TestCollectorEndpoints:
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
 
-    def test_api_key_hash_is_read_only(self, auth_client):
-        # api_key_hash is in read_only_fields — values sent in POST are silently ignored
+    def test_api_key_hash_cannot_be_set_by_client(self, auth_client):
+        # api_key_hash is write_only + stripped in validate() — a client-supplied
+        # value is dropped, and the created collector gets a managed placeholder.
         resp = auth_client.post("/api/collectors/", {
             "name": "New Poller",
             "api_key_hash": "should-be-ignored",
         })
         assert resp.status_code == 201
-        # The returned hash is empty string (not our submitted value) because field is read-only
-        assert resp.json()["api_key_hash"] != "should-be-ignored"
+        assert "api_key_hash" not in resp.json()
+        c = Collector.objects.get(pk=resp.json()["id"])
+        assert c.api_key_hash != "should-be-ignored"
+        assert c.api_key_hash.startswith("pending-")
 
     def test_unauthenticated_rejected(self, api_client):
         resp = api_client.get("/api/collectors/")

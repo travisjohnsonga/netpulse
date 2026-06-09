@@ -38,6 +38,7 @@ pyrad>=2.4       # RADIUS Access-Request health check
 
 # Secrets
 hvac~=2.1
+bcrypt>=4.0  # per-collector API-key / enrollment-token hashing (already a transitive dep; pinned for hygiene)
 
 # SSO / Single Sign-On (OAuth2). >=5.9 declares Django 6.0 support (Framework ::
 # Django :: 6.0); 5.4.x predates it. Pulls social-auth-core (<5.0,>=4.8.3).

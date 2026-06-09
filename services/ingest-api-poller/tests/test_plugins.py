@@ -186,6 +186,18 @@ class TestMerakiPluginWebhook(unittest.TestCase):
         result = plugin.parse_webhook(self._valid_payload("WRONG"), "1.2.3.4")
         self.assertEqual(result, [])
 
+    def test_shared_secret_never_reaches_logs_or_stored_raw(self):
+        # CodeQL #19/#20: the webhook sharedSecret must not appear in any log line
+        # nor in the persisted/surfaced alert.raw.
+        secret = "TOP-SECRET-shared-value-9z"
+        plugin = _meraki_plugin(webhook_secret=secret)
+        with self.assertLogs("ingest.plugins.meraki", level="DEBUG") as cm:
+            alert = plugin.parse_webhook(self._valid_payload(secret), "1.2.3.4")[0]
+        joined = "\n".join(cm.output)
+        self.assertNotIn(secret, joined)                    # not in logs
+        self.assertNotIn(secret, str(alert.raw))            # not in stored raw
+        self.assertEqual(alert.raw.get("sharedSecret"), "***REDACTED***")
+
     def test_empty_secret_in_creds_skips_verification(self):
         """If no webhook_secret configured, accept all webhooks."""
         plugin = _meraki_plugin(webhook_secret="")

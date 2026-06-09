@@ -1,0 +1,5 @@
+# Throwaway rotation-harness secrets — never commit.
+creds/
+nsc/
+out/
+state/

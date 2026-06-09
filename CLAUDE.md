@@ -24,6 +24,29 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~1275 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite.
 
+### Remote Collector Subsystem (status — moved from "planned, no code")
+
+Maturity: **[VALIDATED]** proven end-to-end · **[BUILT]** committed, not yet proven end-to-end ·
+**[PLANNED]** not built. Full design: `docs/ARCHITECTURE.md` §10; ops: `docs/collectors/runbook.md`;
+gates: `docs/collector-production-gates.md`; proofs: `scripts/t0`–`scripts/t3`.
+
+- **[VALIDATED]** Transport substrate — NATS leaf + edge JetStream buffer, hub sources by acked seq
+  (cut→buffer→replay, zero loss/dup); mTLS leaf (TLS1.3, handshake_first, advertise+no_advertise);
+  operator/JWT per-collector accounts; revoke-without-reload; inter-NATS account-mapped telemetry to
+  the untouched internal bus (separate operator-mode collector-hub); signing-key rotation both modes
+  (planned zero-breakage; compromise stage-first, ~2.4s push-bounded for 16 accts).
+- **[BUILT]** Central side (committed, unit-tested, no live agent yet): enrollment (token→api-key +
+  account + best-effort PKI cert), config-DOWN (per-collector non-secret bundle of cred-path refs +
+  checks + sha256 rev → JetStream KV), single-authority resolution via `Site.default_collector`
+  (`resolve.effective_collector` / `devices_for_collector`). Secret-broker (Option A): authz logic +
+  live least-privilege OpenBao policy (read-only/no-list, verified) + fail-closed are VALIDATED; its
+  **identity-from-transport NATS routing is BUILT, not yet proven end-to-end** (the blocking gate).
+- **[PLANNED]** `services/collector` agent (forwarder + buffer/replay + broker client),
+  `docker-compose.collector.yml`, `setup.sh` role selection.
+- **Remaining before prod creds flow:** (1) broker identity-wiring end-to-end proof (A-can't-fetch-B
+  over the real transport); (2) the agent; (3) packaging + setup.sh role; (4) an api rebuild to apply
+  **migration 0004** (collector identity fields — committed, not yet migrated on running stacks).
+
 **Recently completed (this session):** Alert expanded panels render config diffs with green/red
 syntax highlighting (reuses the `DiffViewer` component) · LLDP neighbors page added to the sidebar ·
 LLDP neighbors now persisted to the `LLDPNeighbor` table (scheduler every 30 min + manual
@@ -304,7 +327,7 @@ OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
 
 ChatOps · network topology auto-map + utilization overlay + circuit capacity overrides · availability/
 uptime + WAN SLA reporting + maintenance windows · business-service health · TV/NOC display mode ·
-distributed remote pollers · NetPulse collector agent (mTLS forward) · firewall traffic log analytics ·
+firewall traffic log analytics ·
 gNMI capability discovery + platform profiles (dial-IN needed) · support-bundle generator · config
 git-sync (Tier 2) · multi-tenancy (Tenant/TenantUser, TenantViewSet) · ChatOps user-identity profile
 fields · NetBox import · CVE applicability engine · lifecycle/EOL UI · SMS/PagerDuty alerts · alert
@@ -329,8 +352,10 @@ Before public v1.0:
 - Output `SECURITY-REPORT.md` (Critical/High/Medium/Low + remediation). Do NOT deploy until all
   Critical + High are resolved or accepted with justification.
 
-Collector deployment (post v1.0): `docker-compose.collector.yml`, role selection in setup.sh,
-collector-agent forwarding service (mTLS/buffer/replay), multi-collector test, docs.
+Collector deployment (post v1.0): transport substrate is VALIDATED and the central side is BUILT (see
+"Remote Collector Subsystem" status above). Remaining: `docker-compose.collector.yml`, role selection
+in setup.sh, the `services/collector` agent (mTLS/buffer/replay + broker client), the broker
+identity-from-transport end-to-end proof, multi-collector test.
 
 ## Marketing Website (post v1.0)
 

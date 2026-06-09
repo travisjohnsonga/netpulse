@@ -1,0 +1,10 @@
+{
+  "name": "TELEMETRY",
+  "subjects": [],
+  "retention": "limits",
+  "storage": "file",
+  "num_replicas": 1,
+  "sources": [
+    { "name": "HUB_TELEMETRY", "external": { "api": "$JS.colhub.API", "deliver": "" } }
+  ]
+}

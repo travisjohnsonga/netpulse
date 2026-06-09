@@ -1,0 +1,63 @@
+# Isolated T1a harness — operator/JWT identity + mTLS leaf. Throwaway; does not
+# touch the live stack. Two collectors (edge1/edge2) = two operator-signed
+# accounts; the leaf goes through the cuttable socat proxy (T0 mechanics).
+name: netpulse-t1
+
+networks: { t1net: {} }
+volumes: { hubdata: {}, edge1data: {}, edge2data: {} }
+
+services:
+  hub:
+    image: nats:2.10-alpine
+    working_dir: /data          # so the resolver's ./jwt → /data/jwt (writable)
+    command: ["-c", "/etc/nats/hub.conf"]
+    volumes:
+      - ./hub.conf:/etc/nats/hub.conf:ro
+      - ./out/resolver.conf:/etc/nats/resolver.conf:ro
+      - ./certs:/certs:ro
+      - hubdata:/data
+    networks: [t1net]
+
+  leafproxy:
+    image: alpine/socat
+    command: ["TCP-LISTEN:7422,fork,reuseaddr", "TCP:hub:7422"]
+    ports: ["17422:7422"]
+    networks: [t1net]
+    depends_on: [hub]
+
+  edge1:
+    image: nats:2.10-alpine
+    command: ["-c", "/etc/nats/edge.conf"]
+    volumes:
+      - ./edge1.conf:/etc/nats/edge.conf:ro
+      - ./certs:/certs:ro
+      - ./creds:/creds:ro
+      - edge1data:/data
+    networks: [t1net]
+    depends_on: [leafproxy]
+
+  edge2:
+    image: nats:2.10-alpine
+    command: ["-c", "/etc/nats/edge.conf"]
+    volumes:
+      - ./edge2.conf:/etc/nats/edge.conf:ro
+      - ./certs:/certs:ro
+      - ./creds:/creds:ro
+      - edge2data:/data
+    networks: [t1net]
+    depends_on: [leafproxy]
+
+  driver:
+    image: natsio/nats-box:latest
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./:/work
+      - ./nsc:/nsc
+      - ./creds:/creds:ro
+    environment:
+      NSC_HOME: /nsc
+      XDG_DATA_HOME: /nsc/data
+      XDG_CONFIG_HOME: /nsc/config
+      NKEYS_PATH: /nsc/keys
+    networks: [t1net]
+    depends_on: [edge1, edge2]
