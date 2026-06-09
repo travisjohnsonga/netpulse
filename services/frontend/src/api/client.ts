@@ -193,6 +193,7 @@ export interface TopologyNode {
   site: string | null
   status: string
   role?: string
+  role_slug?: string
   role_color?: string | null
   risk_score: number
   ip?: string
@@ -201,16 +202,30 @@ export interface TopologyNode {
   management_ip?: string | null
   model?: string
   last_seen?: string | null
+  neighbor_count?: number
+  // unifi_ap nodes only:
+  client_count?: number
+  radios?: { band: string | null; channel: number | null }[]
 }
 
+export interface TopologyLinkMember {
+  port_a: string
+  port_b: string
+  speed_mbps: number | null
+}
 export interface TopologyEdge {
   source: string
   target: string
   port_a: string
   port_b: string
   speed_mbps: number | null
-  utilization_pct: number
-  utilization_color: string
+  // Aggregated parallel links (LAG / redundant uplinks).
+  link_count?: number
+  label?: string
+  links?: TopologyLinkMember[]
+  // legacy/optional util fields (no longer emitted by the backend)
+  utilization_pct?: number
+  utilization_color?: string
 }
 
 export interface TopologyData {
@@ -492,6 +507,74 @@ export interface InterfaceStat {
 
 export async function fetchDeviceMetrics(deviceId: number, period = '1h'): Promise<DeviceMetrics> {
   const { data } = await api.get<DeviceMetrics>(`/devices/${deviceId}/metrics/`, { params: { period } })
+  return data
+}
+
+// ── UniFi AP wireless telemetry ──────────────────────────────────────────────
+export interface UnifiRadio {
+  band: string
+  channel: number | null
+  channel_width: string
+  tx_power_dbm: number | null
+  noise_floor_dbm: number | null
+  clients: number
+  channel_utilization_pct: number | null
+  tx_retries_pct: number | null
+  satisfaction: number | null
+  tx_bytes: number
+  rx_bytes: number
+}
+export interface UnifiApStatus {
+  device_id: number
+  hostname: string
+  ip_address: string | null
+  model: string
+  os_version: string
+  site_name: string | null
+  controller_name: string | null
+  state: number
+  satisfaction: number | null
+  client_count: number
+  cpu_pct: number | null
+  memory_pct: number | null
+  temperature_c: number | null
+  uptime_seconds: number | null
+  uplink_speed_mbps: number | null
+  uplink_type: string
+  radios: UnifiRadio[]
+  last_collected: string | null
+}
+export interface UnifiApTimeseries {
+  device_id: string
+  period: string
+  radios: Record<string, {
+    clients: MetricPoint[]
+    channel_utilization_pct: MetricPoint[]
+    tx_bytes: MetricPoint[]
+    rx_bytes: MetricPoint[]
+  }>
+  clients_total: MetricPoint[]
+}
+export interface UnifiApDetail {
+  status: UnifiApStatus | null
+  timeseries: UnifiApTimeseries
+}
+export interface WirelessSummary {
+  total_aps: number
+  online: number
+  offline: number
+  total_clients: number
+  avg_satisfaction: number | null
+  aps: UnifiApStatus[]
+  channel_utilization: Record<string, Record<string, { utilization_pct: number; ap_count: number }>>
+}
+
+export async function fetchDeviceUnifiAp(deviceId: number, period = '1h'): Promise<UnifiApDetail> {
+  const { data } = await api.get<UnifiApDetail>(`/devices/${deviceId}/unifi-ap/`, { params: { period } })
+  return data
+}
+export async function fetchWirelessSummary(): Promise<WirelessSummary> {
+  const { data } = await api.get<WirelessSummary>('/wireless/summary/')
   return data
 }
 

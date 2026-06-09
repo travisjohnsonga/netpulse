@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from .models import EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiCloudAccount, UnifiController
+from .models import (
+    EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiApStatus,
+    UnifiCloudAccount, UnifiController,
+)
 
 
 class NetBoxImportSerializer(serializers.ModelSerializer):
@@ -104,6 +107,28 @@ class UnifiControllerSerializer(serializers.ModelSerializer):
             from apps.credentials import vault
             vault.write_secret(instance.vault_path, {"password": password})
         return instance
+
+
+class UnifiApStatusSerializer(serializers.ModelSerializer):
+    """Latest AP snapshot joined with the owning Device's identity fields, for
+    the device-detail Wireless tab and the fleet Wireless page."""
+    device_id = serializers.IntegerField(source="device.id", read_only=True)
+    hostname = serializers.CharField(source="device.hostname", read_only=True)
+    ip_address = serializers.CharField(source="device.ip_address", read_only=True)
+    model = serializers.CharField(source="device.model", read_only=True)
+    os_version = serializers.CharField(source="device.os_version", read_only=True)
+    site_name = serializers.CharField(source="device.site.name", read_only=True, default=None)
+    controller_name = serializers.CharField(source="controller.name", read_only=True, default=None)
+
+    class Meta:
+        model = UnifiApStatus
+        fields = (
+            "device_id", "hostname", "ip_address", "model", "os_version",
+            "site_name", "controller_name", "state", "satisfaction",
+            "client_count", "cpu_pct", "memory_pct", "temperature_c",
+            "uptime_seconds", "uplink_speed_mbps", "uplink_type", "radios",
+            "last_collected",
+        )
 
 
 class UnifiCloudAccountSerializer(serializers.ModelSerializer):

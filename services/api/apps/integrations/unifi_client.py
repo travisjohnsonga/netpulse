@@ -87,9 +87,22 @@ class UnifiClient:
         except Exception as exc:  # noqa: BLE001
             raise UnifiError(f"UniFi request {path} failed: {exc}") from exc
 
-    def get_devices(self) -> list:
-        """All UniFi-managed devices (APs/switches/gateways) for the site."""
-        return self._get(f"/api/s/{self.site_id}/stat/device", timeout=30)
+    def get_devices(self, device_type: str | None = None) -> list:
+        """UniFi-managed devices (APs/switches/gateways) for the site.
+
+        ``device_type`` filters by the UniFi ``type`` field ('uap', 'usw',
+        'ugw', 'udm'); None returns every device. The ``stat/device`` payload
+        carries the rich per-device stats (radio_table_stats, cpu/mem, uplink,
+        satisfaction) used by both inventory sync and telemetry collection.
+        """
+        devices = self._get(f"/api/s/{self.site_id}/stat/device", timeout=30)
+        if device_type:
+            devices = [d for d in devices if (d.get("type") or "").lower() == device_type]
+        return devices
+
+    def get_ap_stats(self) -> list:
+        """All access points (type 'uap') with their radio/health stats."""
+        return self.get_devices(device_type="uap")
 
     def get_clients(self) -> list:
         """Connected client stations for the site."""

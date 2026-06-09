@@ -18,23 +18,110 @@ interface NavItem {
   badge?: 'lldp'    // render a live count badge keyed by this source
 }
 
-const navItems: NavItem[] = [
+interface NavGroup {
+  label: string
+  icon: string
+  divider?: boolean
+  children: NavItem[]
+}
+
+type NavEntry = NavItem | NavGroup
+
+const isGroup = (e: NavEntry): e is NavGroup => 'children' in e
+
+// Sidebar nav: a mix of leaf links and collapsible groups. The Network group
+// gathers the device/wireless/topology/flow pages; it auto-expands when the
+// current route matches one of its children.
+const navEntries: NavEntry[] = [
   { label: 'Dashboard', href: '/dashboard', icon: '▦' },
-  { label: 'Network Devices', href: '/devices', icon: '⬡' },
-  { label: 'LLDP Neighbors', href: '/lldp-neighbors', icon: '📡', badge: 'lldp' },
-  { label: 'Sites', href: '/sites', icon: '🏢' },
-  { label: 'Compare', href: '/configs/compare', icon: '🔀' },
-  { label: 'Topology', href: '/topology', icon: '🌐' },
+  {
+    label: 'Network', icon: '🌐', children: [
+      { label: 'Devices', href: '/devices', icon: '⬡' },
+      { label: 'Wireless', href: '/wireless', icon: '📶' },
+      { label: 'Topology', href: '/topology', icon: '🗺️' },
+      { label: 'LLDP Neighbors', href: '/lldp-neighbors', icon: '📡', badge: 'lldp' },
+      { label: 'Flow Analytics', href: '/flows', icon: '〰️' },
+      { label: 'Sites', href: '/sites', icon: '🏢' },
+      { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍' },
+      { label: 'Compare', href: '/configs/compare', icon: '🔀' },
+    ],
+  },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true },
   { label: 'Logs', href: '/logs', icon: '🧾' },
-  { label: 'Flows', href: '/flows', icon: '〰️' },
   { label: 'Checks', href: '/checks', icon: '✓' },
-  { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍', divider: true },
-  { label: 'CVE', href: '/cve', icon: '🛡' },
+  { label: 'CVE', href: '/cve', icon: '🛡', divider: true },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
   { label: 'API Docs', href: '/api-docs', icon: '📖', divider: true },
   { label: 'Settings', href: '/settings', icon: '⚙' },
 ]
+
+// A single leaf nav link (top level or nested inside a group).
+function NavLeaf({ item, nested, badge, onNavigate }: {
+  item: NavItem; nested?: boolean; badge: number; onNavigate: () => void
+}) {
+  return (
+    <NavLink
+      to={item.href}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        clsx(
+          'flex items-center gap-3 text-sm font-medium transition-colors',
+          nested ? 'pl-11 pr-5 py-2.5' : 'px-5 py-3',
+          isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white',
+        )
+      }
+    >
+      <span className="text-base w-5 text-center" aria-hidden>{item.icon}</span>
+      <span className="flex-1">{item.label}</span>
+      {badge > 0 && (
+        <span
+          className="ml-auto min-w-[1.25rem] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-center rounded-full bg-red-500 text-white"
+          title={`${badge} not in inventory`}
+        >
+          {badge}
+        </span>
+      )}
+    </NavLink>
+  )
+}
+
+// A collapsible group; auto-expands when one of its child routes is active.
+function NavGroupItem({ group, badgeFor, onNavigate }: {
+  group: NavGroup; badgeFor: (i: NavItem) => number; onNavigate: () => void
+}) {
+  const location = useLocation()
+  const active = group.children.some((c) => location.pathname.startsWith(c.href))
+  const [open, setOpen] = useState(active)
+  useEffect(() => { if (active) setOpen(true) }, [active])
+  const childBadges = group.children.reduce((sum, c) => sum + badgeFor(c), 0)
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={clsx(
+          'w-full flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors',
+          active ? 'text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white',
+        )}
+      >
+        <span className="text-base w-5 text-center" aria-hidden>{group.icon}</span>
+        <span className="flex-1 text-left">{group.label}</span>
+        {childBadges > 0 && !open && (
+          <span className="min-w-[1.25rem] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-center rounded-full bg-red-500 text-white">
+            {childBadges}
+          </span>
+        )}
+        <span className={clsx('text-[10px] text-gray-400 transition-transform', open && 'rotate-90')} aria-hidden>▶</span>
+      </button>
+      {open && (
+        <div className="py-1">
+          {group.children.map((child) => (
+            <NavLeaf key={child.href} item={child} nested badge={badgeFor(child)} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface Props {
   children: ReactNode
@@ -83,7 +170,8 @@ export default function Layout({ children }: Props) {
 
   const isDark = theme === 'dark' || (theme === 'system' && typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
-  const currentPage = navItems.find((n) => location.pathname.startsWith(n.href))?.label ?? 'NetPulse'
+  const allLeaves = navEntries.flatMap((e) => (isGroup(e) ? e.children : [e]))
+  const currentPage = allLeaves.find((n) => location.pathname.startsWith(n.href))?.label ?? 'NetPulse'
 
   return (
     <div className="h-screen overflow-hidden bg-gray-50 dark:bg-gray-950 flex">
@@ -113,34 +201,12 @@ export default function Layout({ children }: Props) {
 
         {/* Nav */}
         <nav className="flex-1 py-4 overflow-y-auto">
-          {navItems.map((item) => (
-            <div key={item.href}>
-              {item.divider && <div className="my-2 mx-5 border-t border-gray-800" aria-hidden />}
-              <NavLink
-                to={item.href}
-                onClick={() => setSidebarOpen(false)}
-                className={({ isActive }) =>
-                  clsx(
-                    'flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white',
-                  )
-                }
-              >
-                <span className="text-base w-5 text-center" aria-hidden>
-                  {item.icon}
-                </span>
-                <span className="flex-1">{item.label}</span>
-                {badgeFor(item) > 0 && (
-                  <span
-                    className="ml-auto min-w-[1.25rem] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-center rounded-full bg-red-500 text-white"
-                    title={`${badgeFor(item)} not in inventory`}
-                  >
-                    {badgeFor(item)}
-                  </span>
-                )}
-              </NavLink>
+          {navEntries.map((entry) => (
+            <div key={isGroup(entry) ? entry.label : entry.href}>
+              {entry.divider && <div className="my-2 mx-5 border-t border-gray-800" aria-hidden />}
+              {isGroup(entry)
+                ? <NavGroupItem group={entry} badgeFor={badgeFor} onNavigate={() => setSidebarOpen(false)} />
+                : <NavLeaf item={entry} badge={badgeFor(entry)} onNavigate={() => setSidebarOpen(false)} />}
             </div>
           ))}
         </nav>

@@ -60,6 +60,63 @@ def canonical_link(dev_a, port_a, dev_b, port_b):
     return dev_a, port_a, dev_b, port_b
 
 
+def _norm_link(a_id, port_a, b_id, port_b, speed):
+    """Order a link's endpoints so the lower device id is first (so both
+    directions of one physical link collapse to the same tuple)."""
+    if a_id > b_id:
+        return (b_id, port_b or "", a_id, port_a or "", speed)
+    return (a_id, port_a or "", b_id, port_b or "", speed)
+
+
+def build_edges(topology_links, lldp_neighbors, dev_ids) -> list[dict]:
+    """Aggregate physical links between device pairs into one edge each.
+
+    Combines discovered TopologyLink rows with LLDP-neighbor matches: a device
+    the fleet *sees* via LLDP but that doesn't report LLDP itself (e.g. a UniFi
+    AP, which is seen by its uplink switch) still gets an edge. Parallel links
+    between the same pair (LAG / redundant uplinks) collapse into one edge
+    carrying ``link_count`` + per-link port detail, so the map draws a single
+    line with an "x2"/"x3" badge instead of overlapping duplicates.
+    """
+    from collections import defaultdict
+
+    raw = []  # (low_id, port_low, high_id, port_high, speed)
+    for ln in topology_links:
+        if ln.device_a_id in dev_ids and ln.device_b_id in dev_ids:
+            raw.append(_norm_link(ln.device_a_id, ln.port_a, ln.device_b_id,
+                                  ln.port_b, ln.link_speed_mbps))
+    for nb in lldp_neighbors:
+        a, b = nb.seen_by_id, nb.matched_device_id
+        if not b or a == b or a not in dev_ids or b not in dev_ids:
+            continue
+        raw.append(_norm_link(a, nb.local_interface, b, nb.port_id, None))
+
+    # Group by device pair, deduping links by their canonical port pair so a
+    # link present in BOTH a TopologyLink and an LLDP match isn't double-counted.
+    groups: dict = defaultdict(dict)
+    for low, port_low, high, port_high, speed in raw:
+        key = (canonical_ifname(port_low), canonical_ifname(port_high))
+        link = groups[(low, high)].setdefault(
+            key, {"port_a": port_low, "port_b": port_high, "speed_mbps": speed})
+        if speed and not link["speed_mbps"]:
+            link["speed_mbps"] = speed
+
+    edges = []
+    for (low, high), links in groups.items():
+        link_list = list(links.values())
+        speeds = [ln["speed_mbps"] for ln in link_list if ln["speed_mbps"]]
+        edges.append({
+            "source": str(low), "target": str(high),
+            "link_count": len(link_list),
+            "label": f"x{len(link_list)}" if len(link_list) > 1 else "",
+            "links": link_list,
+            "speed_mbps": max(speeds) if speeds else None,
+            # First link's ports kept at top level for back-compat / simple labels.
+            "port_a": link_list[0]["port_a"], "port_b": link_list[0]["port_b"],
+        })
+    return edges
+
+
 def discover_links(device, interfaces=None) -> list[dict]:
     """
     Discover this device's LLDP neighbors and persist matched links.

@@ -303,6 +303,30 @@ class DeviceViewSet(viewsets.ModelViewSet):
         data["lldp_neighbors"] = self._lldp_neighbors(device)
         return Response(data)
 
+    @extend_schema(
+        summary="UniFi AP telemetry: latest radio/health snapshot + time-series",
+        parameters=[OpenApiParameter("period", str, description="1h|6h|24h|7d (default 1h)")],
+        responses=None,
+    )
+    @action(detail=True, methods=["get"], url_path="unifi-ap")
+    def unifi_ap(self, request, pk=None):
+        """Current AP status (radios/health) + windowed InfluxDB time-series.
+
+        Returns ``{status, timeseries}``; ``status`` is null when telemetry
+        hasn't been collected for this AP yet (the tab renders an empty state).
+        """
+        from apps.integrations.serializers import UnifiApStatusSerializer
+        from apps.integrations.unifi_telemetry import query_ap_timeseries
+
+        device = self.get_object()
+        status_obj = getattr(device, "unifi_ap_status", None)
+        status_data = UnifiApStatusSerializer(status_obj).data if status_obj else None
+        period = request.query_params.get("period", "1h")
+        return Response({
+            "status": status_data,
+            "timeseries": query_ap_timeseries(str(device.id), period),
+        })
+
     @action(detail=True, methods=["get"], url_path="reachability")
     def reachability(self, request, pk=None):
         """Ping/RTT latency + reachability history (?period=1h|6h|24h|7d)."""
@@ -565,7 +589,8 @@ class DeviceViewSet(viewsets.ModelViewSet):
         discovered TopologyLink rows. Filters: site, role, device (center) + depth.
         """
         from collections import defaultdict
-        from .models import TopologyLink
+        from . import topology as topo
+        from .models import LLDPNeighbor, TopologyLink
 
         params = request.query_params
         # ALL inventory devices belong on the map — including unreachable ones
@@ -584,6 +609,11 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
         dev_ids = set(devices.values_list("id", flat=True))
         links = list(TopologyLink.objects.filter(device_a__in=dev_ids, device_b__in=dev_ids))
+        # LLDP matches where the seen device AND its matched neighbour are both
+        # in the inventory set — supplies edges for devices that don't report
+        # LLDP themselves (e.g. APs seen by their uplink switch).
+        neighbors = list(LLDPNeighbor.objects.filter(
+            seen_by_id__in=dev_ids, matched_device_id__in=dev_ids))
 
         center = params.get("device")
         depth = params.get("depth")
@@ -593,6 +623,10 @@ class DeviceViewSet(viewsets.ModelViewSet):
             for ln in links:
                 adj[ln.device_a_id].add(ln.device_b_id)
                 adj[ln.device_b_id].add(ln.device_a_id)
+            for nb in neighbors:
+                if nb.matched_device_id:
+                    adj[nb.seen_by_id].add(nb.matched_device_id)
+                    adj[nb.matched_device_id].add(nb.seen_by_id)
             max_depth = None if (not depth or depth == "all") else int(depth)
             visited, frontier, d = {center}, {center}, 0
             while frontier and (max_depth is None or d < max_depth):
@@ -604,6 +638,21 @@ class DeviceViewSet(viewsets.ModelViewSet):
             dev_ids &= visited
             devices = devices.filter(id__in=dev_ids)
             links = [ln for ln in links if ln.device_a_id in dev_ids and ln.device_b_id in dev_ids]
+            neighbors = [nb for nb in neighbors
+                         if nb.seen_by_id in dev_ids and nb.matched_device_id in dev_ids]
+
+        edges = topo.build_edges(links, neighbors, dev_ids)
+
+        # Degree (distinct neighbour count) per node, for the hover tooltip.
+        degree: dict = defaultdict(int)
+        for e in edges:
+            degree[e["source"]] += 1
+            degree[e["target"]] += 1
+
+        # Latest AP telemetry for unifi_ap nodes (client count + radio summary).
+        from apps.integrations.models import UnifiApStatus
+        ap_status = {s.device_id: s for s in
+                     UnifiApStatus.objects.filter(device_id__in=dev_ids)}
 
         def role_of(notes: str) -> str:
             for line in (notes or "").splitlines():
@@ -611,13 +660,15 @@ class DeviceViewSet(viewsets.ModelViewSet):
                     return line.split(":", 1)[1].strip()
             return ""
 
-        nodes = [
-            {
+        nodes = []
+        for d in devices:
+            node = {
                 "id": str(d.id), "label": d.hostname, "type": d.platform,
                 "site": d.site.name if d.site else None, "status": d.status,
                 # Role + colour: prefer the structured Role FK, fall back to the
                 # legacy "Role:" notes convention.
                 "role": d.role.name if d.role else role_of(d.notes),
+                "role_slug": d.role.slug if d.role else "",
                 "role_color": d.role.color if d.role else None,
                 "risk_score": 0,
                 "ip": str(d.ip_address or ""), "vendor": d.vendor or "",
@@ -626,18 +677,16 @@ class DeviceViewSet(viewsets.ModelViewSet):
                 "management_ip": str(d.management_ip) if d.management_ip else None,
                 "model": d.model or "",
                 "last_seen": d.last_seen.isoformat() if d.last_seen else None,
+                "neighbor_count": degree.get(str(d.id), 0),
             }
-            for d in devices
-        ]
-        edges = [
-            {
-                "source": str(ln.device_a_id), "target": str(ln.device_b_id),
-                "port_a": ln.port_a, "port_b": ln.port_b,
-                "speed_mbps": ln.link_speed_mbps,
-                "utilization_pct": 0, "utilization_color": "green",
-            }
-            for ln in links
-        ]
+            st = ap_status.get(d.id)
+            if st:
+                node["client_count"] = st.client_count
+                node["radios"] = [
+                    {"band": r.get("band"), "channel": r.get("channel")}
+                    for r in (st.radios or [])
+                ]
+            nodes.append(node)
         return Response({"nodes": nodes, "edges": edges})
 
     @staticmethod

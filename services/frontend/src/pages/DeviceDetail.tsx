@@ -6,6 +6,7 @@ import { sshUrl, sshTooltip } from '../lib/ssh'
 import { useWebSocket } from '../hooks/useWebSocket'
 import Overview from './device/Overview'
 import Telemetry, { TelemetryConfigPanel, Environment } from './device/Telemetry'
+import Wireless from './device/Wireless'
 import Logs from './device/Logs'
 import Flows from './device/Flows'
 import ArpMac from './device/ArpMac'
@@ -23,6 +24,7 @@ import { CollectionMethodBadges } from '../components/CollectionMethodBadges'
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'telemetry', label: 'Telemetry' },
+  { id: 'wireless', label: 'Wireless' },
   { id: 'environment', label: 'Environment' },
   { id: 'logs', label: 'Logs' },
   { id: 'flows', label: 'Flows' },
@@ -188,7 +190,7 @@ export default function DeviceDetail() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800 overflow-x-auto">
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.id !== 'wireless' || device.platform === 'unifi_ap').map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={clsx('px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap transition-colors',
               tab === t.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800')}>
@@ -207,6 +209,7 @@ export default function DeviceDetail() {
       {/* Tab content */}
       {tab === 'overview' && <Overview device={device} onTab={setTab} onRefresh={load} onManageCredentials={() => setManagingCreds(true)} />}
       {tab === 'telemetry' && <Telemetry device={device} onConfigure={() => setTelemetryConfig(true)} refreshSignal={telemetryRefresh} />}
+      {tab === 'wireless' && device.platform === 'unifi_ap' && <Wireless device={device} />}
       {tab === 'environment' && <Environment device={device} />}
       {tab === 'logs' && <Logs device={device} />}
       {tab === 'flows' && <Flows device={device} />}

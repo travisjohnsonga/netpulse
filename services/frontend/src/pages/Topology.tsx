@@ -13,63 +13,96 @@ type Popup =
   | null
 
 const OFFLINE_COLOR = '#e74c3c'
-const DEFAULT_ROLE_COLOR = '#6b7280'
+const DEFAULT_ROLE_COLOR = '#607D8B'
 
-// A device is "offline" if it's unreachable, marked inactive, or its
-// reachability probe last failed. Offline nodes are drawn red regardless of role.
+// Visual style + layout tier per (normalised) device role. Tier drives the
+// hierarchical layout: routers/firewalls top, then core, distribution, access,
+// APs at the bottom.
+interface RoleStyle { shape: string; color: string; size: number; icon: string; tier: number }
+const NODE_STYLES: Record<string, RoleStyle> = {
+  router:        { shape: 'ellipse',         color: '#FF9800', size: 46, icon: '🔀', tier: 0 },
+  firewall:      { shape: 'round-triangle',  color: '#f44336', size: 46, icon: '🛡', tier: 0 },
+  'core-switch': { shape: 'diamond',         color: '#2196F3', size: 52, icon: '◆', tier: 1 },
+  distribution:  { shape: 'hexagon',         color: '#00BCD4', size: 46, icon: '⬡', tier: 2 },
+  'access-switch':{ shape: 'round-rectangle', color: '#4CAF50', size: 40, icon: '▪', tier: 3 },
+  'wireless-ap': { shape: 'ellipse',         color: '#9C27B0', size: 34, icon: '📶', tier: 4 },
+  default:       { shape: 'ellipse',         color: DEFAULT_ROLE_COLOR, size: 38, icon: '●', tier: 2 },
+}
+
+// Map a node's role slug / role name / platform to one of the NODE_STYLES keys.
+function roleKey(n: TopologyNode): string {
+  const r = `${n.role_slug || ''} ${n.role || ''}`.toLowerCase()
+  const t = (n.type || '').toLowerCase()
+  if (t === 'unifi_ap' || r.includes('wireless') || /\bap\b/.test(r)) return 'wireless-ap'
+  if (r.includes('firewall') || t.includes('fortios') || t.includes('panos') || t.includes('sonicwall') || t.includes('asa')) return 'firewall'
+  if (r.includes('core')) return 'core-switch'
+  if (r.includes('distrib')) return 'distribution'
+  if (r.includes('access') || t === 'aos_cx' || t === 'nxos' || t === 'eos') return 'access-switch'
+  if (r.includes('router') || r.includes('wan') || t.startsWith('ios') || t === 'junos') return 'router'
+  return 'default'
+}
+function styleFor(n: TopologyNode): RoleStyle {
+  return NODE_STYLES[roleKey(n)] ?? NODE_STYLES.default
+}
+
 function isOffline(n: TopologyNode): boolean {
   return n.is_reachable === false || n.status === 'inactive' || n.status === 'unreachable'
 }
-// Node fill: red when offline, otherwise the device's role colour.
-function nodeColor(n: TopologyNode): string {
-  if (isOffline(n)) return OFFLINE_COLOR
-  return n.role_color || DEFAULT_ROLE_COLOR
+function isAP(n: TopologyNode): boolean {
+  return roleKey(n) === 'wireless-ap'
 }
+function nodeColor(n: TopologyNode): string {
+  return isOffline(n) ? OFFLINE_COLOR : styleFor(n).color
+}
+// Edge colour by the up/down state of its two endpoints.
+const EDGE_UP = '#4CAF50', EDGE_PARTIAL = '#FF9800', EDGE_DOWN = '#e74c3c', EDGE_UNKNOWN = '#9E9E9E'
+function edgeColor(aOffline: boolean | undefined, bOffline: boolean | undefined): string {
+  if (aOffline === undefined || bOffline === undefined) return EDGE_UNKNOWN
+  if (aOffline && bOffline) return EDGE_DOWN
+  if (aOffline || bOffline) return EDGE_PARTIAL
+  return EDGE_UP
+}
+function edgeWidth(linkCount: number): number {
+  if (linkCount >= 3) return 5
+  if (linkCount === 2) return 3.5
+  return 2
+}
+
 function relativeTime(iso?: string | null): string {
   if (!iso) return 'never'
-  const then = new Date(iso).getTime()
-  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000))
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
   if (secs < 60) return `${secs}s ago`
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
   return `${Math.floor(secs / 86400)}d ago`
 }
-const UTILIZATION_COLORS: Record<string, string> = {
-  green: '#22c55e', yellow: '#eab308', orange: '#f97316', red: '#ef4444', gray: '#9ca3af',
-}
-const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
-const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
-
-function typeIcon(type: string): string {
-  const t = (type || '').toLowerCase()
-  if (t.includes('asa') || t.includes('fortios') || t.includes('panos')) return '🛡'
-  if (t === 'nxos' || t === 'eos') return '🔲'
-  if (t.includes('ap') || t.includes('wifi')) return '📶'
-  return '🔀'  // routers / default
-}
-function speedWidth(mbps: number | null): number {
-  if (!mbps) return 2
-  if (mbps >= 40000) return 6
-  if (mbps >= 10000) return 4
-  if (mbps >= 1000) return 3
-  return 2
-}
-function fmtSpeed(mbps: number | null): string {
+function fmtSpeed(mbps: number | null | undefined): string {
   if (!mbps) return '—'
   return mbps >= 1000 ? `${mbps / 1000}G` : `${mbps}M`
 }
+function apRadioSummary(n: TopologyNode): string {
+  if (!n.radios || n.radios.length === 0) return ''
+  return n.radios.filter((r) => r.channel != null).map((r) => `${r.band} ch${r.channel}`).join(' / ')
+}
+
+const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
+const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
+const btnCls = 'px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50'
+
+interface MiniState { box: { x: number; y: number; w: number; h: number }; dots: { x: number; y: number; c: string }[]; view: { x: number; y: number; w: number; h: number } }
 
 export default function Topology() {
   const navigate = useNavigate()
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<Core | null>(null)
+  const dataRef = useRef<{ nodes: TopologyNode[]; edges: TopologyEdge[] }>({ nodes: [], edges: [] })
   const [popup, setPopup] = useState<Popup>(null)
   const [hover, setHover] = useState<{ x: number; y: number; title: string; lines: string[] } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [nodeCount, setNodeCount] = useState(0)
   const [edgeCount, setEdgeCount] = useState(0)
-  const { lastMessage } = useWebSocket('/ws/telemetry/')
+  const [mini, setMini] = useState<MiniState | null>(null)
   const { lastMessage: deviceMessage } = useWebSocket('/ws/devices/')
 
   // Filters
@@ -80,6 +113,11 @@ export default function Topology() {
   const [depth, setDepth] = useState('all')
   const [role, setRole] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
+  // View toggles
+  const [showLabels, setShowLabels] = useState(true)
+  const [showAPs, setShowAPs] = useState(true)
+  const [layoutMode, setLayoutMode] = useState<'hier' | 'force'>('hier')
+  const [legendOpen, setLegendOpen] = useState(true)
   const [discovering, setDiscovering] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -88,55 +126,95 @@ export default function Topology() {
     fetchSites().then(setSites).catch(() => {})
   }, [])
 
-  const buildGraph = (allNodes: TopologyNode[], allEdges: TopologyEdge[]) => {
+  const updateMinimap = useCallback(() => {
+    const cy = cyRef.current
+    if (!cy || cy.nodes().length === 0) { setMini(null); return }
+    const bb = cy.elements().boundingBox()
+    const W = 150, H = 100, pad = 6
+    const sx = (W - pad * 2) / Math.max(1, bb.w), sy = (H - pad * 2) / Math.max(1, bb.h)
+    const s = Math.min(sx, sy)
+    const toMini = (x: number, y: number) => ({ x: pad + (x - bb.x1) * s, y: pad + (y - bb.y1) * s })
+    const dots = cy.nodes().map((n) => {
+      const p = n.position(); const m = toMini(p.x, p.y)
+      return { x: m.x, y: m.y, c: (n.data('color') as string) || DEFAULT_ROLE_COLOR }
+    })
+    const ext = cy.extent()
+    const v1 = toMini(ext.x1, ext.y1), v2 = toMini(ext.x2, ext.y2)
+    setMini({
+      box: { x: 0, y: 0, w: W, h: H },
+      dots,
+      view: { x: v1.x, y: v1.y, w: Math.max(2, v2.x - v1.x), h: Math.max(2, v2.y - v1.y) },
+    })
+  }, [])
+
+  const buildGraph = useCallback((allNodes: TopologyNode[], allEdges: TopologyEdge[]) => {
     if (!containerRef.current) return
     cyRef.current?.destroy()
 
-    // Online/Offline filter: drop non-matching nodes and any edge that loses an
-    // endpoint, so isolated and offline devices honour the toolbar selection.
-    const nodes = statusFilter === 'all'
+    // Apply client-side filters (status + show-APs); drop edges that lose an endpoint.
+    let nodes = statusFilter === 'all'
       ? allNodes
       : allNodes.filter((n) => (statusFilter === 'offline' ? isOffline(n) : !isOffline(n)))
+    if (!showAPs) nodes = nodes.filter((n) => !isAP(n))
     const keep = new Set(nodes.map((n) => n.id))
     const edges = allEdges.filter((e) => keep.has(e.source) && keep.has(e.target))
 
+    const offlineById: Record<string, boolean> = Object.fromEntries(nodes.map((n) => [n.id, isOffline(n)]))
     const labelById: Record<string, string> = Object.fromEntries(nodes.map((n) => [n.id, n.label]))
-    // Group edges by unordered device pair to detect parallel links.
-    const pairKey = (e: TopologyEdge) => [e.source, e.target].sort().join('|')
-    const groups: Record<string, TopologyEdge[]> = {}
-    for (const e of edges) (groups[pairKey(e)] ||= []).push(e)
+
+    // Hierarchical layout: assign positions per role tier (preset), else cose.
+    const tiers: Record<number, TopologyNode[]> = {}
+    nodes.forEach((n) => { (tiers[styleFor(n).tier] ||= []).push(n) })
+    const colW = 130, rowH = 170
+    const maxRow = Math.max(1, ...Object.values(tiers).map((t) => t.length))
+    const positions: Record<string, { x: number; y: number }> = {}
+    Object.entries(tiers).forEach(([tier, ns]) => {
+      const totalW = (maxRow - 1) * colW
+      const step = ns.length > 1 ? totalW / (ns.length - 1) : 0
+      ns.forEach((n, i) => {
+        positions[n.id] = { x: ns.length > 1 ? i * step : totalW / 2, y: Number(tier) * rowH + 60 }
+      })
+    })
 
     const cy = cytoscape({
       container: containerRef.current,
       elements: [
         ...nodes.map((n) => ({
-          data: { id: n.id, label: `${typeIcon(n.type)} ${n.label}`, status: n.status, color: nodeColor(n), raw: n },
+          data: {
+            id: n.id,
+            label: `${styleFor(n).icon} ${n.label}${isAP(n) && n.client_count != null ? `\n${n.client_count} clients` : ''}`,
+            color: nodeColor(n), shape: styleFor(n).shape, size: styleFor(n).size, raw: n,
+          },
           classes: isOffline(n) ? 'offline' : '',
+          ...(layoutMode === 'hier' ? { position: positions[n.id] } : {}),
         })),
-        ...edges.map((e, i) => {
-          const group = groups[pairKey(e)]
-          const count = group.length
-          // Show the parallel-link count once, on the first edge of the group.
-          const isFirst = group[0] === e
-          return { data: {
+        ...edges.map((e, i) => ({
+          data: {
             id: `e${i}`, source: e.source, target: e.target,
-            ports: `${e.port_a} ↔ ${e.port_b}`, width: speedWidth(e.speed_mbps),
-            color: UTILIZATION_COLORS[e.utilization_color] ?? UTILIZATION_COLORS.green,
-            countLabel: count > 1 && isFirst ? `×${count}` : '',
+            width: edgeWidth(e.link_count ?? 1),
+            color: edgeColor(offlineById[e.source], offlineById[e.target]),
+            countLabel: (e.link_count ?? 1) > 1 ? (e.label || `×${e.link_count}`) : '',
             raw: e,
-          } }
-        }),
+          },
+        })),
       ],
-      layout: { name: 'cose', animate: false, padding: 40, nodeRepulsion: 6000 },
+      layout: layoutMode === 'hier'
+        ? { name: 'preset', padding: 40, fit: true }
+        : { name: 'cose', animate: false, padding: 40, nodeRepulsion: 6000 },
       style: [
         { selector: 'node', style: {
           'background-color': 'data(color)',
-          label: 'data(label)', 'font-size': 11, color: '#1f2937',
-          'text-valign': 'bottom', 'text-margin-y': 5,
+          label: showLabels ? 'data(label)' : '', 'font-size': 10, color: '#1f2937', 'text-wrap': 'wrap',
+          'text-valign': 'bottom', 'text-margin-y': 4, 'text-halign': 'center',
           'text-background-color': '#ffffff', 'text-background-opacity': 0.85, 'text-background-padding': '2px',
-          width: 45, height: 45, 'border-width': 2, 'border-color': '#ffffff',
+          width: 'data(size)', height: 'data(size)', 'border-width': 2, 'border-color': '#ffffff',
         } },
-        // Offline devices: red dashed border + faded, so they read as "down" at a glance.
+        // Per-role node shapes (cytoscape needs a literal NodeShape, not a data mapper).
+        { selector: 'node[shape="diamond"]', style: { shape: 'diamond' } },
+        { selector: 'node[shape="hexagon"]', style: { shape: 'hexagon' } },
+        { selector: 'node[shape="round-rectangle"]', style: { shape: 'round-rectangle' } },
+        { selector: 'node[shape="round-triangle"]', style: { shape: 'round-triangle' } },
+        { selector: 'node[shape="ellipse"]', style: { shape: 'ellipse' } },
         { selector: 'node.offline', style: {
           'border-color': OFFLINE_COLOR, 'border-width': 3, 'border-style': 'dashed', opacity: 0.6,
         } },
@@ -152,10 +230,10 @@ export default function Topology() {
     })
 
     const edgeTooltip = (e: TopologyEdge): string[] => {
-      const g = groups[pairKey(e)]
       const s = labelById[e.source] ?? e.source
       const t = labelById[e.target] ?? e.target
-      return g.map((x) => `${s}:${x.port_a} ↔ ${t}:${x.port_b}`)
+      const members = e.links && e.links.length ? e.links : [{ port_a: e.port_a, port_b: e.port_b, speed_mbps: e.speed_mbps }]
+      return members.map((m) => `${s}:${m.port_a || '?'} ↔ ${t}:${m.port_b || '?'}`)
     }
 
     cy.on('tap', 'node', (ev) => { const p = ev.renderedPosition; setPopup({ kind: 'node', data: (ev.target as NodeSingular).data('raw') as TopologyNode, x: p.x, y: p.y }) })
@@ -165,10 +243,18 @@ export default function Topology() {
       const p = ev.renderedPosition
       const offline = isOffline(n)
       const lines = [
-        `Platform: ${n.type || '—'}`,
+        `Role: ${n.role || roleKey(n)}`,
         `IP: ${n.management_ip || n.ip || '—'}`,
+        `Platform: ${n.type || '—'}`,
         offline ? '🔴 Offline' : '✅ Online',
       ]
+      if (isAP(n)) {
+        if (n.client_count != null) lines.push(`📶 ${n.client_count} clients`)
+        const radios = apRadioSummary(n)
+        if (radios) lines.push(radios)
+      } else {
+        lines.push(`Neighbors: ${n.neighbor_count ?? 0}`)
+      }
       if (offline) lines.push(`Last seen: ${relativeTime(n.last_seen)}`)
       setHover({ x: p.x, y: p.y, title: n.label, lines })
     })
@@ -176,14 +262,15 @@ export default function Topology() {
       const e = (ev.target as EdgeSingular).data('raw') as TopologyEdge
       const p = ev.renderedPosition
       ;(ev.target as EdgeSingular).addClass('hover')
-      setHover({ x: p.x, y: p.y, title: 'Link', lines: edgeTooltip(e) })
+      setHover({ x: p.x, y: p.y, title: `Link${(e.link_count ?? 1) > 1 ? ` (${e.link_count} members)` : ''}`, lines: edgeTooltip(e) })
     })
     cy.on('mouseout', 'node edge', (ev) => { (ev.target as EdgeSingular).removeClass('hover'); setHover(null) })
-    cy.on('pan zoom drag', () => setHover(null))
+    cy.on('pan zoom drag', () => { setHover(null); updateMinimap() })
     cy.on('tap', (ev) => { if (ev.target === cy) setPopup(null) })
+    cy.ready(() => updateMinimap())
     cyRef.current = cy
     setNodeCount(nodes.length); setEdgeCount(edges.length)
-  }
+  }, [statusFilter, showAPs, showLabels, layoutMode, updateMinimap])
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -193,25 +280,18 @@ export default function Topology() {
     if (depth && depth !== 'all') params.depth = depth
     if (role) params.role = role
     fetchTopology(params)
-      .then(({ nodes, edges }) => { buildGraph(nodes, edges); setError(null) })
+      .then(({ nodes, edges }) => { dataRef.current = { nodes, edges }; buildGraph(nodes, edges); setError(null) })
       .catch(() => setError('Could not load topology. Check that the API is running.'))
       .finally(() => setLoading(false))
-    // statusFilter is applied client-side inside buildGraph; included so toggling
-    // it re-renders the graph.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [site, center, depth, role, statusFilter])
+  }, [site, center, depth, role, buildGraph])
 
   useEffect(() => { reload(); return () => { cyRef.current?.destroy() } }, [reload])
 
+  // Client-side view toggles rebuild from cached data without refetching.
   useEffect(() => {
-    if (!lastMessage || !cyRef.current) return
-    const msg = lastMessage as { type?: string; utilization?: Record<string, number> }
-    if (msg.type !== 'topology_update' || !msg.utilization) return
-    cyRef.current.edges().forEach((edge) => {
-      const id = edge.data('id') as string
-      if (id in msg.utilization!) edge.data('color', UTILIZATION_COLORS.green)
-    })
-  }, [lastMessage])
+    if (dataRef.current.nodes.length) buildGraph(dataRef.current.nodes, dataRef.current.edges)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, showAPs, showLabels, layoutMode])
 
   // Discovery/enrichment created new topology links → reload the graph.
   useEffect(() => {
@@ -231,8 +311,8 @@ export default function Topology() {
     reload()
   }
 
-  const fitView = () => cyRef.current?.fit(undefined, 40)
-  const resetZoom = () => cyRef.current?.reset()
+  const fitView = () => { cyRef.current?.fit(undefined, 40); updateMinimap() }
+  const zoomBy = (f: number) => { const cy = cyRef.current; if (!cy) return; cy.zoom({ level: cy.zoom() * f, renderedPosition: { x: (containerRef.current?.clientWidth ?? 600) / 2, y: (containerRef.current?.clientHeight ?? 400) / 2 } }); updateMinimap() }
 
   return (
     <div className="flex flex-col h-full space-y-3">
@@ -242,12 +322,14 @@ export default function Topology() {
           {!loading && !error && <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{nodeCount} devices · {edgeCount} links</p>}
         </div>
         <div className="flex gap-2">
-          <button onClick={fitView} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50">Fit</button>
-          <button onClick={resetZoom} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50">Reset</button>
+          <button onClick={reload} className={btnCls} title="Refresh">↺ Refresh</button>
+          <button onClick={fitView} className={btnCls} title="Fit to view">⊞ Fit</button>
+          <button onClick={() => zoomBy(1.25)} className={btnCls} title="Zoom in">＋</button>
+          <button onClick={() => zoomBy(0.8)} className={btnCls} title="Zoom out">－</button>
         </div>
       </div>
 
-      {/* Filter bar */}
+      {/* Filter / view bar */}
       <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 flex-shrink-0">
         <select className={selCls} value={site} onChange={(e) => setSite(e.target.value)}>
           <option value="">All Sites</option>
@@ -272,30 +354,21 @@ export default function Topology() {
           <option value="online">Online Only</option>
           <option value="offline">Offline Only</option>
         </select>
+        <select className={selCls} value={layoutMode} onChange={(e) => setLayoutMode(e.target.value as 'hier' | 'force')} title="Graph layout">
+          <option value="hier">Hierarchical</option>
+          <option value="force">Force-directed</option>
+        </select>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300 px-1">
+          <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} /> Labels
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300 px-1">
+          <input type="checkbox" checked={showAPs} onChange={(e) => setShowAPs(e.target.checked)} /> APs
+        </label>
         <button onClick={discoverAll} disabled={discovering} className="ml-auto px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium">
           {discovering ? 'Discovering…' : '🔍 Discover Links'}
         </button>
       </div>
       {toast && <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-800 flex-shrink-0">{toast}</div>}
-
-      {/* Legend */}
-      <div className="flex flex-wrap gap-4 text-xs flex-shrink-0">
-        <div className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2">
-          <span className="font-medium text-gray-600 dark:text-gray-400">Status:</span>
-          <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
-            <span className="w-3 h-3 rounded-full" style={{ background: '#22c55e' }} />Online (role color)
-          </span>
-          <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
-            <span className="w-3 h-3 rounded-full border-2 border-dashed" style={{ background: OFFLINE_COLOR, borderColor: OFFLINE_COLOR, opacity: 0.6 }} />Offline
-          </span>
-        </div>
-        <div className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2">
-          <span className="font-medium text-gray-600 dark:text-gray-400">Link util:</span>
-          {[['<60%', 'green'], ['60-80%', 'yellow'], ['80-90%', 'orange'], ['>90%', 'red'], ['down', 'gray']].map(([label, color]) => (
-            <span key={label} className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400"><span className="w-6 h-1.5 rounded" style={{ background: UTILIZATION_COLORS[color] }} />{label}</span>
-          ))}
-        </div>
-      </div>
 
       {/* Graph */}
       <div className="relative flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden" style={{ minHeight: 460 }}>
@@ -309,7 +382,49 @@ export default function Topology() {
         )}
         <div ref={containerRef} className="w-full h-full" />
 
-        {/* Hover tooltip (informational; click a node/link for actions) */}
+        {/* Legend (toggleable) */}
+        <div className="absolute top-3 left-3 z-20">
+          {legendOpen ? (
+            <div className="bg-white/95 dark:bg-gray-900/95 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm text-[11px] w-48">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
+                <span className="font-semibold text-gray-700 dark:text-gray-200">Legend</span>
+                <button onClick={() => setLegendOpen(false)} className="text-gray-400 hover:text-gray-600">×</button>
+              </div>
+              <div className="px-3 py-2 space-y-1 text-gray-600 dark:text-gray-300">
+                {(['router', 'firewall', 'core-switch', 'distribution', 'access-switch', 'wireless-ap'] as const).map((k) => (
+                  <div key={k} className="flex items-center gap-2">
+                    <span style={{ color: NODE_STYLES[k].color }}>{NODE_STYLES[k].icon}</span>
+                    <span className="capitalize">{k.replace('-', ' ')}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-700 space-y-1 text-gray-600 dark:text-gray-300">
+                <div className="flex items-center gap-2"><span className="w-6 h-[2px]" style={{ background: EDGE_UP }} />Single link</div>
+                <div className="flex items-center gap-2"><span className="w-6 h-[3.5px]" style={{ background: EDGE_UP }} />×2 aggregated</div>
+                <div className="flex items-center gap-2"><span className="w-6 h-[5px]" style={{ background: EDGE_UP }} />×3+ aggregated</div>
+              </div>
+              <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-700 space-y-1 text-gray-600 dark:text-gray-300">
+                <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: EDGE_UP }} />Online</div>
+                <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full border border-dashed" style={{ background: OFFLINE_COLOR, borderColor: OFFLINE_COLOR }} />Offline</div>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setLegendOpen(true)} className={btnCls + ' bg-white/95 dark:bg-gray-900/95'}>Legend</button>
+          )}
+        </div>
+
+        {/* Mini-map */}
+        {mini && (
+          <div className="absolute bottom-3 right-3 z-20 bg-white/95 dark:bg-gray-900/95 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-1">
+            <svg width={mini.box.w} height={mini.box.h}>
+              {mini.dots.map((d, i) => <circle key={i} cx={d.x} cy={d.y} r={2} fill={d.c} />)}
+              <rect x={mini.view.x} y={mini.view.y} width={mini.view.w} height={mini.view.h}
+                fill="none" stroke="#3b82f6" strokeWidth={1} />
+            </svg>
+          </div>
+        )}
+
+        {/* Hover tooltip */}
         {hover && !popup && (
           <div
             className="absolute z-30 pointer-events-none bg-gray-900 text-white text-xs rounded-lg shadow-lg px-3 py-2 max-w-xs"
@@ -335,22 +450,27 @@ export default function Topology() {
                     </span>
                   } />
                   {isOffline(popup.data) && <Row k="Last seen" v={relativeTime(popup.data.last_seen)} />}
-                  {popup.data.vendor && <Row k="Vendor" v={popup.data.vendor} />}
                   {(popup.data.management_ip || popup.data.ip) && <Row k="IP" v={<span className="font-mono text-xs">{popup.data.management_ip || popup.data.ip}</span>} />}
                   {popup.data.model && <Row k="Model" v={popup.data.model} />}
                   {popup.data.site && <Row k="Site" v={popup.data.site} />}
+                  {isAP(popup.data) && popup.data.client_count != null && <Row k="Clients" v={`📶 ${popup.data.client_count}`} />}
+                  {isAP(popup.data) && apRadioSummary(popup.data) && <Row k="Radios" v={apRadioSummary(popup.data)} />}
+                  {!isAP(popup.data) && <Row k="Neighbors" v={popup.data.neighbor_count ?? 0} />}
                 </div>
                 <button onClick={() => navigate(`/devices/${popup.data.id}`)} className="mt-3 w-full py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium">View Device →</button>
               </>
             ) : (
               <>
-                <p className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Link</p>
-                <p className="text-xs font-mono text-gray-700 dark:text-gray-300 mb-3">{popup.data.port_a} ↔ {popup.data.port_b}</p>
+                <p className="font-semibold text-gray-900 dark:text-gray-100 mb-1">Link{(popup.data.link_count ?? 1) > 1 ? ` (×${popup.data.link_count})` : ''}</p>
+                <div className="text-xs font-mono text-gray-700 dark:text-gray-300 mb-3 space-y-0.5">
+                  {(popup.data.links && popup.data.links.length ? popup.data.links : [{ port_a: popup.data.port_a, port_b: popup.data.port_b, speed_mbps: popup.data.speed_mbps }]).map((m, i) => (
+                    <div key={i}>{m.port_a || '?'} ↔ {m.port_b || '?'}</div>
+                  ))}
+                </div>
                 <div className="space-y-1.5">
                   <Row k="Speed" v={fmtSpeed(popup.data.speed_mbps)} />
-                  <Row k="Utilization" v={`${popup.data.utilization_pct}%`} />
+                  <Row k="Links" v={popup.data.link_count ?? 1} />
                 </div>
-                <button onClick={() => navigate(`/devices/${popup.data.source}`)} className="mt-3 w-full py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-md font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300">View Interface →</button>
               </>
             )}
           </div>

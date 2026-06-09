@@ -159,3 +159,47 @@ class UnifiCloudAccount(TimestampedModel):
         if obj is None:
             obj = cls.objects.create()
         return obj
+
+
+class UnifiApStatus(TimestampedModel):
+    """
+    Latest telemetry snapshot for a UniFi access point, refreshed every cycle by
+    the scheduler's UniFi-telemetry task (see apps.integrations.unifi_telemetry).
+
+    UniFi APs are controller-managed (no SSH/SNMP), so their live state is pulled
+    from the controller's ``stat/device`` payload. The rolling time-series lives
+    in InfluxDB (``unifi_ap_radio`` / ``unifi_ap_health`` measurements); this row
+    holds just the most-recent values so the fleet page and device-detail
+    Wireless tab can render current state without an InfluxDB round-trip. Per-AP
+    radio detail is kept as JSON since its shape (2.4/5/6 GHz) varies by model.
+    """
+    device = models.OneToOneField(
+        "devices.Device", on_delete=models.CASCADE, related_name="unifi_ap_status",
+    )
+    controller = models.ForeignKey(
+        UnifiController, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ap_statuses",
+    )
+    # Health / overall.
+    state = models.IntegerField(default=0, help_text="UniFi state: 1=connected, 0=disconnected")
+    satisfaction = models.IntegerField(null=True, blank=True, help_text="UniFi health score 0-100")
+    client_count = models.IntegerField(default=0)
+    cpu_pct = models.FloatField(null=True, blank=True)
+    memory_pct = models.FloatField(null=True, blank=True)
+    temperature_c = models.FloatField(null=True, blank=True)
+    uptime_seconds = models.BigIntegerField(null=True, blank=True)
+    # Uplink (speed Mbps, type wire|wireless).
+    uplink_speed_mbps = models.IntegerField(null=True, blank=True)
+    uplink_type = models.CharField(max_length=16, blank=True)
+    # Per-radio detail: list of {band, channel, channel_width, tx_power_dbm,
+    # noise_floor_dbm, clients, channel_utilization_pct, tx_retries_pct,
+    # satisfaction, tx_bytes, rx_bytes}.
+    radios = models.JSONField(default=list)
+    last_collected = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "UniFi AP Status"
+        verbose_name_plural = "UniFi AP Statuses"
+
+    def __str__(self):
+        return f"AP status for {self.device_id}"

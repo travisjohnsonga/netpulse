@@ -36,6 +36,7 @@ MAC_VENDOR_INTERVAL_S = int(os.environ.get("MAC_VENDOR_UPDATE_INTERVAL_S", str(7
 HOSTNAME_CHECK_INTERVAL_S = int(os.environ.get("HOSTNAME_CHECK_INTERVAL_S", str(24 * 3600)))
 LLDP_COLLECT_INTERVAL_S = int(os.environ.get("LLDP_COLLECT_INTERVAL_S", str(30 * 60)))
 UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
+UNIFI_TELEMETRY_INTERVAL_S = int(os.environ.get("UNIFI_TELEMETRY_INTERVAL_S", str(5 * 60)))
 OS_PLATFORM_REFRESH_INTERVAL_S = int(os.environ.get("OS_PLATFORM_REFRESH_INTERVAL_S", str(6 * 3600)))
 OS_VERSION_SEED_INTERVAL_S = int(os.environ.get("OS_VERSION_SEED_INTERVAL_S", str(24 * 3600)))
 AUDIT_PURGE_INTERVAL_S = int(os.environ.get("AUDIT_PURGE_INTERVAL_S", str(24 * 3600)))
@@ -76,6 +77,7 @@ class Command(BaseCommand):
             ["hostname_check", HOSTNAME_CHECK_INTERVAL_S, self._check_hostnames, False, None],
             ["lldp_collect", LLDP_COLLECT_INTERVAL_S, self._collect_lldp, False, None],
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
+            ["unifi_telemetry", UNIFI_TELEMETRY_INTERVAL_S, self._collect_unifi_telemetry, False, None],
             ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
             ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
             ["audit_purge", AUDIT_PURGE_INTERVAL_S, self._purge_audit_log, False, None],
@@ -165,6 +167,11 @@ class Command(BaseCommand):
         logger.info("scheduler: syncing enabled UniFi controllers")
         from apps.integrations.unifi_sync import sync_all_controllers
         sync_all_controllers()
+
+    def _collect_unifi_telemetry(self):
+        logger.info("scheduler: collecting UniFi AP telemetry")
+        from apps.integrations.unifi_telemetry import collect_all_ap_telemetry
+        collect_all_ap_telemetry()
 
     def _refresh_os_platforms(self):
         logger.info("scheduler: refreshing OS-version fleet inventory")

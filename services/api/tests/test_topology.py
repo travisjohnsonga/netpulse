@@ -202,6 +202,62 @@ class TestTopologyEndpoint:
         labels = {n["label"] for n in resp.json()["nodes"]}
         assert labels == {"a", "b"}
 
+    def test_ap_edge_from_lldp_neighbor_match(self, auth_client):
+        # An AP that doesn't report LLDP still gets an edge from the switch that
+        # sees it (LLDPNeighbor.matched_device), with no TopologyLink at all.
+        from django.utils import timezone
+        from apps.devices.models import LLDPNeighbor
+        sw = Device.objects.create(hostname="sw1", ip_address="10.3.0.1", platform="aos_cx", status="active")
+        ap = Device.objects.create(hostname="ap1", ip_address="10.3.0.2", platform="unifi_ap", status="active")
+        LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/1", port_id="eth0",
+                                    system_name="ap1", matched_device=ap, last_seen=timezone.now())
+        body = auth_client.get("/api/devices/topology/").json()
+        assert len(body["edges"]) == 1
+        e = body["edges"][0]
+        assert {e["source"], e["target"]} == {str(sw.id), str(ap.id)}
+        assert e["link_count"] == 1 and e["label"] == ""
+
+    def test_parallel_links_aggregate_with_count(self, auth_client):
+        # Two physical links between the same pair → one edge, link_count=2, "x2".
+        from django.utils import timezone
+        a = Device.objects.create(hostname="agg-a", ip_address="10.4.0.1", status="active")
+        b = Device.objects.create(hostname="agg-b", ip_address="10.4.0.2", status="active")
+        now = timezone.now()
+        TopologyLink.objects.create(device_a=a, port_a="Gi1", device_b=b, port_b="Gi1", link_speed_mbps=1000, last_seen=now)
+        TopologyLink.objects.create(device_a=a, port_a="Gi2", device_b=b, port_b="Gi2", link_speed_mbps=10000, last_seen=now)
+        body = auth_client.get("/api/devices/topology/").json()
+        assert len(body["edges"]) == 1
+        e = body["edges"][0]
+        assert e["link_count"] == 2 and e["label"] == "x2"
+        assert len(e["links"]) == 2 and e["speed_mbps"] == 10000  # fastest member
+
+    def test_topology_link_and_lldp_dedupe(self, auth_client):
+        # The same physical link present as BOTH a TopologyLink and an LLDP match
+        # must not be double-counted.
+        from django.utils import timezone
+        from apps.devices.models import LLDPNeighbor
+        a = Device.objects.create(hostname="d-a", ip_address="10.7.0.1", status="active")
+        b = Device.objects.create(hostname="d-b", ip_address="10.7.0.2", status="active")
+        now = timezone.now()
+        TopologyLink.objects.create(device_a=a, port_a="GigabitEthernet4", device_b=b,
+                                    port_b="GigabitEthernet4", last_seen=now)
+        LLDPNeighbor.objects.create(seen_by=a, local_interface="Gi4", port_id="Gi4",
+                                    matched_device=b, last_seen=now)
+        body = auth_client.get("/api/devices/topology/").json()
+        assert len(body["edges"]) == 1 and body["edges"][0]["link_count"] == 1
+
+    def test_ap_node_includes_client_count_and_radios(self, auth_client):
+        from apps.devices.models import Device as Dev
+        from apps.integrations.models import UnifiApStatus
+        ap = Dev.objects.create(hostname="ap-x", ip_address="10.8.0.1", platform="unifi_ap", status="active")
+        UnifiApStatus.objects.create(device=ap, state=1, client_count=22,
+                                     radios=[{"band": "2.4GHz", "channel": 6},
+                                             {"band": "5GHz", "channel": 36}])
+        body = auth_client.get("/api/devices/topology/").json()
+        node = next(n for n in body["nodes"] if n["label"] == "ap-x")
+        assert node["client_count"] == 22
+        assert {r["band"] for r in node["radios"]} == {"2.4GHz", "5GHz"}
+
     def test_site_filter(self, auth_client):
         from apps.devices.models import Site
         s = Site.objects.create(name="DC-T")
