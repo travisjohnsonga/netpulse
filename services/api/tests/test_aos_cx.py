@@ -195,6 +195,146 @@ class TestAOSCXClient:
         assert by["1/1/4"]["neighbor_mgmt_ip"] == ""
         assert by["1/1/5"]["neighbor_mgmt_ip"] == "10.150.0.15"
 
+    def test_aos_cx_interface_stats_captured(self):
+        """depth-2 interfaces carry statistics + rate_statistics + mtu."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces": {
+            "1/1/1": {
+                "name": "1/1/1", "admin_state": "up", "link_state": "up",
+                "link_speed": 10_000_000_000, "mtu": 1500, "description": "uplink",
+                "statistics": {"rx_bytes": 1000, "tx_bytes": 2000,
+                               "rx_packets": 10, "tx_packets": 20,
+                               "if_in_errors": 1, "fe_if_in_discard_packets": 3},
+                "rate_statistics": {"rx_bytes_per_second": 100, "tx_bytes_per_second": 200,
+                                    "rx_packets_per_second": 5, "tx_packets_per_second": 6},
+            },
+        }})
+        from apps.devices.aos_cx_client import interface_counters
+        iface = client.get_interfaces()[0]
+        assert iface["mtu"] == 1500
+        assert iface["speed_mbps"] == 10_000
+        c = interface_counters(iface)
+        assert c["rx_bytes"] == 1000 and c["tx_bytes"] == 2000
+        assert c["rx_packets"] == 10 and c["tx_packets"] == 20
+        assert c["rx_errors"] == 1 and c["rx_discards"] == 3
+        assert c["rx_bps"] == 100 and c["tx_bps"] == 200
+        assert c["rx_pps"] == 5 and c["tx_pps"] == 6
+        assert c["tx_errors"] is None   # firmware doesn't expose if_out_errors
+
+    def test_aos_cx_interface_counters_falls_back_to_hc_keys(self):
+        """rx/tx bytes fall back to the if_hc_* high-capacity counters."""
+        from apps.devices.aos_cx_client import interface_counters
+        c = interface_counters({"statistics": {"if_hc_in_bytes": 42, "if_hc_out_bytes": 43}})
+        assert c["rx_bytes"] == 42 and c["tx_bytes"] == 43
+
+    def test_aos_cx_system_info_serial_and_base_mac(self):
+        """get_system_info reads serial/base-MAC off the chassis product_info."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={
+            "system": {"hostname": "wco2-mdf-crt-01", "platform_name": "6300",
+                       "software_version": "FL.10.13.1160"},
+            "system/subsystems": {"chassis,1": "/rest/v10.09/system/subsystems/chassis,1",
+                                  "fan_tray,1/1": "/uri"},
+            "system/subsystems/chassis,1": {"product_info": {
+                "base_mac_address": "9c:37:08:25:f3:40", "serial_number": "SG44LMP040",
+                "product_name": "6300M 24SFP+ 4SFP56 Swch", "part_number": "JL658A"}},
+        })
+        info = client.get_system_info()
+        assert info["hostname"] == "wco2-mdf-crt-01"
+        assert info["os_version"] == "FL.10.13.1160"
+        assert info["model"] == "6300"
+        assert info["serial_number"] == "SG44LMP040"
+        assert info["base_mac"] == "9c:37:08:25:f3:40"
+        assert info["part_number"] == "JL658A"
+
+    def test_aos_cx_arp_table_across_vrfs(self):
+        """ARP comes from per-VRF neighbors; IPv6 ND is skipped, MAC kept raw."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={
+            "system/vrfs": {"default": "/uri", "mgmt": "/uri"},
+            "system/vrfs/default/neighbors": {
+                "10.150.0.1,vlan1": {
+                    "address_family": "ipv4", "from": "dynamic", "ip_address": "10.150.0.1",
+                    "mac": "1a:c2:41:2c:0b:0c", "state": "reachable",
+                    "port": {"vlan1": "/rest/v10.09/system/interfaces/vlan1"}},
+                "fe80::1,vlan1": {  # IPv6 ND — must be skipped
+                    "address_family": "ipv6", "ip_address": "fe80::1",
+                    "mac": "1a:c2:41:2c:0b:0d"},
+                "10.150.0.2,vlan5": {  # static
+                    "address_family": "ipv4", "from": "static", "ip_address": "10.150.0.2",
+                    "mac": "aa:bb:cc:dd:ee:ff",
+                    "port": {"vlan5": "/rest/v10.09/system/interfaces/vlan5"}},
+            },
+            "system/vrfs/mgmt/neighbors": {},
+        })
+        rows = client.get_arp_table()
+        by_ip = {r["ip_address"]: r for r in rows}
+        assert set(by_ip) == {"10.150.0.1", "10.150.0.2"}   # IPv6 excluded
+        assert by_ip["10.150.0.1"]["mac_address"] == "1a:c2:41:2c:0b:0c"  # raw
+        assert by_ip["10.150.0.1"]["interface"] == "vlan1"
+        assert by_ip["10.150.0.1"]["vlan"] == 1
+        assert by_ip["10.150.0.1"]["entry_type"] == "dynamic"
+        assert by_ip["10.150.0.2"]["entry_type"] == "static"
+        assert by_ip["10.150.0.2"]["vlan"] == 5
+
+    def test_aos_cx_mac_table_from_vlans(self):
+        """MAC table is read from each VLAN's macs child (keyed selector,mac)."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/vlans": {
+            "1": {"id": 1, "macs": {
+                "dynamic,00:09:01:12:a6:c3": {
+                    "mac_addr": "00:09:01:12:a6:c3", "from": "dynamic",
+                    "port": {"lag2": "/rest/v10.09/system/interfaces/lag2"}},
+            }},
+            "5": {"id": 5, "macs": {
+                "static,aa:bb:cc:00:11:22": {
+                    "mac_addr": "aa:bb:cc:00:11:22", "from": "static",
+                    "port": {"1/1/3": "/rest/v10.09/system/interfaces/1%2F1%2F3"}},
+            }},
+        }})
+        rows = client.get_mac_table()
+        by_mac = {r["mac_address"]: r for r in rows}
+        assert by_mac["00:09:01:12:a6:c3"]["vlan"] == 1
+        assert by_mac["00:09:01:12:a6:c3"]["interface"] == "lag2"
+        assert by_mac["00:09:01:12:a6:c3"]["entry_type"] == "dynamic"
+        assert by_mac["aa:bb:cc:00:11:22"]["vlan"] == 5
+        assert by_mac["aa:bb:cc:00:11:22"]["interface"] == "1/1/3"
+        assert by_mac["aa:bb:cc:00:11:22"]["entry_type"] == "static"
+
+    def test_aos_cx_environment_sensors(self):
+        """Temp/fan/PSU sensors aggregate across subsystems; temp → °C."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/subsystems": {
+            "line_card,1/1": {"temp_sensors": {
+                "1/1-ASIC": {"name": "1/1-ASIC", "location": "asic",
+                             "temperature": 61375, "status": "normal"}}},
+            "fan_tray,1/1": {"fans": {
+                "Tray-1/1/1": {"name": "Tray-1/1/1", "rpm": 6941, "speed": "slow",
+                               "status": "ok"}}},
+            "chassis,1": {"power_supplies": {
+                "1/1": {"name": "1/1", "status": "ok",
+                        "characteristics": {"instantaneous_power": 27, "maximum_power": 250},
+                        "identity": {"product_name": "JL085A", "serial_number": "TH46"}}}},
+        }})
+        env = client.get_environment()
+        assert env["temperatures"][0]["temperature_c"] == 61.375
+        assert env["temperatures"][0]["status"] == "normal"
+        assert env["fans"][0]["rpm"] == 6941 and env["fans"][0]["status"] == "ok"
+        psu = env["power_supplies"][0]
+        assert psu["status"] == "ok" and psu["maximum_power"] == 250
+        assert psu["model"] == "JL085A"
+
+    def test_aos_cx_vlans(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/vlans": {
+            "1": {"id": 1, "name": "DEFAULT_VLAN_1", "admin": "up",
+                  "oper_state": "up", "type": "static"},
+            "20": {"id": 20, "name": "DATA", "admin": "up", "oper_state": "down"},
+        }})
+        by_id = {v["id"]: v for v in client.get_vlans()}
+        assert by_id[1]["name"] == "DEFAULT_VLAN_1" and by_id[1]["oper_state"] == "up"
+        assert by_id[20]["name"] == "DATA" and by_id[20]["oper_state"] == "down"
+
     def test_aos_cx_lldp_falls_back_to_interface_walk(self):
         """FL.10.13 returns HTTP 400 for lldp_neighbors_info → walk interfaces.
 

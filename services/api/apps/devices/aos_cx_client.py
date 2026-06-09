@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import unquote
 
 import requests
 import urllib3
@@ -121,6 +122,8 @@ class AOSCXClient:
                             "link_state": "", "ip": "", "description": "",
                             "speed_mbps": None})
                 continue
+            stats = obj.get("statistics")
+            rates = obj.get("rate_statistics")
             out.append({
                 "name": obj.get("name", name) or name,
                 "type": obj.get("type", "") or "",
@@ -129,6 +132,9 @@ class AOSCXClient:
                 "ip": obj.get("ip4_address", "") or "",
                 "description": obj.get("description", "") or "",
                 "speed_mbps": _speed_mbps(obj.get("link_speed")),
+                "mtu": _int_or_none(obj.get("mtu") or obj.get("active_mtu")),
+                "statistics": stats if isinstance(stats, dict) else {},
+                "rate_statistics": rates if isinstance(rates, dict) else {},
             })
         return out
 
@@ -263,6 +269,260 @@ class AOSCXClient:
                 or info.get("capabilities") or ""),
         }
 
+    # ── richer system info (stack serial / base MAC) ─────────────────────────
+    def get_system_info(self) -> dict:
+        """
+        Return the full normalized system identity:
+        ``{hostname, os_version, model, serial_number, base_mac, product_name,
+        part_number, raw}``.
+
+        ``hostname``/``os_version``/``model`` come straight off ``GET /system``
+        (``platform_name`` is the model family, e.g. ``6300``). ``serial_number``
+        and ``base_mac`` live on the chassis subsystem's ``product_info`` block —
+        on a VSF stack the conductor (first chassis) carries the system identity —
+        so they are read from the first ``chassis,*`` subsystem.
+        """
+        data = self._get("system", params={
+            "depth": 1,
+            "attributes": "hostname,platform_name,software_version",
+        })
+        pi = self._primary_chassis_product_info()
+        return {
+            "hostname": data.get("hostname", "") or "",
+            "os_version": data.get("software_version", "") or "",
+            "model": data.get("platform_name", "") or "",
+            "serial_number": pi.get("serial_number", "") or "",
+            "base_mac": pi.get("base_mac_address", "") or "",
+            "product_name": pi.get("product_name", "") or "",
+            "part_number": pi.get("part_number", "") or "",
+            "raw": data,
+        }
+
+    def _primary_chassis_product_info(self) -> dict:
+        """``product_info`` of the first chassis subsystem (serial + base MAC).
+
+        Returns ``{}`` when the subsystems collection or the chassis resource is
+        unavailable so ``get_system_info`` still returns the core fields.
+        """
+        try:
+            subs = self._get("system/subsystems")
+        except Exception as exc:  # noqa: BLE001 — identity is best-effort
+            logger.debug("AOS-CX %s: subsystems unavailable (%s)", self.ip, exc)
+            return {}
+        if not isinstance(subs, dict):
+            return {}
+        chassis_key = next((k for k in subs if str(k).startswith("chassis")), None)
+        if not chassis_key:
+            return {}
+        try:
+            obj = self._get(f"system/subsystems/{_enc(chassis_key)}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("AOS-CX %s: chassis %s unavailable (%s)", self.ip, chassis_key, exc)
+            return {}
+        pi = obj.get("product_info") if isinstance(obj, dict) else None
+        return pi if isinstance(pi, dict) else {}
+
+    # ── ARP / neighbour table ─────────────────────────────────────────────────
+    def get_arp_table(self) -> list[dict]:
+        """
+        Return the IPv4 ARP table across all VRFs as normalized rows
+        ``[{ip_address, mac_address, interface, vlan, age_minutes, protocol,
+        entry_type}]`` (the schema ``apps.arp_mac.store_arp_mac`` persists).
+
+        AOS-CX exposes ARP as the per-VRF ``neighbors`` collection
+        (``GET /system/vrfs/<vrf>/neighbors?depth=2``); each entry carries
+        ``ip_address``, ``mac``, ``from`` (dynamic/static) and a ``port``
+        reference. IPv6 neighbour-discovery entries are skipped (ARP is IPv4).
+        MAC addresses are returned as advertised — the caller normalises them.
+        """
+        out: list[dict] = []
+        for vrf in self._list_vrfs():
+            try:
+                data = self._get(f"system/vrfs/{_enc(vrf)}/neighbors", params={"depth": 2})
+            except Exception as exc:  # noqa: BLE001 — VRF may have no neighbours
+                logger.debug("AOS-CX %s: neighbors for vrf %s unavailable (%s)",
+                             self.ip, vrf, exc)
+                continue
+            for key, nb in _iter_named(data):
+                row = _parse_arp_neighbor(key, nb)
+                if row:
+                    out.append(row)
+        return out
+
+    # ── MAC address table ─────────────────────────────────────────────────────
+    def get_mac_table(self) -> list[dict]:
+        """
+        Return the bridge MAC address-table as normalized rows
+        ``[{mac_address, vlan, interface, entry_type}]``.
+
+        AOS-CX keys the forwarding table under each VLAN's ``macs`` child; a
+        single ``GET /system/vlans?depth=4&attributes=id,macs`` expands every
+        VLAN's table in one request. Each entry is keyed ``<selector>,<mac>``
+        and carries ``mac_addr``, ``from`` (dynamic/static) and a ``port`` ref.
+        Returns ``[]`` if the table is empty or the shape is unexpected.
+        """
+        out: list[dict] = []
+        try:
+            data = self._get("system/vlans", params={"depth": 4, "attributes": "id,macs"})
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("AOS-CX %s: vlan mac table unavailable (%s)", self.ip, exc)
+            return out
+        if not isinstance(data, dict):
+            return out
+        for vkey, vlan in data.items():
+            if not isinstance(vlan, dict):
+                continue
+            vid = vlan.get("id") if vlan.get("id") is not None else _int_or_none(vkey)
+            macs = vlan.get("macs")
+            if not isinstance(macs, dict):
+                continue
+            for mkey, m in macs.items():
+                row = _parse_mac_entry(vid, mkey, m)
+                if row:
+                    out.append(row)
+        return out
+
+    # ── environment / sensors ─────────────────────────────────────────────────
+    def get_environment(self) -> dict:
+        """
+        Return temperature/fan/PSU sensors aggregated across every subsystem:
+        ``{temperatures: [...], fans: [...], power_supplies: [...]}``.
+
+        A single ``GET /system/subsystems?depth=4`` (scoped to the sensor
+        children) expands each member's ``temp_sensors``/``fans``/
+        ``power_supplies`` inline. AOS-CX reports temperatures in milli-degrees
+        Celsius (61375 → 61.375 °C). Returns empty lists on any error.
+        """
+        env = {"temperatures": [], "fans": [], "power_supplies": []}
+        try:
+            data = self._get("system/subsystems", params={
+                "depth": 4,
+                "attributes": "name,type,temp_sensors,fans,power_supplies",
+            })
+        except Exception as exc:  # noqa: BLE001 — environment is best-effort
+            logger.debug("AOS-CX %s: subsystems environment unavailable (%s)", self.ip, exc)
+            return env
+        if not isinstance(data, dict):
+            return env
+        for sub_name, sub in data.items():
+            if not isinstance(sub, dict):
+                continue
+            for sname, s in _iter_named(sub.get("temp_sensors") or {}):
+                if isinstance(s, dict):
+                    env["temperatures"].append({
+                        "name": s.get("name") or sname,
+                        "subsystem": sub_name,
+                        "location": s.get("location", "") or "",
+                        "temperature_c": _milli_c(s.get("temperature")),
+                        "status": s.get("status", "") or "",
+                    })
+            for fname, f in _iter_named(sub.get("fans") or {}):
+                if isinstance(f, dict):
+                    env["fans"].append({
+                        "name": f.get("name") or fname,
+                        "subsystem": sub_name,
+                        "rpm": _int_or_none(f.get("rpm")),
+                        "speed": f.get("speed", "") or "",
+                        "status": f.get("status", "") or "",
+                    })
+            for pname, p in _iter_named(sub.get("power_supplies") or {}):
+                if isinstance(p, dict):
+                    char = p.get("characteristics") or {}
+                    ident = p.get("identity") or {}
+                    env["power_supplies"].append({
+                        "name": p.get("name") or pname,
+                        "subsystem": sub_name,
+                        "status": p.get("status", "") or "",
+                        "instantaneous_power": _int_or_none(char.get("instantaneous_power")),
+                        "maximum_power": _int_or_none(char.get("maximum_power")),
+                        "model": ident.get("product_name", "") or "",
+                        "serial": ident.get("serial_number", "") or "",
+                    })
+        return env
+
+    # ── VLANs ─────────────────────────────────────────────────────────────────
+    def get_vlans(self) -> list[dict]:
+        """Return VLANs as ``[{id, name, admin, oper_state, type, description}]``
+        from ``GET /system/vlans?depth=2`` (keyed by VLAN id)."""
+        out: list[dict] = []
+        data = self._get("system/vlans", params={"depth": 2})
+        for key, v in _iter_named(data):
+            if not isinstance(v, dict):
+                out.append({"id": _int_or_none(key), "name": "", "admin": "",
+                            "oper_state": "", "type": "", "description": ""})
+                continue
+            out.append({
+                "id": v.get("id") if v.get("id") is not None else _int_or_none(key),
+                "name": v.get("name", "") or "",
+                "admin": v.get("admin", "") or "",
+                "oper_state": v.get("oper_state", "") or "",
+                "type": v.get("type", "") or "",
+                "description": v.get("description", "") or "",
+            })
+        return out
+
+    # ── routes (lower priority) ───────────────────────────────────────────────
+    def get_routes(self) -> list[dict]:
+        """Return IPv4/IPv6 routes across all VRFs as
+        ``[{prefix, vrf, address_family, protocol}]`` (best-effort)."""
+        out: list[dict] = []
+        for vrf in self._list_vrfs():
+            try:
+                data = self._get(f"system/vrfs/{_enc(vrf)}/routes", params={"depth": 2})
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("AOS-CX %s: routes for vrf %s unavailable (%s)",
+                             self.ip, vrf, exc)
+                continue
+            for key, r in _iter_named(data):
+                if not isinstance(r, dict):
+                    out.append({"prefix": unquote(str(key)), "vrf": vrf,
+                                "address_family": "", "protocol": ""})
+                    continue
+                out.append({
+                    "prefix": r.get("prefix") or unquote(str(key)),
+                    "vrf": vrf,
+                    "address_family": r.get("address_family", "") or "",
+                    "protocol": r.get("from", "") or "",
+                })
+        return out
+
+    # ── unified collection ────────────────────────────────────────────────────
+    def collect_all(self) -> dict:
+        """
+        Collect everything AOS-CX exposes over REST in one authenticated session:
+        ``{system, interfaces, arp, mac, environment, vlans, lldp}``. Each piece
+        is best-effort — a failure in one section yields an empty value for it
+        rather than aborting the whole collection.
+        """
+        def _safe(fn, default):
+            try:
+                return fn()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("AOS-CX %s: %s failed: %s", self.ip, fn.__name__, exc)
+                return default
+
+        return {
+            "system": _safe(self.get_system_info, {}),
+            "interfaces": _safe(self.get_interfaces, []),
+            "arp": _safe(self.get_arp_table, []),
+            "mac": _safe(self.get_mac_table, []),
+            "environment": _safe(self.get_environment,
+                                 {"temperatures": [], "fans": [], "power_supplies": []}),
+            "vlans": _safe(self.get_vlans, []),
+            "lldp": _safe(self.get_lldp_neighbors, []),
+        }
+
+    def _list_vrfs(self) -> list[str]:
+        """VRF names from ``GET /system/vrfs`` (falls back to ``['default']``)."""
+        try:
+            data = self._get("system/vrfs")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("AOS-CX %s: vrfs unavailable (%s)", self.ip, exc)
+            return ["default"]
+        if isinstance(data, dict) and data:
+            return list(data.keys())
+        return ["default"]
+
     # ── internals ─────────────────────────────────────────────────────────────
     def _url(self, path: str) -> str:
         return f"{self.base_url}/{path.lstrip('/')}"
@@ -328,3 +588,123 @@ def _last_segment(key: str) -> str:
     local port is the leading segment.
     """
     return str(key).split(",", 1)[0]
+
+
+def _enc(key: str) -> str:
+    """
+    Encode an AOS-CX resource key for use as a URL path segment. Slashes inside
+    interface/subsystem names (e.g. ``line_card,1/1``) must be percent-encoded
+    so they aren't read as path separators; commas are left as-is (AOS-CX returns
+    them unencoded in its own URIs).
+    """
+    return str(key).replace("/", "%2F")
+
+
+def _int_or_none(value):
+    """Best-effort int (handles AOS-CX numeric strings); None when unparseable."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _milli_c(value):
+    """AOS-CX reports sensor temperature in milli-degrees C (61375 → 61.375)."""
+    v = _int_or_none(value)
+    return round(v / 1000.0, 3) if v is not None else None
+
+
+def _ref_name(ref) -> str:
+    """
+    Resolve an AOS-CX resource reference to a bare name. References come as a
+    ``{name: URI}`` dict (depth ≥ 2) or a plain URI string; either way we want
+    the interface/VLAN name (the dict key, or the URI's last decoded segment).
+    """
+    if isinstance(ref, dict) and ref:
+        return str(next(iter(ref.keys())))
+    if isinstance(ref, str) and ref:
+        return unquote(ref.rstrip("/").rsplit("/", 1)[-1])
+    return ""
+
+
+def _vlan_from_ifname(name: str):
+    """VLAN id from an SVI interface name (``vlan20`` → 20); None otherwise."""
+    m = re.fullmatch(r"vlan(\d+)", str(name or "").strip(), re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+def _parse_arp_neighbor(key, nb) -> dict | None:
+    """Normalise one AOS-CX ``neighbors`` entry into an ARP row (IPv4 only)."""
+    if not isinstance(nb, dict):
+        return None
+    if (nb.get("address_family") or "ipv4").lower() != "ipv4":
+        return None  # IPv6 ND entries are not ARP
+    ip = nb.get("ip_address") or str(key).split(",", 1)[0]
+    mac = nb.get("mac") or ""
+    if not ip or not mac or not valid_ip(ip):
+        return None
+    iface = _ref_name(nb.get("port")) or _ref_name(nb.get("phy_port"))
+    return {
+        "ip_address": ip,
+        "mac_address": mac,
+        "interface": iface,
+        "vlan": _vlan_from_ifname(iface),
+        "age_minutes": None,   # AOS-CX neighbours carry no age
+        "protocol": "Internet",
+        "entry_type": "static" if (nb.get("from") or "").lower() in ("static", "permanent")
+        else "dynamic",
+    }
+
+
+def _parse_mac_entry(vid, key, m) -> dict | None:
+    """Normalise one AOS-CX VLAN ``macs`` entry (keyed ``<selector>,<mac>``)."""
+    parts = str(key).split(",")
+    key_mac = parts[-1] if len(parts) >= 2 else ""
+    key_sel = parts[0] if len(parts) >= 2 else ""
+    if isinstance(m, dict):
+        mac = m.get("mac_addr") or key_mac
+        iface = _ref_name(m.get("port"))
+        sel = m.get("from") or key_sel or "dynamic"
+    else:
+        mac, iface, sel = key_mac, "", (key_sel or "dynamic")
+    if not mac:
+        return None
+    return {
+        "mac_address": mac,
+        "vlan": _int_or_none(vid),
+        "interface": iface,
+        "entry_type": str(sel).lower(),
+    }
+
+
+def interface_counters(iface: dict) -> dict:
+    """
+    Map an AOS-CX interface (from :meth:`AOSCXClient.get_interfaces`) onto the
+    common interface-counter schema. ``statistics`` holds cumulative counters and
+    ``rate_statistics`` the device-computed per-second rates — preferring the
+    latter avoids re-deriving rates from counter deltas. Missing counters
+    (e.g. errors aren't exposed on every firmware) come back as ``None``.
+    """
+    st = iface.get("statistics") or {}
+    rt = iface.get("rate_statistics") or {}
+
+    def pick(src, *keys):
+        for k in keys:
+            if src.get(k) is not None:
+                return _int_or_none(src.get(k))
+        return None
+
+    return {
+        "rx_bytes": pick(st, "rx_bytes", "if_hc_in_bytes"),
+        "tx_bytes": pick(st, "tx_bytes", "if_hc_out_bytes"),
+        "rx_packets": pick(st, "rx_packets", "if_hc_in_unicast_packets"),
+        "tx_packets": pick(st, "tx_packets", "if_hc_out_unicast_packets"),
+        "rx_errors": pick(st, "if_in_errors", "rx_errors"),
+        "tx_errors": pick(st, "if_out_errors", "tx_errors"),
+        "rx_discards": pick(st, "fe_if_in_discard_packets", "if_in_discards", "rx_dropped"),
+        "tx_discards": pick(st, "if_out_discards", "tx_dropped"),
+        "rx_bps": pick(rt, "rx_bytes_per_second"),
+        "tx_bps": pick(rt, "tx_bytes_per_second"),
+        "rx_pps": pick(rt, "rx_packets_per_second"),
+        "tx_pps": pick(rt, "tx_packets_per_second"),
+    }
