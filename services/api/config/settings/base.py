@@ -286,6 +286,12 @@ COLLECTOR_PKI_ROOT_MOUNT = os.environ.get("COLLECTOR_PKI_ROOT_MOUNT", "pki_root"
 COLLECTOR_PKI_ROLE = os.environ.get("COLLECTOR_PKI_ROLE", "collector")
 COLLECTOR_CERT_TTL = os.environ.get("COLLECTOR_CERT_TTL", "720h")
 
+# The secret-broker MUST use its least-privilege AppRole in production; it will
+# refuse to start (and refuse to read) rather than fall back to the platform
+# token. Defaults to "required whenever DEBUG is false"; can be forced on.
+BROKER_REQUIRE_APPROLE = os.environ.get(
+    "BROKER_REQUIRE_APPROLE", str(not DEBUG)).lower() == "true"
+
 # Rebuild the DiscoveredPlatformModel fleet inventory (OS-version compliance) on
 # every Device save/delete. Disabled in tests to keep device-creation cheap; the
 # scheduler refreshes it every 6h regardless.

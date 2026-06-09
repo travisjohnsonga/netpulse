@@ -1,0 +1,13 @@
+name: t4echo
+services:
+  hub:
+    image: nats:2.10-alpine
+    working_dir: /data
+    command: ["-c","/etc/nats/hub.conf"]
+    volumes: ["./hub.conf:/etc/nats/hub.conf:ro","./out/resolver.conf:/etc/nats/resolver.conf:ro","hubdata:/data"]
+  driver:
+    image: natsio/nats-box:latest
+    command: ["sleep","infinity"]
+    volumes: ["./:/work","./nsc:/nsc","./creds:/creds:ro"]
+    environment: { NSC_HOME: /nsc, XDG_DATA_HOME: /nsc/data, XDG_CONFIG_HOME: /nsc/config, NKEYS_PATH: /nsc/keys }
+volumes: { hubdata: {} }
