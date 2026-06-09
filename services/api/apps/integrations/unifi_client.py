@@ -104,6 +104,17 @@ class UnifiClient:
         """All access points (type 'uap') with their radio/health stats."""
         return self.get_devices(device_type="uap")
 
+    def get_gateway_stats(self) -> dict | None:
+        """The UDM/gateway/console device dict (type ugw/udm/usg/uxg), or None."""
+        for d in self.get_devices():
+            if (d.get("type") or "").lower() in ("ugw", "udm", "usg", "uxg", "ucg"):
+                return d
+        return None
+
+    def get_system_health(self) -> list:
+        """Site health subsystems (wan/wan2/vpn/www/lan/wlan) with status/throughput."""
+        return self._get(f"/api/s/{self.site_id}/stat/health")
+
     def get_clients(self) -> list:
         """Connected client stations for the site."""
         return self._get(f"/api/s/{self.site_id}/stat/sta", timeout=30)

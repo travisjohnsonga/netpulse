@@ -77,7 +77,7 @@ class Command(BaseCommand):
             ["hostname_check", HOSTNAME_CHECK_INTERVAL_S, self._check_hostnames, False, None],
             ["lldp_collect", LLDP_COLLECT_INTERVAL_S, self._collect_lldp, False, None],
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
-            ["unifi_telemetry", UNIFI_TELEMETRY_INTERVAL_S, self._collect_unifi_telemetry, False, None],
+            ["unifi_telemetry", UNIFI_TELEMETRY_INTERVAL_S, self._collect_unifi_telemetry, True, None],
             ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
             ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
             ["audit_purge", AUDIT_PURGE_INTERVAL_S, self._purge_audit_log, False, None],

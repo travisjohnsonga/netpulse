@@ -4,10 +4,11 @@ import {
   fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
   fetchDeviceMetrics, enrichDevice, checkHostname, fetchDeviceAudit,
   type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig, type DeviceMetrics,
-  type AuditLogEntry,
+  type AuditLogEntry, UNIFI_CONSOLE_PLATFORMS,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
 import DeviceEditModal from '../../components/DeviceEditModal'
+import ConsoleTelemetry from './ConsoleTelemetry'
 
 const SEVERITY_BADGE: Record<string, string> = {
   critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
@@ -107,8 +108,13 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
     return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${mm}m` : `${mm}m`
   }
 
+  const isUnifiConsole = UNIFI_CONSOLE_PLATFORMS.includes(device.platform)
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* UniFi console (UDM / Cloud Key) controller + WAN telemetry */}
+      {isUnifiConsole && <ConsoleTelemetry device={device} />}
+
       {/* Device info */}
       <Card className="lg:col-span-2">
         <div className="flex items-center justify-between mb-3">

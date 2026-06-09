@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .models import (
     EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiApStatus,
-    UnifiCloudAccount, UnifiController,
+    UnifiCloudAccount, UnifiConsoleStatus, UnifiController,
 )
 
 
@@ -128,6 +128,24 @@ class UnifiApStatusSerializer(serializers.ModelSerializer):
             "client_count", "cpu_pct", "memory_pct", "temperature_c",
             "uptime_seconds", "uplink_speed_mbps", "uplink_type", "radios",
             "last_collected",
+        )
+
+
+class UnifiConsoleStatusSerializer(serializers.ModelSerializer):
+    """Latest console/gateway snapshot for the device-detail Overview panels."""
+    device_id = serializers.IntegerField(source="device.id", read_only=True)
+    hostname = serializers.CharField(source="device.hostname", read_only=True)
+    model = serializers.CharField(source="device.model", read_only=True)
+    os_version = serializers.CharField(source="device.os_version", read_only=True)
+    controller_name = serializers.CharField(source="controller.name", read_only=True, default=None)
+
+    class Meta:
+        model = UnifiConsoleStatus
+        fields = (
+            "device_id", "hostname", "model", "os_version", "controller_name",
+            "state", "satisfaction", "cpu_pct", "memory_pct", "temperature_c",
+            "uptime_seconds", "loadavg_1", "loadavg_5", "loadavg_15",
+            "num_adopted", "num_disconnected", "num_pending", "wans", "last_collected",
         )
 
 

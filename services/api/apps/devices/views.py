@@ -327,6 +327,30 @@ class DeviceViewSet(viewsets.ModelViewSet):
             "timeseries": query_ap_timeseries(str(device.id), period),
         })
 
+    @extend_schema(
+        summary="UniFi console/gateway telemetry: latest snapshot + time-series",
+        parameters=[OpenApiParameter("period", str, description="1h|6h|24h|7d (default 1h)")],
+        responses=None,
+    )
+    @action(detail=True, methods=["get"], url_path="unifi-console")
+    def unifi_console(self, request, pk=None):
+        """Current console status (controller health + WAN) + InfluxDB series.
+
+        Returns ``{status, timeseries}``; ``status`` is null until telemetry has
+        been collected for this console.
+        """
+        from apps.integrations.serializers import UnifiConsoleStatusSerializer
+        from apps.integrations.unifi_telemetry import query_console_timeseries
+
+        device = self.get_object()
+        status_obj = getattr(device, "unifi_console_status", None)
+        status_data = UnifiConsoleStatusSerializer(status_obj).data if status_obj else None
+        period = request.query_params.get("period", "1h")
+        return Response({
+            "status": status_data,
+            "timeseries": query_console_timeseries(str(device.id), period),
+        })
+
     @action(detail=True, methods=["get"], url_path="reachability")
     def reachability(self, request, pk=None):
         """Ping/RTT latency + reachability history (?period=1h|6h|24h|7d)."""

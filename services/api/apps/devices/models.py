@@ -167,6 +167,8 @@ class Device(TimestampedModel):
         UNIFI_SW = "unifi_sw", "UniFi Switch"
         UNIFI_GW = "unifi_gw", "UniFi Gateway"
         UNIFI_UDM = "unifi_udm", "UniFi Dream Machine"
+        UNIFI_UCKP = "unifi_uckp", "UniFi CloudKey"
+        UNIFI_UCG = "unifi_ucg", "UniFi Console Gateway"
         OTHER = "other", "Other"
 
     hostname = models.CharField(max_length=255, unique=True, db_index=True)

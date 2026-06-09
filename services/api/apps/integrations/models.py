@@ -203,3 +203,45 @@ class UnifiApStatus(TimestampedModel):
 
     def __str__(self):
         return f"AP status for {self.device_id}"
+
+
+class UnifiConsoleStatus(TimestampedModel):
+    """
+    Latest telemetry snapshot for a UniFi console / gateway (UDM, UDM-Pro, Cloud
+    Key, UXG …), refreshed by the UniFi-telemetry scheduler task.
+
+    Like UnifiApStatus, this holds the most-recent values so the device-detail
+    Overview panels (Controller Status + WAN) render without an InfluxDB
+    round-trip; the rolling time-series goes to InfluxDB (unifi_controller_health
+    / unifi_wan). WAN detail is JSON since a console may have 1–2 uplinks.
+    """
+    device = models.OneToOneField(
+        "devices.Device", on_delete=models.CASCADE, related_name="unifi_console_status",
+    )
+    controller = models.ForeignKey(
+        UnifiController, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="console_statuses",
+    )
+    state = models.IntegerField(default=0, help_text="UniFi state: 1=connected, 0=disconnected")
+    satisfaction = models.IntegerField(null=True, blank=True, help_text="UniFi health score 0-100")
+    cpu_pct = models.FloatField(null=True, blank=True)
+    memory_pct = models.FloatField(null=True, blank=True)
+    temperature_c = models.FloatField(null=True, blank=True)
+    uptime_seconds = models.BigIntegerField(null=True, blank=True)
+    loadavg_1 = models.FloatField(null=True, blank=True)
+    loadavg_5 = models.FloatField(null=True, blank=True)
+    loadavg_15 = models.FloatField(null=True, blank=True)
+    num_adopted = models.IntegerField(default=0)
+    num_disconnected = models.IntegerField(default=0)
+    num_pending = models.IntegerField(default=0)
+    # Per-WAN detail: list of {name, key, ip, up, speed_mbps, latency_ms,
+    # rx_bps, tx_bps, uptime}.
+    wans = models.JSONField(default=list)
+    last_collected = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "UniFi Console Status"
+        verbose_name_plural = "UniFi Console Statuses"
+
+    def __str__(self):
+        return f"Console status for {self.device_id}"

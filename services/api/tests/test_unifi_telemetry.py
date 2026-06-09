@@ -28,16 +28,36 @@ RAW_AP = {
 }
 
 
+RAW_GW = {
+    "type": "udm", "mac": "0c:ea:14:c7:be:8d", "name": "IEAG-Brownfield",
+    "ip": "10.7.40.43", "model": "UDMPROMAX", "version": "5.1.110",
+    "uptime": 86400, "cpu": 8, "mem": 45, "temperature": 52, "satisfaction": 98,
+    "state": 1, "num_adopted": 45, "num_disconnected": 2, "num_pending": 0,
+    "sys_stats": {"loadavg_1": 0.5, "loadavg_5": 0.4, "loadavg_15": 0.3,
+                  "mem_total": 2048000, "mem_used": 921600},
+    "wan1": {"name": "WAN", "ip": "216.14.43.226", "up": True, "speed": 1000,
+             "rx_bytes-r": 12345, "tx_bytes-r": 6789, "latency": 12, "uptime": 86000},
+    "wan2": {"name": "WAN2", "ip": "10.9.9.9", "up": True, "speed": 500,
+             "rx_bytes-r": 100, "tx_bytes-r": 50, "latency": 8, "uptime": 80000},
+}
+
+
 class FakeApClient:
-    """Stand-in UnifiClient context manager returning canned AP stats."""
-    def __init__(self, aps):
+    """Stand-in UnifiClient context manager returning canned AP + gateway stats."""
+    def __init__(self, aps, gateway=None, health=None):
         self._aps = aps
+        self._gateway = gateway
+        self._health = health or []
     def __enter__(self):
         return self
     def __exit__(self, *a):
         return False
     def get_ap_stats(self):
         return self._aps
+    def get_gateway_stats(self):
+        return self._gateway
+    def get_system_health(self):
+        return self._health
 
 
 def _controller(**kw):
@@ -89,7 +109,7 @@ class TestCollect:
         monkeypatch.setattr(unifi_telemetry, "_write_influx", lambda pts: writes.extend(pts))
 
         res = unifi_telemetry.collect_controller_ap_telemetry(c)
-        assert res == {"aps": 1, "matched": 1, "skipped": 0}
+        assert res == {"aps": 1, "matched": 1, "skipped": 0, "console": 0}
 
         st = UnifiApStatus.objects.get(device=dev)
         assert st.client_count == 22 and st.satisfaction == 95
@@ -123,6 +143,51 @@ class TestCollect:
 
         totals = unifi_telemetry.collect_all_ap_telemetry()
         assert totals["controllers"] == 1 and totals["aps"] == 1
+
+
+class TestConsole:
+    def test_map_gateway(self):
+        m = unifi_telemetry.map_unifi_gateway(RAW_GW, [])
+        assert m["model"] == "UDMPROMAX" and m["cpu_pct"] == 8 and m["memory_pct"] == 45
+        assert m["satisfaction"] == 98 and m["num_adopted"] == 45 and m["num_disconnected"] == 2
+        assert m["loadavg_1"] == 0.5 and round(m["mem_total_mb"]) == 2000
+        wans = {w["key"]: w for w in m["wans"]}
+        assert set(wans) == {"wan1", "wan2"}
+        assert wans["wan1"]["ip"] == "216.14.43.226" and wans["wan1"]["up"] is True
+        assert wans["wan1"]["latency_ms"] == 12 and wans["wan1"]["rx_bps"] == 12345
+
+    def test_collect_console_persists_and_writes(self, monkeypatch):
+        from apps.integrations.models import UnifiConsoleStatus
+        c = _controller()
+        monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
+                            lambda *a, **k: FakeApClient([], gateway=RAW_GW))
+        monkeypatch.setattr("apps.integrations.unifi_sync._credentials",
+                            lambda c, p="": ("admin", "pw"))
+        writes = []
+        monkeypatch.setattr(unifi_telemetry, "_write_influx", lambda pts: writes.extend(pts))
+
+        res = unifi_telemetry.collect_controller_ap_telemetry(c)
+        assert res["console"] == 1
+        dev = Device.objects.get(ip_address="10.7.40.43")
+        assert dev.platform == "unifi_udm"
+        st = UnifiConsoleStatus.objects.get(device=dev)
+        assert st.cpu_pct == 8 and st.num_adopted == 45 and len(st.wans) == 2
+        assert st.controller_id == c.id
+        # 1 health point + 2 WAN points
+        assert len(writes) == 3
+
+    def test_device_unifi_console_endpoint(self, auth_client, monkeypatch):
+        from apps.integrations.models import UnifiConsoleStatus
+        dev = Device.objects.create(hostname="udm-1", ip_address="10.7.40.43", platform="unifi_udm")
+        UnifiConsoleStatus.objects.create(device=dev, state=1, cpu_pct=8, num_adopted=45,
+                                          wans=[{"key": "wan1", "ip": "1.2.3.4", "up": True}])
+        monkeypatch.setattr("apps.integrations.unifi_telemetry.query_console_timeseries",
+                            lambda did, period: {"device_id": did, "period": period, "health": {}, "wan": {}})
+        resp = auth_client.get(f"/api/devices/{dev.id}/unifi-console/")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"]["cpu_pct"] == 8 and body["status"]["num_adopted"] == 45
+        assert body["status"]["wans"][0]["ip"] == "1.2.3.4"
 
 
 class TestEndpoints:

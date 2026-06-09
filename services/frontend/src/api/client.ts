@@ -578,6 +578,56 @@ export async function fetchWirelessSummary(): Promise<WirelessSummary> {
   return data
 }
 
+// ── UniFi console / gateway (UDM) telemetry ──────────────────────────────────
+export interface UnifiWan {
+  key: string
+  name: string
+  ip: string
+  up: boolean
+  speed_mbps: number | null
+  latency_ms: number | null
+  rx_bps: number | null
+  tx_bps: number | null
+  uptime: number
+}
+export interface UnifiConsoleStatus {
+  device_id: number
+  hostname: string
+  model: string
+  os_version: string
+  controller_name: string | null
+  state: number
+  satisfaction: number | null
+  cpu_pct: number | null
+  memory_pct: number | null
+  temperature_c: number | null
+  uptime_seconds: number | null
+  loadavg_1: number | null
+  loadavg_5: number | null
+  loadavg_15: number | null
+  num_adopted: number
+  num_disconnected: number
+  num_pending: number
+  wans: UnifiWan[]
+  last_collected: string | null
+}
+export interface UnifiConsoleTimeseries {
+  device_id: string
+  period: string
+  health: { cpu_pct?: MetricPoint[]; memory_pct?: MetricPoint[]; loadavg_1?: MetricPoint[] }
+  wan: Record<string, { latency_ms: MetricPoint[]; rx_bps: MetricPoint[]; tx_bps: MetricPoint[] }>
+}
+export interface UnifiConsoleDetail {
+  status: UnifiConsoleStatus | null
+  timeseries: UnifiConsoleTimeseries
+}
+// Device platforms that are UniFi consoles/gateways (show the console panels).
+export const UNIFI_CONSOLE_PLATFORMS = ['unifi_udm', 'unifi_gw', 'unifi_uckp', 'unifi_ucg']
+export async function fetchDeviceUnifiConsole(deviceId: number, period = '1h'): Promise<UnifiConsoleDetail> {
+  const { data } = await api.get<UnifiConsoleDetail>(`/devices/${deviceId}/unifi-console/`, { params: { period } })
+  return data
+}
+
 export async function fetchDeviceReachability(deviceId: number, period = '1h'): Promise<DeviceReachability & { device_id: string; period: string }> {
   const { data } = await api.get(`/devices/${deviceId}/reachability/`, { params: { period } })
   return data
