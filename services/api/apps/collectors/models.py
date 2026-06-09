@@ -52,10 +52,30 @@ class Collector(TimestampedModel):
     is_default = models.BooleanField(default=False)
     # bcrypt hash of the API key issued at registration; never stored in plaintext
     api_key_hash = models.CharField(max_length=128, unique=True)
-    # OpenBao PKI serial for the collector's mTLS certificate
+    api_key_issued_at = models.DateTimeField(null=True, blank=True)
+    # OpenBao PKI serial + SHA-256 fingerprint for the collector's mTLS cert. The
+    # fingerprint is matched against the client cert NATS/central present at the
+    # leaf connection; the private key never touches the DB (it stays on the
+    # collector / in OpenBao).
     cert_serial = models.CharField(max_length=128, blank=True)
+    cert_fingerprint_sha256 = models.CharField(max_length=95, blank=True, db_index=True)
     cert_expires_at = models.DateTimeField(null=True, blank=True)
+    # One-time enrollment (bootstrap) token — stored hashed; the agent presents
+    # the plaintext once to /enroll/ to exchange it for its API key + mTLS cert.
+    enrollment_token_hash = models.CharField(max_length=128, blank=True)
+    enrolled_at = models.DateTimeField(null=True, blank=True)
+    # Per-collector NATS account name (leaf identity). The leaf credentials/seed
+    # live in OpenBao, never here.
+    nats_account = models.CharField(max_length=64, blank=True)
+    # NB: the sites a collector is responsible for are NOT stored here — that
+    # fact is owned by Site.default_collector (a single-valued FK, so a device
+    # resolves to exactly one collector). The served-sites list is the reverse
+    # accessor `collector.default_for_sites`, and the authoritative device set is
+    # apps.collectors.resolve.devices_for_collector (the inverse of
+    # effective_collector). One authority, no parallel store → no double-poll.
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
+    # Last heartbeat received from this collector (the canonical liveness stamp;
+    # see is_healthy + run_scheduler offline detection).
     last_seen_at = models.DateTimeField(null=True, blank=True)
     version = models.CharField(max_length=50, blank=True)
     remote_ip = models.GenericIPAddressField(null=True, blank=True)

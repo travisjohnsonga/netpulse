@@ -273,6 +273,11 @@ SETUP_COMPLETE = os.environ.get("SETUP_COMPLETE", "false").lower() == "true"
 # ingest-snmp poller learns about devices. Disabled in tests (no NATS).
 SNMP_DEVICE_PUBLISH = os.environ.get("SNMP_DEVICE_PUBLISH", "true").lower() == "true"
 
+# Write per-collector config bundles to the JetStream KV bucket on change
+# (config-DOWN to remote collectors). Disabled in tests (no NATS); the local
+# server still polls directly regardless.
+COLLECTOR_CONFIG_PUBLISH = os.environ.get("COLLECTOR_CONFIG_PUBLISH", "true").lower() == "true"
+
 # Rebuild the DiscoveredPlatformModel fleet inventory (OS-version compliance) on
 # every Device save/delete. Disabled in tests to keep device-creation cheap; the
 # scheduler refreshes it every 6h regardless.

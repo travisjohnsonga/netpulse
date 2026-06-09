@@ -18,6 +18,40 @@ def effective_collector(device):
     return Collector.objects.filter(is_default=True).first()
 
 
+def devices_for_collector(collector):
+    """The inverse of :func:`effective_collector`: a queryset of every device
+    that resolves to ``collector``.
+
+    This is the SINGLE authority for "which devices does this collector own" —
+    build_config (and any future caller) must go through it rather than filter
+    devices inline, so a device can never be claimed by two collectors. The
+    precedence mirrors effective_collector exactly, expressed as one efficient
+    query (no per-device Python evaluation):
+
+      device.collector == c
+      OR (device.collector is null AND site.default_collector == c)
+      OR (c.is_default AND device.collector is null
+          AND (site is null OR site.default_collector is null))
+    """
+    from django.db.models import Q
+
+    from apps.devices.models import Device
+
+    cond = Q(collector=collector)
+    cond |= Q(collector__isnull=True, site__default_collector=collector)
+    if collector.is_default:
+        cond |= Q(collector__isnull=True) & (
+            Q(site__isnull=True) | Q(site__default_collector__isnull=True)
+        )
+    return (
+        Device.objects
+        .select_related("collector", "site", "credential_profile", "telemetry_config")
+        .prefetch_related("monitored_interfaces")
+        .filter(cond)
+        .distinct()
+    )
+
+
 def effective_collector_ip(device) -> str:
     """Resolve the IP a device should send telemetry to (never raises)."""
     collector = effective_collector(device)

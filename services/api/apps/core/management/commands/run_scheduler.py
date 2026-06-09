@@ -41,6 +41,8 @@ AUDIT_LOG_RETENTION_DAYS = int(os.environ.get("AUDIT_LOG_RETENTION_DAYS", "90"))
 # Heartbeat the local collector frequently; with the default 300s tick it
 # effectively fires every tick (well under the 600s health window).
 COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
+# How often to sweep remote collectors and flip stale ones to OFFLINE.
+COLLECTOR_OFFLINE_CHECK_INTERVAL_S = int(os.environ.get("COLLECTOR_OFFLINE_CHECK_INTERVAL_S", "120"))
 DEFAULT_TICK_S = 300
 
 
@@ -77,6 +79,7 @@ class Command(BaseCommand):
             ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
             ["audit_purge", AUDIT_PURGE_INTERVAL_S, self._purge_audit_log, False, None],
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
+            ["collector_offline_sweep", COLLECTOR_OFFLINE_CHECK_INTERVAL_S, self._collector_offline_sweep, True, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -196,3 +199,23 @@ class Command(BaseCommand):
             register_local_collector,
         )
         register_local_collector()
+
+    def _collector_offline_sweep(self):
+        # Flip ACTIVE remote collectors whose heartbeat has aged past the health
+        # window to OFFLINE (the local collector self-heartbeats every tick, so
+        # it never trips). This is the single home for offline detection — no
+        # second scheduler.
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.collectors.models import HEARTBEAT_HEALTHY_SECONDS, Collector
+        cutoff = timezone.now() - timedelta(seconds=HEARTBEAT_HEALTHY_SECONDS)
+        stale = Collector.objects.filter(
+            collector_type=Collector.CollectorType.REMOTE,
+            status=Collector.Status.ACTIVE,
+            last_seen_at__lt=cutoff,
+        )
+        n = stale.update(status=Collector.Status.OFFLINE)
+        if n:
+            logger.info("scheduler: marked %d remote collector(s) offline (stale heartbeat)", n)

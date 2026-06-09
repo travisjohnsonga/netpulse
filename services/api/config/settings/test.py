@@ -32,6 +32,9 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 # No NATS in the unit-test environment — don't publish device configs on save.
 SNMP_DEVICE_PUBLISH = False
 
+# Don't publish per-collector config bundles to NATS in tests.
+COLLECTOR_CONFIG_PUBLISH = False
+
 # Don't rebuild the OS-version fleet inventory on every device save in tests.
 OS_PLATFORM_REFRESH_ON_SAVE = False
 
