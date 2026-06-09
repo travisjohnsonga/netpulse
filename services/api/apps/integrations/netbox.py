@@ -76,8 +76,23 @@ class NetBoxClient:
             raise NetBoxError(f"Could not reach NetBox: {exc.reason}") from exc
 
     def detect_version(self) -> str:
-        data = self._get("/api/status/")
-        return str(data.get("netbox-version", ""))
+        """Return the NetBox version, or "unknown" if the connection works but
+        the version can't be read.
+
+        ``_get`` always sends the API token, but some NetBox deployments require
+        auth on every endpoint and still reject ``/api/status/`` (custom
+        permissions). On a 401/403 there, fall back to a tiny authenticated read
+        to confirm the connection is actually good and report the version as
+        unknown rather than failing the whole import.
+        """
+        try:
+            data = self._get("/api/status/")
+            return str(data.get("netbox-version", ""))
+        except NetBoxError as exc:
+            if "401" in str(exc) or "403" in str(exc):
+                self._get("/api/dcim/sites/?limit=1")  # re-raises if truly unauth/unreachable
+                return "unknown"
+            raise
 
     def _paginate(self, path: str) -> list[dict]:
         results: list[dict] = []

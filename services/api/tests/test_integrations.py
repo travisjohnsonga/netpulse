@@ -159,6 +159,54 @@ class TestNetBoxClientSSL:
         assert c._ssl_ctx.check_hostname is False
 
 
+class TestNetBoxDetectVersion:
+    """detect_version reads /api/status/, with a 401/403 fallback for NetBox
+    instances that require auth on every endpoint."""
+
+    def test_returns_version_normally(self, monkeypatch):
+        c = RealNetBoxClient("https://n.example.com", "t")
+        monkeypatch.setattr(c, "_get", lambda path: {"netbox-version": "4.2.1"})
+        assert c.detect_version() == "4.2.1"
+
+    def test_falls_back_to_sites_when_status_forbidden(self, monkeypatch):
+        c = RealNetBoxClient("https://n.example.com", "t")
+        seen = []
+
+        def fake_get(path):
+            seen.append(path)
+            if path == "/api/status/":
+                raise netbox_mod.NetBoxError("NetBox returned HTTP 403 for /api/status/")
+            return {"results": []}
+
+        monkeypatch.setattr(c, "_get", fake_get)
+        assert c.detect_version() == "unknown"
+        assert "/api/dcim/sites/?limit=1" in seen  # confirmed connectivity via an authed read
+
+    def test_reraises_when_fallback_also_unauthorized(self, monkeypatch):
+        c = RealNetBoxClient("https://n.example.com", "t")
+
+        def fake_get(path):
+            code = "403" if path == "/api/status/" else "401"
+            raise netbox_mod.NetBoxError(f"NetBox returned HTTP {code} for {path}")
+
+        monkeypatch.setattr(c, "_get", fake_get)
+        with pytest.raises(netbox_mod.NetBoxError):
+            c.detect_version()
+
+    def test_reraises_non_auth_errors_without_fallback(self, monkeypatch):
+        c = RealNetBoxClient("https://n.example.com", "t")
+        seen = []
+
+        def fake_get(path):
+            seen.append(path)
+            raise netbox_mod.NetBoxError("Could not reach NetBox: timed out")
+
+        monkeypatch.setattr(c, "_get", fake_get)
+        with pytest.raises(netbox_mod.NetBoxError, match="Could not reach"):
+            c.detect_version()
+        assert seen == ["/api/status/"]  # a non-auth error is not retried against sites/
+
+
 class TestNetBoxPreview:
     def test_preview_does_not_write(self, auth_client):
         resp = auth_client.post("/api/import/netbox/preview/", {
