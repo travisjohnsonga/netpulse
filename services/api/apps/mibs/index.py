@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 from django.conf import settings
@@ -29,20 +30,30 @@ def mibs_dir() -> Path:
     return Path(getattr(settings, "MIBS_DIR", os.environ.get("MIBS_DIR", "/app/mibs")))
 
 
+# A MIB filename is a single path segment of safe characters — no separators, no
+# traversal, no leading dot. We allow-list the charset rather than blocklisting
+# "..", so encoded/obscured traversal can't slip through.
+_SAFE_MIB_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 def safe_mib_path(base_dir, user_input: str) -> str:
     """
-    Join ``base_dir`` with a user-supplied filename, guaranteeing the result
-    stays inside ``base_dir`` (prevents path traversal). Strips any directory
-    components, then verifies the resolved path is contained in the resolved
-    base before returning it.
+    Resolve a user-supplied MIB filename inside ``base_dir``, REJECTING (not
+    silently stripping) anything that isn't a plain in-directory filename.
+
+    Defence in depth: (1) the name must match an allow-listed charset and not be
+    "."/".."; (2) the fully-resolved path must stay inside the resolved base.
+    Raises ValueError otherwise; returns the resolved absolute path.
     """
-    safe_name = os.path.basename(user_input)
-    full_path = os.path.join(str(base_dir), safe_name)
-    real_base = os.path.realpath(str(base_dir))
-    real_path = os.path.realpath(full_path)
-    if real_path != real_base and not real_path.startswith(real_base + os.sep):
-        raise ValueError(f"Path traversal detected: {user_input!r}")
-    return full_path
+    name = (user_input or "").strip()
+    if name in (".", "..") or not _SAFE_MIB_NAME.match(name):
+        raise ValueError(f"unsafe MIB filename: {user_input!r}")
+    base = Path(base_dir).resolve()
+    candidate = (base / name).resolve()
+    # candidate must be base itself's child (base must be a parent of candidate).
+    if candidate == base or base not in candidate.parents:
+        raise ValueError(f"path traversal detected: {user_input!r}")
+    return str(candidate)
 
 
 def _category(path: Path, root: Path) -> str:
@@ -136,17 +147,20 @@ def validate_text(text: str) -> dict:
 
 def save_upload(filename: str, text: str) -> dict:
     """Validate + save an uploaded MIB into custom/. Returns the validation dict."""
-    name = os.path.basename(filename)
-    if not name or name in (".", "..") or not name.lower().endswith(MIB_EXTENSIONS):
+    name = (filename or "").strip()
+    if not name.lower().endswith(MIB_EXTENSIONS):
         return {"ok": False, "error": "unsupported extension (use .my/.mib/.txt)"}
+    custom = mibs_dir() / "custom"
+    custom.mkdir(parents=True, exist_ok=True)
+    # Reject (do NOT silently strip) traversal / unsafe filenames.
+    try:
+        dest = safe_mib_path(custom, name)
+    except ValueError:
+        return {"ok": False, "error": "invalid MIB filename"}
     result = validate_text(text)
     if not result["ok"]:
         return {"ok": False, "error": "no MIB object definitions found",
                 "warnings": result["warnings"]}
-    custom = mibs_dir() / "custom"
-    custom.mkdir(parents=True, exist_ok=True)
-    # Traversal-safe join: raises if `name` would escape custom/.
-    dest = safe_mib_path(custom, name)
     Path(dest).write_text(text)
     reload()
     return {"success": True, "objects_loaded": result["objects"],

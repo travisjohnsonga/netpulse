@@ -83,7 +83,10 @@ class ApprovedOSVersionSerializer(serializers.ModelSerializer):
             try:
                 re.compile(pattern)
             except re.error as exc:
-                raise serializers.ValidationError({"version_pattern": f"Invalid regex: {exc}"})
+                from apps.core.errors import safe_detail
+                raise serializers.ValidationError({"version_pattern": safe_detail(
+                    exc, context="version_pattern regex",
+                    public="Invalid regular expression.")})
         return attrs
 
 
