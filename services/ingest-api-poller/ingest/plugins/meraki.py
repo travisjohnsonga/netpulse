@@ -214,10 +214,16 @@ class MerakiPlugin(VendorAPIPlugin):
                 )
                 return []
 
-        alert_type = payload.get("alertType", "unknown")
-        network_id = payload.get("networkId", "")
-        occurred_at = _parse_ts(payload.get("sentAt"))
-        alert_data = payload.get("alertData", {})
+        # Redact the shared secret (and any credential-like fields) up FRONT, then
+        # derive everything we log/store/build from the sanitized copy. The raw
+        # `payload` is only ever touched for the constant-time secret compare
+        # above, so no clear-text secret can reach a log line, the alert message,
+        # or the persisted `raw`.
+        safe_payload = redact_dict(payload)
+        alert_type = safe_payload.get("alertType", "unknown")
+        network_id = safe_payload.get("networkId", "")
+        occurred_at = _parse_ts(safe_payload.get("sentAt"))
+        alert_data = safe_payload.get("alertData", {})
         device_serial = alert_data.get("deviceSerial", "")
         device_name = alert_data.get("deviceName", "")
 
@@ -232,10 +238,7 @@ class MerakiPlugin(VendorAPIPlugin):
             message=f"{alert_type}: {alert_data}",
             occurred_at=occurred_at,
             resolved=False,
-            # Strip the webhook sharedSecret (and any other credential-like
-            # fields) before persisting — `raw` is stored and may be surfaced
-            # in logs/UI, so it must not carry clear-text secrets.
-            raw=redact_dict(payload),
+            raw=safe_payload,
         )
         logger.info(
             "Meraki webhook from %s: alert_type=%s network=%s",
