@@ -175,39 +175,146 @@ Executive summary view across entire estate.
 
 ---
 
-### 10. NetPulse Collector (On-Prem → Cloud Agent)
+### 10. NetPulse Remote Collector (On-Prem → Central)
 
-Lightweight agent for securely forwarding on-prem telemetry to cloud-hosted NetPulse.
+A remote collector polls local devices and forwards their telemetry to a central
+NetPulse over a **single outbound mTLS connection** (443/8443) — no inbound
+firewall rules on the customer network. This section reflects the design as
+**built and validated tonight**; maturity is marked per piece. Detailed proofs
+live in `scripts/t0`–`scripts/t3` (NATS substrate harnesses) and the
+`apps/collectors` code; the production gates are in
+`docs/collector-production-gates.md` and the operator steps in
+`docs/collectors/runbook.md`.
 
-**Architecture:**
-- Runs on-prem as Docker container or systemd service
-- Receives all telemetry locally (gRPC/gNMI, syslog, NetFlow/sFlow, SNMP polling)
-- Forwards to cloud over single outbound mTLS connection (port 443/8443)
-- No inbound firewall rules required on customer network
-- Local disk buffer if cloud connection drops — replays when reconnected
+Maturity legend: **[VALIDATED]** proven end-to-end · **[BUILT]** committed, not
+yet proven end-to-end · **[PLANNED]** not built.
 
-**Security:**
-- Outbound only — customer opens no inbound ports
-- mTLS — both collector and cloud authenticate with certificates
-- Certificates issued by OpenBao PKI engine
-- Unique API key per collector instance (stored as bcrypt hash)
-- TLS 1.3 minimum
+#### Transport substrate — NATS leaf + edge JetStream  [VALIDATED]
 
-**Customer deployment:**
-```bash
-docker run -d \
-  --name netpulse-collector \
-  --restart always \
-  -p 514:514/udp \
-  -p 2055:2055/udp \
-  -p 50051:50051 \
-  -e NETPULSE_CLOUD_URL=https://cloud.netpulse.io \
-  -e NETPULSE_API_KEY=their-api-key \
-  netpulse/collector:latest
-```
+Telemetry does **not** ride a bare leaf-forward. The edge runs its own JetStream
+stream that captures local telemetry; the central hub *sources* from that edge
+stream and resumes by acked sequence after any disconnect.
 
-**Solves SNMP behind firewall:** Collector polls local devices directly and forwards
-results to cloud. No firewall holes needed for SNMP.
+> **Why a buffer in the edge stream, not a straight forward:** a plain leaf
+> forward is fire-and-forget — anything published while the link is down is lost.
+> Putting the durable buffer in the **edge JetStream stream** means a disconnect
+> just stalls the hub's source consumer; on reconnect it resumes from the last
+> acked sequence with no loss and no duplicates. Proven in `scripts/t0`
+> (cut → buffer → replay, zero loss/zero dup) and `scripts/t2` (the same across
+> the inter-NATS hop).
+
+The leaf is mTLS, TLS 1.3 minimum, `handshake_first: true` (TLS before any
+plaintext INFO). The hub's leaf listener sets `advertise: <fixed-ingress>` +
+`no_advertise: true` so a reconnecting collector always re-dials the published
+ingress and never the hub's own address. `[VALIDATED]` (scripts/t0, scripts/t1).
+
+#### Topology — a separate operator-mode collector-hub  [VALIDATED design]
+
+Collectors terminate on a **dedicated operator-mode "collector-hub" NATS**, which
+links to the existing internal NATS to hand off telemetry.
+
+> **Why a separate hub:** NATS operator/JWT auth is **server-wide** and mutually
+> exclusive with the internal bus's `authorization { user/password }`. The
+> internal 4222 user/pass listener must stay **untouched** (in-cluster services
+> depend on it), so the collector-facing operator mode cannot live on the same
+> node. The internal NATS therefore **never learns collectors exist** — it dials
+> *one* leaf bound to a single aggregate account and *sources one stream*; all
+> per-collector accounts, ingress, `advertise`/`no_advertise`, and isolation live
+> on the collector-hub. Proven in `scripts/t2` (a collector-account publish
+> reaches the internal stream-processor consumer, surviving a cut with no
+> loss/dup; the internal bus config is untouched).
+
+#### Identity model — bus identity vs transport identity  [VALIDATED]
+
+Two distinct identities ride the one leaf connection:
+
+- **Bus identity = per-collector operator-signed account** (its `.creds`). Each
+  collector is its own NATS account (isolation + tenant-ready). Accounts are
+  signed by the operator **signing key**, never the operator **identity key**.
+  > **Why the split:** the identity key is the root of the whole collector trust
+  > hierarchy. It is kept **cold/offline**; only the signing key is online to mint
+  > accounts. Rotating or revoking the signing key never requires touching the
+  > cold identity key. (Finding from `scripts/t3`: minting must pass `-K <signing
+  > key>` or nsc silently signs with the identity key.)
+- **Transport identity = per-collector mTLS cert** from the OpenBao PKI
+  intermediate (`pki_int`, role `collector`, client-auth only). The cert proves
+  the *transport*; the account `.creds` prove the *bus*. Keeping them distinct
+  means a stolen cert without creds (or vice-versa) is useless.
+
+**Account resolver = `full` (NATS-based, local store).** Account JWTs are pushed
+once and cached locally on the collector-hub.
+> **Why:** a reconnecting collector resolves from the local store, so resolver
+> availability is **out of the steady-state connect path** — a brief resolver
+> outage only blocks a brand-new enrollment, never existing collectors. (Memory
+> mode needs a reload to add accounts; URL mode puts an external server in the
+> cold-lookup path — both rejected.)
+
+Adding/revoking a collector is a runtime account JWT push (**no `nats.conf`
+reload**). Rotating the operator signing key is the rare exception that needs a
+connection-preserving SIGHUP — see the runbook. `[VALIDATED]` (scripts/t1
+revoke-without-reload; scripts/t3 rotation both modes).
+
+#### Device credentials — Option A: central OpenBao broker  [broker logic VALIDATED, identity-wiring BUILT]
+
+A remote collector **never reads device credentials from OpenBao itself**. It
+asks a central **secret-broker** over the authenticated leaf (NATS
+request/reply); the broker returns the creds **RAM-only, short TTL**, never to
+disk.
+
+Confused-deputy defense (broker authorization logic — **[VALIDATED]** by
+`tests/test_secret_broker.py`, 34 cases):
+- **Identity is the authenticated transport account**, never a field in the
+  message body. A body that names a different collector cannot widen access.
+- **The allowed set is derived server-side** from the single authority
+  `resolve.effective_collector(device)` — a collector may fetch a device's creds
+  **iff** `effective_collector(device) == that collector`. `resolve.py` is reused,
+  never reimplemented.
+- **The request can only narrow** (pick a device/protocol). The broker *computes*
+  the vault path for an owned device and reads only that — never a path the
+  collector supplies — and validates it against a strict shape.
+- **Least privilege:** the broker reads via an OpenBao AppRole scoped to
+  `read` on `secret/data/netpulse/credentials/+` with **no list anywhere** —
+  verified against the **live** OpenBao (read ✓, list 403, out-of-scope 403). A
+  bug degrades to "fails to fetch," never "enumerates the vault." **[VALIDATED].**
+- **Fail closed:** in production the broker refuses to start (and refuses to read)
+  without its scoped AppRole. **[VALIDATED].**
+
+> **Why A, not B or C:** **B — local vault sync** (replicate a credential subset
+> to each edge) was rejected: it puts standing plaintext-capable secret material
+> at every remote site and multiplies the blast radius of a stolen edge. **C —
+> encrypted KV injection** (push encrypted creds down the config bundle) was
+> rejected: the edge would need the decryption key resident, which is the same
+> exposure as B with extra moving parts. Option A keeps **all** standing OpenBao
+> read access on **one** central, audited, least-privilege broker; the edge holds
+> only short-TTL RAM copies of the creds for devices it actually owns.
+
+**Open item (the one thing not yet end-to-end): [BUILT]** — the NATS
+cross-account service routing that conveys the caller's account to the broker is
+committed but not yet proven over the real transport (account_token_position vs a
+per-account import subject — routing still open). Until the A-can't-fetch-B proof
+passes over the real leaf, this is a **blocking production gate** (see
+`docs/collector-production-gates.md`).
+
+#### Central-side plumbing  [BUILT]
+
+Committed and unit-tested (`apps/collectors`), not yet exercised by a live agent:
+- **Enrollment:** one-time enrollment token → exchanged once for an API key
+  (bcrypt-hashed) + a NATS account + a best-effort per-collector PKI cert.
+- **Config-DOWN:** a per-collector non-secret config bundle (devices as
+  credential-path *references* only, checks, a sha256 revision) published to a
+  per-collector JetStream KV bucket; ownership-aware republish on device/site
+  reassignment.
+- **Single assignment authority:** `resolve.effective_collector` (device.collector
+  → site.default_collector → global `is_default` → `COLLECTOR_IP`) and its inverse
+  `resolve.devices_for_collector`. **`Site.default_collector` is the sole
+  site-level authority** — there is no separate site-assignment list to drift.
+
+#### Not built yet  [PLANNED]
+
+The on-edge **collector agent** (`services/collector`: the forwarding process,
+local buffer/replay, broker client), `docker-compose.collector.yml`, and the
+`setup.sh` role selection are **not built**. Do not treat the deployment snippet
+in older drafts as runnable.
 
 ---
 
@@ -273,20 +380,25 @@ docker compose up -d
 - **Services:** all 24 services
 - **Use case:** Primary NetPulse server
 
-### Mode 2: Collector Only (future)
+### Mode 2: Collector Only  [PLANNED — substrate validated, agent not built]
 
 Lightweight collector that forwards telemetry to a central NetPulse server. No
-UI, no DB, no processing engines.
+UI, no DB, no processing engines. The transport substrate is **validated**
+(`scripts/t0`–`scripts/t3`); the on-edge agent and packaging below are **not yet
+built** — the compose file and `setup.sh` role do not exist.
 
 ```bash
-docker compose -f docker-compose.collector.yml up -d
+docker compose -f docker-compose.collector.yml up -d   # [PLANNED] not built yet
 # or
-./setup.sh → select "Collector"
+./setup.sh → select "Collector"                        # [PLANNED] not built yet
 ```
 
-- **Services:** ingest-snmp, ingest-syslog, ingest-flow, ingest-grpc,
-  collector-agent, valkey (buffer only)
-- **Use case:** Remote sites forwarding to central
+- **Services:** ingest-snmp, ingest-syslog, ingest-flow, ingest-grpc, the
+  collector agent, and a **local edge NATS with a JetStream stream as the durable
+  buffer** (NOT valkey — the buffer lives in the edge JetStream stream that the
+  central hub sources from by acked sequence; see §10). The earlier
+  "valkey (buffer only)" note was wrong and predates the validated design.
+- **Use case:** Remote sites forwarding to central over one outbound mTLS leaf
 
 ### Mode 3: Cloud Hosted (future)
 
