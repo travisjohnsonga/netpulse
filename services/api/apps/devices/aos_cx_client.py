@@ -124,6 +124,8 @@ class AOSCXClient:
                 continue
             stats = obj.get("statistics")
             rates = obj.get("rate_statistics")
+            lacp = obj.get("lacp_status")
+            bond = obj.get("bond_status")
             out.append({
                 "name": obj.get("name", name) or name,
                 "type": obj.get("type", "") or "",
@@ -133,10 +135,60 @@ class AOSCXClient:
                 "description": obj.get("description", "") or "",
                 "speed_mbps": _speed_mbps(obj.get("link_speed")),
                 "mtu": _int_or_none(obj.get("mtu") or obj.get("active_mtu")),
+                # VLAN membership lives on the interface (AOS-CX has no
+                # vlans/<id>/ports child); expose the access/trunk config.
+                "vlan_mode": obj.get("vlan_mode", "") or "",
+                "vlan_tag": _ref_name(obj.get("vlan_tag")),
+                "vlan_trunks": _ref_names(obj.get("vlan_trunks")),
+                # LACP/LAG state is carried inline on the interface.
+                "lacp_status": lacp if isinstance(lacp, dict) else {},
+                "bond_status": bond if isinstance(bond, dict) else {},
                 "statistics": stats if isinstance(stats, dict) else {},
                 "rate_statistics": rates if isinstance(rates, dict) else {},
             })
         return out
+
+    def get_interface_stats(self, port: str) -> dict:
+        """
+        Return the counter/rate summary for a single interface, mapped onto the
+        common schema (see :func:`interface_counters`). ``GET /system/interfaces/
+        <port>?depth=2`` scoped to the statistics attributes.
+        """
+        obj = self._get(f"system/interfaces/{_enc(port)}",
+                        params={"depth": 2, "attributes": "name,statistics,rate_statistics"})
+        return interface_counters(obj if isinstance(obj, dict) else {})
+
+    def get_poe_status(self) -> list[dict]:
+        """
+        Return per-port PoE status for PoE-capable interfaces:
+        ``[{port, admin_disable, poe_status, power_drawn, power_allocated,
+        pd_class}]``.
+
+        AOS-CX exposes PoE under each physical interface's ``poe_interface``
+        child (``GET /system/interfaces/<port>/poe_interface``); ports without
+        PoE (e.g. SFP+ on a 6300M) return HTTP 404 and are skipped. Returns an
+        empty list on a switch with no PoE-capable ports.
+        """
+        out: list[dict] = []
+        for name in self._physical_ports():
+            try:
+                obj = self._get(f"system/interfaces/{_enc(name)}/poe_interface",
+                                params={"depth": 1})
+            except Exception:  # noqa: BLE001 — 404 on non-PoE ports
+                continue
+            row = _parse_poe(name, obj)
+            if row:
+                out.append(row)
+        return out
+
+    def _physical_ports(self) -> list[str]:
+        """Physical port names (``1/1/1`` form) — the only PoE-capable ports."""
+        try:
+            data = self._get("system/interfaces", params={"depth": 1})
+        except Exception:  # noqa: BLE001
+            return []
+        names = list(data.keys()) if isinstance(data, dict) else []
+        return [n for n in names if re.fullmatch(r"\d+/\d+/\d+", str(n))]
 
     # ── LLDP neighbours (wired into enrichment in Stage 2) ───────────────────
     def get_lldp_neighbors(self) -> list[dict]:
@@ -625,6 +677,51 @@ def _ref_name(ref) -> str:
     if isinstance(ref, str) and ref:
         return unquote(ref.rstrip("/").rsplit("/", 1)[-1])
     return ""
+
+
+def _ref_names(ref) -> list[str]:
+    """
+    List of names from an AOS-CX reference collection — a ``{name: URI}`` dict
+    or a list of refs/URIs (e.g. an interface's ``vlan_trunks``). Empty when
+    absent.
+    """
+    if isinstance(ref, dict):
+        return [str(k) for k in ref]
+    if isinstance(ref, list):
+        out = []
+        for x in ref:
+            if isinstance(x, dict) and x:
+                out.append(str(next(iter(x))))
+            elif isinstance(x, str) and x:
+                out.append(unquote(x.rstrip("/").rsplit("/", 1)[-1]))
+        return out
+    return []
+
+
+def _parse_poe(port: str, obj) -> dict | None:
+    """
+    Normalise an AOS-CX ``poe_interface`` payload. Fields are read with
+    fallbacks because the layout differs across firmware (some nest under
+    ``config``/``power``/``status``, others keep them at the top level).
+    """
+    if not isinstance(obj, dict):
+        return None
+    status = obj.get("status") if isinstance(obj.get("status"), dict) else {}
+    power = obj.get("power") if isinstance(obj.get("power"), dict) else {}
+    config = obj.get("config") if isinstance(obj.get("config"), dict) else {}
+    return {
+        "port": port,
+        "admin_disable": bool(config.get("admin_disable", obj.get("admin_disable", False))),
+        "poe_status": (status.get("poe_oper_status") or obj.get("poe_status")
+                       or status.get("status") or ""),
+        "power_drawn": _int_or_none(status.get("power_drawn_in_watts")
+                                    or power.get("power_drawn") or obj.get("power_drawn")),
+        "power_allocated": _int_or_none(status.get("power_allocated_in_watts")
+                                        or power.get("power_allocated")
+                                        or obj.get("power_allocated")),
+        "pd_class": (status.get("pd_class_actual") or status.get("pd_class")
+                     or obj.get("pd_class") or ""),
+    }
 
 
 def _vlan_from_ifname(name: str):

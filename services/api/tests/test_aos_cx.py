@@ -335,6 +335,77 @@ class TestAOSCXClient:
         assert by_id[1]["name"] == "DEFAULT_VLAN_1" and by_id[1]["oper_state"] == "up"
         assert by_id[20]["name"] == "DATA" and by_id[20]["oper_state"] == "down"
 
+    def test_aos_cx_interface_lacp_bond_and_vlan(self):
+        """get_interfaces exposes LACP/LAG state and interface VLAN membership."""
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces": {
+            "1/1/1": {"name": "1/1/1", "vlan_mode": "access",
+                      "vlan_tag": {"1": "/rest/v10.09/system/vlans/1"},
+                      "lacp_status": {"actor_key": "1", "actor_state": "Activ:1"},
+                      "bond_status": {"state": "up"}},
+            "lag256": {"name": "lag256", "vlan_mode": "native-untagged",
+                       "vlan_trunks": {"1": "/uri", "100": "/uri"},
+                       "bond_status": {"state": "up", "bond_speed": 20_000_000_000}},
+        }})
+        by = {i["name"]: i for i in client.get_interfaces()}
+        assert by["1/1/1"]["vlan_mode"] == "access"
+        assert by["1/1/1"]["vlan_tag"] == "1"
+        assert by["1/1/1"]["lacp_status"]["actor_key"] == "1"
+        assert by["1/1/1"]["bond_status"]["state"] == "up"
+        assert sorted(by["lag256"]["vlan_trunks"]) == ["1", "100"]
+        assert by["lag256"]["bond_status"]["bond_speed"] == 20_000_000_000
+
+    def test_aos_cx_get_interface_stats_single_port(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(get_json={"system/interfaces/1%2F1%2F1": {
+            "name": "1/1/1",
+            "statistics": {"rx_bytes": 100, "tx_bytes": 200},
+            "rate_statistics": {"rx_bytes_per_second": 7},
+        }})
+        c = client.get_interface_stats("1/1/1")
+        assert c["rx_bytes"] == 100 and c["tx_bytes"] == 200 and c["rx_bps"] == 7
+
+    def test_aos_cx_poe_status_skips_non_poe_ports(self):
+        """PoE-capable ports return data; SFP+ ports 404 and are skipped."""
+        routes = {
+            "system/interfaces": (200, {"1/1/1": "/uri", "1/1/2": "/uri", "lag1": "/uri"}),
+            "system/interfaces/1%2F1%2F1/poe_interface": (200, {
+                "config": {"admin_disable": False},
+                "status": {"poe_oper_status": "delivering", "pd_class_actual": "class3",
+                           "power_drawn_in_watts": 7}}),
+            "system/interfaces/1%2F1%2F2/poe_interface": (404, {}),
+        }
+
+        class _Resp:
+            def __init__(self, status, data):
+                self.status_code, self._data = status, data
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class _RouteSession:
+            verify = True
+
+            def get(self, url, **kwargs):
+                path = url.split("/rest/v10.09/", 1)[-1]
+                return _Resp(*routes.get(path, (404, {})))
+
+            def close(self):
+                pass
+
+        client = AOSCXClient("10.0.0.5")
+        client._session = _RouteSession()
+        poe = client.get_poe_status()
+        assert len(poe) == 1                       # only 1/1/1 has PoE (lag1 not physical)
+        assert poe[0]["port"] == "1/1/1"
+        assert poe[0]["poe_status"] == "delivering"
+        assert poe[0]["pd_class"] == "class3"
+        assert poe[0]["power_drawn"] == 7
+
     def test_aos_cx_lldp_falls_back_to_interface_walk(self):
         """FL.10.13 returns HTTP 400 for lldp_neighbors_info → walk interfaces.
 
