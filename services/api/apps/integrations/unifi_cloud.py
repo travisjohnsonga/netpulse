@@ -65,23 +65,57 @@ def _read_api_key() -> str:
         return ""
 
 
+def _has_network_controller(host: dict) -> bool:
+    """
+    True only when the host runs a Network controller. Hosts that run only
+    Protect/Access/Talk (no Network) can't import devices, so we skip them.
+    """
+    state = host.get("reportedState") or {}
+    for ctrl in state.get("controllers") or []:
+        if ctrl.get("name") == "network" and ctrl.get("isRunning"):
+            return True
+    return False
+
+
 def _host_to_controller_fields(host: dict) -> dict | None:
     """
     Map a Site Manager host record to UnifiController fields. Returns None when
     the host has no usable management IP.
+
+    The Site Manager payload reports the management IP under ``reportedState.ip``
+    (primary LAN IP), with ``ipAddrs`` (list) and ``wans[].ipv4`` as fallbacks —
+    NOT ``ipAddresses`` as an earlier version assumed.
     """
     state = host.get("reportedState") or {}
-    ips = state.get("ipAddresses") or []
-    ip = ips[0] if ips else None
+    hardware = state.get("hardware") or {}
+
+    # Management IP, in priority order: primary IP → first IPv4 in ipAddrs →
+    # first WAN IPv4.
+    ip = state.get("ip") or None
+    if not ip:
+        for addr in state.get("ipAddrs") or []:
+            if ":" not in addr:  # skip IPv6 (incl. link-local)
+                ip = addr
+                break
+    if not ip:
+        for wan in state.get("wans") or []:
+            if wan.get("ipv4"):
+                ip = wan["ipv4"]
+                break
     if not ip:
         return None
-    # Consoles (UDM/UDR/Dream Machine) serve the controller on 443; CloudKeys on 8443.
+
+    # Prefer the controller's reported mgmt port; else consoles (UDM/UDR/Dream
+    # Machine) serve on 443 and CloudKeys on 8443.
     htype = (host.get("type") or "").lower()
-    port = 443 if htype == "console" else 8443
-    name = state.get("hostname") or host.get("hardwareId") or f"UniFi {host.get('id', '')}"
+    port = state.get("mgmt_port") or (443 if htype == "console" else 8443)
+    name = (state.get("hostname") or state.get("name") or hardware.get("name")
+            or host.get("hardwareId", "")[:32] or f"UniFi {host.get('id', '')[:8]}")
+    model = hardware.get("name") or hardware.get("shortname") or ""
     return {
         "name": name, "host": ip, "port": port,
         "cloud_host_id": str(host.get("id", "")),
+        "model": model, "version": state.get("version", ""),
     }
 
 
@@ -111,26 +145,31 @@ def discover_controllers() -> dict:
 
     results: list[dict] = []
     for host in hosts:
+        if not _has_network_controller(host):
+            logger.debug("Skipping host %s — no running network controller", host.get("id"))
+            continue
         fields = _host_to_controller_fields(host)
         if not fields:
             continue
-        state = host.get("reportedState") or {}
         existing = UnifiController.objects.filter(cloud_host_id=fields["cloud_host_id"]).first()
         if existing:
             existing.name = fields["name"]
             existing.host = fields["host"]
             existing.port = fields["port"]
-            existing.save(update_fields=["name", "host", "port", "updated_at"])
+            existing.model = fields["model"]
+            existing.version = fields["version"]
+            existing.save(update_fields=["name", "host", "port", "model", "version", "updated_at"])
             status = "updated"
         else:
             UnifiController.objects.create(
                 name=fields["name"], host=fields["host"], port=fields["port"],
                 cloud_host_id=fields["cloud_host_id"], username="", enabled=True,
+                model=fields["model"], version=fields["version"],
             )
             status = "created"
         results.append({
             "name": fields["name"], "host": fields["host"], "port": fields["port"],
-            "model": host.get("hardwareId", ""), "version": state.get("version", ""),
+            "model": fields["model"], "version": fields["version"],
             "status": status,
         })
 

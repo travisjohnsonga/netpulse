@@ -75,9 +75,10 @@ class UnifiControllerSerializer(serializers.ModelSerializer):
         fields = (
             "id", "name", "host", "port", "username", "verify_ssl", "unifi_site_id",
             "site", "site_name", "enabled", "last_sync", "last_error",
-            "device_count", "password", "password_set",
+            "device_count", "model", "version", "password", "password_set",
         )
-        read_only_fields = ("id", "last_sync", "last_error", "device_count")
+        read_only_fields = ("id", "last_sync", "last_error", "device_count",
+                            "model", "version")
 
     def get_password_set(self, obj) -> bool:
         from apps.credentials import vault

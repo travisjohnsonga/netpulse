@@ -7,17 +7,20 @@ from apps.integrations.models import UnifiCloudAccount, UnifiController
 pytestmark = pytest.mark.django_db
 
 
-def _host(hid, hostname, ip, htype="console", model="UDM-Pro", version="4.1.13"):
-    return {
-        "id": hid, "type": htype, "hardwareId": model,
-        "reportedState": {"hostname": hostname, "ipAddresses": [ip] if ip else [], "version": version},
-    }
+def _host(hid, hostname, ip, htype="console", model="UDM-Pro", version="4.1.13", network=True):
+    state = {"hostname": hostname, "version": version, "hardware": {"name": model}}
+    if ip:
+        state["ip"] = ip
+    if network:
+        state["controllers"] = [{"name": "network", "isRunning": True}]
+    return {"id": hid, "type": htype, "hardwareId": model, "reportedState": state}
 
 
 class TestMapping:
     def test_console_maps_to_443(self):
         f = unifi_cloud._host_to_controller_fields(_host("h1", "udm", "192.168.1.1", "console"))
-        assert f == {"name": "udm", "host": "192.168.1.1", "port": 443, "cloud_host_id": "h1"}
+        assert f == {"name": "udm", "host": "192.168.1.1", "port": 443, "cloud_host_id": "h1",
+                     "model": "UDM-Pro", "version": "4.1.13"}
 
     def test_cloudkey_maps_to_8443(self):
         f = unifi_cloud._host_to_controller_fields(_host("h2", "ck", "10.0.0.1", "cloudKey"))
@@ -25,6 +28,27 @@ class TestMapping:
 
     def test_no_ip_returns_none(self):
         assert unifi_cloud._host_to_controller_fields(_host("h3", "ghost", None)) is None
+
+    def test_mgmt_port_override(self):
+        host = _host("h1", "ck", "10.0.0.1", "cloudKey")
+        host["reportedState"]["mgmt_port"] = 443
+        assert unifi_cloud._host_to_controller_fields(host)["port"] == 443
+
+    def test_falls_back_to_ipaddrs(self):
+        host = _host("h1", "udm", None)
+        host["reportedState"]["ipAddrs"] = ["fe80::1", "10.7.40.43", "10.1.99.50"]
+        f = unifi_cloud._host_to_controller_fields(host)
+        assert f["host"] == "10.7.40.43"  # first IPv4, IPv6 skipped
+
+    def test_falls_back_to_wan_ipv4(self):
+        host = _host("h1", "udm", None)
+        host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
+        assert unifi_cloud._host_to_controller_fields(host)["host"] == "203.0.113.5"
+
+    def test_model_from_hardware_shortname(self):
+        host = _host("h1", "udm", "10.0.0.1")
+        host["reportedState"]["hardware"] = {"shortname": "UDMPROMAX"}
+        assert unifi_cloud._host_to_controller_fields(host)["model"] == "UDMPROMAX"
 
 
 class TestDiscover:
@@ -50,6 +74,25 @@ class TestDiscover:
         monkeypatch.setattr(unifi_cloud, "_read_api_key", lambda: "")
         with pytest.raises(unifi_cloud.UnifiCloudError):
             unifi_cloud.discover_controllers()
+
+    def test_skips_hosts_without_network_controller(self, monkeypatch):
+        monkeypatch.setattr(unifi_cloud, "_read_api_key", lambda: "key")
+        hosts = [_host("h1", "HQ UDM", "192.168.1.1", "console"),
+                 _host("h2", "Protect-only", "10.1.0.1", "console", network=False)]
+        monkeypatch.setattr("apps.integrations.unifi_cloud.UnifiCloudClient",
+                            lambda *a, **k: type("C", (), {"get_hosts": lambda self: hosts})())
+        res = unifi_cloud.discover_controllers()
+        assert res["discovered"] == 1
+        assert not UnifiController.objects.filter(cloud_host_id="h2").exists()
+
+    def test_persists_model_and_version(self, monkeypatch):
+        monkeypatch.setattr(unifi_cloud, "_read_api_key", lambda: "key")
+        hosts = [_host("h1", "HQ", "192.168.1.1", model="UDM-Pro", version="4.1.13")]
+        monkeypatch.setattr("apps.integrations.unifi_cloud.UnifiCloudClient",
+                            lambda *a, **k: type("C", (), {"get_hosts": lambda self: hosts})())
+        unifi_cloud.discover_controllers()
+        ctrl = UnifiController.objects.get(cloud_host_id="h1")
+        assert ctrl.model == "UDM-Pro" and ctrl.version == "4.1.13"
 
 
 class TestPagination:

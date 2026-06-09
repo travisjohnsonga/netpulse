@@ -114,6 +114,9 @@ class UnifiController(TimestampedModel):
     last_sync = models.DateTimeField(null=True, blank=True)
     last_error = models.CharField(max_length=512, blank=True)
     device_count = models.IntegerField(default=0)
+    # Hardware model / firmware version, populated from cloud discovery.
+    model = models.CharField(max_length=128, blank=True)
+    version = models.CharField(max_length=64, blank=True)
 
     class Meta:
         ordering = ["name"]

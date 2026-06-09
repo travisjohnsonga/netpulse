@@ -963,6 +963,8 @@ export interface UnifiController {
   last_sync: string | null
   last_error: string
   device_count: number
+  model?: string
+  version?: string
   password_set?: boolean
 }
 
