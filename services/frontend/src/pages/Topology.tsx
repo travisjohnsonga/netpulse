@@ -85,6 +85,61 @@ function apRadioSummary(n: TopologyNode): string {
   return n.radios.filter((r) => r.channel != null).map((r) => `${r.band} ch${r.channel}`).join(' / ')
 }
 
+// Group-aware hierarchical layout. Instead of spreading every tier evenly
+// across the full width (which scatters APs far from their switch and creates
+// long crossing lines), this lays the graph out as a tidy forest: each child is
+// placed beneath its upstream parent and a parent is centred over its children.
+// APs therefore cluster directly under their uplink switch.
+function buildHierarchyLayout(
+  nodes: TopologyNode[],
+  edges: TopologyEdge[],
+  tierOf: (n: TopologyNode) => number,
+): Record<string, { x: number; y: number }> {
+  const COL_GAP = 110, ROW_H = 170
+  const byId: Record<string, TopologyNode> = Object.fromEntries(nodes.map((n) => [n.id, n]))
+  const tier: Record<string, number> = Object.fromEntries(nodes.map((n) => [n.id, tierOf(n)]))
+
+  // Orient each edge parent→child by tier (lower tier number = upstream). Each
+  // child keeps a single primary parent (first seen) so the result is a forest;
+  // same-tier links are peer connections, not hierarchy.
+  const children = new Map<string, string[]>()
+  const parent = new Map<string, string>()
+  for (const e of edges) {
+    const a = e.source, b = e.target
+    if (!(a in tier) || !(b in tier) || tier[a] === tier[b]) continue
+    const [p, c] = tier[a] < tier[b] ? [a, b] : [b, a]
+    if (parent.has(c)) continue
+    parent.set(c, p)
+    if (!children.has(p)) children.set(p, [])
+    children.get(p)!.push(c)
+  }
+
+  const cmpLabel = (x: string, y: string) => (byId[x]?.label || '').localeCompare(byId[y]?.label || '')
+  // Roots: parentless nodes (top tier, or isolated / peer-only). Stable order.
+  const roots = nodes.map((n) => n.id).filter((id) => !parent.has(id))
+    .sort((x, y) => (tier[x] - tier[y]) || cmpLabel(x, y))
+
+  // Post-order walk: leaves take consecutive x slots; an internal node centres
+  // over its placed children. Visiting a parent's whole subtree before the next
+  // keeps each group contiguous.
+  const xPos: Record<string, number> = {}
+  const seen = new Set<string>()
+  let nextSlot = 0
+  const place = (id: string) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    const kids = (children.get(id) || []).filter((k) => !seen.has(k)).sort(cmpLabel)
+    if (kids.length === 0) { xPos[id] = nextSlot++ * COL_GAP; return }
+    kids.forEach(place)
+    const placed = kids.filter((k) => k in xPos)
+    xPos[id] = placed.reduce((s, k) => s + xPos[k], 0) / placed.length
+  }
+  roots.forEach(place)
+  nodes.forEach((n) => { if (!(n.id in xPos)) xPos[n.id] = nextSlot++ * COL_GAP })
+
+  return Object.fromEntries(nodes.map((n) => [n.id, { x: xPos[n.id], y: tier[n.id] * ROW_H + 60 }]))
+}
+
 const ROLES = ['access', 'distribution', 'core', 'wan-edge', 'firewall']
 const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
 const btnCls = 'px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50'
@@ -162,19 +217,11 @@ export default function Topology() {
     const offlineById: Record<string, boolean> = Object.fromEntries(nodes.map((n) => [n.id, isOffline(n)]))
     const labelById: Record<string, string> = Object.fromEntries(nodes.map((n) => [n.id, n.label]))
 
-    // Hierarchical layout: assign positions per role tier (preset), else cose.
-    const tiers: Record<number, TopologyNode[]> = {}
-    nodes.forEach((n) => { (tiers[styleFor(n).tier] ||= []).push(n) })
-    const colW = 130, rowH = 170
-    const maxRow = Math.max(1, ...Object.values(tiers).map((t) => t.length))
-    const positions: Record<string, { x: number; y: number }> = {}
-    Object.entries(tiers).forEach(([tier, ns]) => {
-      const totalW = (maxRow - 1) * colW
-      const step = ns.length > 1 ? totalW / (ns.length - 1) : 0
-      ns.forEach((n, i) => {
-        positions[n.id] = { x: ns.length > 1 ? i * step : totalW / 2, y: Number(tier) * rowH + 60 }
-      })
-    })
+    // Hierarchical layout: group children under their upstream parent (preset),
+    // else fall back to force-directed (cose).
+    const positions = layoutMode === 'hier'
+      ? buildHierarchyLayout(nodes, edges, (n) => styleFor(n).tier)
+      : {}
 
     const cy = cytoscape({
       container: containerRef.current,
