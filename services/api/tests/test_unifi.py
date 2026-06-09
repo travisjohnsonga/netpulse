@@ -71,6 +71,83 @@ class TestImportDevice:
         assert Device.objects.get(hostname="AP-S").site_id == site.id
 
 
+class TestMacNormalize:
+    def test_canonicalises_separators(self):
+        assert unifi_sync._normalize_mac("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff"
+        assert unifi_sync._normalize_mac("aa-bb-cc-dd-ee-ff") == "aa:bb:cc:dd:ee:ff"
+        assert unifi_sync._normalize_mac("aabb.ccdd.eeff") == "aa:bb:cc:dd:ee:ff"
+        assert unifi_sync._normalize_mac("aabbccddeeff") == "aa:bb:cc:dd:ee:ff"
+
+    def test_rejects_invalid(self):
+        assert unifi_sync._normalize_mac("") == ""
+        assert unifi_sync._normalize_mac(None) == ""
+        assert unifi_sync._normalize_mac("not-a-mac") == ""
+        assert unifi_sync._normalize_mac("aa:bb:cc") == ""
+
+
+class TestDuplicateOnIpChange:
+    """A UniFi device that changes IP must update in place, not duplicate."""
+
+    def test_mac_keeps_single_record_when_ip_changes(self, roles):
+        c = _controller()
+        mac = "aa:bb:cc:dd:ee:ff"
+        unifi_sync._import_device({"type": "udm", "name": "wco2-mdf-uic-01", "ip": "10.151.1.167",
+                                   "mac": mac, "version": "3.0"}, c)
+        d1 = Device.objects.get(hostname="wco2-mdf-uic-01")
+        assert d1.mac_address == mac
+
+        # Same device, new IP — must match by MAC and update, not create a dup.
+        assert unifi_sync._import_device({"type": "udm", "name": "wco2-mdf-uic-01",
+                                          "ip": "10.16.133.5", "mac": mac}, c) == "updated"
+        assert Device.objects.count() == 1
+        d1.refresh_from_db()
+        assert d1.ip_address == "10.16.133.5" and d1.management_ip == "10.16.133.5"
+        # No "-2" suffix duplicate.
+        assert not Device.objects.filter(hostname="wco2-mdf-uic-01-2").exists()
+
+    def test_no_mac_falls_back_to_hostname_platform(self, roles):
+        c = _controller()
+        unifi_sync._import_device({"type": "uap", "name": "AP-Edge", "ip": "10.0.9.1"}, c)
+        # No MAC, new IP, same name+type → matched by hostname+platform.
+        assert unifi_sync._import_device({"type": "uap", "name": "AP-Edge", "ip": "10.0.9.99"}, c) == "updated"
+        assert Device.objects.filter(hostname__startswith="AP-Edge").count() == 1
+        assert Device.objects.get(hostname="AP-Edge").management_ip == "10.0.9.99"
+
+    def test_find_existing_priority_mac_over_ip(self, roles):
+        c = _controller()
+        unifi_sync._import_device({"type": "uap", "name": "AP-1", "ip": "10.0.8.1",
+                                   "mac": "11:22:33:44:55:66"}, c)
+        found = unifi_sync.find_existing_unifi_device(
+            "11:22:33:44:55:66", "10.0.8.250", "other-name", "unifi_ap")
+        assert found is not None and found.hostname == "AP-1"
+
+
+class TestControllerHostPropagation:
+    def test_updates_linked_device_on_host_change(self, roles):
+        from apps.integrations.models import UnifiConsoleStatus
+        c = _controller(host="10.16.133.5")
+        unifi_sync._import_device({"type": "udm", "name": "udm-1", "ip": "10.151.1.167",
+                                   "mac": "de:ad:be:ef:00:01"}, c)
+        device = Device.objects.get(hostname="udm-1")
+        UnifiConsoleStatus.objects.create(device=device, controller=c)
+
+        assert unifi_sync.update_linked_device_host(c) is True
+        device.refresh_from_db()
+        assert device.management_ip == "10.16.133.5" and device.ip_address == "10.16.133.5"
+
+    def test_noop_without_linked_device(self):
+        c = _controller(host="10.16.133.5")
+        assert unifi_sync.update_linked_device_host(c) is False
+
+    def test_noop_when_host_is_dns_name(self, roles):
+        from apps.integrations.models import UnifiConsoleStatus
+        c = _controller(host="unifi.example.com")
+        unifi_sync._import_device({"type": "udm", "name": "udm-2", "ip": "10.0.0.5",
+                                   "mac": "de:ad:be:ef:00:02"}, c)
+        UnifiConsoleStatus.objects.create(device=Device.objects.get(hostname="udm-2"), controller=c)
+        assert unifi_sync.update_linked_device_host(c) is False
+
+
 def _profile(**kw):
     from apps.credentials.models import CredentialProfile
     defaults = dict(name="unifi-creds", https_enabled=True, https_username="admin",

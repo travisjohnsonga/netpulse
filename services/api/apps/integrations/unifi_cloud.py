@@ -153,12 +153,18 @@ def discover_controllers() -> dict:
             continue
         existing = UnifiController.objects.filter(cloud_host_id=fields["cloud_host_id"]).first()
         if existing:
+            host_changed = existing.host != fields["host"]
             existing.name = fields["name"]
             existing.host = fields["host"]
             existing.port = fields["port"]
             existing.model = fields["model"]
             existing.version = fields["version"]
             existing.save(update_fields=["name", "host", "port", "model", "version", "updated_at"])
+            # A re-discovered controller whose mgmt IP moved should drag its
+            # device record along, not wait for the next device sync.
+            if host_changed:
+                from .unifi_sync import update_linked_device_host
+                update_linked_device_host(existing)
             status = "updated"
         else:
             UnifiController.objects.create(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,46 @@ def _valid_ip(value) -> str:
         return ""
 
 
+def _normalize_mac(value) -> str:
+    """Canonicalise a MAC to lowercase colon form, or '' if not a valid MAC.
+
+    Accepts colon/dash/dot/bare forms (e.g. ``AA-BB-...``, ``aabb.ccdd.eeff``)
+    and normalises to ``aa:bb:cc:dd:ee:ff`` so lookups match regardless of how
+    the controller formats it.
+    """
+    hexes = re.sub(r"[^0-9a-fA-F]", "", str(value or ""))
+    if len(hexes) != 12:
+        return ""
+    hexes = hexes.lower()
+    return ":".join(hexes[i:i + 2] for i in range(0, 12, 2))
+
+
+def find_existing_unifi_device(mac: str, ip: str, hostname: str, platform: str):
+    """Find the Device this UniFi device already maps to, by stable identity.
+
+    Priority: MAC (stable across IP changes) → IP (``management_ip``/``ip_address``)
+    → hostname+platform. Returns the Device or None. Keying on MAC first is what
+    stops a changed IP from spawning a duplicate ``<name>-2`` record.
+    """
+    from django.db.models import Q
+
+    from apps.devices.models import Device
+
+    if mac:
+        d = Device.objects.filter(mac_address=mac).first()
+        if d:
+            return d
+    if ip:
+        d = Device.objects.filter(Q(management_ip=ip) | Q(ip_address=ip)).first()
+        if d:
+            return d
+    if hostname:
+        d = Device.objects.filter(hostname=hostname, platform=platform).first()
+        if d:
+            return d
+    return None
+
+
 def _unique_hostname(base: str) -> str:
     """Return a hostname not already taken (Device.hostname is unique)."""
     from apps.devices.models import Device
@@ -85,7 +126,6 @@ def _unique_hostname(base: str) -> str:
 def _import_device(raw: dict, controller) -> str:
     """Create/update a Device from one UniFi device dict. Returns
     'imported' | 'updated' | 'skipped'."""
-    from django.db.models import Q
     from django.utils import timezone
 
     from apps.devices.models import Device, DeviceRole
@@ -94,16 +134,21 @@ def _import_device(raw: dict, controller) -> str:
     if not ip:
         return "skipped"  # no usable IP → can't create (ip_address is required+unique)
 
+    mac = _normalize_mac(raw.get("mac"))
     platform, role_slug = UNIFI_TYPE_MAP.get((raw.get("type") or "").lower(), ("other", None))
     role = DeviceRole.objects.filter(slug=role_slug).first() if role_slug else None
     name = (raw.get("name") or raw.get("mac") or ip).strip()
     model = (raw.get("model") or "").strip()
     version = (raw.get("version") or "").strip()
 
-    existing = Device.objects.filter(Q(management_ip=ip) | Q(ip_address=ip)).first()
+    # Match by stable identity (MAC first) so a device that changed IP updates in
+    # place instead of spawning a duplicate.
+    existing = find_existing_unifi_device(mac, ip, name, platform)
     if existing:
         existing.platform = platform
         existing.vendor = existing.vendor or "Ubiquiti"
+        if mac and existing.mac_address != mac:
+            existing.mac_address = mac
         if model:
             existing.model = model
         if version:
@@ -112,6 +157,11 @@ def _import_device(raw: dict, controller) -> str:
             existing.role = role
         if controller.site_id and not existing.site_id:
             existing.site = controller.site
+        # Track the device's current address (it may have changed). management_ip
+        # is non-unique; only move the unique ip_address when it's free.
+        existing.management_ip = ip
+        if existing.ip_address != ip and not Device.objects.filter(ip_address=ip).exclude(pk=existing.pk).exists():
+            existing.ip_address = ip
         existing.last_seen = timezone.now()
         # Only adopt the controller hostname if it's free (don't break uniqueness).
         if name and name != existing.hostname and not Device.objects.filter(hostname=name).exclude(pk=existing.pk).exists():
@@ -121,7 +171,7 @@ def _import_device(raw: dict, controller) -> str:
 
     Device.objects.create(
         hostname=_unique_hostname(name or ip),
-        ip_address=ip, management_ip=ip,
+        ip_address=ip, management_ip=ip, mac_address=mac,
         vendor="Ubiquiti", model=model, os_version=version,
         platform=platform, role=role, site=controller.site,
         status=Device.Status.ACTIVE, last_seen=timezone.now(),
@@ -159,6 +209,41 @@ def sync_controller(controller) -> dict:
     controller.save(update_fields=["last_sync", "last_error", "device_count", "updated_at"])
     logger.info("UniFi %s sync: %s", controller.name, counts)
     return counts
+
+
+def update_linked_device_host(controller) -> bool:
+    """Propagate a controller's current ``host`` (mgmt IP) to the Device that
+    represents it, so editing or re-discovering a controller whose IP changed
+    doesn't leave its device pointing at a stale address before the next sync.
+
+    The device is found via the console-status link (reliable FK back to the
+    controller); if none exists yet there's nothing to update. Best-effort and
+    a no-op when ``host`` is a DNS name rather than an IP. Returns True if a
+    device was updated.
+    """
+    from apps.devices.models import Device
+
+    ip = _valid_ip(controller.host)
+    if not ip:
+        return False
+
+    status = controller.console_statuses.first()
+    device = status.device if (status and status.device_id) else None
+    if device is None:
+        return False
+
+    fields: list[str] = []
+    if device.management_ip != ip:
+        device.management_ip = ip
+        fields.append("management_ip")
+    if device.ip_address != ip and not Device.objects.filter(ip_address=ip).exclude(pk=device.pk).exists():
+        device.ip_address = ip
+        fields.append("ip_address")
+    if not fields:
+        return False
+    device.save(update_fields=[*fields, "updated_at"])
+    logger.info("UniFi %s: propagated host %s to device %s", controller.name, ip, device.hostname)
+    return True
 
 
 def sync_all_controllers() -> dict:

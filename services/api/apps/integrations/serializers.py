@@ -89,9 +89,14 @@ class UnifiControllerSerializer(serializers.ModelSerializer):
         return UnifiController.objects.create(**validated_data)
 
     def update(self, instance, validated_data):
+        old_host = instance.host
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
+        # If the controller's mgmt IP was edited, keep its device record in sync.
+        if instance.host != old_host:
+            from .unifi_sync import update_linked_device_host
+            update_linked_device_host(instance)
         return instance
 
 

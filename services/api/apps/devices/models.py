@@ -182,6 +182,10 @@ class Device(TimestampedModel):
     platform = models.CharField(max_length=20, choices=Platform.choices, default=Platform.OTHER)
     os_version = models.CharField(max_length=100, blank=True)
     serial_number = models.CharField(max_length=100, blank=True, db_index=True)
+    # Hardware MAC (canonical lowercase colon form, e.g. "aa:bb:cc:dd:ee:ff").
+    # Stable across IP changes, so used as the upsert key for UniFi controller
+    # sync. Blank for devices with no known MAC; not unique (many blanks).
+    mac_address = models.CharField(max_length=17, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     # Last time NetPulse successfully reached the device (e.g. config collection).
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
