@@ -37,11 +37,12 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
         """Verify the connection; return available sites + device count."""
         c = self.get_object()
         from .unifi_client import UnifiClient, UnifiError
-        from .unifi_sync import _read_password
-        # Allow testing a just-typed password from the form, else use the stored one.
-        password = (request.data or {}).get("password") or _read_password(c)
+        from .unifi_sync import _credentials
+        # Allow testing a just-typed password from the form, else use the stored
+        # one. Username always comes from the model field (never the vault).
         try:
-            with UnifiClient(c.host, c.port, c.username, password,
+            username, password = _credentials(c, (request.data or {}).get("password") or "")
+            with UnifiClient(c.host, c.port, username, password,
                              site_id=c.unifi_site_id, verify_ssl=c.verify_ssl) as client:
                 devices = client.get_devices()
                 sites = [s.get("name") or s.get("desc") or "" for s in client.get_sites()]

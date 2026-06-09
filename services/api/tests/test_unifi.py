@@ -71,6 +71,82 @@ class TestImportDevice:
         assert Device.objects.get(hostname="AP-S").site_id == site.id
 
 
+class TestCredentials:
+    def test_uses_model_username_and_vault_password(self, monkeypatch):
+        c = _controller(username="admin")
+        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "vaultpw")
+        assert unifi_sync._credentials(c) == ("admin", "vaultpw")
+
+    def test_password_override_wins(self, monkeypatch):
+        c = _controller(username="admin")
+        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "vaultpw")
+        assert unifi_sync._credentials(c, "typed") == ("admin", "typed")
+
+    def test_raises_clear_error_when_password_missing(self, monkeypatch):
+        from apps.integrations.unifi_client import UnifiError
+        c = _controller(username="admin")
+        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "")
+        with pytest.raises(UnifiError, match="No credentials configured"):
+            unifi_sync._credentials(c)
+
+    def test_raises_clear_error_when_username_missing(self, monkeypatch):
+        from apps.integrations.unifi_client import UnifiError
+        c = _controller(username="")
+        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "pw")
+        with pytest.raises(UnifiError, match="No credentials configured"):
+            unifi_sync._credentials(c)
+
+
+class TestLogin:
+    """Login tries UniFi OS (/api/auth/login) first, then classic (/api/login)."""
+
+    class FakeResp:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    def _client(self, monkeypatch, responses):
+        """Build a UnifiClient whose session.post returns queued responses by path."""
+        from apps.integrations.unifi_client import UnifiClient
+        client = UnifiClient("10.0.0.1", 443, "admin", "pw")
+        calls = []
+
+        def fake_post(url, **kw):
+            calls.append(url)
+            for path, resp in responses.items():
+                if url.endswith(path):
+                    return resp
+            raise AssertionError(f"unexpected POST {url}")
+
+        monkeypatch.setattr(client.session, "post", fake_post)
+        return client, calls
+
+    def test_unifi_os_login_sets_proxy_prefix(self, monkeypatch):
+        client, calls = self._client(monkeypatch, {"/api/auth/login": self.FakeResp(200)})
+        client.login()
+        assert client._logged_in and client._unifi_os
+        assert client._api("/api/s/default/stat/device") == "/proxy/network/api/s/default/stat/device"
+        assert calls == ["https://10.0.0.1:443/api/auth/login"]
+
+    def test_falls_back_to_classic_login(self, monkeypatch):
+        client, calls = self._client(monkeypatch, {
+            "/api/auth/login": self.FakeResp(401),
+            "/api/login": self.FakeResp(200),
+        })
+        client.login()
+        assert client._logged_in and not client._unifi_os
+        assert client._api("/api/s/default/stat/device") == "/api/s/default/stat/device"
+        assert calls == ["https://10.0.0.1:443/api/auth/login", "https://10.0.0.1:443/api/login"]
+
+    def test_raises_when_both_endpoints_fail(self, monkeypatch):
+        from apps.integrations.unifi_client import UnifiError
+        client, _ = self._client(monkeypatch, {
+            "/api/auth/login": self.FakeResp(401),
+            "/api/login": self.FakeResp(401),
+        })
+        with pytest.raises(UnifiError, match="tried both auth endpoints"):
+            client.login()
+
+
 class TestSyncController:
     def test_sync_imports_and_stamps(self, roles, monkeypatch):
         c = _controller()

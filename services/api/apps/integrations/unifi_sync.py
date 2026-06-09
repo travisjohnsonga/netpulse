@@ -30,6 +30,27 @@ def _read_password(controller) -> str:
         return ""
 
 
+def _credentials(controller, password_override: str = "") -> tuple[str, str]:
+    """Return ``(username, password)`` for a controller.
+
+    The username lives on the model (``controller.username``); only the
+    password is stored in OpenBao (key ``password``). The vault never holds the
+    username, so reading it from there yields None — always take it from the
+    model field. Raises :class:`UnifiError` if either is missing so callers
+    surface a clear "add credentials" message instead of a generic login 401.
+    """
+    from .unifi_client import UnifiError
+
+    username = (controller.username or "").strip()
+    password = password_override or _read_password(controller)
+    if not username or not password:
+        raise UnifiError(
+            f"No credentials configured for {controller.name}. "
+            "Add a username and password in the Edit modal."
+        )
+    return username, password
+
+
 def _valid_ip(value) -> str:
     try:
         ipaddress.ip_address(str(value))
@@ -108,8 +129,9 @@ def sync_controller(controller) -> dict:
 
     counts = {"imported": 0, "updated": 0, "skipped": 0}
     try:
-        with UnifiClient(controller.host, controller.port, controller.username,
-                         _read_password(controller), site_id=controller.unifi_site_id,
+        username, password = _credentials(controller)
+        with UnifiClient(controller.host, controller.port, username,
+                         password, site_id=controller.unifi_site_id,
                          verify_ssl=controller.verify_ssl) as client:
             devices = client.get_devices()
         for raw in devices:

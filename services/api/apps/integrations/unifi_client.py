@@ -33,31 +33,54 @@ class UnifiClient:
         self.session.trust_env = False
         self.session.verify = verify_ssl
         self._logged_in = False
+        # UniFi OS (UDM/Cloud Key Gen2+/newer firmware) vs. classic self-hosted
+        # controller. Set during login(); changes the auth + data API paths.
+        self._unifi_os = False
 
     def login(self) -> None:
-        try:
-            resp = self.session.post(
-                f"{self.base_url}/api/login",
-                json={"username": self.username, "password": self.password},
-                timeout=self.timeout, verify=self.verify_ssl,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as exc:  # noqa: BLE001
-            raise UnifiError(f"UniFi login failed: {exc}") from exc
-        if (data.get("meta", {}) or {}).get("rc") != "ok":
-            raise UnifiError(f"UniFi login rejected: {data}")
-        self._logged_in = True
+        """Authenticate, trying UniFi OS first then the classic controller.
+
+        UniFi OS (UDM, Cloud Key Gen2+, recent firmware) authenticates at
+        ``/api/auth/login`` and proxies the Network app under ``/proxy/network``;
+        the classic self-hosted controller uses ``/api/login`` directly. We try
+        the OS endpoint first and fall back to classic, recording which one
+        worked so subsequent requests hit the right path.
+        """
+        errors = []
+        for endpoint in ("/api/auth/login", "/api/login"):
+            try:
+                resp = self.session.post(
+                    f"{self.base_url}{endpoint}",
+                    json={"username": self.username, "password": self.password},
+                    timeout=self.timeout, verify=self.verify_ssl,
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{endpoint}: {exc}")
+                continue
+            if resp.status_code == 200:
+                self._logged_in = True
+                self._unifi_os = endpoint == "/api/auth/login"
+                return
+            errors.append(f"{endpoint}: HTTP {resp.status_code}")
+        raise UnifiError(
+            f"UniFi login failed for {self.base_url} — tried both auth endpoints "
+            f"(/api/auth/login, /api/login): {'; '.join(errors)}"
+        )
+
+    def _api(self, path: str) -> str:
+        """Prefix data paths with /proxy/network on UniFi OS controllers."""
+        return f"/proxy/network{path}" if self._unifi_os else path
 
     def logout(self) -> None:
+        path = "/api/auth/logout" if self._unifi_os else "/api/logout"
         try:
-            self.session.post(f"{self.base_url}/api/logout", timeout=5, verify=self.verify_ssl)
+            self.session.post(f"{self.base_url}{path}", timeout=5, verify=self.verify_ssl)
         except Exception:  # noqa: BLE001 — best-effort
             pass
 
     def _get(self, path: str, timeout: int | None = None) -> list:
         try:
-            resp = self.session.get(f"{self.base_url}{path}", timeout=timeout or self.timeout,
+            resp = self.session.get(f"{self.base_url}{self._api(path)}", timeout=timeout or self.timeout,
                                     verify=self.verify_ssl)
             resp.raise_for_status()
             return resp.json().get("data", []) or []
