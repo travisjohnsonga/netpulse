@@ -1,5 +1,18 @@
 name: netpulse
 
+# Internal DNS for containers that resolve on-prem hostnames (devices, NetBox,
+# SMTP, UniFi controllers). Docker's embedded resolver still answers service
+# names (postgres/influxdb/…); these servers are only the upstream for external
+# names. Override INTERNAL_DNS / INTERNAL_DOMAIN in .env — setup.sh auto-detects
+# them; the defaults target the current lab. Merged into outbound services via
+# `<<: *internal-dns`.
+x-internal-dns: &internal-dns
+  dns:
+    - ${INTERNAL_DNS:-172.20.1.7}
+    - 8.8.8.8
+  dns_search:
+    - ${INTERNAL_DOMAIN:-vantran.local}
+
 services:
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +180,7 @@ services:
   # ─────────────────────────────────────────────────────────────────────────────
 
   api:
+    <<: *internal-dns
     build:
       context: ./services/api
       # Version baked into the image; netpulse.sh exports these on rebuild.
@@ -295,6 +309,7 @@ services:
         condition: service_healthy
 
   ingest-snmp:
+    <<: *internal-dns
     build: ./services/ingest-snmp
     restart: unless-stopped
     command: python -m ingest.snmp_server
@@ -360,6 +375,7 @@ services:
         condition: service_healthy
 
   ingest-api-poller:
+    <<: *internal-dns
     build: ./services/ingest-api-poller
     restart: unless-stopped
     command: python -m ingest.poller_server
@@ -399,6 +415,7 @@ services:
         condition: service_healthy
 
   config-manager:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_config_manager
@@ -421,6 +438,7 @@ services:
         condition: service_healthy
 
   reachability-monitor:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_reachability_monitor --interval 30
@@ -436,6 +454,7 @@ services:
         condition: service_healthy
 
   alert-engine:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_alert_engine
@@ -453,6 +472,7 @@ services:
         condition: service_healthy
 
   check-engine:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_check_engine
@@ -477,6 +497,7 @@ services:
         condition: service_healthy
 
   cve-engine:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_cve_engine
@@ -497,6 +518,7 @@ services:
         condition: service_healthy
 
   lifecycle-engine:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_lifecycle_engine
@@ -532,6 +554,7 @@ services:
         condition: service_healthy
 
   scheduler:
+    <<: *internal-dns
     build: ./services/api
     restart: unless-stopped
     # Authoritative periodic-task scheduler (management-command loop, the pattern

@@ -360,6 +360,26 @@ if [ -n "$host_ip" ]; then
   info "host IP for collectors: $host_ip"
 fi
 
+# Internal DNS so containers resolve on-prem hostnames (devices, NetBox, SMTP,
+# UniFi). Wired into outbound services via docker-compose dns:/dns_search:.
+# Auto-detected here; never overwrite an existing value. Skip the systemd-resolved
+# stub (127.0.0.53) — it's not reachable from inside a container.
+if [ -z "$(env_get INTERNAL_DNS)" ]; then
+  internal_dns="$(resolvectl status 2>/dev/null | grep 'DNS Servers' | awk '{print $3}' | head -1)"
+  [ -z "$internal_dns" ] && internal_dns="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)"
+  if [ -n "$internal_dns" ] && [ "$internal_dns" != "127.0.0.53" ]; then
+    env_set INTERNAL_DNS "$internal_dns"
+    info "detected internal DNS server: $internal_dns"
+  fi
+fi
+if [ -z "$(env_get INTERNAL_DOMAIN)" ]; then
+  internal_domain="$(resolvectl status 2>/dev/null | grep 'DNS Domain' | awk '{print $3}' | head -1)"
+  if [ -n "$internal_domain" ]; then
+    env_set INTERNAL_DOMAIN "$internal_domain"
+    info "detected internal DNS domain: $internal_domain"
+  fi
+fi
+
 # Make sure the dashboard is reachable by IP (Django rejects unlisted Hosts).
 # Done before the stack starts so the api reads the final value on first boot.
 merge_allowed_hosts
