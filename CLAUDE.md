@@ -24,6 +24,21 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~1275 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite.
 
+**Recently completed (this session):** Alert expanded panels render config diffs with green/red
+syntax highlighting (reuses the `DiffViewer` component) · LLDP neighbors page added to the sidebar ·
+LLDP neighbors now persisted to the `LLDPNeighbor` table (scheduler every 30 min + manual
+`collect_lldp` command) · AOS-CX LLDP collection fixed for FL.10.13 firmware (per-interface API, not
+`/lldp_neighbors_info`; two methods with auto-fallback) · LLDP capability parsing fixed
+(comma-separated `"Bridge, Router"` → `["bridge","router"]`) · LLDP undiscovered-neighbors page
+(capability filters, hostname search, default excludes phones/workstations) · AOS-CX syslog severity
+keyword fixed (`info`, not `informational`) · OS-version policy (pre-populated from inventory, opt-in
+scoring, most-urgent precedence: prohibited > deprecated > preferred > approved) · multi-collector
+service checks (model + aggregation + API; central engine attributes to the default collector until
+the distributed agent ships) · Settings reorganized into tabbed pages (Users & Access, Alerting,
+Network Devices, Compliance, System) · Audit log now uses real data (40+ event types, CSV export) ·
+Topology shows ALL devices (offline = red) · all CodeQL HIGH alerts resolved · ReadTheDocs (MkDocs +
+Material theme, manual GitHub webhook).
+
 **Recently completed:** default admin password `NetPulse1!` + forced change on first login ·
 ALLOWED_HOSTS auto-detection in setup.sh · web UI defaults to ports 80/443 · CodeQL workflow + all
 HIGH alerts fixed · MkDocs docs on ReadTheDocs · Email/SMTP integration (Settings → Integrations →
@@ -33,11 +48,17 @@ errors (parseApiErrors) · UniFi multi-controller support + Site Manager cloud a
 SiteCredential assignments (per site, optional role) · NetBox import preview endpoint + UI · host-IP
 detection prefers NETPULSE_HOST_IP (not the container IP).
 
-**Pending / next session:** test UniFi against a real controller · UniFi device sync once local
-controller credentials are added · marketing website (post v1.0). NOTE: device IP fields were
-investigated for consolidation and intentionally KEPT BOTH — `ip_address` is the required/unique
-identity IP (dedup, ARP/flow correlation), `management_ip` is the optional OOB/management override
-(connection code uses `management_ip or ip_address`). They serve distinct purposes; not merged.
+**Pending / next session:** **AOS-CX REST API migration** — migrate all collection (interfaces, ARP,
+environment, VLANs, PoE, routes) from SNMP/SSH to the REST API, with SNMP kept as fallback; priority
+order: (1) system info, (2) interface list + stats, (3) ARP table, (4) environment/sensors, (5) VLANs,
+PoE, routes (see the AOS-CX REST notes in the platform doc + the Platform Support section below) ·
+test UniFi against a real controller · UniFi device sync once local controller credentials are added ·
+SonicWall v7 config backup still requires the built-in `admin` account · collector IP: fresh installs
+may store the container IP unless `NETPULSE_HOST_IP` is set in `.env` · marketing website (post v1.0) ·
+product-name decision before v1.0. NOTE: device IP fields were investigated for consolidation and
+intentionally KEPT BOTH — `ip_address` is the required/unique identity IP (dedup, ARP/flow
+correlation), `management_ip` is the optional OOB/management override (connection code uses
+`management_ip or ip_address`). They serve distinct purposes; not merged.
 
 **Known issues:** a fresh install can store the container IP as the collector IP if `NETPULSE_HOST_IP`
 isn't set (setup.sh now sets it; `register_local_collector` self-heals a 172.16/12 value) · SonicWall
@@ -166,6 +187,15 @@ aos_cx, aruba, sonicwall, plus aruba/aos.
   fan/PSU presence via entPhysicalClass. SNMPv3 "Wrong PDU digest" = WRONG key in OpenBao, not pysnmp.
   Aruba Central keepalive logs (`hpe-restd`) are normal noise. Central-managed config push: `aruba-central
   disable` → `sleep(2)` → push → re-enable (try/finally). gNMI on 8443 (OpenConfig) — planned.
+  **REST API** (preferred enrichment when reachable; SNMP fallback) verified on FL.10.13 firmware
+  (`wco2-mdf-crt-01` 10.150.0.15). LLDP on FL.10.13 uses the **per-interface** API, not
+  `/lldp_neighbors_info`: `GET /system/interfaces/{port}` → `lldp_neighbors: {key: uri}`, then
+  `GET /system/interfaces/{port}/lldp_neighbors/{key}` → `neighbor_info` (`chassis_id`,
+  `chassis_name`, `chassis_capability_available` as comma string, `chassis_description`,
+  `mgmt_ip_list`, `port_description`, `port_id_subtype`, `vlan_id_list`, `vlan_name_list`).
+  Capabilities `"Bridge, Router"` → split/strip/lowercase → `["bridge","router"]`; mgmt IP =
+  first entry of comma-separated `mgmt_ip_list`. Confirmed working: `GET /system?depth=1`. Next
+  session: migrate interfaces/ARP/environment/VLANs/PoE off SNMP to REST (see Pending).
 - **Discovery**: 4-tier (passive/topology-walk/active-scan/import); all land PENDING, never
   auto-activate. Default `ping_snmp` (production-safe). ⚠️ nmap Active Scan tripped a firewall block in
   the wco2 lab — reserve for labs. OT/ICS WARNING: never auto-probe industrial subnets (excluded_subnets).

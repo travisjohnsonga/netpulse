@@ -15,7 +15,9 @@ curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scrip
 - Configuration compliance engine
 - Flow analytics with Sankey diagrams
 - Multi-vendor support (Cisco, Fortinet, HPE, SonicWall, Ubiquiti UniFi)
+- LLDP neighbor discovery (persisted topology, undiscovered-neighbor view)
 - Discovery with import preview, periodic hostname verification, and per-site credential assignment
+- Audit log (40+ event types, CSV export)
 - Integrations: NetBox import (with preview), UniFi (multi-controller + cloud auto-discovery), Email/SMTP alerts
 
 ## Documentation
