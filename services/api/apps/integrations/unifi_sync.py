@@ -21,32 +21,44 @@ UNIFI_TYPE_MAP = {
 }
 
 
-def _read_password(controller) -> str:
-    from apps.credentials import vault
-    try:
-        return (vault.read_secret(controller.vault_path) or {}).get("password", "") or ""
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("UniFi %s: could not read password from OpenBao: %s", controller.name, exc)
-        return ""
+def get_controller_credentials(controller, profile=None) -> tuple[str, str]:
+    """Return ``(username, password)`` for a controller's local API access.
 
-
-def _credentials(controller, password_override: str = "") -> tuple[str, str]:
-    """Return ``(username, password)`` for a controller.
-
-    The username lives on the model (``controller.username``); only the
-    password is stored in OpenBao (key ``password``). The vault never holds the
-    username, so reading it from there yields None — always take it from the
-    model field. Raises :class:`UnifiError` if either is missing so callers
-    surface a clear "add credentials" message instead of a generic login 401.
+    Credentials come from a CredentialProfile (the same system the rest of
+    NetPulse uses), not from fields on the controller: the username is on the
+    profile (``https_username`` / ``ssh_username``) and the password lives in
+    OpenBao at the profile's ``vault_path``. HTTPS credentials are preferred,
+    falling back to SSH. ``profile`` overrides the controller's saved profile
+    (used by the test endpoint to try a not-yet-saved selection). Raises
+    :class:`UnifiError` with an actionable message when nothing usable is found.
     """
+    from apps.credentials import vault
+
     from .unifi_client import UnifiError
 
-    username = (controller.username or "").strip()
-    password = password_override or _read_password(controller)
+    profile = profile or controller.credential_profile
+    if profile is None:
+        raise UnifiError(
+            f"No credential profile assigned to controller {controller.name}. "
+            "Assign a profile with HTTPS/API credentials in Settings → "
+            "Integrations → UniFi."
+        )
+    secrets = vault.read_secret(profile.vault_path) or {}
+    if profile.https_enabled:
+        username = (profile.https_username or "").strip()
+        password = secrets.get("https_password", "") or ""
+    elif profile.ssh_enabled:
+        username = (profile.ssh_username or "").strip()
+        password = secrets.get("ssh_password", "") or ""
+    else:
+        raise UnifiError(
+            f'Credential profile "{profile.name}" has no HTTPS or SSH '
+            "credentials. Enable HTTPS credentials for UniFi controller access."
+        )
     if not username or not password:
         raise UnifiError(
-            f"No credentials configured for {controller.name}. "
-            "Add a username and password in the Edit modal."
+            f'No credentials found in profile "{profile.name}". '
+            "Check the HTTPS username and password are set."
         )
     return username, password
 
@@ -129,7 +141,7 @@ def sync_controller(controller) -> dict:
 
     counts = {"imported": 0, "updated": 0, "skipped": 0}
     try:
-        username, password = _credentials(controller)
+        username, password = get_controller_credentials(controller)
         with UnifiClient(controller.host, controller.port, username,
                          password, site_id=controller.unifi_site_id,
                          verify_ssl=controller.verify_ssl) as client:

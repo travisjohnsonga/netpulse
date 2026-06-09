@@ -99,7 +99,17 @@ class UnifiController(TimestampedModel):
     cloud_host_id = models.CharField(max_length=128, blank=True, db_index=True)
     host = models.CharField(max_length=255, help_text="Controller hostname or IP")
     port = models.IntegerField(default=8443)
-    username = models.CharField(max_length=128)
+    # Legacy: credentials now come from credential_profile (see below). Kept
+    # nullable so the data migration can seed a profile from existing values.
+    username = models.CharField(max_length=128, blank=True)
+    # Local controller API credentials. The profile should have HTTPS (or SSH)
+    # enabled; the username/password must match a UniFi local admin account.
+    credential_profile = models.ForeignKey(
+        "credentials.CredentialProfile", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="unifi_controllers",
+        help_text="Credential profile for local controller API access "
+                  "(HTTPS credentials recommended).",
+    )
     verify_ssl = models.BooleanField(default=False)
     # UniFi site identifier on the controller (UniFi → Settings → System → Site
     # ID). Named unifi_site_id to avoid clashing with the `site` FK's site_id.

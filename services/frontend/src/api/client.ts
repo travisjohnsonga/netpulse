@@ -1087,37 +1087,38 @@ export interface UnifiController {
   name: string
   host: string
   port: number
-  username: string
   verify_ssl: boolean
   unifi_site_id: string
   site: number | null
   site_name?: string | null
+  // Local controller API credentials come from a CredentialProfile.
+  credential_profile: number | null
+  credential_profile_name?: string | null
   enabled: boolean
   last_sync: string | null
   last_error: string
   device_count: number
   model?: string
   version?: string
-  password_set?: boolean
 }
 
 export async function fetchUnifiControllers(): Promise<UnifiController[]> {
   const { data } = await api.get<UnifiController[] | Paginated<UnifiController>>('/integrations/unifi/')
   return unwrap(data)
 }
-export async function createUnifiController(payload: Partial<UnifiController> & { password?: string }): Promise<UnifiController> {
+export async function createUnifiController(payload: Partial<UnifiController>): Promise<UnifiController> {
   const { data } = await api.post<UnifiController>('/integrations/unifi/', payload)
   return data
 }
-export async function updateUnifiController(id: number, payload: Partial<UnifiController> & { password?: string }): Promise<UnifiController> {
+export async function updateUnifiController(id: number, payload: Partial<UnifiController>): Promise<UnifiController> {
   const { data } = await api.put<UnifiController>(`/integrations/unifi/${id}/`, payload)
   return data
 }
 export async function deleteUnifiController(id: number): Promise<void> {
   await api.delete(`/integrations/unifi/${id}/`)
 }
-export async function testUnifiController(id: number, password?: string): Promise<{ connected: boolean; sites?: string[]; device_count?: number; error?: string }> {
-  const { data } = await api.post(`/integrations/unifi/${id}/test/`, password ? { password } : {})
+export async function testUnifiController(id: number, credentialProfileId?: number | null): Promise<{ connected: boolean; sites?: string[]; device_count?: number; error?: string }> {
+  const { data } = await api.post(`/integrations/unifi/${id}/test/`, credentialProfileId ? { credential_profile: credentialProfileId } : {})
   return data
 }
 export async function syncUnifiController(id: number): Promise<{ imported: number; updated: number; skipped: number }> {

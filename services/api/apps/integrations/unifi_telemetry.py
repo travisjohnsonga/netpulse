@@ -311,11 +311,11 @@ def collect_controller_ap_telemetry(controller) -> dict:
     from django.utils import timezone
 
     from .unifi_client import UnifiClient, UnifiError
-    from .unifi_sync import _credentials, _import_device
+    from .unifi_sync import get_controller_credentials, _import_device
 
     counts = {"aps": 0, "matched": 0, "skipped": 0, "console": 0}
     try:
-        username, password = _credentials(controller)
+        username, password = get_controller_credentials(controller)
         with UnifiClient(controller.host, controller.port, username, password,
                          site_id=controller.unifi_site_id,
                          verify_ssl=controller.verify_ssl) as client:

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import Modal from './Modal'
+import { Link } from 'react-router-dom'
 import {
   fetchUnifiControllers, createUnifiController, updateUnifiController, deleteUnifiController,
-  testUnifiController, syncUnifiController, syncAllUnifi, fetchSites,
+  testUnifiController, syncUnifiController, syncAllUnifi, fetchSites, fetchCredentials,
   fetchUnifiCloud, saveUnifiCloud, testUnifiCloud, discoverUnifiControllers,
   type UnifiController, type Site, type UnifiCloudAccount, type UnifiDiscoveredController,
+  type CredentialProfileListItem,
 } from '../api/client'
 import { parseApiErrors } from '../api/errors'
 
@@ -30,11 +32,20 @@ function statusDot(c: UnifiController): { cls: string; title: string } {
   return { cls: 'bg-gray-300 dark:bg-gray-600', title: 'Never synced' }
 }
 
-type Draft = Partial<UnifiController> & { password?: string }
+type Draft = Partial<UnifiController>
 
 const BLANK: Draft = {
-  name: '', host: '', port: 8443, username: '', unifi_site_id: 'default',
-  site: null, verify_ssl: false, enabled: true, password: '',
+  name: '', host: '', port: 8443, unifi_site_id: 'default',
+  site: null, verify_ssl: false, enabled: true, credential_profile: null,
+}
+
+// Sort HTTPS-capable profiles first — they're the right fit for UniFi.
+function sortProfiles(ps: CredentialProfileListItem[]): CredentialProfileListItem[] {
+  return [...ps].sort((a, b) => {
+    const ah = a.enabled_protocols.includes('https') ? 0 : 1
+    const bh = b.enabled_protocols.includes('https') ? 0 : 1
+    return ah - bh || a.name.localeCompare(b.name)
+  })
 }
 
 export default function UnifiSettingsModal({ onClose }: { onClose: () => void }) {
@@ -50,10 +61,15 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
   const [cloudKey, setCloudKey] = useState('')
   const [cloudMsg, setCloudMsg] = useState<string | null>(null)
   const [discovered, setDiscovered] = useState<UnifiDiscoveredController[] | null>(null)
+  const [profiles, setProfiles] = useState<CredentialProfileListItem[]>([])
 
   const load = () => fetchUnifiControllers().then(setList).catch((e) => setError(parseApiErrors(e, 'Failed to load controllers.')))
   const loadCloud = () => fetchUnifiCloud().then(setCloud).catch(() => {})
-  useEffect(() => { load(); loadCloud(); fetchSites().then(setSites).catch(() => {}) }, [])
+  useEffect(() => {
+    load(); loadCloud()
+    fetchSites().then(setSites).catch(() => {})
+    fetchCredentials().then((p) => setProfiles(sortProfiles(p))).catch(() => {})
+  }, [])
 
   const saveCloud = async () => {
     setBusy(true); setCloudMsg(null); setError(null)
@@ -77,7 +93,7 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
       if (cloudKey) await saveUnifiCloud({ api_key: cloudKey })
       const r = await discoverUnifiControllers()
       setCloudKey(''); setDiscovered(r.controllers); loadCloud(); load()
-      setCloudMsg(`Found ${r.discovered} controller(s). Add local credentials to each to enable device sync.`)
+      setCloudMsg(`Found ${r.discovered} controller(s). Assign a credential profile to each to enable device sync.`)
     } catch (e) { setError(parseApiErrors(e, 'Discovery failed.')) }
     finally { setBusy(false) }
   }
@@ -102,8 +118,8 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
     try {
       const saved = await saveDraft()              // persist so the test uses current values
       if (!saved) return
-      setEditing({ ...editing, id: saved.id, password: '' })
-      const r = await testUnifiController(saved.id, editing?.password)
+      setEditing({ ...editing, id: saved.id })
+      const r = await testUnifiController(saved.id, editing?.credential_profile ?? undefined)
       if (r.connected) setTestResult(`✅ Connected — ${r.device_count} device(s). Sites: ${(r.sites || []).join(', ') || 'default'}`)
       else setTestResult(`❌ ${r.error || 'Connection failed'}`)
       load()
@@ -150,10 +166,31 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
             <div className="col-span-2"><label className={label}>Host (IP or hostname)</label><input className={input} value={d.host || ''} onChange={(e) => set({ host: e.target.value })} placeholder="192.168.1.1" /></div>
             <div><label className={label}>Port</label><input type="number" className={input} value={d.port ?? 8443} onChange={(e) => set({ port: Number(e.target.value) })} /></div>
           </div>
-          <div><label className={label}>Username</label><input className={input} value={d.username || ''} onChange={(e) => set({ username: e.target.value })} autoComplete="off" /></div>
           <div>
-            <label className={label}>Password {d.password_set && <span className="text-xs text-gray-400">(stored — leave blank to keep)</span>}</label>
-            <input type="password" className={input} value={d.password || ''} onChange={(e) => set({ password: e.target.value })} placeholder={d.password_set ? '••••••••' : ''} autoComplete="new-password" />
+            <label className={label}>Credential Profile</label>
+            {profiles.length === 0 ? (
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                ⚠️ No credential profiles found. Create one in Settings → Credentials before adding a controller.{' '}
+                <Link to="/settings/credentials" className="underline font-medium" onClick={onClose}>Go to Credentials →</Link>
+              </div>
+            ) : (
+              <>
+                <select className={input} value={d.credential_profile ?? ''} onChange={(e) => set({ credential_profile: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">— Select a credential profile —</option>
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.enabled_protocols.includes('https') ? ' · HTTPS' : ` · ${p.enabled_protocols.join('/') || 'no protocols'}`}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  ℹ️ Pick a profile with <strong>HTTPS</strong> credentials whose username/password match a UniFi
+                  controller <strong>local admin</strong> account (separate from your UI.com cloud API key). Recommended:
+                  create a read-only local admin in UniFi Network → Admins &amp; Users → Add Admin (Local Access Only),
+                  then add a NetPulse credential profile with HTTPS enabled under Settings → Credentials.
+                </p>
+              </>
+            )}
           </div>
           <div>
             <label className={label}>UniFi Site ID</label>
@@ -171,7 +208,9 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
             <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" checked={!!d.verify_ssl} onChange={(e) => set({ verify_ssl: e.target.checked })} /> Verify SSL</label>
             <label className="flex items-center gap-2 text-sm font-medium text-gray-800 dark:text-gray-200"><input type="checkbox" checked={d.enabled ?? true} onChange={(e) => set({ enabled: e.target.checked })} /> Enabled</label>
           </div>
-          <button onClick={test} disabled={busy || !d.host} className="w-full py-2 text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg disabled:opacity-50 dark:text-gray-200">Test Connection</button>
+          <button onClick={test} disabled={busy || !d.host || !d.credential_profile} className="w-full py-2 text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg disabled:opacity-50 dark:text-gray-200">
+            Test Connection{d.credential_profile ? ` (profile: ${profiles.find((p) => p.id === d.credential_profile)?.name ?? d.credential_profile})` : ''}
+          </button>
         </div>
       </Modal>
     )
@@ -249,7 +288,7 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
                       <td className="px-3 py-2 sticky right-0 bg-white dark:bg-gray-800">
                         <div className="flex items-center justify-end gap-1.5">
                           <button onClick={() => syncOne(c)} disabled={busy} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">Sync</button>
-                          <button onClick={() => { setError(null); setTestResult(null); setEditing({ ...c, password: '' }) }} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Edit</button>
+                          <button onClick={() => { setError(null); setTestResult(null); setEditing({ ...c }) }} className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Edit</button>
                           <button onClick={() => remove(c)} className="px-2 py-0.5 text-xs border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
                         </div>
                       </td>

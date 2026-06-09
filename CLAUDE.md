@@ -127,8 +127,12 @@ templates, overrides) · alerts (AlertRule, AlertEvent, AlertChannel) · cve · 
 (DeviceRiskScore) · collectors · configbackup (ConfigBackupSettings, DeviceConfig) · integrations
 (NetBox/DNA import; EmailSettings — SMTP for alert email, provider presets, password in OpenBao at
 netpulse/integrations/smtp; GET/PUT /api/integrations/email/ + /test/; UnifiController — multi-controller
-UniFi device import, password in OpenBao at netpulse/integrations/unifi/{id}, CRUD + /test//sync/
-+ sync-all under /api/integrations/unifi/, 6h scheduler sync via UNIFI_SYNC_INTERVAL_S;
+UniFi device import; local controller API credentials come from a linked CredentialProfile
+(credential_profile FK; HTTPS preferred, SSH fallback — see get_controller_credentials), CRUD + /test//sync/
++ sync-all under /api/integrations/unifi/, 6h scheduler sync via UNIFI_SYNC_INTERVAL_S; AP + console
+telemetry every UNIFI_TELEMETRY_INTERVAL_S (5m) → UnifiApStatus/UnifiConsoleStatus + InfluxDB
+(unifi_ap_radio/unifi_ap_health, unifi_controller_health/unifi_wan); /api/wireless/{summary,aps}/,
+/api/devices/{id}/{unifi-ap,unifi-console}/;
 UnifiCloudAccount — UniFi Site Manager (api.ui.com) single-API-key auto-discovery of all controllers,
 key in OpenBao at netpulse/integrations/unifi/cloud, GET/PUT + cloud/test + cloud/discover) · logs
 (OpenSearch + LogFilter regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·

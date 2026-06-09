@@ -103,8 +103,8 @@ class TestCollect:
                                     management_ip="10.0.0.50", platform="unifi_ap")
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeApClient([RAW_AP]))
-        monkeypatch.setattr("apps.integrations.unifi_sync._credentials",
-                            lambda c, p="": ("admin", "pw"))
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials",
+                            lambda c, profile=None: ("admin", "pw"))
         writes = []
         monkeypatch.setattr(unifi_telemetry, "_write_influx", lambda pts: writes.extend(pts))
 
@@ -124,8 +124,8 @@ class TestCollect:
         c = _controller()
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeApClient([RAW_AP]))
-        monkeypatch.setattr("apps.integrations.unifi_sync._credentials",
-                            lambda c, p="": ("admin", "pw"))
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials",
+                            lambda c, profile=None: ("admin", "pw"))
         monkeypatch.setattr(unifi_telemetry, "_write_influx", lambda pts: None)
 
         res = unifi_telemetry.collect_controller_ap_telemetry(c)
@@ -137,8 +137,8 @@ class TestCollect:
         _controller(name="B", host="10.0.0.2", enabled=False)  # skipped
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeApClient([RAW_AP]))
-        monkeypatch.setattr("apps.integrations.unifi_sync._credentials",
-                            lambda c, p="": ("admin", "pw"))
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials",
+                            lambda c, profile=None: ("admin", "pw"))
         monkeypatch.setattr(unifi_telemetry, "_write_influx", lambda pts: None)
 
         totals = unifi_telemetry.collect_all_ap_telemetry()
@@ -161,8 +161,8 @@ class TestConsole:
         c = _controller()
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeApClient([], gateway=RAW_GW))
-        monkeypatch.setattr("apps.integrations.unifi_sync._credentials",
-                            lambda c, p="": ("admin", "pw"))
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials",
+                            lambda c, profile=None: ("admin", "pw"))
         writes = []
         monkeypatch.setattr(unifi_telemetry, "_write_influx", lambda pts: writes.extend(pts))
 

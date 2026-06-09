@@ -36,12 +36,18 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
     def test(self, request, pk=None):
         """Verify the connection; return available sites + device count."""
         c = self.get_object()
+        from apps.credentials.models import CredentialProfile
+
         from .unifi_client import UnifiClient, UnifiError
-        from .unifi_sync import _credentials
-        # Allow testing a just-typed password from the form, else use the stored
-        # one. Username always comes from the model field (never the vault).
+        from .unifi_sync import get_controller_credentials
+        # Allow testing a not-yet-saved profile selection from the form, else use
+        # the controller's saved credential profile.
+        profile = None
+        pid = (request.data or {}).get("credential_profile")
+        if pid:
+            profile = CredentialProfile.objects.filter(pk=pid).first()
         try:
-            username, password = _credentials(c, (request.data or {}).get("password") or "")
+            username, password = get_controller_credentials(c, profile=profile)
             with UnifiClient(c.host, c.port, username, password,
                              site_id=c.unifi_site_id, verify_ssl=c.verify_ssl) as client:
                 devices = client.get_devices()

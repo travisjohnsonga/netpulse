@@ -71,30 +71,54 @@ class TestImportDevice:
         assert Device.objects.get(hostname="AP-S").site_id == site.id
 
 
+def _profile(**kw):
+    from apps.credentials.models import CredentialProfile
+    defaults = dict(name="unifi-creds", https_enabled=True, https_username="admin",
+                    vault_path="netpulse/credentials/test")
+    defaults.update(kw)
+    return CredentialProfile.objects.create(**defaults)
+
+
 class TestCredentials:
-    def test_uses_model_username_and_vault_password(self, monkeypatch):
-        c = _controller(username="admin")
-        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "vaultpw")
-        assert unifi_sync._credentials(c) == ("admin", "vaultpw")
+    """Controller credentials now come from a linked CredentialProfile."""
 
-    def test_password_override_wins(self, monkeypatch):
-        c = _controller(username="admin")
-        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "vaultpw")
-        assert unifi_sync._credentials(c, "typed") == ("admin", "typed")
+    def test_uses_https_profile_creds(self, monkeypatch):
+        c = _controller(credential_profile=_profile())
+        monkeypatch.setattr("apps.credentials.vault.read_secret",
+                            lambda path: {"https_password": "vaultpw"})
+        assert unifi_sync.get_controller_credentials(c) == ("admin", "vaultpw")
 
-    def test_raises_clear_error_when_password_missing(self, monkeypatch):
+    def test_falls_back_to_ssh(self, monkeypatch):
+        p = _profile(name="ssh-creds", https_enabled=False, ssh_enabled=True, ssh_username="root")
+        c = _controller(credential_profile=p)
+        monkeypatch.setattr("apps.credentials.vault.read_secret",
+                            lambda path: {"ssh_password": "sshpw"})
+        assert unifi_sync.get_controller_credentials(c) == ("root", "sshpw")
+
+    def test_profile_override(self, monkeypatch):
+        c = _controller()  # no saved profile
+        p = _profile(name="adhoc")
+        monkeypatch.setattr("apps.credentials.vault.read_secret",
+                            lambda path: {"https_password": "pw"})
+        assert unifi_sync.get_controller_credentials(c, profile=p) == ("admin", "pw")
+
+    def test_raises_when_no_profile(self):
         from apps.integrations.unifi_client import UnifiError
-        c = _controller(username="admin")
-        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "")
-        with pytest.raises(UnifiError, match="No credentials configured"):
-            unifi_sync._credentials(c)
+        with pytest.raises(UnifiError, match="No credential profile"):
+            unifi_sync.get_controller_credentials(_controller())
 
-    def test_raises_clear_error_when_username_missing(self, monkeypatch):
+    def test_raises_when_no_https_or_ssh(self):
         from apps.integrations.unifi_client import UnifiError
-        c = _controller(username="")
-        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "pw")
-        with pytest.raises(UnifiError, match="No credentials configured"):
-            unifi_sync._credentials(c)
+        c = _controller(credential_profile=_profile(name="empty", https_enabled=False))
+        with pytest.raises(UnifiError, match="no HTTPS or SSH"):
+            unifi_sync.get_controller_credentials(c)
+
+    def test_raises_when_password_missing(self, monkeypatch):
+        from apps.integrations.unifi_client import UnifiError
+        c = _controller(credential_profile=_profile())
+        monkeypatch.setattr("apps.credentials.vault.read_secret", lambda path: {})
+        with pytest.raises(UnifiError, match="No credentials found"):
+            unifi_sync.get_controller_credentials(c)
 
 
 class TestLogin:
@@ -154,7 +178,7 @@ class TestSyncController:
                    {"type": "usw", "name": "B", "ip": "10.0.2.2"},
                    {"type": "uap", "name": "C"}]  # no ip → skipped
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient", lambda *a, **k: FakeClient(devices))
-        monkeypatch.setattr(unifi_sync, "_read_password", lambda c: "pw")
+        monkeypatch.setattr(unifi_sync, "get_controller_credentials", lambda c, profile=None: ("admin", "pw"))
         res = unifi_sync.sync_controller(c)
         assert res == {"imported": 2, "updated": 0, "skipped": 1}
         c.refresh_from_db()
@@ -162,16 +186,17 @@ class TestSyncController:
 
 
 class TestEndpoints:
-    def test_create_writes_password(self, auth_client, monkeypatch):
-        writes = {}
-        monkeypatch.setattr("apps.credentials.vault.write_secret", lambda p, d: writes.update({p: d}))
+    def test_create_with_credential_profile(self, auth_client):
+        p = _profile(name="hq-creds")
         resp = auth_client.post("/api/integrations/unifi/", {
-            "name": "HQ", "host": "10.0.0.1", "port": 8443, "username": "admin",
-            "unifi_site_id": "default", "password": "secret123",
+            "name": "HQ", "host": "10.0.0.1", "port": 8443,
+            "unifi_site_id": "default", "credential_profile": p.id,
         }, format="json")
         assert resp.status_code == 201
-        cid = resp.json()["id"]
-        assert writes == {f"netpulse/integrations/unifi/{cid}": {"password": "secret123"}}
+        body = resp.json()
+        assert body["credential_profile"] == p.id
+        assert body["credential_profile_name"] == "hq-creds"
+        assert "password" not in body
 
     def test_list(self, auth_client):
         _controller()
@@ -186,7 +211,7 @@ class TestEndpoints:
         c = _controller()
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeClient([{"type": "uap", "ip": "1.1.1.1"}], [{"name": "default"}, {"name": "Guest"}]))
-        monkeypatch.setattr("apps.integrations.unifi_sync._read_password", lambda c: "pw")
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials", lambda c, profile=None: ("admin", "pw"))
         resp = auth_client.post(f"/api/integrations/unifi/{c.id}/test/", {}, format="json")
         assert resp.status_code == 200
         b = resp.json()
@@ -196,7 +221,7 @@ class TestEndpoints:
         c = _controller()
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeClient([{"type": "uap", "name": "X", "ip": "10.5.0.1"}]))
-        monkeypatch.setattr("apps.integrations.unifi_sync._read_password", lambda c: "pw")
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials", lambda c, profile=None: ("admin", "pw"))
         resp = auth_client.post(f"/api/integrations/unifi/{c.id}/sync/", {}, format="json")
         assert resp.status_code == 200 and resp.json()["imported"] == 1
 
@@ -205,7 +230,7 @@ class TestEndpoints:
         _controller(name="B", host="10.0.0.2", enabled=False)  # disabled → skipped
         monkeypatch.setattr("apps.integrations.unifi_client.UnifiClient",
                             lambda *a, **k: FakeClient([{"type": "uap", "name": "Z", "ip": "10.6.0.1"}]))
-        monkeypatch.setattr("apps.integrations.unifi_sync._read_password", lambda c: "pw")
+        monkeypatch.setattr("apps.integrations.unifi_sync.get_controller_credentials", lambda c, profile=None: ("admin", "pw"))
         resp = auth_client.post("/api/integrations/unifi/sync-all/", {}, format="json")
         assert resp.status_code == 200
         assert resp.json()["controllers"] == 1  # only the enabled one

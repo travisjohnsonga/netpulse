@@ -68,44 +68,28 @@ class EmailSettingsSerializer(serializers.ModelSerializer):
 
 
 class UnifiControllerSerializer(serializers.ModelSerializer):
-    # Write-only: written to OpenBao when supplied; never returned.
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    password_set = serializers.SerializerMethodField()
+    # Credentials come from a CredentialProfile (HTTPS/SSH); no password here.
     site_name = serializers.CharField(source="site.name", read_only=True, default=None)
+    credential_profile_name = serializers.CharField(
+        source="credential_profile.name", read_only=True, default=None)
 
     class Meta:
         model = UnifiController
         fields = (
-            "id", "name", "host", "port", "username", "verify_ssl", "unifi_site_id",
-            "site", "site_name", "enabled", "last_sync", "last_error",
-            "device_count", "model", "version", "password", "password_set",
+            "id", "name", "host", "port", "verify_ssl", "unifi_site_id",
+            "site", "site_name", "credential_profile", "credential_profile_name",
+            "enabled", "last_sync", "last_error", "device_count", "model", "version",
         )
         read_only_fields = ("id", "last_sync", "last_error", "device_count",
                             "model", "version")
 
-    def get_password_set(self, obj) -> bool:
-        from apps.credentials import vault
-        try:
-            return bool((vault.read_secret(obj.vault_path) or {}).get("password"))
-        except Exception:  # noqa: BLE001
-            return False
-
     def create(self, validated_data):
-        password = validated_data.pop("password", None)
-        controller = UnifiController.objects.create(**validated_data)
-        if password:
-            from apps.credentials import vault
-            vault.write_secret(controller.vault_path, {"password": password})
-        return controller
+        return UnifiController.objects.create(**validated_data)
 
     def update(self, instance, validated_data):
-        password = validated_data.pop("password", None)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
-        if password:
-            from apps.credentials import vault
-            vault.write_secret(instance.vault_path, {"password": password})
         return instance
 
 
