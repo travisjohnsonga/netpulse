@@ -211,6 +211,11 @@ SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 # AGENT_DIR to a mounted volume populated with the CI artifacts.
 AGENT_DIR = os.environ.get("AGENT_DIR", str(BASE_DIR.parent.parent / "agent"))
 
+# Agent PKI CA cert, written by setup_agent_pki onto the shared ssl-certs volume
+# so the nginx (frontend) container can use it as ssl_client_certificate to
+# verify agent mTLS connections. Defaults under SSL_DIR (shared with nginx).
+AGENT_CA_FILE = os.environ.get("AGENT_CA_FILE", os.path.join(SSL_DIR, "agent-ca.crt"))
+
 # Trusted CA bundle (system roots + admin-added CAs), rebuilt by apps.tls.
 # Point outbound HTTPS (requests: CVE feeds, vendor APIs, git sync) at it when
 # present so private/internal PKIs and SSL-inspection proxies are trusted.

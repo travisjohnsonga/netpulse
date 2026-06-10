@@ -61,7 +61,27 @@ class Command(BaseCommand):
         except Exception as exc:  # noqa: BLE001
             self.stderr.write(f"Agent PKI setup failed: {exc}")
             return
+        self._publish_ca_file(client, mount)
         self.stdout.write(self.style.SUCCESS("Agent PKI ready."))
+
+    def _publish_ca_file(self, client, mount):
+        """Write the CA PEM to settings.AGENT_CA_FILE (shared ssl-certs volume)
+        so nginx can use it as ssl_client_certificate. Best-effort."""
+        ca_file = getattr(settings, "AGENT_CA_FILE", "")
+        if not ca_file:
+            return
+        try:
+            pem = client.secrets.pki.read_ca_certificate(mount_point=mount) or ""
+            if not pem.strip():
+                self.stderr.write("CA PEM empty — not writing CA file.")
+                return
+            import os
+            os.makedirs(os.path.dirname(ca_file), exist_ok=True)
+            with open(ca_file, "w") as fh:
+                fh.write(pem if pem.endswith("\n") else pem + "\n")
+            self.stdout.write(f"CA cert written to {ca_file} (for nginx mTLS).")
+        except Exception as exc:  # noqa: BLE001 — file publish is best-effort
+            self.stderr.write(f"Could not write CA file (continuing): {exc}")
 
     # ── steps ──────────────────────────────────────────────────────────────
     def _setup(self, client, mount, role):

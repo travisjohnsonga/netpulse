@@ -118,6 +118,18 @@ class Agent(TimestampedModel):
     def __str__(self):
         return f"{self.hostname} ({self.id})"
 
+    # An mTLS-authenticated agent is the request principal (request.user) for
+    # metrics/role-check ingestion, so DRF's IsAuthenticated must treat it as
+    # authenticated. It is never a Django auth user — admin endpoints still use
+    # JWT — so these are simple constants.
+    @property
+    def is_authenticated(self) -> bool:
+        return True
+
+    @property
+    def is_anonymous(self) -> bool:
+        return False
+
 
 class AgentRoleStatus(TimestampedModel):
     """Latest role-check result for one (agent, role_type) — services/ports/custom."""

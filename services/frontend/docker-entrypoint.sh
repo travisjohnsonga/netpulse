@@ -32,5 +32,21 @@ if [ ! -f "$SSL_DIR/ca-bundle.crt" ]; then
     fi
 fi
 
+# Agent mTLS CA (ssl_client_certificate). The api publishes the real NetPulse
+# Agent CA here (setup_agent_pki, early in its entrypoint). Wait briefly for it,
+# then fall back to a placeholder so nginx always starts — agent mTLS just won't
+# verify until the real CA lands and nginx is reloaded/restarted.
+AGENT_CA="$SSL_DIR/agent-ca.crt"
+i=0
+while [ ! -s "$AGENT_CA" ] && [ "$i" -lt 30 ]; do
+    i=$((i + 1)); sleep 1
+done
+if [ ! -s "$AGENT_CA" ]; then
+    echo "[entrypoint] agent CA not published yet — seeding placeholder (agent mTLS inactive until reload)"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -nodes \
+        -keyout /tmp/agent-ca-placeholder.key -out "$AGENT_CA" -days 3650 \
+        -subj "/CN=NetPulse Agent CA Placeholder" >/dev/null 2>&1
+fi
+
 # Runs as an nginx /docker-entrypoint.d/ hook — return so the launcher
 # continues to the next script and finally starts nginx.

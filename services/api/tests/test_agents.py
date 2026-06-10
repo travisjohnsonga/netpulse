@@ -143,16 +143,21 @@ class TestIngestion:
             return 3
         monkeypatch.setattr("apps.agents.views.write_agent_metrics", fake_write)
         a = self._agent()
-        # No header → 403
+        # No mTLS headers → 403 (mTLS authenticator has no challenge header, so
+        # DRF renders the unauthenticated denial as 403, not 401)
         assert api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json").status_code == 403
-        # Wrong serial → 403
+        # Verified but wrong serial → 403
         r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json",
-                            HTTP_X_AGENT_CERT_SERIAL="wrong")
+                            HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="wrong")
         assert r.status_code == 403
-        # Correct serial → 200, last_seen stamped, points written
+        # Serial present but nginx didn't verify (no X-Agent-Verified) → 403
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json",
+                            HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+        assert r.status_code == 403
+        # Verified + correct serial (uppercase, no colons — nginx format) → 200
         r = api_client.post(f"/api/agents/{a.id}/metrics/",
                             {"metrics": {"cpu": [{"core": "cpu", "usage_pct": 12}]}}, format="json",
-                            HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+                            HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
         assert r.status_code == 200 and r.json()["points_written"] == 3
         a.refresh_from_db()
         assert a.last_seen is not None
@@ -162,7 +167,7 @@ class TestIngestion:
         a.status = Agent.Status.REVOKED
         a.save()
         r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json",
-                            HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+                            HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
         assert r.status_code == 403
 
     def test_role_checks_stored_and_returned(self, api_client, auth_client):
@@ -170,7 +175,7 @@ class TestIngestion:
         r = api_client.post(f"/api/agents/{a.id}/role-checks/", {
             "roles": [{"role": "dns", "services": [{"name": "named", "running": True}],
                        "ports": [{"port": 53, "proto": "udp", "open": True}], "custom": []}],
-        }, format="json", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+        }, format="json", HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
         assert r.status_code == 200 and r.json()["roles"] == 1
         # Authenticated read of role status
         got = auth_client.get(f"/api/agents/{a.id}/roles/").json()

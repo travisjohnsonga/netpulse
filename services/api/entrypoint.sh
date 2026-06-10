@@ -12,6 +12,13 @@ echo "[entrypoint] waiting for postgres..."
 if [ "$INIT_OPENBAO" = "1" ]; then
     echo "[entrypoint] initialising / unsealing OpenBao..."
     python manage.py init_openbao || echo "[entrypoint] OpenBao init/unseal had issues (continuing)"
+
+    # Initialise the agent PKI (mount + CA + role + policy) and publish the CA
+    # cert onto the shared ssl volume for nginx mTLS. Needs OpenBao (not the DB),
+    # so run early — before migrations/seeds — so the CA is present when the
+    # frontend (nginx) container boots. Idempotent; no-ops if OpenBao is sealed.
+    echo "[entrypoint] setting up agent PKI..."
+    python manage.py setup_agent_pki || echo "[entrypoint] agent PKI setup had issues (continuing)"
 fi
 
 echo "[entrypoint] running database migrations..."
@@ -63,11 +70,6 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     # Seed SSO providers from any SOCIAL_AUTH_* env vars (idempotent).
     echo "[entrypoint] seeding SSO providers from env..."
     python manage.py seed_sso_providers || echo "[entrypoint] SSO provider seed had issues (continuing)"
-
-    # Initialise OpenBao PKI for agent certificate issuance (idempotent;
-    # no-ops when OpenBao is disabled/sealed).
-    echo "[entrypoint] setting up agent PKI..."
-    python manage.py setup_agent_pki || echo "[entrypoint] agent PKI setup had issues (continuing)"
 
     # Register this server as the local collector (idempotent); the scheduler
     # keeps its heartbeat fresh thereafter.

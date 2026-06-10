@@ -7,12 +7,13 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.errors import safe_detail
 
 from . import pki
+from .authentication import AgentCertAuthentication
 from .metrics import write_agent_metrics
 from .models import Agent, AgentEnrollmentToken, AgentRoleStatus, ServerRole
 from .serializers import (
@@ -24,11 +25,6 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Header carrying the verified client-cert serial. In production nginx terminates
-# mTLS and sets this from $ssl_client_serial (the mTLS-edge follow-up); the agent
-# is authenticated by matching it to Agent.cert_serial.
-CERT_SERIAL_HEADER = "HTTP_X_AGENT_CERT_SERIAL"
 
 
 def _server_url() -> str:
@@ -67,11 +63,12 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Agent.objects.all().select_related("device", "device__site")
     serializer_class = AgentSerializer
 
-    # Actions that must NOT require a JWT: enrollment is authenticated by the
-    # one-time enrollment token; metrics/role-checks by the mTLS client-cert
-    # serial; ca_certificate returns public CA info. They are AllowAny with no
-    # JWT/Session authenticators.
-    PUBLIC_ACTIONS = ("enroll", "metrics", "role_checks", "ca_certificate")
+    # Public (no JWT/Session auth): enrollment is authed by the one-time token;
+    # ca_certificate returns public CA info.
+    PUBLIC_ACTIONS = ("enroll", "ca_certificate")
+    # mTLS-authed ingestion: authenticated by the nginx-verified client-cert
+    # serial via AgentCertAuthentication (request.user is the Agent).
+    CERT_ACTIONS = ("metrics", "role_checks")
 
     def _resolved_action(self):
         # get_authenticators() runs inside initialize_request(), BEFORE
@@ -85,28 +82,23 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         return action
 
     def get_permissions(self):
-        if self._resolved_action() in self.PUBLIC_ACTIONS:
+        action = self._resolved_action()
+        if action in self.PUBLIC_ACTIONS:
             return [AllowAny()]
+        if action in self.CERT_ACTIONS:
+            return [IsAuthenticated()]
         return super().get_permissions()
 
     def get_authenticators(self):
-        # No JWT/Session auth on public actions — this also skips
-        # SessionAuthentication's CSRF enforcement on these POSTs. Without this,
-        # the default authenticators would emit a WWW-Authenticate challenge and
-        # any auth misstep would surface as a 401 instead of staying public.
-        if self._resolved_action() in self.PUBLIC_ACTIONS:
+        # Public actions: no authenticators (also skips SessionAuthentication's
+        # CSRF on these POSTs). Ingestion: only the mTLS cert authenticator —
+        # never JWT/Session.
+        action = self._resolved_action()
+        if action in self.PUBLIC_ACTIONS:
             return []
+        if action in self.CERT_ACTIONS:
+            return [AgentCertAuthentication()]
         return super().get_authenticators()
-
-    def _cert_authed_agent(self, request, pk):
-        """Return the Agent if the request's client-cert serial matches it, else None."""
-        agent = Agent.objects.filter(pk=pk).first()
-        if not agent or agent.status == Agent.Status.REVOKED:
-            return None
-        serial = request.META.get(CERT_SERIAL_HEADER, "")
-        if not agent.cert_serial or serial != agent.cert_serial:
-            return None
-        return agent
 
     def destroy(self, request, *args, **kwargs):
         """Revoke (soft): mark revoked + best-effort revoke the cert in OpenBao."""
@@ -182,11 +174,10 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
     def metrics(self, request, pk=None):
-        """Ingest a metrics payload (client-cert authed) → InfluxDB."""
-        agent = self._cert_authed_agent(request, pk)
-        if agent is None:
-            return Response({"detail": "Agent certificate invalid."},
-                            status=status.HTTP_403_FORBIDDEN)
+        """Ingest a metrics payload → InfluxDB. Authenticated by the agent's
+        mTLS client cert (AgentCertAuthentication); request.user is the Agent.
+        Identity comes from the verified cert, so the URL pk is informational."""
+        agent = request.user
         payload = request.data or {}
         device_id = agent.device_id or agent.id
         written = write_agent_metrics(device_id, agent.hostname,
@@ -200,11 +191,9 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="role-checks")
     def role_checks(self, request, pk=None):
-        """Ingest role-check results (client-cert authed). Upsert per role_type."""
-        agent = self._cert_authed_agent(request, pk)
-        if agent is None:
-            return Response({"detail": "Agent certificate invalid."},
-                            status=status.HTTP_403_FORBIDDEN)
+        """Ingest role-check results (mTLS cert authed; request.user is the
+        Agent). Upsert per role_type."""
+        agent = request.user
         results = (request.data or {}).get("roles") or []
         now = timezone.now()
         for r in results if isinstance(results, list) else []:
