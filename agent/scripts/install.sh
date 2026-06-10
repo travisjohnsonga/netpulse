@@ -44,6 +44,16 @@ case "$ARCH" in
 esac
 
 echo "Installing NetPulse Agent (linux-${ARCH})..."
+
+# Handle re-runs / upgrades cleanly. Stop a running agent and remove the old
+# binary before downloading (a running binary can be busy/locked). Works for
+# both fresh installs (no-ops) and upgrades.
+if systemctl is-active --quiet netpulse-agent 2>/dev/null; then
+  echo "Stopping existing agent..."
+  systemctl stop netpulse-agent
+fi
+rm -f "${INSTALL_DIR}/netpulse-agent"
+
 curl "${CURL_OPTS[@]}" -o "${INSTALL_DIR}/netpulse-agent" "${SERVER_URL}/agent/download/linux-${ARCH}"
 chmod +x "${INSTALL_DIR}/netpulse-agent"
 
@@ -53,9 +63,25 @@ id -u netpulse-agent &>/dev/null || \
 
 CONFIG_PATH="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
-"${INSTALL_DIR}/netpulse-agent" \
+# Enroll, capturing output so we can give a clear message if the host already
+# has an enrolled agent. Re-running normally succeeds — the server re-enrolls in
+# place (rotating the cert) — but a conflicting record returns HTTP 409.
+set +e
+ENROLL_OUT="$("${INSTALL_DIR}/netpulse-agent" \
   --enroll "$TOKEN" --server "$SERVER_URL" --config "$CONFIG_PATH" \
-  "${ENROLL_OPTS[@]}"
+  "${ENROLL_OPTS[@]}" 2>&1)"
+ENROLL_RC=$?
+set -e
+printf '%s\n' "$ENROLL_OUT"
+if [ "$ENROLL_RC" -ne 0 ]; then
+  if printf '%s' "$ENROLL_OUT" | grep -q "HTTP 409"; then
+    echo "⚠️  This host already has an enrolled agent." >&2
+    echo "   Revoke it in NetPulse: Settings → Agents → $(hostname) → Revoke," >&2
+    echo "   then re-run this installer." >&2
+  fi
+  echo "❌ Enrollment failed." >&2
+  exit 1
+fi
 chown -R netpulse-agent:netpulse-agent "$CONFIG_DIR"
 
 # Enrollment succeeded — install the hardened systemd unit (writes the unit,
