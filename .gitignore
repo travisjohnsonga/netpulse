@@ -47,6 +47,12 @@ dist/
 build/
 .cache/
 
+# NetPulse Agent binaries — built by CI / locally, mounted into the api
+# container; never committed. (Also covered by the generic dist/ rule above
+# and agent/.gitignore; listed explicitly here for clarity.)
+agent/dist/
+agent/netpulse-agent
+
 # Docker
 docker-compose.override.yml
 

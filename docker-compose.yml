@@ -211,6 +211,11 @@ services:
       - ./advisories:/app/advisories:ro
       # SNMP MIB tree — read-write so MIB uploads can be saved into mibs/custom/.
       - ./mibs:/app/mibs
+      # Agent assets for the /agent/{install,download/<platform>} endpoints.
+      # AGENT_DIR=/agent and the views read AGENT_DIR/dist/<binary> and
+      # AGENT_DIR/scripts/install.sh, so the whole agent/ dir is mounted here
+      # (dist/ holds the CI-built binaries; both are gitignored).
+      - ./agent:/agent:ro
     # Service-check "Run now" executes the probe in this process, so the api
     # needs the same unprivileged-ICMP sysctl as check-engine for ICMP checks.
     sysctls:
