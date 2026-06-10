@@ -323,11 +323,48 @@ OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
   CN/SANs via `use_csr_*=false`), and the `netpulse-agent-pki` policy. The CA
   PEM is served at `GET /api/agents/ca-certificate/` (public). Binaries are
   served at `/agent/{install,download/<platform>}` from `settings.AGENT_DIR`.
-- **Infra follow-up (NOT built):** nginx mTLS termination passing the verified
-  client-cert serial to Django (until then, agent metrics/role-check pushes
-  can't authenticate by cert-serial end-to-end); Windows Phase-2 polish
-  (event-log forwarding, custom PowerShell role checks). The Go binaries are
-  built by CI, not in-repo.
+- **nginx mTLS termination — BUILT (verified end-to-end).** nginx requests a
+  client cert at the TLS handshake (`ssl_verify_client optional` against the
+  agent CA; TLS 1.3 forbids per-location renegotiation), enforces it on the
+  metrics/role-checks locations (403 without a CA-verified cert), and forwards
+  `X-Agent-Verified`/`X-Agent-Cert-Serial`/`-Subject`; the generic `/api/`
+  location strips those headers so they can't be spoofed. `AgentCertAuthentication`
+  resolves the agent by normalized serial (nginx uppercase-no-colon vs OpenBao
+  colon-lower). The CA PEM is published by `setup_agent_pki` to
+  `settings.AGENT_CA_FILE` on the shared ssl-certs volume; the frontend
+  entrypoint waits for it (placeholder fallback so nginx always starts).
+- **Infra follow-up (NOT built):** Windows Phase-2 polish (event-log forwarding,
+  custom PowerShell role checks). The Go binaries are built by CI, not in-repo.
+
+## Pending (next session)
+
+### Agent download/install endpoints — wiring gaps (not "unimplemented")
+The Django views ARE implemented (`apps/agents/download_views.py`, committed):
+`GET /agent/install` serves `scripts/install.sh` as `text/plain`,
+`GET /agent/download/{linux-amd64,linux-arm64,windows-amd64}` serve
+`application/octet-stream` (404 when the file is absent). Two **deployment**
+gaps stop the one-liner from working end-to-end (symptom: the URL returns the
+SPA `index.html`, or 404 direct to Django):
+1. **nginx doesn't proxy `/agent/*`** — `location /` serves the SPA for any
+   non-`/api/` path, so `https://server/agent/install` returns `index.html`.
+   Fix: add an nginx `location /agent/ { proxy_pass http://api:8000; … }` block.
+2. **`AGENT_DIR` assets aren't in the api image** — `settings.AGENT_DIR` defaults
+   to the in-repo `agent/` (resolves to `/agent` in-container), but the api build
+   context is `./services/api`, so `scripts/install.sh` + `dist/<platform>` are
+   not present → 404. Fix: COPY/mount the `agent/` scripts + CI-built `dist/`
+   into the image (or set `AGENT_DIR` to a mounted volume), and publish binaries
+   to `agent/dist/` from `build-agent.yml` (or serve from GitHub Releases).
+3. Add `GET /agent/install.ps1` (serve `scripts/install.ps1` as `text/plain`).
+Workaround until then: build the binary manually on the target server.
+
+### Collector (ingest) service builds — verify next session
+All six ingesters are built (ingest-{snmp,syslog,flow,grpc,otlp,api-poller}).
+Next session, verify each is running, healthy, and actually processing data in
+both labs: `docker compose ps | grep ingest`; exercise each path end-to-end
+(SNMP trap, syslog, NetFlow, gNMI stream, OTLP metric, REST poll); confirm the
+NATS → stream-processor → InfluxDB/PostgreSQL/OpenSearch flow; scan
+`docker compose logs ingest-*` for running-but-idle services; then document
+which are production-ready vs placeholder.
 
 ## Planned Features (NOT built — specs in docs/)
 
