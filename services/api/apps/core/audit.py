@@ -10,6 +10,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Metadata keys whose values are credentials and must never be persisted in
+# clear text on an audit record (callers pass arbitrary context dicts).
+_SENSITIVE_KEYS = frozenset({
+    "authorization", "cookie", "x-api-key", "api_key", "apikey",
+    "token", "password", "secret",
+})
+
+
+def scrub_sensitive(data: dict | None) -> dict:
+    """Return a copy of ``data`` with sensitive values masked, safe to persist."""
+    if not isinstance(data, dict):
+        return {}
+    return {k: ("***REDACTED***" if str(k).lower() in _SENSITIVE_KEYS else v)
+            for k, v in data.items()}
+
 
 def client_ip(request) -> str | None:
     """Best client IP from a request, honouring X-Forwarded-For (first hop)."""
@@ -66,7 +81,7 @@ def log_event(
             target_id=target_id,
             target_name=target_name,
             description=description,
-            metadata=metadata or {},
+            metadata=scrub_sensitive(metadata),
             success=success,
             error_message=(error_message or "")[:512],
         )

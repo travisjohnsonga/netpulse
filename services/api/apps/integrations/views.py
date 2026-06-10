@@ -158,11 +158,16 @@ class EmailTestView(APIView):
         if not to:
             return Response({"error": "A recipient address ('to') is required."},
                             status=status.HTTP_400_BAD_REQUEST)
-        ok, err = send_test_email(to)
+        # send_test_email logs the underlying SMTP error server-side; never echo
+        # the raw exception text back to the client (information exposure).
+        ok, _err = send_test_email(to)
         if ok:
             return Response({"sent": True})
-        return Response({"sent": False, "error": err or "Failed to send test email."},
-                        status=status.HTTP_502_BAD_GATEWAY)
+        return Response(
+            {"sent": False,
+             "error": "Failed to send the test email. Verify the SMTP host, port, "
+                      "and credentials, then check the server logs for details."},
+            status=status.HTTP_502_BAD_GATEWAY)
 
 
 class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):

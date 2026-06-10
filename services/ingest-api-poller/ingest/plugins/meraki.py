@@ -227,12 +227,14 @@ class MerakiPlugin(VendorAPIPlugin):
         device_serial = alert_data.get("deviceSerial", "")
         device_name = alert_data.get("deviceName", "")
 
+        severity = _ALERT_TYPE_SEVERITY.get(alert_type, "info")
+        category = _ALERT_TYPE_CATEGORY.get(alert_type, "connectivity")
         alert = VendorAlert(
             integration_id=self.integration_id,
             vendor=self.vendor,
             alert_id=str(uuid.uuid4()),
-            severity=_ALERT_TYPE_SEVERITY.get(alert_type, "info"),
-            category=_ALERT_TYPE_CATEGORY.get(alert_type, "connectivity"),
+            severity=severity,
+            category=category,
             device_id=device_serial,
             device_name=device_name,
             message=f"{alert_type}: {alert_data}",
@@ -240,8 +242,11 @@ class MerakiPlugin(VendorAPIPlugin):
             resolved=False,
             raw=safe_payload,
         )
+        # Log only the source IP and the classification we derived from constant
+        # lookup tables — never values read back out of the webhook payload, which
+        # (even after redaction) CodeQL treats as carrying the shared secret.
         logger.info(
-            "Meraki webhook from %s: alert_type=%s network=%s",
-            source_ip, alert_type, network_id,
+            "Meraki webhook from %s: severity=%s category=%s",
+            source_ip, severity, category,
         )
         return [alert]

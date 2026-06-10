@@ -38,22 +38,25 @@ _SAFE_MIB_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def safe_mib_path(base_dir, user_input: str) -> str:
     """
-    Resolve a user-supplied MIB filename inside ``base_dir``, REJECTING (not
-    silently stripping) anything that isn't a plain in-directory filename.
+    Resolve a user-supplied MIB filename inside ``base_dir``, REJECTING anything
+    that isn't a plain in-directory filename.
 
-    Defence in depth: (1) the name must match an allow-listed charset and not be
-    "."/".."; (2) the fully-resolved path must stay inside the resolved base.
-    Raises ValueError otherwise; returns the resolved absolute path.
+    Defence in depth: (1) ``os.path.basename`` strips any directory components so
+    no separators/traversal survive; (2) the leaf must match an allow-listed
+    charset and not be "."/".."; (3) the fully-resolved path must stay strictly
+    inside the resolved base. Raises ValueError otherwise; returns the resolved
+    absolute path.
     """
-    name = (user_input or "").strip()
-    if name in (".", "..") or not _SAFE_MIB_NAME.match(name):
+    # Strip any path components — defeats traversal regardless of encoding.
+    safe_name = os.path.basename((user_input or "").strip())
+    if not safe_name or safe_name in (".", "..") or not _SAFE_MIB_NAME.match(safe_name):
         raise ValueError(f"unsafe MIB filename: {user_input!r}")
-    base = Path(base_dir).resolve()
-    candidate = (base / name).resolve()
-    # candidate must be base itself's child (base must be a parent of candidate).
-    if candidate == base or base not in candidate.parents:
+    real_base = os.path.realpath(base_dir)
+    real_path = os.path.realpath(os.path.join(real_base, safe_name))
+    # The resolved path must live strictly within the resolved base directory.
+    if not real_path.startswith(real_base + os.sep):
         raise ValueError(f"path traversal detected: {user_input!r}")
-    return str(candidate)
+    return real_path
 
 
 def _category(path: Path, root: Path) -> str:
