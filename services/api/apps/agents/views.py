@@ -66,15 +66,33 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Agent.objects.all().select_related("device", "device__site")
     serializer_class = AgentSerializer
 
+    # Actions that must NOT require a JWT: enrollment is authenticated by the
+    # one-time enrollment token; metrics/role-checks by the mTLS client-cert
+    # serial. They are AllowAny with no JWT/Session authenticators.
+    PUBLIC_ACTIONS = ("enroll", "metrics", "role_checks")
+
+    def _resolved_action(self):
+        # get_authenticators() runs inside initialize_request(), BEFORE
+        # ViewSetMixin assigns self.action — so resolve it ourselves from the
+        # action_map + request method (both already set by the view closure).
+        # get_permissions() runs later, when self.action IS set.
+        action = getattr(self, "action", None)
+        if action is None:
+            method = getattr(getattr(self, "request", None), "method", "") or ""
+            action = (getattr(self, "action_map", None) or {}).get(method.lower())
+        return action
+
     def get_permissions(self):
-        if self.action in ("enroll", "metrics", "role_checks"):
+        if self._resolved_action() in self.PUBLIC_ACTIONS:
             return [AllowAny()]
         return super().get_permissions()
 
     def get_authenticators(self):
-        # Enrollment + ingestion don't carry a JWT; skip SessionAuthentication's
-        # CSRF enforcement on these unauthenticated/cert-authed POSTs.
-        if getattr(self, "action", None) in ("enroll", "metrics", "role_checks"):
+        # No JWT/Session auth on public actions — this also skips
+        # SessionAuthentication's CSRF enforcement on these POSTs. Without this,
+        # the default authenticators would emit a WWW-Authenticate challenge and
+        # any auth misstep would surface as a 401 instead of staying public.
+        if self._resolved_action() in self.PUBLIC_ACTIONS:
             return []
         return super().get_authenticators()
 
