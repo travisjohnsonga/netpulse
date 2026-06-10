@@ -2,11 +2,16 @@ name: Build Agent
 
 on:
   push:
+    # Without `branches`, a `push` block that only sets `tags` fires on tag
+    # pushes ONLY — main-branch pushes never built. List main explicitly so
+    # agent changes merged to main rebuild the binaries (tags still build too).
+    branches:
+      - main
+    tags:
+      - 'v*'
     paths:
       - 'agent/**'
       - '.github/workflows/build-agent.yml'
-    tags:
-      - 'v*'
   pull_request:
     paths:
       - 'agent/**'
