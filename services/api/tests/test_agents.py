@@ -139,6 +139,39 @@ class TestEnroll:
         assert Agent.objects.get(hostname="host-b").device is None
         assert Device.objects.filter(hostname="host-b").count() == 0
 
+    def test_reenroll_same_host_reuses_agent(self, api_client, fake_pki, monkeypatch):
+        # Re-running the installer on an already-enrolled host updates the same
+        # agent record (rotates the cert) instead of 500-ing on the device link.
+        t = _token(max_uses=0)
+        first = _enroll(api_client, t.token, hostname="web-01")
+        assert first.status_code == 201
+        aid = first.json()["agent_id"]
+        # Second enrollment returns a fresh cert serial → 200 (re_enrolled), same id.
+        monkeypatch.setattr(agent_views.pki, "issue_agent_certificate",
+                            lambda *a, **k: {"serial": "ff:ee:dd:cc", "certificate":
+                            "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----", "ca_chain": []})
+        second = _enroll(api_client, t.token, hostname="web-01")
+        assert second.status_code == 200, second.content
+        assert second.json()["agent_id"] == aid and second.json()["re_enrolled"] is True
+        assert Agent.objects.filter(hostname="web-01").count() == 1
+        a = Agent.objects.get(id=aid)
+        assert a.cert_serial == "ff:ee:dd:cc" and a.device is not None
+
+    def test_reenroll_revoked_host_creates_fresh_and_steals_device(self, api_client, fake_pki):
+        t = _token(max_uses=0)
+        first = _enroll(api_client, t.token, hostname="web-02")
+        old = Agent.objects.get(id=first.json()["agent_id"])
+        old.status = Agent.Status.REVOKED
+        old.save(update_fields=["status"])
+        # A revoked host re-enrolling gets a NEW agent; the device link transfers
+        # to it (no OneToOne 500).
+        resp = _enroll(api_client, t.token, hostname="web-02")
+        assert resp.status_code == 201
+        new = Agent.objects.get(id=resp.json()["agent_id"])
+        assert new.id != old.id and new.device is not None
+        old.refresh_from_db()
+        assert old.device is None
+
 
 # ── Metrics + role-check ingestion (client-cert authed) ─────────────────────────
 

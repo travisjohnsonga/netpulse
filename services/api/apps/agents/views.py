@@ -2,6 +2,7 @@
 import logging
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.http import HttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -128,13 +129,34 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                             public="Certificate issuance failed. Check OpenBao PKI setup.")},
                             status=status.HTTP_502_BAD_GATEWAY)
 
-        agent = Agent.objects.create(
-            hostname=data["hostname"], os=data["os"], arch=data["arch"],
-            version=data["version"], enrollment_token=token,
-            cert_serial=issued.get("serial", ""),
-            collection_interval=30,
-        )
-        self._link_device(agent, request, token)
+        # Graceful (re-)enrollment: re-running the installer on a host that's
+        # already enrolled rotates the cert on the EXISTING agent record instead
+        # of creating a duplicate (which would also collide on the OneToOne
+        # device link → 500). Revoked agents are left alone — a fresh record is
+        # created so a revoked host isn't silently resurrected.
+        agent = (Agent.objects.filter(hostname=data["hostname"])
+                 .exclude(status=Agent.Status.REVOKED).first())
+        created = agent is None
+        if created:
+            agent = Agent(hostname=data["hostname"], collection_interval=30)
+        agent.os = data["os"]
+        agent.arch = data["arch"]
+        agent.version = data["version"]
+        agent.enrollment_token = token
+        agent.cert_serial = issued.get("serial", "")
+        agent.status = Agent.Status.ACTIVE
+        try:
+            agent.save()
+            self._link_device(agent, request, token)
+        except IntegrityError:
+            # Expected condition (e.g. a stale unique link we couldn't reconcile)
+            # — never surface a 500. Point the operator at the fix.
+            existing = Agent.objects.filter(hostname=data["hostname"]).first()
+            return Response({"detail": (
+                "This host already has an enrolled agent. Revoke it in "
+                "Settings → Agents, then re-run the installer."
+                + (f" Existing agent ID: {existing.id}." if existing else "")
+            )}, status=status.HTTP_409_CONFLICT)
 
         token.use_count += 1
         if token.max_uses and token.use_count >= token.max_uses:
@@ -148,7 +170,8 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
             "ca_certificate": "\n".join(ca) if isinstance(ca, list) else ca,
             "collection_interval": agent.collection_interval,
             "server_url": _server_url(),
-        }, status=status.HTTP_201_CREATED)
+            "re_enrolled": not created,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     def _link_device(self, agent, request, token):
         from apps.devices.models import Device
@@ -168,6 +191,14 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         elif token.site_id and not device.site_id:
             device.site = token.site
             device.save(update_fields=["site"])
+        if agent.device_id == device.id:
+            return
+        # device.agent is a OneToOne — transfer it off any prior agent (e.g. a
+        # revoked enrollment for this host) so the re-enrolling agent can claim it.
+        prior = Agent.objects.filter(device=device).exclude(pk=agent.pk).first()
+        if prior:
+            prior.device = None
+            prior.save(update_fields=["device", "updated_at"])
         agent.device = device
         agent.save(update_fields=["device", "updated_at"])
 
