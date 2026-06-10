@@ -1040,10 +1040,13 @@ export interface Agent {
   created_at: string
 }
 
+export type TargetOS = 'linux' | 'windows' | 'any'
+
 export interface AgentToken {
   id: number
   token: string
   description: string
+  target_os: TargetOS
   expires_at: string | null
   max_uses: number
   use_count: number
@@ -1095,7 +1098,8 @@ export async function fetchAgentTokens(): Promise<AgentToken[]> {
 }
 
 export async function createAgentToken(payload: {
-  description?: string; max_uses?: number; expires_at?: string | null; site?: number | null
+  description?: string; max_uses?: number; expires_at?: string | null
+  site?: number | null; target_os?: TargetOS
 }): Promise<AgentToken> {
   const { data } = await api.post<AgentToken>('/agents/tokens/', payload)
   return data

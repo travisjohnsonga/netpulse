@@ -26,8 +26,16 @@ def _generate_token() -> str:
 class AgentEnrollmentToken(TimestampedModel):
     """One-time (or N-use) token an admin generates to enroll agents."""
 
+    class TargetOS(models.TextChoices):
+        LINUX = "linux", "Linux"
+        WINDOWS = "windows", "Windows"
+        ANY = "any", "Any"
+
     token = models.CharField(max_length=64, unique=True, default=_generate_token, db_index=True)
     description = models.CharField(max_length=255, blank=True)
+    # Informational: which OS the install command in the UI targets. Does NOT
+    # restrict which OS can actually enroll with the token.
+    target_os = models.CharField(max_length=20, choices=TargetOS.choices, default=TargetOS.ANY)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="agent_tokens",

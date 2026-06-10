@@ -48,8 +48,8 @@ class AgentEnrollmentTokenSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentEnrollmentToken
         fields = (
-            "id", "token", "description", "expires_at", "max_uses", "use_count",
-            "site", "site_name", "is_active", "created_at",
+            "id", "token", "description", "target_os", "expires_at", "max_uses",
+            "use_count", "site", "site_name", "is_active", "created_at",
         )
         read_only_fields = ("id", "use_count", "created_at")
 

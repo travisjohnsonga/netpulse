@@ -75,6 +75,14 @@ class TestTokens:
         items = data["results"] if isinstance(data, dict) else data
         assert items[0]["token"].endswith("…")
 
+    def test_target_os_defaults_any_and_is_settable(self, auth_client):
+        # Default 'any' when omitted; honored when provided.
+        r1 = auth_client.post("/api/agents/tokens/", {"description": "d"}, format="json")
+        assert r1.status_code == 201 and r1.json()["target_os"] == "any"
+        r2 = auth_client.post("/api/agents/tokens/",
+                              {"description": "w", "target_os": "windows"}, format="json")
+        assert r2.status_code == 201 and r2.json()["target_os"] == "windows"
+
     def test_is_valid_rules(self):
         from django.utils import timezone
         from datetime import timedelta

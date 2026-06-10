@@ -4,7 +4,7 @@ import { SectionHeader } from '../Settings'
 import {
   fetchAgents, revokeAgent, fetchAgentTokens, createAgentToken, deleteAgentToken,
   fetchServerRoles, deleteServerRole,
-  type Agent, type AgentToken, type ServerRole,
+  type Agent, type AgentToken, type ServerRole, type TargetOS,
 } from '../../api/client'
 
 const EXPIRY_OPTS = [
@@ -20,6 +20,7 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   const [description, setDescription] = useState('')
   const [maxUses, setMaxUses] = useState(1)
   const [expiryHours, setExpiryHours] = useState(168)
+  const [targetOs, setTargetOs] = useState<TargetOS>('linux')
   const [created, setCreated] = useState<AgentToken | null>(null)
   const [selfSigned, setSelfSigned] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -30,17 +31,32 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
     try {
       const expires_at = expiryHours
         ? new Date(Date.now() + expiryHours * 3600_000).toISOString() : null
-      setCreated(await createAgentToken({ description, max_uses: maxUses, expires_at }))
+      setCreated(await createAgentToken({ description, max_uses: maxUses, expires_at, target_os: targetOs }))
       onCreated()
     } catch { setError('Failed to generate token.') } finally { setBusy(false) }
   }
 
   const copy = (t: string) => navigator.clipboard?.writeText(t)
   // For a self-signed server cert: -k skips verification on the curl download,
-  // --insecure does the same for the agent's enrollment request.
-  const installCmd = created
+  // --insecure / -Insecure does the same for the agent's enrollment request.
+  const linuxCmd = created
     ? `curl -fsSL${selfSigned ? ' -k' : ''} ${serverUrl}/agent/install | sudo bash -s -- --server ${serverUrl} --token ${created.token}${selfSigned ? ' --insecure' : ''}`
     : ''
+  const windowsCmd = created
+    ? `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n`
+      + `Invoke-WebRequest -Uri "${serverUrl}/agent/install.ps1" -OutFile "$env:TEMP\\install.ps1"\n`
+      + `powershell -ExecutionPolicy Bypass -File "$env:TEMP\\install.ps1" `
+      + `-Server "${serverUrl}" -Token "${created.token}"${selfSigned ? ' -Insecure' : ''}`
+    : ''
+  // 'any' = "Both" → show both blocks.
+  const showLinux = targetOs === 'linux' || targetOs === 'any'
+  const showWindows = targetOs === 'windows' || targetOs === 'any'
+
+  const OS_OPTS: { val: TargetOS; label: string }[] = [
+    { val: 'linux', label: 'Linux' },
+    { val: 'windows', label: 'Windows' },
+    { val: 'any', label: 'Both' },
+  ]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -66,6 +82,20 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                 {EXPIRY_OPTS.map((o) => <option key={o.label} value={o.hours}>{o.label}</option>)}
               </select>
             </label>
+            <div className="block text-sm">
+              <span className="text-gray-700 dark:text-gray-300">Target OS</span>
+              <div className="mt-1 inline-flex rounded-lg border dark:border-gray-600 overflow-hidden">
+                {OS_OPTS.map((o) => (
+                  <button key={o.val} type="button" onClick={() => setTargetOs(o.val)}
+                    className={clsx('px-4 py-2 text-sm',
+                      targetOs === o.val
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300')}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg dark:border-gray-600 dark:text-gray-300">Cancel</button>
               <button onClick={generate} disabled={busy} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50">
@@ -89,13 +119,26 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                 <span className="text-gray-500 dark:text-gray-400"> (adds <code>--insecure</code> to install command)</span>
               </span>
             </label>
-            <div>
-              <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Install command:</p>
-              <div className="flex items-start gap-2">
-                <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg break-all">{installCmd}</code>
-                <button onClick={() => copy(installCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+            {showLinux && (
+              <div>
+                <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Linux install command:</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg break-all">{linuxCmd}</code>
+                  <button onClick={() => copy(linuxCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Supports linux/amd64, linux/arm64 — auto-detected during install.</p>
               </div>
-            </div>
+            )}
+            {showWindows && (
+              <div>
+                <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Windows install command (PowerShell):</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg whitespace-pre-wrap break-all">{windowsCmd}</code>
+                  <button onClick={() => copy(windowsCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Supports windows/amd64 — run PowerShell as Administrator.</p>
+              </div>
+            )}
             <div className="flex justify-end pt-2">
               <button onClick={onClose} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg">Done</button>
             </div>
