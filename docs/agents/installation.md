@@ -29,6 +29,13 @@ curl -fsSL https://your-netpulse/agent/install | sudo bash -s -- \
   --token YOUR_TOKEN
 ```
 
+!!! success "Verified end-to-end"
+    This one-liner is verified working: nginx proxies `/agent/*` to the API,
+    which serves `install.sh` and the platform binary from `AGENT_DIR`. It
+    downloads the binary, enrolls (mTLS cert issued), and installs + starts a
+    hardened `netpulse-agent` systemd unit in one step. Re-running it is safe
+    (see [Re-enrollment / upgrade](#re-enrollment-upgrade)).
+
 Self-signed server certificate:
 
 ```bash
@@ -59,6 +66,14 @@ installer).
 
 ## Windows
 
+!!! warning "`/agent/install.ps1` is not served yet"
+    The one-liner below fetches `install.ps1` from the server, but that endpoint
+    is **not wired up yet** (only `/agent/install` and `/agent/download/<platform>`
+    are routed). Until it is, install Windows agents manually: download
+    `windows-amd64` from `/agent/download/windows-amd64`, then run
+    `netpulse-agent.exe --enroll <TOKEN> --server <URL> --config <path>` followed
+    by `--install-service`.
+
 Run PowerShell **as Administrator**:
 
 ```powershell
@@ -83,3 +98,23 @@ journalctl -u netpulse-agent -f
 Then confirm the server appears under **Servers → All Servers** (and the agent
 under **Settings → Agents**). First metrics arrive within one collection
 interval (default 30s).
+
+## Re-enrollment / upgrade
+
+Re-running the installer on a host that already has an agent is safe — it stops
+the running service, replaces the binary, and **re-enrolls in place**: the
+server reuses the existing agent record and rotates its certificate (the agent
+keeps its identity, device link, and role assignments). Just run the one-liner
+again:
+
+```bash
+curl -fsSL https://your-netpulse/agent/install | sudo bash -s -- \
+  --server https://your-netpulse --token YOUR_TOKEN
+```
+
+If the host was **revoked** in the UI, re-enrolling creates a fresh agent record
+instead of resurrecting the revoked one. In the rare case the server can't
+reconcile the host to a single record, enrollment returns **HTTP 409** and the
+installer prints a clear message — revoke the stale agent first:
+
+> **Settings → Agents → [hostname] → Revoke**, then re-run the installer.

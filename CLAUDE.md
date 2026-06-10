@@ -21,8 +21,8 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 
 ## Current State (June 2026)
 
-- Tests: ~1560 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
-  Django 6.0. Frontend: React + Vite.
+- Tests: ~1563 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
+  Django 6.0. Frontend: React + Vite 7.
 
 **Recently completed (agent + servers session):** NetPulse Agent end-to-end —
 OpenBao PKI auto-setup (`setup_agent_pki`: `pki` mount + "NetPulse Agent CA" EC
@@ -39,6 +39,38 @@ services + config-declared via role-checks) · dedicated **Servers page**
 (`/servers` list + `/servers/:id` detail with CPU/Memory/Disk/Network/Roles/…
 tabs, `/api/servers/` API reading agent metrics from InfluxDB). Agent docs under
 `docs/agents/`.
+
+**Recently completed (agent install + security session):** Agent install/serving
+now works **end-to-end**. nginx `location /agent/` proxy added (requests were
+falling through to the SPA → `index.html`); the repo `agent/` dir is bind-mounted
+read-only at `/agent` (= `AGENT_DIR`) on the api service, so `GET /agent/install`
+serves `scripts/install.sh` and `GET /agent/download/{linux-amd64,linux-arm64,
+windows-amd64}` serve the CI-built binaries (verified ELF / ELF-arm64 / PE32+,
+HTTP 200 through public HTTPS). Verified one-liner:
+`curl -fsSL [-k] https://server/agent/install | sudo bash -s -- --server URL
+--token TOKEN [--insecure]`. Binaries come from the `build-agent.yml` CI artifact
+(`agent-binaries`, all 3 platforms), gitignored in `agent/dist/`. ·
+**Linux systemd install** — `-install-service` now works on Linux (writes a
+hardened `/etc/systemd/system/netpulse-agent.service`: `NoNewPrivileges`,
+`ProtectSystem=strict`, non-root `netpulse-agent` user); the installer is
+re-run/upgrade-safe (stops the service + removes the old binary first). ·
+**Graceful agent re-enrollment** — re-running the installer reuses the existing
+agent record and rotates its cert (HTTP 200) instead of 500-ing on the device
+OneToOne; revoked hosts get a fresh record; residual conflicts return **409**
+with a revoke-then-retry message (no more 500). · **Agent role auto-enable** —
+the metrics response returns `assigned_roles` + `collection_config{services,
+role_checks_enabled}`; the Go agent reconciles and persists this, so assigning a
+role in the UI auto-enables its checks on the agent's next check-in (no manual
+config edit; the Roles tab shows a notice). · **Vite 5.4.21 → 7.3.5**
+(+`@vitejs/plugin-react` ^5.2.0) — fixes GHSA-4w7w-66w2-5vf9 (dev-server `.map`
+path traversal); 0 npm-audit vulnerabilities. · **CodeQL HIGH alerts resolved** —
+mibs path traversal (reject-not-strip + `os.path.basename`/realpath containment),
+meraki credential logging (log constants, not payload-derived values), audit
+failure-path logging (event_type only — never the exception object),
+integrations exception exposure (generic message via the SMTP test endpoint);
+`build-agent.yml` got least-privilege `permissions`, the Node24 opt-in
+(`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`), `cache-dependency-path: agent/go.sum`,
+and a `workflow_dispatch` trigger.
 
 ### Remote Collector Subsystem (status — moved from "planned, no code")
 
@@ -354,24 +386,26 @@ OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
 
 ## Pending (next session)
 
-### Agent download/install endpoints — wiring gaps (not "unimplemented")
-The Django views ARE implemented (`apps/agents/download_views.py`, committed):
-`GET /agent/install` serves `scripts/install.sh` as `text/plain`,
-`GET /agent/download/{linux-amd64,linux-arm64,windows-amd64}` serve
-`application/octet-stream` (404 when the file is absent). Two **deployment**
-gaps stop the one-liner from working end-to-end (symptom: the URL returns the
-SPA `index.html`, or 404 direct to Django):
-1. **nginx doesn't proxy `/agent/*`** — `location /` serves the SPA for any
-   non-`/api/` path, so `https://server/agent/install` returns `index.html`.
-   Fix: add an nginx `location /agent/ { proxy_pass http://api:8000; … }` block.
-2. **`AGENT_DIR` assets aren't in the api image** — `settings.AGENT_DIR` defaults
-   to the in-repo `agent/` (resolves to `/agent` in-container), but the api build
-   context is `./services/api`, so `scripts/install.sh` + `dist/<platform>` are
-   not present → 404. Fix: COPY/mount the `agent/` scripts + CI-built `dist/`
-   into the image (or set `AGENT_DIR` to a mounted volume), and publish binaries
-   to `agent/dist/` from `build-agent.yml` (or serve from GitHub Releases).
-3. Add `GET /agent/install.ps1` (serve `scripts/install.ps1` as `text/plain`).
-Workaround until then: build the binary manually on the target server.
+### Agent download/install — DONE (one-liner verified end-to-end)
+`GET /agent/install` (→ `scripts/install.sh`) and `GET /agent/download/<platform>`
+(→ CI binaries) are served by Django (`apps/agents/download_views.py`) and
+**proxied by nginx** (`location /agent/`); the repo `agent/` dir is bind-mounted
+at `/agent` (`AGENT_DIR`) on the api service. Verified: the install script +
+linux-amd64/linux-arm64/windows-amd64 downloads all return 200 through public
+HTTPS. **Remaining agent gaps (genuinely pending):**
+1. **`GET /agent/install.ps1` is NOT routed yet** — the Windows enrollment helper
+   references `install.ps1` but only `agent/install` + `agent/download/<platform>`
+   are wired in `config/urls.py`. Add a view serving `scripts/install.ps1` as
+   `text/plain`, plus an nginx note (the `/agent/` block already covers it).
+2. **Binaries are CI artifacts, not committed** — `build-agent.yml` produces the
+   `agent-binaries` artifact (gitignored `agent/dist/`); it does NOT auto-update
+   the served files. After a workflow run, refresh them with
+   `gh run download --name agent-binaries --dir agent/dist` (or publish to a
+   GitHub Release). The mounted `agent/dist/` must be repopulated to ship new
+   agent behaviour (e.g. role auto-enable).
+3. **Agent Phase-2 (NOT built):** process monitoring, log forwarding, Windows
+   Event Log collection, custom PowerShell role checks (see the NetPulse Agent
+   section's "Infra follow-up").
 
 ### Collector (ingest) service builds — verify next session
 All six ingesters are built (ingest-{snmp,syslog,flow,grpc,otlp,api-poller}).
