@@ -64,11 +64,17 @@ class TestEmailSettingsEndpoint:
         resp = auth_client.post("/api/integrations/email/test/", {}, format="json")
         assert resp.status_code == 400
 
-    def test_test_endpoint_failure_surfaces_error(self, auth_client, monkeypatch):
+    def test_test_endpoint_failure_returns_generic_message(self, auth_client, monkeypatch):
+        # CodeQL #27: the raw exception/SMTP error must NOT be echoed to the
+        # client (it's logged server-side); the response carries a static message.
         monkeypatch.setattr("apps.integrations.views.send_test_email",
-                            lambda to: (False, "Connection refused"))
+                            lambda to: (False, "Connection refused to 10.0.0.5:587"))
         resp = auth_client.post("/api/integrations/email/test/", {"to": "x@example.com"}, format="json")
-        assert resp.status_code == 502 and resp.json()["error"] == "Connection refused"
+        assert resp.status_code == 502
+        body = resp.json()
+        assert body["sent"] is False
+        assert "Connection refused" not in body["error"]   # no leak
+        assert "SMTP" in body["error"]                      # generic guidance
 
 
 class TestSendAlertEmail:
