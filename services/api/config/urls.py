@@ -4,6 +4,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenVerifyView
 
+from apps.agents.download_views import download_binary, install_script
 from apps.core.throttled_auth import ThrottledTokenObtainPairView, ThrottledTokenRefreshView
 from apps.core.views import (
     AuditRetentionView, HostnameDisplayView, LldpSettingsView, SystemSettingsView,
@@ -62,6 +63,10 @@ urlpatterns = [
     path("api/settings/audit-retention/", AuditRetentionView.as_view(), name="audit-retention"),
     path("api/settings/hostname-display/", HostnameDisplayView.as_view(), name="hostname-display"),
     path("api/settings/lldp/", LldpSettingsView.as_view(), name="lldp-settings"),
+
+    # ── NetPulse Agent install script + binary downloads (public, top-level) ──
+    path("agent/install", install_script, name="agent-install"),
+    path("agent/download/<str:platform>", download_binary, name="agent-download"),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
     path("api/schema/", SpectacularAPIView.as_view(),                      name="schema"),

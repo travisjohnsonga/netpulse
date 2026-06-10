@@ -205,6 +205,12 @@ NVD_RESULTS_PER_PAGE = int(os.environ.get("NVD_RESULTS_PER_PAGE", "2000"))
 # lives here on disk (mode 0600) and is never returned by the API.
 SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 
+# NetPulse Agent assets served by the /agent/{install,download/*} endpoints:
+# scripts/install.sh (the install one-liner target) and dist/<platform> binaries
+# built by CI. Defaults to the in-repo `agent/` dir; in container deployments set
+# AGENT_DIR to a mounted volume populated with the CI artifacts.
+AGENT_DIR = os.environ.get("AGENT_DIR", str(BASE_DIR.parent.parent / "agent"))
+
 # Trusted CA bundle (system roots + admin-added CAs), rebuilt by apps.tls.
 # Point outbound HTTPS (requests: CVE feeds, vendor APIs, git sync) at it when
 # present so private/internal PKIs and SSL-inspection proxies are trusted.
