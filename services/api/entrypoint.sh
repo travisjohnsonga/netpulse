@@ -64,6 +64,11 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] seeding SSO providers from env..."
     python manage.py seed_sso_providers || echo "[entrypoint] SSO provider seed had issues (continuing)"
 
+    # Initialise OpenBao PKI for agent certificate issuance (idempotent;
+    # no-ops when OpenBao is disabled/sealed).
+    echo "[entrypoint] setting up agent PKI..."
+    python manage.py setup_agent_pki || echo "[entrypoint] agent PKI setup had issues (continuing)"
+
     # Register this server as the local collector (idempotent); the scheduler
     # keeps its heartbeat fresh thereafter.
     echo "[entrypoint] registering local collector..."

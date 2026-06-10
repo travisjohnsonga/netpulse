@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -17,30 +18,46 @@ import (
 type Client struct {
 	serverURL  string
 	agentID    string
+	apiKey     string
 	httpClient *http.Client
 }
 
-func NewClient(serverURL, agentID, certPath, keyPath, caPath string, insecure bool) (*Client, error) {
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("load client cert: %w", err)
-	}
-	caCert, err := os.ReadFile(caPath)
-	if err != nil {
-		return nil, fmt.Errorf("read CA cert: %w", err)
-	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(caCert)
-
+// NewClient builds the HTTPS client. It uses mTLS when the enrollment client
+// cert+key are present (the normal path); if they're absent/unloadable it
+// degrades to a plain TLS client, optionally sending apiKey as a Bearer token,
+// so the agent still starts before PKI is set up. insecure skips server-cert
+// verification (dev / self-signed).
+func NewClient(serverURL, agentID, certPath, keyPath, caPath string, insecure bool, apiKey string) (*Client, error) {
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            pool,
 		MinVersion:         tls.VersionTLS13,
 		InsecureSkipVerify: insecure, // dev / self-signed servers
 	}
+
+	mtls := false
+	if certPath != "" && keyPath != "" {
+		if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
+			tlsConfig.Certificates = []tls.Certificate{cert}
+			mtls = true
+		} else {
+			log.Printf("transport: client cert unavailable (%v); falling back to non-mTLS", err)
+		}
+	}
+	if !mtls && apiKey == "" {
+		log.Printf("transport: no client cert or API key — requests will be unauthenticated")
+	}
+
+	// Trust the enrollment CA for server verification when it's available.
+	if caCert, err := os.ReadFile(caPath); err == nil {
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(caCert) {
+			tlsConfig.RootCAs = pool
+		}
+	}
+
 	return &Client{
 		serverURL: serverURL,
 		agentID:   agentID,
+		apiKey:    apiKey,
 		httpClient: &http.Client{
 			Transport: &http.Transport{TLSClientConfig: tlsConfig},
 			Timeout:   30 * time.Second,
@@ -54,7 +71,15 @@ func (c *Client) post(path string, payload interface{}) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 	url := fmt.Sprintf("%s/api/agents/%s/%s", c.serverURL, c.agentID, path)
-	resp, err := c.httpClient.Post(url, "application/json", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("new request %s: %w", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" { // Bearer fallback when not using mTLS
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("post %s: %w", path, err)
 	}

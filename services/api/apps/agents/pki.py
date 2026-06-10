@@ -5,11 +5,9 @@ Enrollment signs the agent's CSR at ``<mount>/sign/<role>`` and returns the
 signed cert + CA chain. Isolated here behind ``issue_agent_certificate`` so the
 enrollment view stays simple and tests can monkeypatch it (no live PKI engine).
 
-Setup (one-time, infra follow-up — see CLAUDE.md):
-    bao secrets enable pki
-    bao write pki/root/generate/internal common_name="NetPulse Agent CA" ttl=87600h
-    bao write pki/roles/agent allowed_domains=agent.netpulse.local \
-        allow_subdomains=true max_ttl=8760h key_type=ec key_bits=384
+Setup is automated by ``manage.py setup_agent_pki`` (run from entrypoint.sh on
+every api start, idempotent): it creates the ``pki`` mount, the "NetPulse Agent
+CA" root, the ``agent`` signing role, and the ``netpulse-agent-pki`` policy.
 """
 from __future__ import annotations
 
@@ -44,7 +42,11 @@ def issue_agent_certificate(hostname: str, csr_pem: str, ttl: str = "8760h") -> 
             csr=csr_pem,
             common_name=f"agent.{hostname}",
             mount_point=_mount(),
-            extra_params={"ttl": ttl, "format": "pem"},
+            # SANs: the agent's own hostname + loopback, so the cert is usable for
+            # both mTLS client-auth and local checks. ip_sans needs the role's
+            # allow_ip_sans (set by setup_agent_pki).
+            extra_params={"ttl": ttl, "format": "pem",
+                          "alt_names": hostname, "ip_sans": "127.0.0.1"},
         )
     except AgentPKIError:
         raise
@@ -62,3 +64,20 @@ def issue_agent_certificate(hostname: str, csr_pem: str, ttl: str = "8760h") -> 
         "serial": data.get("serial_number", ""),
         "expiration": data.get("expiration"),
     }
+
+
+def read_ca_certificate() -> str:
+    """Return the agent PKI CA certificate (PEM). Public info — agents fetch it
+    to verify the server during mTLS. Raises AgentPKIError if unavailable.
+    """
+    from apps.credentials import vault
+
+    if not vault.vault_enabled():
+        raise AgentPKIError("OpenBao is not configured; no CA certificate available.")
+    try:
+        pem = vault._client().secrets.pki.read_ca_certificate(mount_point=_mount())
+    except Exception as exc:  # noqa: BLE001
+        raise AgentPKIError(f"OpenBao PKI CA read failed: {exc}") from exc
+    if not (pem or "").strip():
+        raise AgentPKIError("Agent PKI CA not initialised; run setup_agent_pki.")
+    return pem

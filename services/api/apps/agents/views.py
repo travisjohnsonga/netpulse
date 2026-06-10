@@ -2,6 +2,7 @@
 import logging
 
 from django.conf import settings
+from django.http import HttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
@@ -68,8 +69,9 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
 
     # Actions that must NOT require a JWT: enrollment is authenticated by the
     # one-time enrollment token; metrics/role-checks by the mTLS client-cert
-    # serial. They are AllowAny with no JWT/Session authenticators.
-    PUBLIC_ACTIONS = ("enroll", "metrics", "role_checks")
+    # serial; ca_certificate returns public CA info. They are AllowAny with no
+    # JWT/Session authenticators.
+    PUBLIC_ACTIONS = ("enroll", "metrics", "role_checks", "ca_certificate")
 
     def _resolved_action(self):
         # get_authenticators() runs inside initialize_request(), BEFORE
@@ -224,6 +226,19 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         agent = self.get_object()
         statuses = agent.role_statuses.all()
         return Response(AgentRoleStatusSerializer(statuses, many=True).data)
+
+    @extend_schema(responses=None)
+    @action(detail=False, methods=["get"], url_path="ca-certificate")
+    def ca_certificate(self, request):
+        """Return the agent PKI CA certificate (PEM, public). Agents fetch this
+        during enrollment and store it as ca.crt to verify the server."""
+        try:
+            pem = pki.read_ca_certificate()
+        except pki.AgentPKIError as exc:
+            return Response({"detail": safe_detail(exc, logger, "agent ca-cert",
+                            public="CA certificate unavailable. Check OpenBao PKI setup.")},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return HttpResponse(pem, content_type="application/x-pem-file")
 
     @extend_schema(responses=None)
     @action(detail=False, methods=["get"])

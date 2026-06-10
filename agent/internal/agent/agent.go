@@ -33,7 +33,7 @@ type metricPayload struct {
 }
 
 func New(cfg *config.Config, version string) (*Agent, error) {
-	client, err := transport.NewClient(cfg.ServerURL, cfg.AgentID, cfg.CertPath, cfg.KeyPath, cfg.CACertPath, cfg.InsecureTLS)
+	client, err := transport.NewClient(cfg.ServerURL, cfg.AgentID, cfg.CertPath, cfg.KeyPath, cfg.CACertPath, cfg.InsecureTLS, cfg.APIKey)
 	if err != nil {
 		return nil, err
 	}

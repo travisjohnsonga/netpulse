@@ -35,6 +35,10 @@ type Config struct {
 	// Set during enrollment from the -insecure flag or an http:// server URL.
 	InsecureTLS bool `json:"insecure_tls"`
 
+	// APIKey is an optional Bearer token used only as a fallback when no mTLS
+	// client cert is present (e.g. before PKI is set up). mTLS is preferred.
+	APIKey string `json:"api_key,omitempty"`
+
 	Collection Collection `json:"collection"`
 	RoleChecks RoleChecks `json:"role_checks"`
 
