@@ -9,7 +9,6 @@ set -euo pipefail
 
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/netpulse-agent"
-SERVICE_FILE="/etc/systemd/system/netpulse-agent.service"
 
 SERVER_URL=""
 TOKEN=""
@@ -52,33 +51,17 @@ chmod +x "${INSTALL_DIR}/netpulse-agent"
 id -u netpulse-agent &>/dev/null || \
   useradd -r -s /sbin/nologin -d /nonexistent netpulse-agent
 
+CONFIG_PATH="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
 "${INSTALL_DIR}/netpulse-agent" \
-  --enroll "$TOKEN" --server "$SERVER_URL" --config "${CONFIG_DIR}/config.json" \
+  --enroll "$TOKEN" --server "$SERVER_URL" --config "$CONFIG_PATH" \
   "${ENROLL_OPTS[@]}"
 chown -R netpulse-agent:netpulse-agent "$CONFIG_DIR"
 
-cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=NetPulse Monitoring Agent
-After=network-online.target
-Wants=network-online.target
+# Enrollment succeeded — install the hardened systemd unit (writes the unit,
+# daemon-reload, enable + start). The unit runs as the netpulse-agent user.
+"${INSTALL_DIR}/netpulse-agent" \
+  --install-service \
+  --config "$CONFIG_PATH"
 
-[Service]
-Type=simple
-ExecStart=${INSTALL_DIR}/netpulse-agent --config ${CONFIG_DIR}/config.json
-Restart=always
-RestartSec=30
-User=netpulse-agent
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=${CONFIG_DIR}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now netpulse-agent
 echo "✅ NetPulse Agent installed. Status: systemctl status netpulse-agent"
