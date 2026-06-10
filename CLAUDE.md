@@ -317,11 +317,17 @@ OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
   generates a keypair + CSR → server signs via OpenBao PKI → agent appears in
   inventory.
 - **Cert issuance** is behind a mockable abstraction (`apps/agents/pki.py`).
+- **OpenBao PKI is set up automatically** by `manage.py setup_agent_pki`
+  (idempotent, run from entrypoint.sh): creates the `pki` mount, the "NetPulse
+  Agent CA" EC P-384 root, the `agent` signing role (server-authoritative
+  CN/SANs via `use_csr_*=false`), and the `netpulse-agent-pki` policy. The CA
+  PEM is served at `GET /api/agents/ca-certificate/` (public). Binaries are
+  served at `/agent/{install,download/<platform>}` from `settings.AGENT_DIR`.
 - **Infra follow-up (NOT built):** nginx mTLS termination passing the verified
-  client-cert serial to Django; OpenBao PKI engine enablement
-  (`bao secrets enable pki` + `pki/roles/agent`); CI-published binary serving at
-  `/agent/download/<platform>`; Windows Phase-2 polish (event-log forwarding,
-  custom PowerShell role checks). The Go binaries are built by CI, not in-repo.
+  client-cert serial to Django (until then, agent metrics/role-check pushes
+  can't authenticate by cert-serial end-to-end); Windows Phase-2 polish
+  (event-log forwarding, custom PowerShell role checks). The Go binaries are
+  built by CI, not in-repo.
 
 ## Planned Features (NOT built — specs in docs/)
 
