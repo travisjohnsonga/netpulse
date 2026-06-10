@@ -38,18 +38,21 @@ _SAFE_MIB_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def safe_mib_path(base_dir, user_input: str) -> str:
     """
-    Resolve a user-supplied MIB filename inside ``base_dir``, REJECTING anything
-    that isn't a plain in-directory filename.
+    Resolve a user-supplied MIB filename inside ``base_dir``, REJECTING (not
+    silently stripping) anything that isn't a plain in-directory filename.
 
-    Defence in depth: (1) ``os.path.basename`` strips any directory components so
-    no separators/traversal survive; (2) the leaf must match an allow-listed
-    charset and not be "."/".."; (3) the fully-resolved path must stay strictly
-    inside the resolved base. Raises ValueError otherwise; returns the resolved
-    absolute path.
+    Defence in depth: (1) the name must match an allow-listed charset and not be
+    "."/".." (rejects separators, traversal, NUL, encoded payloads); (2)
+    ``os.path.basename`` — a no-op for an already-validated bare name — keeps a
+    path-injection sanitizer in the data flow and is asserted unchanged; (3) the
+    fully-resolved path must stay strictly inside the resolved base. Raises
+    ValueError otherwise; returns the resolved absolute path.
     """
-    # Strip any path components — defeats traversal regardless of encoding.
-    safe_name = os.path.basename((user_input or "").strip())
-    if not safe_name or safe_name in (".", "..") or not _SAFE_MIB_NAME.match(safe_name):
+    name = (user_input or "").strip()
+    if name in (".", "..") or not _SAFE_MIB_NAME.match(name):
+        raise ValueError(f"unsafe MIB filename: {user_input!r}")
+    safe_name = os.path.basename(name)
+    if safe_name != name:  # a validated bare name is its own basename
         raise ValueError(f"unsafe MIB filename: {user_input!r}")
     real_base = os.path.realpath(base_dir)
     real_path = os.path.realpath(os.path.join(real_base, safe_name))
