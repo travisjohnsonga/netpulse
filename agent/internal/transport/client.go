@@ -65,7 +65,22 @@ func NewClient(serverURL, agentID, certPath, keyPath, caPath string, insecure bo
 	}, nil
 }
 
-func (c *Client) post(path string, payload interface{}) error {
+// MetricsResponse is the server's reply to a metrics push. The server is
+// authoritative for role assignments and pushes them back here so the agent can
+// auto-enable role checks without a manual config edit.
+type MetricsResponse struct {
+	Accepted         bool     `json:"accepted"`
+	PointsWritten    int      `json:"points_written"`
+	AssignedRoles    []string `json:"assigned_roles"`
+	CollectionConfig struct {
+		Services          bool `json:"services"`
+		RoleChecksEnabled bool `json:"role_checks_enabled"`
+	} `json:"collection_config"`
+}
+
+// post sends payload to the agent endpoint at path. When out is non-nil the JSON
+// response body is decoded into it.
+func (c *Client) post(path string, payload interface{}, out interface{}) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
@@ -87,8 +102,22 @@ func (c *Client) post(path string, payload interface{}) error {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("server returned %d for %s", resp.StatusCode, path)
 	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return fmt.Errorf("decode %s response: %w", path, err)
+		}
+	}
 	return nil
 }
 
-func (c *Client) SendMetrics(payload interface{}) error    { return c.post("metrics/", payload) }
-func (c *Client) SendRoleChecks(payload interface{}) error { return c.post("role-checks/", payload) }
+// SendMetrics pushes a metrics payload and returns the server's response (which
+// carries the agent's assigned roles + desired collection config).
+func (c *Client) SendMetrics(payload interface{}) (*MetricsResponse, error) {
+	var r MetricsResponse
+	if err := c.post("metrics/", payload, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (c *Client) SendRoleChecks(payload interface{}) error { return c.post("role-checks/", payload, nil) }

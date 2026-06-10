@@ -64,7 +64,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	a, err := agent.New(cfg, Version)
+	a, err := agent.New(cfg, *configPath, Version)
 	if err != nil {
 		log.Fatalf("Failed to create agent: %v", err)
 	}

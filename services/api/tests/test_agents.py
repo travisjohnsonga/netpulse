@@ -170,6 +170,21 @@ class TestIngestion:
         a.refresh_from_db()
         assert a.last_seen is not None
 
+    def test_metrics_response_pushes_assigned_roles(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent()
+        hdr = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+        # No roles assigned → role checks stay disabled.
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json", **hdr).json()
+        assert r["assigned_roles"] == []
+        assert r["collection_config"]["role_checks_enabled"] is False
+        assert r["collection_config"]["services"] is True
+        # Assign a role → it is pushed back and role checks are enabled.
+        AgentRole.objects.create(agent=a, role=ServerRole.objects.get(role_type="web"))
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json", **hdr).json()
+        assert r["assigned_roles"] == ["web"]
+        assert r["collection_config"]["role_checks_enabled"] is True
+
     def test_revoked_agent_rejected(self, api_client):
         a = self._agent()
         a.status = Agent.Status.REVOKED

@@ -78,3 +78,14 @@ func Load(path string) (*Config, error) {
 	}
 	return &cfg, nil
 }
+
+// Save writes cfg back to path as indented JSON (0600 — the file may hold an
+// API key). Used when the agent applies server-pushed config changes (e.g.
+// auto-enabling role checks for newly assigned roles).
+func Save(path string, cfg *Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}

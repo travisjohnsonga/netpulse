@@ -322,6 +322,7 @@ function RolesTab({ id, os }: { id: string; os: string }) {
   const [showAssign, setShowAssign] = useState(false)
   const [pick, setPick] = useState<number | ''>('')
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<AssignedRole | null>(null)
 
   const load = useCallback(() => {
     fetchServerRoleAssignments(id).then(setAssigned).catch(() => {})
@@ -330,7 +331,12 @@ function RolesTab({ id, os }: { id: string; os: string }) {
 
   const assign = async (roleId: number) => {
     setBusy(true)
-    try { await assignServerRole(id, roleId); load(); setDetected((d) => d.filter((x) => x.role_id !== roleId)) } finally { setBusy(false); setShowAssign(false); setPick('') }
+    try {
+      const a = await assignServerRole(id, roleId)
+      setNotice(a)
+      load()
+      setDetected((d) => d.filter((x) => x.role_id !== roleId))
+    } finally { setBusy(false); setShowAssign(false); setPick('') }
   }
   const remove = async (roleId: number) => { await removeServerRole(id, roleId); load() }
   const detect = async () => { setDetected(await detectServerRoles(id)) }
@@ -344,6 +350,31 @@ function RolesTab({ id, os }: { id: string; os: string }) {
         <button onClick={detect} className="px-3 py-2 text-sm border rounded-lg dark:border-gray-600 dark:text-gray-300">🔍 Auto-detect</button>
         <span className="text-xs text-gray-400">OS: {os || 'unknown'}</span>
       </div>
+
+      {notice && (
+        <div role="alert" className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl p-4 text-sm text-green-900 dark:text-green-100">
+          <div className="flex items-start justify-between gap-3">
+            <div className="font-semibold">✅ Role “{notice.name}” assigned successfully!</div>
+            <button onClick={() => setNotice(null)} className="text-green-700 dark:text-green-300 hover:underline text-xs shrink-0">Dismiss</button>
+          </div>
+          <p className="mt-2">
+            The agent picks this up <span className="font-medium">automatically on its next check-in</span> — the
+            server pushes the assigned roles back in the metrics response, so no config edit is required as long as
+            the agent is reporting metrics.
+          </p>
+          <p className="mt-2">To apply immediately, restart the agent on the host:</p>
+          <pre className="mt-1 bg-green-100 dark:bg-green-950/50 rounded-md px-3 py-2 overflow-x-auto font-mono text-xs">sudo systemctl restart netpulse-agent</pre>
+          <p className="mt-2">
+            Prefer to manage roles in the config file? Edit
+            <code className="mx-1 px-1 rounded bg-green-100 dark:bg-green-950/50">/etc/netpulse-agent/config.json</code>
+            and restart:
+          </p>
+          <pre className="mt-1 bg-green-100 dark:bg-green-950/50 rounded-md px-3 py-2 overflow-x-auto font-mono text-xs">{`"role_checks": {
+  "enabled": true,
+  "roles": ["${notice.role_type}"]
+}`}</pre>
+        </div>
+      )}
 
       {showAssign && (
         <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4 flex items-end gap-3">

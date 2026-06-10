@@ -199,7 +199,26 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE
         agent.save(update_fields=update_fields)
-        return Response({"accepted": True, "points_written": written})
+        # Push the server-authoritative role assignments back in the response so
+        # the agent can auto-enable role checks without a manual config edit.
+        # de-dup while preserving assignment order.
+        seen: set[str] = set()
+        assigned_roles = [
+            rt for rt in agent.assigned_roles.select_related("role")
+                              .values_list("role__role_type", flat=True)
+            if rt and not (rt in seen or seen.add(rt))
+        ]
+        return Response({
+            "accepted": True,
+            "points_written": written,
+            "assigned_roles": assigned_roles,
+            "collection_config": {
+                # Keep reporting running service names so role auto-detection works.
+                "services": True,
+                # Turn role checks on as soon as at least one role is assigned.
+                "role_checks_enabled": bool(assigned_roles),
+            },
+        })
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="role-checks")
