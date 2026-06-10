@@ -3,7 +3,7 @@ import pytest
 
 from apps.agents import pki, views as agent_views
 from apps.agents.metrics import build_points
-from apps.agents.models import Agent, AgentEnrollmentToken, ServerRole
+from apps.agents.models import Agent, AgentEnrollmentToken, AgentRole, ServerRole
 from apps.devices.models import Device
 
 pytestmark = pytest.mark.django_db
@@ -188,6 +188,57 @@ class TestIngestion:
         # Authenticated read of role status
         got = auth_client.get(f"/api/agents/{a.id}/roles/").json()
         assert got[0]["role_type"] == "dns" and got[0]["services"][0]["name"] == "named"
+
+
+# ── Server role assignment (/api/servers/) ──────────────────────────────────────
+
+class TestServerRoleAssignment:
+    def _server(self, **kw):
+        kw.setdefault("os", "linux")
+        return Agent.objects.create(hostname="srv-roles", **kw)
+
+    def test_assign_list_remove_role(self, auth_client):
+        s = self._server()
+        dns = ServerRole.objects.get(role_type="dns")
+        r = auth_client.post(f"/api/servers/{s.id}/roles/", {"role_id": dns.id}, format="json")
+        assert r.status_code == 201, r.content
+        got = auth_client.get(f"/api/servers/{s.id}/roles/").json()
+        assert len(got) == 1 and got[0]["role_type"] == "dns" and got[0]["role_id"] == dns.id
+        # Re-assign is idempotent → 200
+        assert auth_client.post(f"/api/servers/{s.id}/roles/", {"role_id": dns.id}, format="json").status_code == 200
+        assert auth_client.delete(f"/api/servers/{s.id}/roles/{dns.id}/").status_code == 204
+        assert auth_client.get(f"/api/servers/{s.id}/roles/").json() == []
+
+    def test_assign_unknown_role_400(self, auth_client):
+        s = self._server()
+        assert auth_client.post(f"/api/servers/{s.id}/roles/", {"role_id": 999999}, format="json").status_code == 400
+
+    def test_detect_roles_from_reported_services(self, auth_client):
+        s = self._server(reported_services=["named", "sshd"])
+        detected = auth_client.post(f"/api/servers/{s.id}/detect-roles/").json()["detected"]
+        dns = next((d for d in detected if d["role_type"] == "dns"), None)
+        assert dns and "named" in dns["matched_services"]
+        assert dns["confidence"] > 0 and dns["assigned"] is False
+
+    def test_role_checks_auto_assigns_role(self, api_client):
+        a = Agent.objects.create(hostname="srv-auto", os="linux", cert_serial="ab:cd:ef:01")
+        r = api_client.post(f"/api/agents/{a.id}/role-checks/",
+                            {"roles": [{"role": "dns", "services": [], "ports": []}]}, format="json",
+                            HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+        assert r.status_code == 200
+        assert AgentRole.objects.filter(agent=a, role__role_type="dns", auto_detected=True).exists()
+
+    def test_metrics_populates_reported_services(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="srv-svc", os="linux", cert_serial="ab:cd:ef:01")
+        api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"services": ["named", "nginx"]}},
+                        format="json", HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+        a.refresh_from_db()
+        assert a.reported_services == ["named", "nginx"]
+
+    def test_server_roles_require_auth(self, api_client):
+        s = self._server()
+        assert api_client.get(f"/api/servers/{s.id}/roles/").status_code == 401
 
 
 # ── Agent management ────────────────────────────────────────────────────────────

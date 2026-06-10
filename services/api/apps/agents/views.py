@@ -15,7 +15,7 @@ from apps.core.errors import safe_detail
 from . import pki
 from .authentication import AgentCertAuthentication
 from .metrics import write_agent_metrics
-from .models import Agent, AgentEnrollmentToken, AgentRoleStatus, ServerRole
+from .models import Agent, AgentEnrollmentToken, AgentRole, AgentRoleStatus, ServerRole
 from .serializers import (
     AgentEnrollmentTokenSerializer,
     AgentRoleStatusSerializer,
@@ -179,13 +179,26 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         Identity comes from the verified cert, so the URL pk is informational."""
         agent = request.user
         payload = request.data or {}
+        metrics = payload.get("metrics") or {}
         device_id = agent.device_id or agent.id
-        written = write_agent_metrics(device_id, agent.hostname,
-                                      payload.get("metrics") or {}, ts=payload.get("timestamp"))
+        written = write_agent_metrics(device_id, agent.hostname, metrics, ts=payload.get("timestamp"))
+        update_fields = ["last_seen", "status", "updated_at"]
+        # Capture running service names (when the agent collects them) for role
+        # auto-detection. Accept a list of names or {name, running?} dicts.
+        services = metrics.get("services")
+        if isinstance(services, list):
+            names = []
+            for s in services:
+                if isinstance(s, str):
+                    names.append(s)
+                elif isinstance(s, dict) and s.get("name") and s.get("running", True):
+                    names.append(s["name"])
+            agent.reported_services = names
+            update_fields.append("reported_services")
         agent.last_seen = timezone.now()
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE
-        agent.save(update_fields=["last_seen", "status", "updated_at"])
+        agent.save(update_fields=update_fields)
         return Response({"accepted": True, "points_written": written})
 
     @extend_schema(request=None, responses=None)
@@ -204,6 +217,12 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                 defaults={"services": r.get("services") or [], "ports": r.get("ports") or [],
                           "custom": r.get("custom") or [], "collected_at": now},
             )
+            # Method 3: roles declared in the agent's config (it's reporting checks
+            # for them) auto-create the assignment so they show on the Roles tab.
+            role = ServerRole.objects.filter(role_type=r["role"]).first()
+            if role:
+                AgentRole.objects.get_or_create(
+                    agent=agent, role=role, defaults={"auto_detected": True})
         agent.last_seen = now
         agent.save(update_fields=["last_seen", "updated_at"])
         return Response({"accepted": True, "roles": len(results)})

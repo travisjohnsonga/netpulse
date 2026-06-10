@@ -36,6 +36,27 @@ func CollectServices(watch []string) ([]ServiceStat, error) {
 	return stats, nil
 }
 
+// RunningServiceNames lists currently-running systemd service unit names (without
+// the ".service" suffix) — used server-side for role auto-detection.
+func RunningServiceNames() []string {
+	out, err := exec.Command("systemctl", "list-units", "--type=service",
+		"--state=running", "--no-legend", "--plain", "--no-pager").Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if name := strings.TrimSuffix(fields[0], ".service"); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 func parseShow(out string) map[string]string {
 	m := make(map[string]string)
 	for _, line := range strings.Split(out, "\n") {

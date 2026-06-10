@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Agent, AgentEnrollmentToken, AgentRoleStatus, ServerRole
+from .models import Agent, AgentEnrollmentToken, AgentRole, AgentRoleStatus, ServerRole
 
 
 class ServerRoleSerializer(serializers.ModelSerializer):
@@ -38,6 +38,37 @@ class AgentRoleStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentRoleStatus
         fields = ("role_type", "services", "ports", "custom", "collected_at")
+
+
+class AssignedRoleSerializer(serializers.ModelSerializer):
+    """A role assigned to a server, with the latest role-check pass/total counts."""
+    role_id = serializers.IntegerField(source="role.id", read_only=True)
+    role_type = serializers.CharField(source="role.role_type", read_only=True)
+    name = serializers.CharField(source="role.name", read_only=True)
+    description = serializers.CharField(source="role.description", read_only=True)
+    assigned_at = serializers.DateTimeField(source="created_at", read_only=True)
+    status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AgentRole
+        fields = ("id", "role_id", "role_type", "name", "description",
+                  "auto_detected", "assigned_at", "status")
+
+    def get_status(self, obj) -> dict | None:
+        st = AgentRoleStatus.objects.filter(
+            agent_id=obj.agent_id, role_type=obj.role.role_type).first()
+        if not st:
+            return None
+        services = st.services or []
+        ports = st.ports or []
+        ok = (sum(1 for s in services if isinstance(s, dict) and s.get("running"))
+              + sum(1 for p in ports if isinstance(p, dict) and p.get("open")))
+        total = len(services) + len(ports)
+        return {
+            "checks_passed": ok, "checks_total": total,
+            "services": services, "ports": ports,
+            "collected_at": st.collected_at,
+        }
 
 
 class AgentEnrollmentTokenSerializer(serializers.ModelSerializer):

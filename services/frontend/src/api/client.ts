@@ -1092,6 +1092,47 @@ export async function fetchAgentRoles(id: string): Promise<AgentRoleStatus[]> {
   return data
 }
 
+// ── Server role assignment (/api/servers/{id}/...) ──────────────────────────
+export interface AssignedRole {
+  id: number
+  role_id: number
+  role_type: string
+  name: string
+  description: string
+  auto_detected: boolean
+  assigned_at: string
+  status: {
+    checks_passed: number; checks_total: number
+    services: { name: string; running?: boolean; state?: string }[]
+    ports: { port: number; proto: string; open: boolean }[]
+    collected_at: string | null
+  } | null
+}
+
+export interface DetectedRole {
+  role_id: number; role_name: string; role_type: string
+  matched_services: string[]; confidence: number; assigned: boolean
+}
+
+export async function fetchServerRoleAssignments(id: string): Promise<AssignedRole[]> {
+  const { data } = await api.get<AssignedRole[]>(`/servers/${id}/roles/`)
+  return data
+}
+
+export async function assignServerRole(id: string, roleId: number): Promise<AssignedRole> {
+  const { data } = await api.post<AssignedRole>(`/servers/${id}/roles/`, { role_id: roleId })
+  return data
+}
+
+export async function removeServerRole(id: string, roleId: number): Promise<void> {
+  await api.delete(`/servers/${id}/roles/${roleId}/`)
+}
+
+export async function detectServerRoles(id: string): Promise<DetectedRole[]> {
+  const { data } = await api.post<{ detected: DetectedRole[] }>(`/servers/${id}/detect-roles/`)
+  return data.detected
+}
+
 export async function fetchAgentTokens(): Promise<AgentToken[]> {
   const { data } = await api.get<AgentToken[] | Paginated<AgentToken>>('/agents/tokens/')
   return unwrap(data)

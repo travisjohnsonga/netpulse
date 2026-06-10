@@ -13,6 +13,22 @@ var winStartTypeStr = map[uint32]string{
 	0: "boot", 1: "system", 2: "automatic", 3: "manual", 4: "disabled",
 }
 
+// RunningServiceNames lists currently-running Windows service names — used
+// server-side for role auto-detection.
+func RunningServiceNames() []string {
+	stats, err := CollectServices(nil)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, s := range stats {
+		if s.Running {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
 // CollectServices reports Windows service states. With a watch list, missing
 // services are reported as "not_found"; without one, all services are listed.
 func CollectServices(watch []string) ([]ServiceStat, error) {

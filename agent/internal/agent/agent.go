@@ -89,6 +89,12 @@ func (a *Agent) collect(hostname string) {
 			metrics["network"] = net
 		}
 	}
+	if a.cfg.Collection.Services {
+		// Running service names → server-side role auto-detection.
+		if names := collector.RunningServiceNames(); len(names) > 0 {
+			metrics["services"] = names
+		}
+	}
 	metrics["system"] = map[string]interface{}{
 		"hostname": hostname, "os": runtime.GOOS, "arch": runtime.GOARCH,
 		"go_version": runtime.Version(),

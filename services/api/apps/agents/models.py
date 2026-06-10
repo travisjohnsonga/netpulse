@@ -118,7 +118,14 @@ class Agent(TimestampedModel):
         AgentEnrollmentToken, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="agents",
     )
-    server_roles = models.ManyToManyField(ServerRole, blank=True, related_name="agents")
+    # Role assignments go through AgentRole (assignment metadata); reverse
+    # accessor on the agent is `assigned_roles`, on the role is `agent_assignments`.
+    server_roles = models.ManyToManyField(
+        ServerRole, through="AgentRole", related_name="agents", blank=True,
+    )
+    # Names of services reported running by the agent's latest metrics push;
+    # used by role auto-detection. Populated only when the agent collects services.
+    reported_services = models.JSONField(default=list, blank=True)
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     collection_interval = models.IntegerField(default=30, help_text="seconds")
@@ -137,6 +144,27 @@ class Agent(TimestampedModel):
     @property
     def is_anonymous(self) -> bool:
         return False
+
+
+class AgentRole(TimestampedModel):
+    """A server role assigned to an agent (the M2M `through`). Carries who/how it
+    was assigned. `created_at` (from TimestampedModel) is the assignment time."""
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="assigned_roles")
+    role = models.ForeignKey(ServerRole, on_delete=models.CASCADE, related_name="agent_assignments")
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="+",
+    )
+    # True when created by auto-detection / agent config rather than a manual UI assign.
+    auto_detected = models.BooleanField(default=False)
+
+    class Meta(TimestampedModel.Meta):
+        unique_together = [("agent", "role")]
+        ordering = ["role__name"]
+
+    def __str__(self):
+        return f"{self.agent.hostname} → {self.role.name}"
 
 
 class AgentRoleStatus(TimestampedModel):
