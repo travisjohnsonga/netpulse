@@ -20,12 +20,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Opt the Node20 JS actions onto the Node 24 runtime to clear the
+    # "deprecated Node.js 20 actions" warning ahead of the forced migration.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          # go.sum lives in agent/, not the repo root — point the dep cache at it.
+          cache: true
+          cache-dependency-path: agent/go.sum
 
       - name: Vet (Linux + Windows)
         working-directory: agent
