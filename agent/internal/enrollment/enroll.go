@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -16,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/travisjohnsonga/netpulse/agent/internal/config"
 )
@@ -39,11 +42,20 @@ type enrollResponse struct {
 
 // Enroll generates a key + CSR, enrolls with the server, and writes
 // key/cert/CA + a config file next to configPath. version is embedded in the
-// request for inventory.
-func Enroll(serverURL, token, configPath, version string) error {
+// request for inventory. insecure (or an http:// server URL) skips server-cert
+// verification for dev / self-signed servers.
+func Enroll(serverURL, token, configPath, version string, insecure bool) error {
 	if serverURL == "" {
 		return fmt.Errorf("--server is required for enrollment")
 	}
+	// Honor http:// vs https:// in the server URL: don't force HTTPS, and skip
+	// cert verification when explicitly insecure or talking plain http.
+	skipVerify := insecure || strings.HasPrefix(serverURL, "http://")
+	transport := &http.Transport{}
+	if skipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	httpClient := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 	dir := filepath.Dir(configPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
@@ -68,7 +80,7 @@ func Enroll(serverURL, token, configPath, version string) error {
 		EnrollmentToken: token, Hostname: hostname,
 		OS: runtime.GOOS, Arch: runtime.GOARCH, Version: version, CSR: string(csrPEM),
 	})
-	httpResp, err := http.Post(serverURL+"/api/agents/enroll/", "application/json", bytes.NewReader(reqBody))
+	httpResp, err := httpClient.Post(serverURL+"/api/agents/enroll/", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("enroll request: %w", err)
 	}
@@ -111,6 +123,9 @@ func Enroll(serverURL, token, configPath, version string) error {
 	cfg := config.Config{
 		ServerURL: serverOut, AgentID: result.AgentID,
 		CertPath: certPath, KeyPath: keyPath, CACertPath: caPath,
+		// Persist so the running agent keeps skipping verification when it pushes
+		// metrics to a dev / self-signed (or plain-http) server.
+		InsecureTLS: insecure || strings.HasPrefix(serverOut, "http://"),
 	}
 	cfg.Collection = config.Collection{Interval: interval, CPU: true, Memory: true, Disk: true, Network: true}
 	cfg.Log.Level = "info"

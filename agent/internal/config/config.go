@@ -31,6 +31,10 @@ type Config struct {
 	KeyPath    string `json:"key_path"`
 	CACertPath string `json:"ca_cert_path"`
 
+	// InsecureTLS skips server-cert verification (dev / self-signed servers).
+	// Set during enrollment from the -insecure flag or an http:// server URL.
+	InsecureTLS bool `json:"insecure_tls"`
+
 	Collection Collection `json:"collection"`
 	RoleChecks RoleChecks `json:"role_checks"`
 

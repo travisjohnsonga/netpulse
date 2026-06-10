@@ -20,7 +20,7 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func NewClient(serverURL, agentID, certPath, keyPath, caPath string) (*Client, error) {
+func NewClient(serverURL, agentID, certPath, keyPath, caPath string, insecure bool) (*Client, error) {
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("load client cert: %w", err)
@@ -33,9 +33,10 @@ func NewClient(serverURL, agentID, certPath, keyPath, caPath string) (*Client, e
 	pool.AppendCertsFromPEM(caCert)
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      pool,
-		MinVersion:   tls.VersionTLS13,
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            pool,
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: insecure, // dev / self-signed servers
 	}
 	return &Client{
 		serverURL: serverURL,

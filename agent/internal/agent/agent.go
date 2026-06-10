@@ -33,7 +33,7 @@ type metricPayload struct {
 }
 
 func New(cfg *config.Config, version string) (*Agent, error) {
-	client, err := transport.NewClient(cfg.ServerURL, cfg.AgentID, cfg.CertPath, cfg.KeyPath, cfg.CACertPath)
+	client, err := transport.NewClient(cfg.ServerURL, cfg.AgentID, cfg.CertPath, cfg.KeyPath, cfg.CACertPath, cfg.InsecureTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +125,7 @@ func (a *Agent) runRoleChecks(hostname string) {
 func (a *Agent) Stop() { a.cancel() }
 
 // Enroll runs first-time enrollment (delegates to the enrollment package).
-func Enroll(serverURL, token, configPath string) error {
-	return enrollment.Enroll(serverURL, token, configPath, "")
+// insecure skips server-cert verification (dev / self-signed servers).
+func Enroll(serverURL, token, configPath string, insecure bool) error {
+	return enrollment.Enroll(serverURL, token, configPath, "", insecure)
 }

@@ -26,6 +26,7 @@ func main() {
 		serverURL        = flag.String("server", "", "NetPulse server URL")
 		installService   = flag.Bool("install-service", false, "Install the OS service (Windows)")
 		uninstallService = flag.Bool("uninstall-service", false, "Uninstall the OS service (Windows)")
+		insecure         = flag.Bool("insecure", false, "Skip TLS cert verification (dev/self-signed)")
 		showVersion      = flag.Bool("version", false, "Print version and exit")
 	)
 	flag.Parse()
@@ -36,7 +37,7 @@ func main() {
 	}
 
 	if *enrollToken != "" {
-		if err := agent.Enroll(*serverURL, *enrollToken, *configPath); err != nil {
+		if err := agent.Enroll(*serverURL, *enrollToken, *configPath, *insecure); err != nil {
 			log.Fatalf("Enrollment failed: %v", err)
 		}
 		log.Println("Enrollment successful!")

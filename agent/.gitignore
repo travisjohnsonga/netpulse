@@ -1,5 +1,6 @@
 dist/
 *.exe
+/netpulse-agent
 agent.key
 agent.crt
 ca.crt
