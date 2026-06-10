@@ -11,6 +11,10 @@ curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scrip
 ## Features
 
 - Push-first telemetry (gRPC/gNMI, SNMP, NetFlow/sFlow)
+- Secure agent-based server monitoring (Linux + Windows; mTLS, OpenBao PKI) with
+  a dedicated Servers page
+- Role-based server monitoring (DNS, DHCP, NPS, Domain Controller, Web, DB, File,
+  Syslog) — manual + auto-detected
 - CVE intelligence with config-aware applicability
 - Configuration compliance engine
 - Flow analytics with Sankey diagrams
@@ -24,5 +28,6 @@ curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scrip
 
 - [Architecture](ARCHITECTURE.md)
 - [Deployment Guide](setup/deployment.md)
+- Agent: [Overview](agents/overview.md) · [Installation](agents/installation.md) · [Configuration](agents/configuration.md) · [Security](agents/security.md)
 - [Platform Support](platforms/sonicwall.md)
 - Integrations: [UniFi](integrations/unifi.md) · [NetBox](integrations/netbox.md) · [Email/SMTP](integrations/email.md)

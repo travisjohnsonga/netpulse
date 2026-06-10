@@ -17,6 +17,11 @@ nav:
   - Setup:
     - Deployment: setup/deployment.md
     - NAT Configuration: setup/nat.md
+  - Agent:
+    - Overview: agents/overview.md
+    - Installation: agents/installation.md
+    - Configuration: agents/configuration.md
+    - Security: agents/security.md
   - Platforms:
     - SonicWall: platforms/sonicwall.md
     - AOS-CX: platforms/aos_cx.md

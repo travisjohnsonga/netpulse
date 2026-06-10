@@ -49,3 +49,27 @@ Use **Test Connection** to verify and see the device count.
 - Device types map as: `uap → unifi_ap` / Wireless AP, `usw → unifi_sw` / Access
   Switch, `ugw → unifi_gw` / Router, `udm → unifi_udm` / Router. Devices are
   keyed by IP, so re-syncs update in place.
+
+## Telemetry
+
+Every `UNIFI_TELEMETRY_INTERVAL_S` (default 5m) the scheduler polls each enabled
+controller for live state:
+
+- **Access points** → `UnifiApStatus` + InfluxDB (`unifi_ap_radio`,
+  `unifi_ap_health`): per-radio channel/utilization/tx-power, client counts,
+  uptime. Surfaced on the **Wireless** page (`/wireless`) and the device's
+  UniFi-AP panel (`/api/devices/{id}/unifi-ap/`, `/api/wireless/{summary,aps}/`).
+- **UDM / gateway consoles** → `UnifiConsoleStatus` + InfluxDB
+  (`unifi_controller_health`, `unifi_wan`): WAN status/throughput and controller
+  health, on the device's UniFi-console panel
+  (`/api/devices/{id}/unifi-console/`).
+
+Local-controller telemetry uses the linked `CredentialProfile` (HTTPS preferred,
+SSH fallback). The login endpoint is auto-detected (UDM `/api/auth/login` vs the
+classic controller login).
+
+## Syslog (CEF) normalization
+
+UniFi gateways/consoles emit CEF-formatted syslog. The syslog normalizer parses
+the CEF header + extensions into structured fields so UniFi events are searchable
+and filterable alongside other device logs.

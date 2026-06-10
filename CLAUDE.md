@@ -21,8 +21,24 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 
 ## Current State (June 2026)
 
-- Tests: ~1275 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
+- Tests: ~1560 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite.
+
+**Recently completed (agent + servers session):** NetPulse Agent end-to-end —
+OpenBao PKI auto-setup (`setup_agent_pki`: `pki` mount + "NetPulse Agent CA" EC
+P-384 root + `agent` role + policy; CA at `GET /api/agents/ca-certificate/`) ·
+nginx **mTLS termination** for agent ingestion (server-level `ssl_verify_client
+optional` against the agent CA, enforced per-location; `X-Agent-Cert-Serial` →
+`AgentCertAuthentication`, serial normalized nginx↔OpenBao; CA published to the
+shared ssl volume) · agent transport graceful degradation (mTLS when cert
+present, else plain/Bearer) · `/agent/{install,download/<platform>}` Django
+endpoints + `-insecure` flag · enrollment-token **OS selector** (Linux/Windows/
+Both → tailored install commands) + self-signed checkbox · **server role
+assignment** (`AgentRole` through-model; manual + auto-detect from reported
+services + config-declared via role-checks) · dedicated **Servers page**
+(`/servers` list + `/servers/:id` detail with CPU/Memory/Disk/Network/Roles/…
+tabs, `/api/servers/` API reading agent metrics from InfluxDB). Agent docs under
+`docs/agents/`.
 
 ### Remote Collector Subsystem (status — moved from "planned, no code")
 
