@@ -31,6 +31,8 @@ import {
   UsersAccessSettings, AlertingSettings, NetworkDeviceSettings,
   ComplianceSettings, SystemSettings,
 } from './pages/settings/groups'
+import Servers from './pages/Servers'
+import ServerDetail from './pages/ServerDetail'
 import Topology from './pages/Topology'
 import Wireless from './pages/Wireless'
 import LldpNeighbors from './pages/LldpNeighbors'
@@ -114,6 +116,8 @@ function AppRoutes() {
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/devices" element={<Devices />} />
                 <Route path="/devices/:id" element={<DeviceDetail />} />
+                <Route path="/servers" element={<Servers />} />
+                <Route path="/servers/:id" element={<ServerDetail />} />
                 <Route path="/sites" element={<Sites />} />
                 <Route path="/sites/:id" element={<SiteDetail />} />
                 <Route path="/configs/compare" element={<ConfigCompare />} />

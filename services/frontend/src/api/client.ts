@@ -1092,6 +1092,75 @@ export async function fetchAgentRoles(id: string): Promise<AgentRoleStatus[]> {
   return data
 }
 
+// ── Servers (agent-monitored) ───────────────────────────────────────────────
+export interface ServerLatestMetrics {
+  cpu_pct: number | null
+  memory_pct: number | null
+  load_1: number | null
+  disk_max_pct: number | null
+  disk_max_mount: string | null
+}
+
+export interface Server {
+  id: string
+  hostname: string
+  os: string
+  os_version: string
+  arch: string
+  status: string
+  last_seen: string | null
+  agent_version: string
+  cert_expires_at: string | null
+  collection_interval: number
+  device_id: number | null
+  site: { id: number; name: string } | null
+  roles: string[]
+  latest_metrics: ServerLatestMetrics
+  created_at: string
+}
+
+export interface ServerDetailMetrics {
+  cpu_pct: number | null
+  cpu_cores: { core: string; usage_pct: number }[]
+  load: Record<string, number>
+  memory: Record<string, number>
+  disks: { mount: string; device?: string; total_bytes?: number; used_bytes?: number; free_bytes?: number; usage_pct?: number; read_bytes_per_sec?: number; write_bytes_per_sec?: number }[]
+  interfaces: { interface: string; rx_bps?: number; tx_bps?: number; rx_errors?: number; tx_errors?: number; rx_bytes?: number; tx_bytes?: number }[]
+}
+
+export interface ServerAlert {
+  id: number; name: string; severity: string; state: string; summary: string; created_at: string
+}
+
+export interface ServerDetail extends Server {
+  detail_metrics: ServerDetailMetrics
+  recent_alerts: ServerAlert[]
+}
+
+export interface MetricHistory {
+  metric: string
+  range: string
+  series: Record<string, number | string | null>[]
+}
+
+export async function fetchServers(): Promise<Server[]> {
+  const { data } = await api.get<Server[] | Paginated<Server>>('/servers/')
+  return unwrap(data)
+}
+
+export async function fetchServer(id: string): Promise<ServerDetail> {
+  const { data } = await api.get<ServerDetail>(`/servers/${id}/`)
+  return data
+}
+
+export async function fetchServerMetricHistory(
+  id: string, metric: string, range = '1h',
+): Promise<MetricHistory> {
+  const { data } = await api.get<MetricHistory>(
+    `/servers/${id}/metrics/history/`, { params: { metric, range } })
+  return data
+}
+
 // ── Server role assignment (/api/servers/{id}/...) ──────────────────────────
 export interface AssignedRole {
   id: number

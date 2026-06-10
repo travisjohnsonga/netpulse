@@ -47,6 +47,12 @@ const navEntries: NavEntry[] = [
       { label: 'Compare', href: '/configs/compare', icon: '🔀' },
     ],
   },
+  {
+    label: 'Servers', icon: '🖥️', children: [
+      { label: 'All Servers', href: '/servers', icon: '🖥️' },
+      { label: 'Agents', href: '/settings/agents', icon: '🛰️' },
+    ],
+  },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true },
   { label: 'Logs', href: '/logs', icon: '🧾' },
   { label: 'Checks', href: '/checks', icon: '✓' },

@@ -34,6 +34,39 @@ class AgentSerializer(serializers.ModelSerializer):
         return list(obj.server_roles.values_list("role_type", flat=True))
 
 
+class ServerSerializer(serializers.ModelSerializer):
+    """An agent-monitored server for the Servers list, with latest metrics."""
+    agent_version = serializers.CharField(source="version", read_only=True)
+    device_id = serializers.IntegerField(source="device.id", read_only=True, default=None)
+    os_version = serializers.SerializerMethodField()
+    site = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
+    latest_metrics = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Agent
+        fields = (
+            "id", "hostname", "os", "os_version", "arch", "status", "last_seen",
+            "agent_version", "cert_expires_at", "collection_interval",
+            "device_id", "site", "roles", "latest_metrics", "created_at",
+        )
+        read_only_fields = fields
+
+    def get_os_version(self, obj) -> str:
+        return getattr(getattr(obj, "device", None), "os_version", "") or ""
+
+    def get_site(self, obj):
+        site = getattr(getattr(obj, "device", None), "site", None)
+        return {"id": site.id, "name": site.name} if site else None
+
+    def get_roles(self, obj) -> list[str]:
+        return list(obj.assigned_roles.values_list("role__role_type", flat=True))
+
+    def get_latest_metrics(self, obj) -> dict:
+        from .metrics_read import latest_metrics
+        return latest_metrics(str(obj.device_id or obj.id))
+
+
 class AgentRoleStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentRoleStatus

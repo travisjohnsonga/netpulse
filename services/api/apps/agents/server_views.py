@@ -10,17 +10,52 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.alerts.models import AlertEvent
+
 from .detection import auto_detect_roles
+from .metrics_read import detail_metrics, metric_history
 from .models import Agent, AgentRole, ServerRole
-from .serializers import AgentSerializer, AssignedRoleSerializer
+from .serializers import AssignedRoleSerializer, ServerSerializer
 
 
 class ServerViewSet(viewsets.ReadOnlyModelViewSet):
-    """List/retrieve agent-monitored servers and manage their role assignments."""
+    """List/retrieve agent-monitored servers, their metrics, and role assignments."""
     queryset = (Agent.objects.exclude(status=Agent.Status.REVOKED)
                 .select_related("device", "device__site")
                 .prefetch_related("assigned_roles__role"))
-    serializer_class = AgentSerializer
+    serializer_class = ServerSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        """Full server detail: list fields + current per-core/mount/iface metrics
+        + the 5 most recent alerts for the linked device."""
+        server = self.get_object()
+        data = self.get_serializer(server).data
+        device_id = str(server.device_id or server.id)
+        data["detail_metrics"] = detail_metrics(device_id)
+        data["recent_alerts"] = self._recent_alerts(server)
+        return Response(data)
+
+    @action(detail=True, methods=["get"], url_path="metrics/history")
+    def metrics_history(self, request, pk=None):
+        """Windowed time-series for charting. ?metric=cpu|memory|disk|load|network
+        &range=1h|6h|24h|7d."""
+        server = self.get_object()
+        device_id = str(server.device_id or server.id)
+        metric = request.query_params.get("metric", "cpu")
+        rng = request.query_params.get("range", "1h")
+        return Response(metric_history(device_id, metric, rng))
+
+    @staticmethod
+    def _recent_alerts(server) -> list[dict]:
+        if not server.device_id:
+            return []
+        events = (AlertEvent.objects.filter(labels__device_id=server.device_id)
+                  .select_related("rule").order_by("-created_at")[:5])
+        return [{
+            "id": e.id, "name": e.rule.name, "severity": e.rule.severity,
+            "state": e.state, "summary": (e.annotations or {}).get("summary", ""),
+            "created_at": e.created_at,
+        } for e in events]
 
     @action(detail=True, methods=["get", "post"])
     def roles(self, request, pk=None):

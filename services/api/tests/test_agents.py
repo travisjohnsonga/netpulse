@@ -241,6 +241,35 @@ class TestServerRoleAssignment:
         assert api_client.get(f"/api/servers/{s.id}/roles/").status_code == 401
 
 
+class TestServersApi:
+    def test_list_returns_servers_with_metric_keys(self, auth_client):
+        Agent.objects.create(hostname="web-1", os="linux", version="1.0.0")
+        data = auth_client.get("/api/servers/").json()
+        items = data["results"] if isinstance(data, dict) else data
+        s = next(x for x in items if x["hostname"] == "web-1")
+        assert s["agent_version"] == "1.0.0" and "roles" in s
+        assert {"cpu_pct", "memory_pct", "load_1", "disk_max_pct", "disk_max_mount"} <= set(s["latest_metrics"])
+
+    def test_detail_has_metrics_and_alerts(self, auth_client):
+        a = Agent.objects.create(hostname="web-2", os="linux")
+        d = auth_client.get(f"/api/servers/{a.id}/").json()
+        assert "detail_metrics" in d and "recent_alerts" in d
+
+    def test_history_endpoint(self, auth_client):
+        a = Agent.objects.create(hostname="web-3", os="linux")
+        d = auth_client.get(f"/api/servers/{a.id}/metrics/history/?metric=cpu&range=1h").json()
+        assert d["metric"] == "cpu" and "series" in d
+
+    def test_revoked_excluded(self, auth_client):
+        Agent.objects.create(hostname="gone", os="linux", status=Agent.Status.REVOKED)
+        data = auth_client.get("/api/servers/").json()
+        items = data["results"] if isinstance(data, dict) else data
+        assert all(x["hostname"] != "gone" for x in items)
+
+    def test_servers_require_auth(self, api_client):
+        assert api_client.get("/api/servers/").status_code == 401
+
+
 # ── Agent management ────────────────────────────────────────────────────────────
 
 class TestAgentManagement:
