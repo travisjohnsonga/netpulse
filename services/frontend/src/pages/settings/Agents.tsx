@@ -21,6 +21,7 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   const [maxUses, setMaxUses] = useState(1)
   const [expiryHours, setExpiryHours] = useState(168)
   const [created, setCreated] = useState<AgentToken | null>(null)
+  const [selfSigned, setSelfSigned] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -35,8 +36,10 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   }
 
   const copy = (t: string) => navigator.clipboard?.writeText(t)
+  // For a self-signed server cert: -k skips verification on the curl download,
+  // --insecure does the same for the agent's enrollment request.
   const installCmd = created
-    ? `curl -fsSL ${serverUrl}/agent/install | sudo bash -s -- --server ${serverUrl} --token ${created.token}`
+    ? `curl -fsSL${selfSigned ? ' -k' : ''} ${serverUrl}/agent/install | sudo bash -s -- --server ${serverUrl} --token ${created.token}${selfSigned ? ' --insecure' : ''}`
     : ''
 
   return (
@@ -79,6 +82,13 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
               <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg break-all">{created.token}</code>
               <button onClick={() => copy(created.token)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
             </div>
+            <label className="flex items-start gap-2 text-xs text-gray-700 dark:text-gray-300">
+              <input type="checkbox" className="mt-0.5" checked={selfSigned}
+                onChange={(e) => setSelfSigned(e.target.checked)} />
+              <span>Server uses self-signed certificate
+                <span className="text-gray-500 dark:text-gray-400"> (adds <code>--insecure</code> to install command)</span>
+              </span>
+            </label>
             <div>
               <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Install command:</p>
               <div className="flex items-start gap-2">
