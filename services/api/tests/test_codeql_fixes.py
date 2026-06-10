@@ -54,7 +54,9 @@ def test_audit_failure_does_not_log_field_values(caplog, monkeypatch):
     result = audit_mod.log_event(AuditLog.EventType.CREDENTIAL_ACCESSED, description=secret)
     assert result is None                       # auditing never raises
     assert secret not in caplog.text            # the secret never reaches the log
-    assert "ValueError" in caplog.text          # only the exception TYPE is logged
+    # The failure is recorded with a static marker only — no exception object or
+    # field value is logged (CodeQL #34).
+    assert "audit log_event failed" in caplog.text
 
 
 # ── P3: information exposure via exception ────────────────────────────────────

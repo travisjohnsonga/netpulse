@@ -85,9 +85,11 @@ def log_event(
             success=success,
             error_message=(error_message or "")[:512],
         )
-    except Exception as exc:  # noqa: BLE001 — auditing must never break the action
-        # Log only the exception TYPE, never str(exc): the failing insert carries
-        # the audit fields (description/metadata/error_message), which can hold
-        # sensitive values, and a DB driver may echo them in the exception text.
-        logger.warning("audit log_event failed (%s): %s", event_type, type(exc).__name__)
+    except Exception:  # noqa: BLE001 — auditing must never break the action
+        # Log ONLY a static marker + the non-sensitive event type. We never put
+        # the exception (or anything derived from it, including exc_info) in the
+        # log line: the failing insert carries the audit fields
+        # (description/metadata/error_message), which can hold sensitive values,
+        # and a DB driver may echo them into the exception text.
+        logger.warning("audit log_event failed for event_type=%s", event_type)
         return None
