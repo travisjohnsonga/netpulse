@@ -57,3 +57,34 @@ jobs:
         with:
           name: agent-binaries
           path: agent/dist/
+
+  release:
+    # Publish the built binaries as GitHub Release assets so download_views.py
+    # can redirect to a public, auth-free URL when local dist/ binaries are
+    # absent. Only on main pushes / tags / manual runs (never on PRs, which
+    # can't write to the repo and shouldn't mutate the release).
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      # Releases require write access to repo contents.
+      contents: write
+    steps:
+      - name: Download built binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-binaries
+          path: agent/dist
+
+      - name: Create/update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent-latest
+          name: NetPulse Agent (latest)
+          files: |
+            agent/dist/netpulse-agent-linux-amd64
+            agent/dist/netpulse-agent-linux-arm64
+            agent/dist/netpulse-agent-windows-amd64.exe
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
