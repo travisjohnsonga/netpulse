@@ -29,6 +29,14 @@ COPY . .
 # it at runtime (entrypoint); creating it here keeps the image quiet by default.
 RUN mkdir -p /app/staticfiles
 
+# The shared ssl-certs named volume mounts here at runtime. Create the directory
+# in the image so a freshly-created (empty) volume inherits this dir's ownership
+# — Docker copies the image directory + its perms into a new volume. Without it
+# the volume mountpoint is root-owned and the non-root netpulse user can't write
+# agent-ca.crt / netpulse.crt, which broke agent mTLS until a manual fix. The
+# `chown -R netpulse:netpulse /app` below sets the ownership it propagates.
+RUN mkdir -p /app/ssl
+
 # Bake the version (git isn't present in the image). Supplied by the build —
 # see docker-compose api build.args / netpulse.sh; empty in plain builds.
 ARG GIT_COMMIT=""

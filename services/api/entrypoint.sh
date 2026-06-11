@@ -13,6 +13,13 @@ if [ "$INIT_OPENBAO" = "1" ]; then
     echo "[entrypoint] initialising / unsealing OpenBao..."
     python manage.py init_openbao || echo "[entrypoint] OpenBao init/unseal had issues (continuing)"
 
+    # Ensure the shared ssl dir exists and is writable by this (non-root) user
+    # before setup_agent_pki publishes the agent CA onto it. The Dockerfile
+    # pre-creates /app/ssl owned by netpulse so a fresh volume inherits that
+    # ownership; this is a belt-and-suspenders guard against an odd volume state.
+    mkdir -p "${SSL_DIR:-/app/ssl}" 2>/dev/null || true
+    chmod 775 "${SSL_DIR:-/app/ssl}" 2>/dev/null || true
+
     # Initialise the agent PKI (mount + CA + role + policy) and publish the CA
     # cert onto the shared ssl volume for nginx mTLS. Needs OpenBao (not the DB),
     # so run early — before migrations/seeds — so the CA is present when the
