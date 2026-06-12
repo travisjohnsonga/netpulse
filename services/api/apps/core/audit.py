@@ -86,10 +86,19 @@ def log_event(
             error_message=(error_message or "")[:512],
         )
     except Exception:  # noqa: BLE001 — auditing must never break the action
-        # Log ONLY a static marker + the non-sensitive event type. We never put
-        # the exception (or anything derived from it, including exc_info) in the
-        # log line: the failing insert carries the audit fields
+        # We never put the exception (or anything derived from it, including
+        # exc_info) in the log line: the failing insert carries the audit fields
         # (description/metadata/error_message), which can hold sensitive values,
         # and a DB driver may echo them into the exception text.
-        logger.warning("audit log_event failed for event_type=%s", event_type)
+        #
+        # Re-derive the event type from the canonical EventType enum rather than
+        # logging the caller-supplied `event_type` directly: the logged token is
+        # then a trusted constant from the model, never an untrusted input value.
+        safe_event = "<unknown>"
+        try:
+            from .models import AuditLog
+            safe_event = AuditLog.EventType(event_type).value
+        except Exception:  # noqa: BLE001 — unrecognised/odd value → stay generic
+            pass
+        logger.warning("audit log_event failed for event_type=%s", safe_event)
         return None

@@ -57,6 +57,28 @@ def test_audit_failure_does_not_log_field_values(caplog, monkeypatch):
     # The failure is recorded with a static marker only — no exception object or
     # field value is logged (CodeQL #34).
     assert "audit log_event failed" in caplog.text
+    # The event type is re-derived from the canonical enum, not the raw input
+    # (CodeQL #37) — for a known event the value still appears for triage.
+    assert "credential_accessed" in caplog.text
+
+
+@pytest.mark.django_db
+def test_audit_failure_logs_canonical_event_only(caplog, monkeypatch):
+    """An unrecognised event_type must fall back to a constant, never be logged
+    verbatim (CodeQL #37 — the logged token must be a trusted constant)."""
+    from apps.core import audit as audit_mod
+    from apps.core.models import AuditLog
+
+    def boom(**kwargs):
+        raise ValueError("db down")
+
+    monkeypatch.setattr(AuditLog.objects, "create", boom)
+    caplog.set_level(logging.WARNING)
+    bogus = "not-a-real-event-type-sensitive?"
+    result = audit_mod.log_event(bogus)
+    assert result is None
+    assert bogus not in caplog.text
+    assert "event_type=<unknown>" in caplog.text
 
 
 # ── P3: information exposure via exception ────────────────────────────────────
