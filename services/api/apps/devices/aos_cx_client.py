@@ -771,7 +771,15 @@ def _parse_mac_entry(vid, key, m) -> dict | None:
     key_sel = parts[0] if len(parts) >= 2 else ""
     if isinstance(m, dict):
         mac = m.get("mac_addr") or key_mac
-        iface = _ref_name(m.get("port"))
+        # ``port`` is a ``{port_name: URI}`` dict on most firmware, but can also
+        # arrive as a bare URI string — handle both explicitly.
+        port_field = m.get("port")
+        if isinstance(port_field, dict):
+            iface = next(iter(port_field.keys()), "") if port_field else ""
+        elif isinstance(port_field, str):
+            iface = _ref_name(port_field)
+        else:
+            iface = ""
         sel = m.get("from") or key_sel or "dynamic"
     else:
         mac, iface, sel = key_mac, "", (key_sel or "dynamic")
