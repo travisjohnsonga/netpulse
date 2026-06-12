@@ -177,6 +177,10 @@ class Device(TimestampedModel):
     hostname_verified_at = models.DateTimeField(null=True, blank=True)
     ip_address = models.GenericIPAddressField(unique=True, db_index=True)
     management_ip = models.GenericIPAddressField(null=True, blank=True)
+    # When True, integration syncs (e.g. UniFi controller sync) must NOT overwrite
+    # management_ip — it was set/curated by a human and an auto-discovered address
+    # (often a WAN IP) would clobber it. The UI exposes a lock toggle.
+    ip_locked = models.BooleanField(default=False)
     vendor = models.CharField(max_length=100, blank=True)
     model = models.CharField(max_length=100, blank=True)
     platform = models.CharField(max_length=20, choices=Platform.choices, default=Platform.OTHER)

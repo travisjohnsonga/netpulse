@@ -25,6 +25,7 @@ const OPTIONS = [
 
 export default function NetBoxImportModal({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('')
+  const [apiKey, setApiKey] = useState('')
   const [token, setToken] = useState('')
   const [opts, setOpts] = useState<Record<string, boolean>>({ sites: true, devices: true })
   const [verifySsl, setVerifySsl] = useState(true)
@@ -42,25 +43,25 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
   useEffect(() => { loadHistory() }, [])
 
   const runPreview = async () => {
-    if (!url || !token) { setError('NetBox URL and API token are required.'); return }
+    if (!url || !apiKey || !token) { setError('NetBox URL, API Key ID and API Token are required.'); return }
     setPreviewing(true); setError(null); setPreview(null); setResult(null)
-    try { setPreview(await netboxPreview({ netbox_url: url, api_token: token, import_options: opts, verify_ssl: verifySsl })) }
+    try { setPreview(await netboxPreview({ netbox_url: url, api_key: apiKey, api_token: token, import_options: opts, verify_ssl: verifySsl })) }
     catch (e) { setError(parseApiErrors(e, 'Preview failed.')) }
     finally { setPreviewing(false) }
   }
 
   const test = async () => {
     setTesting(true); setTestResult(null); setError(null)
-    try { setTestResult(await netboxTestConnection(url, token, verifySsl)) }
-    catch { setTestResult({ ok: false, message: 'Test request failed.' }) }
+    try { setTestResult(await netboxTestConnection(url, apiKey, token, verifySsl)) }
+    catch (e) { setTestResult({ ok: false, message: parseApiErrors(e, 'Test request failed.') }) }
     finally { setTesting(false) }
   }
 
   const runImport = async () => {
-    if (!url || !token) { setError('NetBox URL and API token are required.'); return }
+    if (!url || !apiKey || !token) { setError('NetBox URL, API Key ID and API Token are required.'); return }
     setImporting(true); setError(null); setResult(null)
     try {
-      const rec = await netboxImport({ netbox_url: url, api_token: token, import_options: opts, verify_ssl: verifySsl })
+      const rec = await netboxImport({ netbox_url: url, api_key: apiKey, api_token: token, import_options: opts, verify_ssl: verifySsl })
       setResult(rec)
       loadHistory()
     } catch (e) {
@@ -75,9 +76,9 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Close</button>
-          <button onClick={test} disabled={testing || !url || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{testing ? 'Testing…' : 'Test'}</button>
-          <button onClick={runPreview} disabled={previewing || !url || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{previewing ? 'Previewing…' : 'Preview'}</button>
-          <button onClick={runImport} disabled={importing || !url || !token} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{importing ? 'Importing…' : preview ? `Import ${preview.summary.will_create + preview.summary.will_update} devices` : 'Import Now'}</button>
+          <button onClick={test} disabled={testing || !url || !apiKey || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{testing ? 'Testing…' : 'Test'}</button>
+          <button onClick={runPreview} disabled={previewing || !url || !apiKey || !token} className="py-2.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">{previewing ? 'Previewing…' : 'Preview'}</button>
+          <button onClick={runImport} disabled={importing || !url || !apiKey || !token} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{importing ? 'Importing…' : preview ? `Import ${preview.summary.will_create + preview.summary.will_update} devices` : 'Import Now'}</button>
         </>
       }
     >
@@ -89,9 +90,17 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
           <input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://netbox.company.com" />
         </div>
         <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key ID</label>
+          <input autoComplete="off" className={inputCls} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="nbt_xxxxxxxxxxxxxxxx" />
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">ℹ️ Found in NetBox → Profile → API Tokens → Key column.</p>
+        </div>
+        <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Token</label>
           <input type="password" autoComplete="off" className={inputCls} value={token} onChange={(e) => setToken(e.target.value)} placeholder="••••••••" />
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">🔒 Stored securely in OpenBao. NetBox v3.x and v4.x are auto-detected.</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">ℹ️ Shown only once when the token is created in NetBox → Profile → API Tokens.</p>
+        </div>
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-xs text-blue-800 dark:text-blue-300">
+          NetBox 4.5+ uses v2 API tokens. Generate one in NetBox: <span className="font-medium">Profile → API Tokens → Add Token</span>, then copy both the Key (nbt_xxx) and the Token value shown after creation. 🔒 Stored securely in OpenBao.
         </div>
 
         <div>
@@ -198,7 +207,7 @@ export default function NetBoxImportModal({ onClose }: { onClose: () => void }) 
                   <span className="text-gray-600 dark:text-gray-400 truncate flex-1">{h.netbox_url}</span>
                   <span className="text-gray-500 dark:text-gray-400">{h.sites_imported}s / {h.devices_imported}d</span>
                   <span className="text-gray-400 dark:text-gray-500">{new Date(h.created_at).toLocaleString()}</span>
-                  <button onClick={() => { setUrl(h.netbox_url); setToken('') }} className="text-blue-600 hover:text-blue-800">Re-import</button>
+                  <button onClick={() => { setUrl(h.netbox_url); setApiKey(''); setToken('') }} className="text-blue-600 hover:text-blue-800">Re-import</button>
                 </div>
               ))}
             </div>

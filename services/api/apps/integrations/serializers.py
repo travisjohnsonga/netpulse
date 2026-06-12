@@ -1,9 +1,46 @@
+import re
+
 from rest_framework import serializers
 
 from .models import (
     EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiApStatus,
     UnifiCloudAccount, UnifiConsoleStatus, UnifiController,
 )
+
+# NetPulse requires NetBox 4.5+ v2 API tokens. A v2 token is split into a Key ID
+# (prefixed ``nbt_``) and a secret value; they're combined as ``{key}.{secret}``
+# and sent as a ``Bearer`` credential. Legacy v1 tokens (a single 40-char hex
+# string) are no longer supported.
+NBT_KEY_PREFIX = "nbt_"
+_V1_TOKEN_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+NBT_PREFIX_ERROR = (
+    "API Key must start with nbt_ (NetBox 4.5+ v2 token format). "
+    "Create a new token in NetBox if you only have a legacy token."
+)
+LEGACY_V1_ERROR = (
+    "This looks like a legacy v1 token. NetPulse requires NetBox 4.5+ with "
+    "v2 tokens (key starts with nbt_). Please upgrade NetBox or generate "
+    "a new v2 token."
+)
+
+
+def _validate_v2_credential(attrs: dict) -> dict:
+    """Validate the v2 Key ID + Token and stash the combined ``api_credential``.
+
+    Raises a DRF ``ValidationError`` when the Key ID isn't a v2 token (``nbt_``
+    prefix) or the secret is empty; gives a tailored message when the value looks
+    like a legacy v1 token.
+    """
+    key = (attrs.get("api_key") or "").strip()
+    token = (attrs.get("api_token") or "").strip()
+    if _V1_TOKEN_RE.match(key):
+        raise serializers.ValidationError({"api_key": LEGACY_V1_ERROR})
+    if not key.startswith(NBT_KEY_PREFIX):
+        raise serializers.ValidationError({"api_key": NBT_PREFIX_ERROR})
+    if not token:
+        raise serializers.ValidationError({"api_token": "API Token is required."})
+    attrs["api_credential"] = f"{key}.{token}"
+    return attrs
 
 
 class NetBoxImportSerializer(serializers.ModelSerializer):
@@ -19,15 +56,24 @@ class NetBoxImportSerializer(serializers.ModelSerializer):
 
 class NetBoxImportRequestSerializer(serializers.Serializer):
     netbox_url = serializers.URLField()
+    # v2 token: Key ID (nbt_…) + the secret value, validated + combined below.
+    api_key = serializers.CharField(write_only=True)
     api_token = serializers.CharField(write_only=True)
     import_options = serializers.DictField(required=False, default=dict)
     verify_ssl = serializers.BooleanField(required=False, default=True)
 
+    def validate(self, attrs):
+        return _validate_v2_credential(attrs)
+
 
 class NetBoxTestRequestSerializer(serializers.Serializer):
     netbox_url = serializers.URLField()
+    api_key = serializers.CharField(write_only=True)
     api_token = serializers.CharField(write_only=True)
     verify_ssl = serializers.BooleanField(required=False, default=True)
+
+    def validate(self, attrs):
+        return _validate_v2_credential(attrs)
 
 
 class NetBoxTestResponseSerializer(serializers.Serializer):

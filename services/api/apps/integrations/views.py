@@ -190,7 +190,7 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         req = NetBoxTestRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
         client = netbox.NetBoxClient(
-            req.validated_data["netbox_url"], req.validated_data["api_token"],
+            req.validated_data["netbox_url"], req.validated_data["api_credential"],
             verify_ssl=req.validated_data["verify_ssl"])
         try:
             version = client.detect_version()
@@ -207,7 +207,7 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         req = NetBoxImportRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
         client = netbox.NetBoxClient(
-            req.validated_data["netbox_url"], req.validated_data["api_token"],
+            req.validated_data["netbox_url"], req.validated_data["api_credential"],
             verify_ssl=req.validated_data["verify_ssl"])
         try:
             client.detect_version()
@@ -222,7 +222,7 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         req = NetBoxImportRequestSerializer(data=request.data)
         req.is_valid(raise_exception=True)
         url = req.validated_data["netbox_url"]
-        token = req.validated_data["api_token"]
+        token = req.validated_data["api_credential"]
         options = req.validated_data.get("import_options") or {}
         verify_ssl = req.validated_data["verify_ssl"]
 
@@ -234,10 +234,10 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
             started_at=timezone.now(),
             created_by=request.user if request.user.is_authenticated else None,
         )
-        # Persist the token to OpenBao (path only in the DB).
+        # Persist the combined v2 credential to OpenBao (path only in the DB).
         record.vault_path = f"netpulse/integrations/netbox/{record.pk}"
         record.save(update_fields=["vault_path"])
-        vault.write_secret(record.vault_path, {"api_token": token})
+        vault.write_secret(record.vault_path, {"api_key": token})
 
         client = netbox.NetBoxClient(url, token, verify_ssl=verify_ssl)
         try:

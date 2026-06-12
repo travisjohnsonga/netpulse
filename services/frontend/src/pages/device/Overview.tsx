@@ -138,7 +138,19 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm">
           <Info label="Hostname" value={device.hostname} />
           <Info label="IP Address" value={device.ip_address} mono />
-          <Info label="Management IP" value={device.management_ip || '—'} mono />
+          <div>
+            <dt className="text-xs text-gray-400 dark:text-gray-500">Management IP</dt>
+            <dd className="flex items-center gap-1.5 font-mono text-xs text-gray-800 dark:text-gray-100">
+              {device.management_ip || '—'}
+              {device.ip_locked && (
+                <span title="Locked — UniFi sync won't overwrite this IP" className="text-amber-500 dark:text-amber-400">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0 1 10 0v2a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2Zm8-2v2H7V7a3 3 0 0 1 6 0Z" clipRule="evenodd" />
+                  </svg>
+                </span>
+              )}
+            </dd>
+          </div>
           <Info label="Vendor" value={device.vendor || '—'} />
           <Info label="Model" value={device.model || '—'} />
           <Info label="Platform" value={device.platform || '—'} />

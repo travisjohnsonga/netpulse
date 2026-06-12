@@ -45,6 +45,16 @@ class NetBoxError(Exception):
     pass
 
 
+def _get_auth_header(token: str) -> str:
+    """Authorization header value for a NetBox API request.
+
+    NetBox 4.5+ v2 API tokens always authenticate with ``Bearer`` (the credential
+    is the combined ``{key}.{secret}``). Legacy v1 ``Token`` auth is no longer
+    supported — NetPulse requires a v2 token (key prefixed ``nbt_``).
+    """
+    return f"Bearer {token}"
+
+
 class NetBoxClient:
     def __init__(self, url: str, token: str, timeout: float = 15.0, verify_ssl: bool = True):
         self.base = url.rstrip("/")
@@ -64,7 +74,7 @@ class NetBoxClient:
     def _get(self, path: str) -> dict:
         url = f"{self.base}{path}"
         req = urllib.request.Request(url, headers={
-            "Authorization": f"Token {self.token}",
+            "Authorization": _get_auth_header(self.token),
             "Accept": "application/json",
         })
         # Only pass context when verification is disabled; for the default

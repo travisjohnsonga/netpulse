@@ -50,6 +50,7 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
   const [hostname, setHostname] = useState(device.hostname)
   const [ip, setIp] = useState(device.ip_address)
   const [mgmtIp, setMgmtIp] = useState(device.management_ip ?? '')
+  const [ipLocked, setIpLocked] = useState(device.ip_locked ?? false)
   const [vendor, setVendor] = useState(device.vendor)
   const [platform, setPlatform] = useState(device.platform || 'other')
   const [osVersion, setOsVersion] = useState(device.os_version)
@@ -88,6 +89,7 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
         hostname: hostname.trim(),
         ip_address: ip.trim(),
         management_ip: mgmtIp.trim() || null,
+        ip_locked: ipLocked,
         vendor,
         platform,
         os_version: osVersion,
@@ -125,7 +127,24 @@ export default function DeviceEditModal({ device, onClose, onSaved }: {
         <Field label="Hostname"><input className={inputCls} value={hostname} onChange={(e) => setHostname(e.target.value)} /></Field>
         <Row>
           <Field label="IP Address"><input className={inputCls} value={ip} onChange={(e) => setIp(e.target.value)} /></Field>
-          <Field label="Management IP"><input className={inputCls} value={mgmtIp} onChange={(e) => setMgmtIp(e.target.value)} placeholder="optional" /></Field>
+          <Field label="Management IP">
+            <div className="flex items-center gap-2">
+              <input className={inputCls} value={mgmtIp} onChange={(e) => setMgmtIp(e.target.value)} placeholder="optional" />
+              <button
+                type="button"
+                onClick={() => setIpLocked((v) => !v)}
+                title={ipLocked
+                  ? 'Locked — UniFi sync will not overwrite this IP. Click to unlock.'
+                  : 'Unlocked — UniFi sync may overwrite this IP. Click to lock.'}
+                aria-pressed={ipLocked}
+                className={`shrink-0 p-2 rounded-lg border ${ipLocked
+                  ? 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                  : 'border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'}`}
+              >
+                {ipLocked ? <LockClosedIcon /> : <LockOpenIcon />}
+              </button>
+            </div>
+          </Field>
         </Row>
         <Row>
           <Field label="Vendor"><input className={inputCls} value={vendor} onChange={(e) => setVendor(e.target.value)} /></Field>
@@ -186,4 +205,19 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col sm:flex-row gap-3">{children}</div>
+}
+
+function LockClosedIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path fillRule="evenodd" d="M5 9V7a5 5 0 0 1 10 0v2a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2Zm8-2v2H7V7a3 3 0 0 1 6 0Z" clipRule="evenodd" />
+    </svg>
+  )
+}
+function LockOpenIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path d="M10 2a5 5 0 0 0-5 5v2a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H7V7a3 3 0 0 1 5.905-.75 1 1 0 0 0 1.937-.5A5.002 5.002 0 0 0 10 2Z" />
+    </svg>
+  )
 }

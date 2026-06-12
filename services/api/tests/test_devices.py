@@ -107,6 +107,7 @@ class TestDeviceEndpoints:
         # Devices columns need, but not the full device record (no groups, etc.).
         assert set(item.keys()) == {
             "id", "hostname", "display_hostname", "ip_address", "management_ip",
+            "ip_locked",
             "platform", "vendor", "model", "os_version", "serial_number", "status",
             "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",

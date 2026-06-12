@@ -158,10 +158,13 @@ def _import_device(raw: dict, controller) -> str:
         if controller.site_id and not existing.site_id:
             existing.site = controller.site
         # Track the device's current address (it may have changed). management_ip
-        # is non-unique; only move the unique ip_address when it's free.
-        existing.management_ip = ip
-        if existing.ip_address != ip and not Device.objects.filter(ip_address=ip).exclude(pk=existing.pk).exists():
-            existing.ip_address = ip
+        # is non-unique; only move the unique ip_address when it's free. Honour
+        # ip_locked: a human-curated management_ip must not be clobbered by sync
+        # (the UniFi cloud often reports a WAN IP for consoles).
+        if not existing.ip_locked:
+            existing.management_ip = ip
+            if existing.ip_address != ip and not Device.objects.filter(ip_address=ip).exclude(pk=existing.pk).exists():
+                existing.ip_address = ip
         existing.last_seen = timezone.now()
         # Only adopt the controller hostname if it's free (don't break uniqueness).
         if name and name != existing.hostname and not Device.objects.filter(hostname=name).exclude(pk=existing.pk).exists():
@@ -230,6 +233,10 @@ def update_linked_device_host(controller) -> bool:
     status = controller.console_statuses.first()
     device = status.device if (status and status.device_id) else None
     if device is None:
+        return False
+    # Don't clobber a human-curated address (the cloud host record often reports
+    # the console's WAN IP, not its LAN management IP).
+    if device.ip_locked:
         return False
 
     fields: list[str] = []

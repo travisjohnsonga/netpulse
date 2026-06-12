@@ -98,6 +98,8 @@ export interface Device {
   hostname_verified_at?: string | null
   ip_address: string
   management_ip: string | null
+  // When true, integration syncs (UniFi) won't overwrite management_ip.
+  ip_locked?: boolean
   platform: string
   vendor: string
   model: string
@@ -984,12 +986,12 @@ export interface NetBoxImportRecord {
   created_at: string
 }
 
-export async function netboxTestConnection(netbox_url: string, api_token: string, verify_ssl = true): Promise<{ ok: boolean; version: string; message: string }> {
-  const { data } = await api.post<{ ok: boolean; version: string; message: string }>('/import/netbox/test-connection/', { netbox_url, api_token, verify_ssl })
+export async function netboxTestConnection(netbox_url: string, api_key: string, api_token: string, verify_ssl = true): Promise<{ ok: boolean; version: string; message: string }> {
+  const { data } = await api.post<{ ok: boolean; version: string; message: string }>('/import/netbox/test-connection/', { netbox_url, api_key, api_token, verify_ssl })
   return data
 }
 
-export async function netboxImport(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean>; verify_ssl?: boolean }): Promise<NetBoxImportRecord> {
+export async function netboxImport(payload: { netbox_url: string; api_key: string; api_token: string; import_options: Record<string, boolean>; verify_ssl?: boolean }): Promise<NetBoxImportRecord> {
   const { data } = await api.post<NetBoxImportRecord>('/import/netbox/', payload)
   return data
 }
@@ -1016,7 +1018,7 @@ export interface NetBoxPreview {
   devices: NetBoxPreviewDevice[]
   credentials: { assignments: Record<string, number>; no_match: number }
 }
-export async function netboxPreview(payload: { netbox_url: string; api_token: string; import_options: Record<string, boolean>; verify_ssl?: boolean }): Promise<NetBoxPreview> {
+export async function netboxPreview(payload: { netbox_url: string; api_key: string; api_token: string; import_options: Record<string, boolean>; verify_ssl?: boolean }): Promise<NetBoxPreview> {
   const { data } = await api.post<NetBoxPreview>('/import/netbox/preview/', payload)
   return data
 }
@@ -2135,6 +2137,8 @@ export interface DeviceDetail {
   hostname_verified_at?: string | null
   ip_address: string
   management_ip: string | null
+  // When true, integration syncs (UniFi) won't overwrite management_ip.
+  ip_locked?: boolean
   vendor: string
   model: string
   platform: string
@@ -2161,6 +2165,7 @@ export interface DeviceCreatePayload {
   hostname: string
   ip_address: string
   management_ip?: string | null
+  ip_locked?: boolean
   vendor?: string
   model?: string
   platform?: string

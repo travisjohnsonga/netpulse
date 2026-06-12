@@ -89,14 +89,25 @@ def _host_to_controller_fields(host: dict) -> dict | None:
     state = host.get("reportedState") or {}
     hardware = state.get("hardware") or {}
 
-    # Management IP, in priority order: primary IP → first IPv4 in ipAddrs →
-    # first WAN IPv4.
-    ip = state.get("ip") or None
+    # WAN IPs are the console's internet-facing addresses, NOT its LAN management
+    # IP — picking one makes NetPulse poll the device over its WAN interface
+    # (usually unreachable/wrong). Collect them so we prefer a LAN IP and only
+    # fall back to a WAN IP when nothing else is available.
+    wan_ips = {w["ipv4"] for w in (state.get("wans") or []) if w.get("ipv4")}
+
+    # Management IP, preferring LAN over WAN, in priority order:
+    #   reported primary IP (if not a WAN IP) → first non-WAN IPv4 in ipAddrs →
+    #   reported primary IP even if it's a WAN IP → first WAN IPv4 (last resort).
+    primary = state.get("ip") or None
+    ip = primary if (primary and primary not in wan_ips) else None
     if not ip:
         for addr in state.get("ipAddrs") or []:
-            if ":" not in addr:  # skip IPv6 (incl. link-local)
-                ip = addr
-                break
+            if ":" in addr or addr in wan_ips:  # skip IPv6 and WAN addresses
+                continue
+            ip = addr
+            break
+    if not ip:
+        ip = primary  # nothing better than the (possibly-WAN) reported IP
     if not ip:
         for wan in state.get("wans") or []:
             if wan.get("ipv4"):

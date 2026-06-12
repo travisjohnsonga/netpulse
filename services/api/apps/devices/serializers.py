@@ -120,6 +120,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
         # (vendor, model, OS, serial, mgmt IP, last seen, credentials, notes, role).
         fields = (
             "id", "hostname", "display_hostname", "ip_address", "management_ip",
+            "ip_locked",
             "platform", "vendor", "model", "os_version", "serial_number", "status",
             "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",

@@ -45,6 +45,27 @@ class TestMapping:
         host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
         assert unifi_cloud._host_to_controller_fields(host)["host"] == "203.0.113.5"
 
+    def test_prefers_lan_over_wan_when_primary_is_wan(self):
+        # The reported primary IP is the WAN address — it must be skipped in
+        # favour of a LAN IP from ipAddrs (Option C: poll the mgmt interface).
+        host = _host("h1", "udm", "203.0.113.5")
+        host["reportedState"]["ipAddrs"] = ["203.0.113.5", "10.150.0.1"]
+        host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
+        assert unifi_cloud._host_to_controller_fields(host)["host"] == "10.150.0.1"
+
+    def test_ipaddrs_skips_wan_entries(self):
+        host = _host("h1", "udm", None)
+        host["reportedState"]["ipAddrs"] = ["203.0.113.5", "10.150.0.1"]
+        host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
+        assert unifi_cloud._host_to_controller_fields(host)["host"] == "10.150.0.1"
+
+    def test_falls_back_to_wan_when_only_wan_available(self):
+        # Primary IP is the WAN address and there's no LAN IP anywhere — better
+        # to keep the WAN IP than return None.
+        host = _host("h1", "udm", "203.0.113.5")
+        host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
+        assert unifi_cloud._host_to_controller_fields(host)["host"] == "203.0.113.5"
+
     def test_model_from_hardware_shortname(self):
         host = _host("h1", "udm", "10.0.0.1")
         host["reportedState"]["hardware"] = {"shortname": "UDMPROMAX"}

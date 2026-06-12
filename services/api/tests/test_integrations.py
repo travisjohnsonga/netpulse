@@ -9,15 +9,20 @@ from apps.integrations.netbox import NetBoxClient as RealNetBoxClient
 
 pytestmark = pytest.mark.django_db
 
+# A valid NetBox 4.5+ v2 API Key ID (the secret is supplied as api_token).
+V2_KEY = "nbt_testkey1234"
+
 
 # ── Fake NetBox client (no network) ──────────────────────────────────────────
 
 
 class FakeClient:
     last_kwargs: dict = {}
+    last_args: tuple = ()
 
     def __init__(self, *args, **kwargs):
         FakeClient.last_kwargs = kwargs
+        FakeClient.last_args = args
 
     def detect_version(self):
         return "4.1.3"
@@ -62,7 +67,7 @@ def patch_client(monkeypatch):
 class TestNetBoxImport:
     def test_test_connection(self, auth_client):
         resp = auth_client.post("/api/import/netbox/test-connection/", {
-            "netbox_url": "https://netbox.example.com", "api_token": "tok",
+            "netbox_url": "https://netbox.example.com", "api_key": V2_KEY, "api_token": "tok",
         }, format="json")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
@@ -71,7 +76,7 @@ class TestNetBoxImport:
     def test_import_creates_sites_and_devices(self, auth_client):
         resp = auth_client.post("/api/import/netbox/", {
             "netbox_url": "https://netbox.example.com",
-            "api_token": "tok",
+            "api_key": V2_KEY, "api_token": "tok",
             "import_options": {"sites": True, "devices": True},
         }, format="json")
         assert resp.status_code == 201, resp.content
@@ -90,9 +95,9 @@ class TestNetBoxImport:
         assert "Role: core" in d.notes
 
     def test_reimport_upserts_existing(self, auth_client):
-        auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "t"}, format="json")
+        auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t"}, format="json")
         before = Device.objects.get(hostname="nb-rtr-01").pk
-        resp = auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "t"}, format="json")
+        resp = auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t"}, format="json")
         body = resp.json()
         assert body["devices_imported"] == 0      # nothing new created
         assert body["devices_updated"] >= 1        # existing updated in place
@@ -101,24 +106,25 @@ class TestNetBoxImport:
         assert Device.objects.get(hostname="nb-rtr-01").pk == before
 
     def test_history_listed(self, auth_client):
-        auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "t"}, format="json")
+        auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t"}, format="json")
         resp = auth_client.get("/api/import/netbox/")
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
 
     def test_vault_path_recorded_not_token(self, auth_client):
-        auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_token": "supersecret"}, format="json")
+        auth_client.post("/api/import/netbox/", {"netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "supersecret"}, format="json")
         rec = NetBoxImport.objects.latest("created_at")
         assert rec.vault_path.startswith("netpulse/integrations/netbox/")
-        # token is never persisted on the model
+        # neither half of the token is ever persisted on the model
         assert "supersecret" not in str(rec.__dict__)
+        assert V2_KEY not in str(rec.__dict__)
 
     def test_unauthenticated_rejected(self, api_client):
         assert api_client.get("/api/import/netbox/").status_code == 401
 
     def test_verify_ssl_defaults_true(self, auth_client):
         resp = auth_client.post("/api/import/netbox/", {
-            "netbox_url": "https://n.example.com", "api_token": "t",
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t",
         }, format="json")
         assert resp.status_code == 201
         assert resp.json()["verify_ssl"] is True
@@ -127,7 +133,7 @@ class TestNetBoxImport:
 
     def test_verify_ssl_disabled_threads_through(self, auth_client):
         resp = auth_client.post("/api/import/netbox/", {
-            "netbox_url": "https://n.example.com", "api_token": "t", "verify_ssl": False,
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t", "verify_ssl": False,
         }, format="json")
         assert resp.status_code == 201
         assert resp.json()["verify_ssl"] is False
@@ -137,9 +143,54 @@ class TestNetBoxImport:
 
     def test_test_connection_passes_verify_ssl(self, auth_client):
         auth_client.post("/api/import/netbox/test-connection/", {
-            "netbox_url": "https://n.example.com", "api_token": "t", "verify_ssl": False,
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t", "verify_ssl": False,
         }, format="json")
         assert FakeClient.last_kwargs.get("verify_ssl") is False
+
+
+class TestNetBoxV2Token:
+    """NetPulse requires NetBox 4.5+ v2 tokens (Key ID nbt_… + secret)."""
+
+    def test_auth_header_is_bearer(self):
+        from apps.integrations.netbox import _get_auth_header
+        assert _get_auth_header("nbt_abc.secret") == "Bearer nbt_abc.secret"
+
+    def test_combined_credential_passed_to_client(self, auth_client):
+        # api_key + api_token are combined into {key}.{secret} for the client.
+        auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "s3cret",
+        }, format="json")
+        assert FakeClient.last_args[1] == f"{V2_KEY}.s3cret"
+
+    def test_combined_credential_stored_in_vault(self, auth_client, monkeypatch):
+        from apps.integrations import views
+        written = {}
+        monkeypatch.setattr(views.vault, "write_secret", lambda path, data: written.update(data))
+        auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "s3cret",
+        }, format="json")
+        assert written == {"api_key": f"{V2_KEY}.s3cret"}
+
+    def test_rejects_key_without_nbt_prefix(self, auth_client):
+        resp = auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_key": "abc123", "api_token": "s",
+        }, format="json")
+        assert resp.status_code == 400
+        assert "nbt_" in str(resp.json()["api_key"])
+
+    def test_rejects_legacy_v1_token(self, auth_client):
+        # A 40-char hex value in the key field is a legacy v1 token.
+        resp = auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_key": "0" * 40, "api_token": "s",
+        }, format="json")
+        assert resp.status_code == 400
+        assert "legacy v1 token" in str(resp.json()["api_key"])
+
+    def test_rejects_empty_token(self, auth_client):
+        resp = auth_client.post("/api/import/netbox/", {
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "",
+        }, format="json")
+        assert resp.status_code == 400
 
 
 class TestNetBoxClientSSL:
@@ -210,7 +261,7 @@ class TestNetBoxDetectVersion:
 class TestNetBoxPreview:
     def test_preview_does_not_write(self, auth_client):
         resp = auth_client.post("/api/import/netbox/preview/", {
-            "netbox_url": "https://n.example.com", "api_token": "t",
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t",
         }, format="json")
         assert resp.status_code == 200
         body = resp.json()
@@ -229,7 +280,7 @@ class TestNetBoxPreview:
         SiteCredential.objects.create(site=site, credential_profile=cred, role=None)
         Device.objects.create(hostname="nb-rtr-01", ip_address="10.10.0.1", site=site, platform="other")
         body = auth_client.post("/api/import/netbox/preview/", {
-            "netbox_url": "https://n.example.com", "api_token": "t",
+            "netbox_url": "https://n.example.com", "api_key": V2_KEY, "api_token": "t",
         }, format="json").json()
         rtr = next(d for d in body["devices"] if d["hostname"] == "nb-rtr-01")
         assert rtr["action"] == "update" and "platform" in rtr["changes"]

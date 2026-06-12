@@ -70,6 +70,27 @@ class TestImportDevice:
         unifi_sync._import_device({"type": "uap", "name": "AP-S", "ip": "10.0.0.70"}, c)
         assert Device.objects.get(hostname="AP-S").site_id == site.id
 
+    def test_ip_locked_blocks_management_ip_overwrite(self, roles):
+        # A device whose IP was manually curated (ip_locked) must keep its
+        # management_ip even when the controller reports a different address.
+        c = _controller()
+        unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "10.150.0.1",
+                                   "mac": "aa:aa:aa:aa:aa:aa"}, c)
+        d = Device.objects.get(hostname="udm-L")
+        d.ip_locked = True
+        d.save(update_fields=["ip_locked"])
+
+        # Sync now reports the WAN IP — must NOT clobber the locked addresses.
+        assert unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "203.0.113.9",
+                                          "mac": "aa:aa:aa:aa:aa:aa"}, c) == "updated"
+        d.refresh_from_db()
+        assert d.management_ip == "10.150.0.1" and d.ip_address == "10.150.0.1"
+        # Non-IP fields still update normally.
+        unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "203.0.113.9",
+                                   "mac": "aa:aa:aa:aa:aa:aa", "version": "9.9"}, c)
+        d.refresh_from_db()
+        assert d.os_version == "9.9" and d.management_ip == "10.150.0.1"
+
 
 class TestMacNormalize:
     def test_canonicalises_separators(self):
@@ -138,6 +159,20 @@ class TestControllerHostPropagation:
     def test_noop_without_linked_device(self):
         c = _controller(host="10.16.133.5")
         assert unifi_sync.update_linked_device_host(c) is False
+
+    def test_noop_when_device_ip_locked(self, roles):
+        from apps.integrations.models import UnifiConsoleStatus
+        c = _controller(host="203.0.113.9")
+        unifi_sync._import_device({"type": "udm", "name": "udm-3", "ip": "10.150.0.1",
+                                   "mac": "de:ad:be:ef:00:03"}, c)
+        device = Device.objects.get(hostname="udm-3")
+        device.ip_locked = True
+        device.save(update_fields=["ip_locked"])
+        UnifiConsoleStatus.objects.create(device=device, controller=c)
+
+        assert unifi_sync.update_linked_device_host(c) is False
+        device.refresh_from_db()
+        assert device.management_ip == "10.150.0.1" and device.ip_address == "10.150.0.1"
 
     def test_noop_when_host_is_dns_name(self, roles):
         from apps.integrations.models import UnifiConsoleStatus
