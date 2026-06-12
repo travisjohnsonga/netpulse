@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { changePassword } from '../api/client'
 import { useAuthStore } from '../store/authStore'
+import LogoMark from '../components/LogoMark'
 
 /**
  * Full-screen, non-dismissable password change shown when the account is flagged
@@ -60,9 +61,7 @@ export default function ForcePasswordChange() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <span className="text-white font-bold text-xl">NP</span>
-          </div>
+          <LogoMark className="w-14 h-14 text-blue-500 rounded-2xl mx-auto mb-4 shadow-lg" />
           <h1 className="text-2xl font-bold text-white">spane</h1>
           <p className="text-gray-400 text-sm mt-1">Set a new password</p>
         </div>

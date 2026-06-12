@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { login, fetchSSOProvidersPublic, type SSOProviderPublic } from '../api/client'
 import { useAuthStore } from '../store/authStore'
+import LogoMark from '../components/LogoMark'
 
 /** Brand-ish icon for each SSO provider (lucide-react isn't a dependency). */
 function providerIcon(provider: string): ReactNode {
@@ -83,9 +84,7 @@ export default function Login() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <span className="text-white font-bold text-xl">NP</span>
-          </div>
+          <LogoMark className="w-14 h-14 text-blue-500 rounded-2xl mx-auto mb-4 shadow-lg" />
           <h1 className="text-2xl font-bold text-white">spane</h1>
           <p className="text-gray-400 text-sm mt-1">Network Intelligence Platform</p>
         </div>

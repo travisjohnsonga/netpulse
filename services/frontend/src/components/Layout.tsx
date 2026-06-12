@@ -11,6 +11,7 @@ import ErrorBoundary from './ErrorBoundary'
 import VersionBadge from './VersionBadge'
 import HeaderSearch from './HeaderSearch'
 import SiteSelector from './SiteSelector'
+import LogoMark from './LogoMark'
 
 interface NavItem {
   label: string
@@ -207,9 +208,7 @@ export default function Layout({ children }: Props) {
       >
         {/* Logo */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-800">
-          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">
-            NP
-          </div>
+          <LogoMark className="w-8 h-8 text-blue-500" />
           <span className="font-semibold text-lg tracking-tight">spane</span>
         </div>
 
