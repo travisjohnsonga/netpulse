@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchUndiscoveredLldp,
+  fetchDevices,
   type UndiscoveredLldpNeighbor,
 } from '../api/client'
 import DeviceAddModal, { type DeviceAddPrefill } from '../components/DeviceAddModal'
 import EmptyState from '../components/EmptyState'
 import { CAP_META, CAP_OPTIONS } from '../lib/lldpCapabilities'
+import { useSite } from '../store/siteStore'
 
 // Infrastructure-ish capabilities visible by default; phones/PCs/cable modems
 // are hidden until the user opts in (they're rarely worth adding to inventory).
@@ -72,6 +74,19 @@ export default function LldpNeighbors() {
   const [seenBy, setSeenBy] = useState<string>('all')
   const [expanded, setExpanded] = useState<number | null>(null)
   const [addPrefill, setAddPrefill] = useState<DeviceAddPrefill | null>(null)
+  // Neighbours are scoped to the active site by the device that observed them
+  // (seen_by_device_id ∈ devices at the selected site).
+  const { selectedSite } = useSite()
+  const [siteDeviceIds, setSiteDeviceIds] = useState<Set<number> | null>(null)
+
+  useEffect(() => {
+    if (!selectedSite) { setSiteDeviceIds(null); return }
+    let cancelled = false
+    fetchDevices({ site: selectedSite, page_size: '1000' })
+      .then((d) => { if (!cancelled) setSiteDeviceIds(new Set(d.results.map((x) => x.id))) })
+      .catch(() => { if (!cancelled) setSiteDeviceIds(new Set()) })
+    return () => { cancelled = true }
+  }, [selectedSite])
 
   const { search, showCaps, showNoCaps, ipFilter } = filters
   const patch = useCallback(
@@ -111,6 +126,7 @@ export default function LldpNeighbors() {
     const q = search.trim().toLowerCase()
     const show = new Set(showCaps)
     return rows.filter((r) => {
+      if (siteDeviceIds && !siteDeviceIds.has(r.seen_by_device_id)) return false
       if (q) {
         const hay = `${r.system_name} ${r.management_address ?? ''} ${r.chassis_id} ${r.seen_by_device_hostname}`.toLowerCase()
         if (!hay.includes(q)) return false
@@ -128,7 +144,7 @@ export default function LldpNeighbors() {
       if (ipFilter === 'no-ip' && r.management_address) return false
       return true
     })
-  }, [rows, search, seenBy, showCaps, showNoCaps, ipFilter])
+  }, [rows, search, seenBy, showCaps, showNoCaps, ipFilter, siteDeviceIds])
 
   // Other ports/devices the same neighbor was seen on (matched by chassis or name).
   const sightingsOf = useCallback((r: UndiscoveredLldpNeighbor) => {

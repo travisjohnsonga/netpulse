@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
-import { fetchDevices, fetchCredentials, fetchSites, fetchDeviceRoles, fetchPingSummary, type Device, type Site, type DeviceRole, type PingSummary } from '../api/client'
+import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary, type Device, type DeviceRole, type PingSummary } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useSite } from '../store/siteStore'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
 } from '../lib/deviceColumns'
@@ -34,10 +35,10 @@ export default function Devices() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [platformFilter, setPlatformFilter] = useState('All')
-  const [siteFilter, setSiteFilter] = useState('All')
   const [roleFilter, setRoleFilter] = useState('All')
-  const [sites, setSites] = useState<Site[]>([])
   const [roles, setRoles] = useState<DeviceRole[]>([])
+  // Site scoping comes from the global header selector (persists across pages).
+  const { selectedSite } = useSite()
   // Sort: column sortKey with optional leading '-' for descending (DRF ordering).
   const [ordering, setOrdering] = useState('hostname')
   const [page, setPage] = useState(1)
@@ -52,9 +53,11 @@ export default function Devices() {
     fetchCredentials()
       .then((profiles) => setCredNames(Object.fromEntries(profiles.map((p) => [p.id, p.name]))))
       .catch(() => {})
-    fetchSites().then(setSites).catch(() => {})
     fetchDeviceRoles().then(setRoles).catch(() => {})
   }, [])
+
+  // Reset to the first page whenever the global site filter changes.
+  useEffect(() => { setPage(1) }, [selectedSite])
 
   // Ping sparklines: fetched in the background (doesn't block the list render)
   // and refreshed on the 60s cache cadence. Failures are non-fatal.
@@ -114,7 +117,7 @@ export default function Devices() {
     if (search) params.search = search
     if (statusFilter !== 'All') params.status = statusFilter
     if (platformFilter !== 'All') params.platform = platformFilter
-    if (siteFilter !== 'All') params.site = siteFilter
+    if (selectedSite) params.site = selectedSite
     if (roleFilter !== 'All') params.role = roleFilter
     if (ordering) params.ordering = ordering
 
@@ -129,7 +132,7 @@ export default function Devices() {
         setError('Failed to load devices. Check that the API is running.')
         setLoading(false)
       })
-  }, [page, search, statusFilter, platformFilter, siteFilter, roleFilter, ordering])
+  }, [page, search, statusFilter, platformFilter, selectedSite, roleFilter, ordering])
 
   useEffect(() => { load() }, [load])
 
@@ -203,16 +206,6 @@ export default function Devices() {
           ))}
         </select>
         <select
-          value={siteFilter}
-          onChange={(e) => { setSiteFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="All">All Sites</option>
-          {sites.map((s) => (
-            <option key={s.id} value={String(s.id)}>{s.name}</option>
-          ))}
-        </select>
-        <select
           value={roleFilter}
           onChange={(e) => { setRoleFilter(e.target.value); setPage(1) }}
           className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -235,13 +228,13 @@ export default function Devices() {
           <EmptyState
             title="No devices found"
             description={
-              search || statusFilter !== 'All' || platformFilter !== 'All' || siteFilter !== 'All' || roleFilter !== 'All'
+              search || statusFilter !== 'All' || platformFilter !== 'All' || selectedSite || roleFilter !== 'All'
                 ? 'No devices match your current filters. Try adjusting your search.'
                 : 'Add your first device or run auto-discovery to populate this list.'
             }
             action={
-              search || statusFilter !== 'All' || platformFilter !== 'All' || siteFilter !== 'All' || roleFilter !== 'All'
-                ? { label: 'Clear Filters', onClick: () => { setSearch(''); setStatusFilter('All'); setPlatformFilter('All'); setSiteFilter('All'); setRoleFilter('All') } }
+              search || statusFilter !== 'All' || platformFilter !== 'All' || roleFilter !== 'All'
+                ? { label: 'Clear Filters', onClick: () => { setSearch(''); setStatusFilter('All'); setPlatformFilter('All'); setRoleFilter('All') } }
                 : { label: 'Add Device', onClick: () => setShowAddModal(true) }
             }
             icon="📡"

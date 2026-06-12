@@ -98,7 +98,7 @@ class TestChangePassword:
     def test_default_password_rejected(self, auth_client, user):
         user.set_password("oldpass123"); user.save()
         resp = auth_client.post("/api/users/me/change-password/", {
-            "current_password": "oldpass123", "new_password": "NetPulse1!",
+            "current_password": "oldpass123", "new_password": "spane1!",
         }, format="json")
         assert resp.status_code == 400
 

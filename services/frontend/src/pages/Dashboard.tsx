@@ -23,6 +23,7 @@ import {
   type TopTalker,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useSite } from '../store/siteStore'
 import { fmtBytes } from '../lib/bytes'
 import clsx from 'clsx'
 
@@ -113,6 +114,9 @@ export default function Dashboard() {
   const [reachPeriod, setReachPeriod] = useState<typeof REACH_PERIODS[number]>('1h')
   const [topTalkers, setTopTalkers] = useState<TopTalker[]>([])
   const { connected } = useWebSocket('/ws/telemetry/')
+  // Global site filter: scope the device list (server-side) and the alert
+  // counts (client-side, by the site's device ids) to the selected site.
+  const { selectedSite } = useSite()
 
   useEffect(() => {
     fetchCheckSummary().then(setCheckSummary).catch(() => {})
@@ -143,7 +147,8 @@ export default function Dashboard() {
     let cancelled = false
     setLoading(true)
 
-    Promise.allSettled([fetchDevices(), fetchAlerts()])
+    const deviceParams = selectedSite ? { site: selectedSite, page_size: '500' } : undefined
+    Promise.allSettled([fetchDevices(deviceParams), fetchAlerts()])
       .then(([devResult, alertResult]) => {
         if (cancelled) return
         if (devResult.status === 'fulfilled') {
@@ -167,11 +172,15 @@ export default function Dashboard() {
       })
 
     return () => { cancelled = true }
-  }, [])
+  }, [selectedSite])
 
   // Ensure these are always arrays before calling array methods
   const safeDevices = Array.isArray(devices) ? devices : []
-  const safeAlerts = Array.isArray(alerts) ? alerts : []
+  // Scope alerts to the active site by the site's device ids (devices are already
+  // server-side filtered to the selected site).
+  const siteDeviceIds = selectedSite ? new Set(safeDevices.map((d) => d.id)) : null
+  const safeAlerts = (Array.isArray(alerts) ? alerts : [])
+    .filter((a) => !siteDeviceIds || (a.device_id != null && siteDeviceIds.has(a.device_id)))
 
   const activeAlerts = safeAlerts.filter((a) => a.state === 'firing')
   const criticalCount = activeAlerts.filter((a) => a.severity === 'critical').length

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchServers, type Server } from '../api/client'
+import { useSite } from '../store/siteStore'
 
 // last_seen older than this (ms) with no fresh heartbeat → offline.
 const OFFLINE_MS = 5 * 60 * 1000
@@ -61,32 +62,37 @@ export default function Servers() {
   const [osFilter, setOsFilter] = useState('All')
   const [roleFilter, setRoleFilter] = useState('All')
   const [statusFilter, setStatusFilter] = useState('All')
-  const [siteFilter, setSiteFilter] = useState('All')
+  // Site scoping comes from the global header selector.
+  const { selectedSite } = useSite()
 
   useEffect(() => {
     fetchServers().then(setServers).catch(() => setError('Failed to load servers.')).finally(() => setLoading(false))
   }, [])
 
-  const osOptions = useMemo(() => ['All', ...new Set(servers.map((s) => s.os).filter(Boolean))], [servers])
-  const roleOptions = useMemo(() => ['All', ...new Set(servers.flatMap((s) => s.roles))], [servers])
-  const siteOptions = useMemo(() => ['All', ...new Set(servers.map((s) => s.site?.name).filter(Boolean) as string[])], [servers])
+  // Servers at the active site (summary cards + filters scope to this set).
+  const siteScoped = useMemo(
+    () => (selectedSite ? servers.filter((s) => String(s.site?.id) === selectedSite) : servers),
+    [servers, selectedSite],
+  )
 
-  const filtered = useMemo(() => servers.filter((s) => {
+  const osOptions = useMemo(() => ['All', ...new Set(siteScoped.map((s) => s.os).filter(Boolean))], [siteScoped])
+  const roleOptions = useMemo(() => ['All', ...new Set(siteScoped.flatMap((s) => s.roles))], [siteScoped])
+
+  const filtered = useMemo(() => siteScoped.filter((s) => {
     if (search && !s.hostname.toLowerCase().includes(search.toLowerCase())) return false
     if (osFilter !== 'All' && s.os !== osFilter) return false
     if (roleFilter !== 'All' && !s.roles.includes(roleFilter)) return false
-    if (siteFilter !== 'All' && s.site?.name !== siteFilter) return false
     if (statusFilter !== 'All' && serverState(s) !== statusFilter) return false
     return true
-  }), [servers, search, osFilter, roleFilter, statusFilter, siteFilter])
+  }), [siteScoped, search, osFilter, roleFilter, statusFilter])
 
-  const online = servers.filter(isOnline).length
+  const online = siteScoped.filter(isOnline).length
   const avg = (vals: (number | null)[]) => {
     const nums = vals.filter((v): v is number => v != null)
     return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null
   }
-  const cpuAvg = avg(servers.map((s) => s.latest_metrics.cpu_pct))
-  const memAvg = avg(servers.map((s) => s.latest_metrics.memory_pct))
+  const cpuAvg = avg(siteScoped.map((s) => s.latest_metrics.cpu_pct))
+  const memAvg = avg(siteScoped.map((s) => s.latest_metrics.memory_pct))
 
   if (loading) return <div className="p-6 text-gray-500">Loading servers…</div>
 
@@ -110,8 +116,8 @@ export default function Servers() {
   }
 
   const cards = [
-    { label: 'Total Servers', value: servers.length },
-    { label: 'Online', value: `${online} / ${servers.length - online}` },
+    { label: 'Total Servers', value: siteScoped.length },
+    { label: 'Online', value: `${online} / ${siteScoped.length - online}` },
     { label: 'CPU Avg', value: cpuAvg == null ? '—' : `${cpuAvg}%` },
     { label: 'Mem Avg', value: memAvg == null ? '—' : `${memAvg}%` },
   ]
@@ -134,8 +140,7 @@ export default function Servers() {
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search hostname…"
           className="px-3 py-2 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600 flex-1 min-w-[12rem]" />
         {[['OS', osFilter, setOsFilter, osOptions], ['Role', roleFilter, setRoleFilter, roleOptions],
-          ['Status', statusFilter, setStatusFilter, ['All', 'online', 'degraded', 'offline']],
-          ['Site', siteFilter, setSiteFilter, siteOptions]].map(([label, val, setter, opts]) => (
+          ['Status', statusFilter, setStatusFilter, ['All', 'online', 'degraded', 'offline']]].map(([label, val, setter, opts]) => (
           <select key={label as string} value={val as string} onChange={(e) => (setter as (v: string) => void)(e.target.value)}
             className="px-3 py-2 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600">
             {(opts as string[]).map((o) => <option key={o} value={o}>{o === 'All' ? `${label}: All` : o}</option>)}

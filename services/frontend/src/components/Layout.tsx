@@ -6,9 +6,11 @@ import { fetchUndiscoveredLldpCount } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
+import { useSite, useSiteStore } from '../store/siteStore'
 import ErrorBoundary from './ErrorBoundary'
 import VersionBadge from './VersionBadge'
 import HeaderSearch from './HeaderSearch'
+import SiteSelector from './SiteSelector'
 
 interface NavItem {
   label: string
@@ -142,9 +144,14 @@ export default function Layout({ children }: Props) {
   const { username, name, email, isAuthenticated, logout } = useAuthStore()
   const { theme, toggle } = useThemeStore()
   const loadPrefs = usePreferencesStore((s) => s.load)
+  const loadSites = useSiteStore((s) => s.loadSites)
+  const { selectedSite, selectedSiteName, setSelectedSite } = useSite()
 
   // Load preferences once (syncs theme from the backend) for the session.
   useEffect(() => { loadPrefs() }, [loadPrefs])
+
+  // Load the site list once so the global site selector is populated.
+  useEffect(() => { if (isAuthenticated) loadSites() }, [isAuthenticated, loadSites])
 
   // Live count of LLDP neighbors not yet in inventory → sidebar badge.
   // Refresh every 5 minutes; the badge hides itself when the count is 0.
@@ -288,6 +295,7 @@ export default function Layout({ children }: Props) {
           </button>
           <span className="font-semibold text-gray-800 dark:text-gray-100">{currentPage}</span>
           <div className="ml-auto flex items-center gap-3 text-xs">
+            <SiteSelector />
             <HeaderSearch />
             <span className="lg:hidden flex items-center gap-2">
               <span
@@ -302,6 +310,21 @@ export default function Layout({ children }: Props) {
             </span>
           </div>
         </header>
+
+        {/* Active site-filter banner (Option B): a clear, dismissible reminder
+            that every site-aware page is scoped to one site. */}
+        {selectedSite && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-300">
+            <span aria-hidden>📍</span>
+            <span>Filtered to: <strong>{selectedSiteName}</strong></span>
+            <button
+              onClick={() => setSelectedSite(null)}
+              className="ml-auto px-2 py-0.5 text-xs font-medium rounded border border-blue-300 dark:border-blue-700 hover:bg-blue-100 dark:hover:bg-blue-800/50 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
 
         {/* Page content — the only scroll region; sidebar + header stay fixed */}
         <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6">

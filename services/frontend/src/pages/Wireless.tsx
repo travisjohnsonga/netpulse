@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { fetchWirelessSummary, type WirelessSummary, type UnifiApStatus, type UnifiRadio } from '../api/client'
 import StatCard from '../components/StatCard'
 import EmptyState from '../components/EmptyState'
+import { useSite } from '../store/siteStore'
 
 function fmtUptime(secs: number | null | undefined): string {
   if (!secs || secs <= 0) return '—'
@@ -60,9 +61,11 @@ export default function Wireless() {
   const [data, setData] = useState<WirelessSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [siteFilter, setSiteFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [scoreFilter, setScoreFilter] = useState('')
+  // Site scoping comes from the global header selector (APs carry a site_name,
+  // so match on the selected site's display name).
+  const { selectedSite, selectedSiteName } = useSite()
 
   useEffect(() => {
     let cancelled = false
@@ -75,17 +78,12 @@ export default function Wireless() {
     return () => { cancelled = true; clearInterval(t) }
   }, [])
 
-  const sites = useMemo(
-    () => Array.from(new Set((data?.aps ?? []).map((a) => a.site_name).filter(Boolean))) as string[],
-    [data],
-  )
-
   const aps = useMemo(() => {
     const list = data?.aps ?? []
     const q = search.trim().toLowerCase()
     return list.filter((a) => {
       if (q && !a.hostname.toLowerCase().includes(q) && !(a.model || '').toLowerCase().includes(q)) return false
-      if (siteFilter && a.site_name !== siteFilter) return false
+      if (selectedSite && a.site_name !== selectedSiteName) return false
       if (statusFilter === 'online' && a.state !== 1) return false
       if (statusFilter === 'offline' && a.state === 1) return false
       if (statusFilter === 'degraded' && !(a.state === 1 && a.satisfaction != null && a.satisfaction < 70)) return false
@@ -94,7 +92,7 @@ export default function Wireless() {
       if (scoreFilter === 'red' && !(a.satisfaction != null && a.satisfaction < 70)) return false
       return true
     })
-  }, [data, search, siteFilter, statusFilter, scoreFilter])
+  }, [data, search, selectedSite, selectedSiteName, statusFilter, scoreFilter])
 
   if (loading) {
     return <div className="py-20 flex justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
@@ -115,28 +113,43 @@ export default function Wireless() {
 
   const selectCls = 'px-2.5 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200'
 
+  // Summary cards: use the server-wide totals normally; when a site is active,
+  // recompute from that site's APs so the cards match the filtered table.
+  const cards = (() => {
+    if (!selectedSite) {
+      return {
+        total: data.total_aps, online: data.online, offline: data.offline,
+        clients: data.total_clients, avg: data.avg_satisfaction,
+      }
+    }
+    const siteAps = (data.aps ?? []).filter((a) => a.site_name === selectedSiteName)
+    const online = siteAps.filter((a) => a.state === 1).length
+    const sats = siteAps.map((a) => a.satisfaction).filter((s): s is number => s != null)
+    return {
+      total: siteAps.length, online, offline: siteAps.length - online,
+      clients: siteAps.reduce((sum, a) => sum + (a.client_count ?? 0), 0),
+      avg: sats.length ? Math.round(sats.reduce((a, b) => a + b, 0) / sats.length) : null,
+    }
+  })()
+
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">Wireless</h1>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total APs" value={data.total_aps} />
-        <StatCard title="Online / Offline" value={`${data.online} / ${data.offline}`}
-          color={data.offline > 0 ? 'yellow' : 'green'} />
-        <StatCard title="Clients" value={data.total_clients} color="blue" />
-        <StatCard title="Avg Score" value={data.avg_satisfaction ?? '—'}
-          color={data.avg_satisfaction == null ? 'blue' : data.avg_satisfaction >= 90 ? 'green' : data.avg_satisfaction >= 70 ? 'yellow' : 'red'} />
+        <StatCard title="Total APs" value={cards.total} />
+        <StatCard title="Online / Offline" value={`${cards.online} / ${cards.offline}`}
+          color={cards.offline > 0 ? 'yellow' : 'green'} />
+        <StatCard title="Clients" value={cards.clients} color="blue" />
+        <StatCard title="Avg Score" value={cards.avg ?? '—'}
+          color={cards.avg == null ? 'blue' : cards.avg >= 90 ? 'green' : cards.avg >= 70 ? 'yellow' : 'red'} />
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name / model…"
           className={clsx(selectCls, 'flex-1 min-w-[180px]')} />
-        <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className={selectCls}>
-          <option value="">All Sites</option>
-          {sites.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectCls}>
           <option value="">All Status</option>
           <option value="online">Online</option>

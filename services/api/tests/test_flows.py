@@ -76,6 +76,29 @@ class TestFlowQuery:
         auth_client.get("/api/flows/?device_id=99999")
         assert {"term": {"exporter_ip.keyword": "__none__"}} in captured["query"]["bool"]["must"]
 
+    def test_site_filter_restricts_to_site_exporters(self, auth_client, monkeypatch):
+        from apps.devices.models import Device, Site
+        site = Site.objects.create(name="DC-1")
+        Device.objects.create(hostname="d1", ip_address="10.0.0.1", site=site)
+        # management_ip takes precedence over ip_address when present.
+        Device.objects.create(hostname="d2", ip_address="10.0.0.2", management_ip="172.16.0.2", site=site)
+        Device.objects.create(hostname="other", ip_address="10.9.9.9")  # different site → excluded
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or _flow_hits())
+        auth_client.get(f"/api/flows/?site={site.id}")
+        terms = [m for m in captured["query"]["bool"]["must"] if "terms" in m]
+        assert len(terms) == 1
+        ips = set(terms[0]["terms"]["exporter_ip.keyword"])
+        assert ips == {"10.0.0.1", "172.16.0.2"}
+
+    def test_empty_site_matches_nothing(self, auth_client, monkeypatch):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="Empty")  # no devices
+        captured = {}
+        monkeypatch.setattr(flow_views, "_execute", lambda body: captured.update(body) or _flow_hits())
+        auth_client.get(f"/api/flows/?site={site.id}")
+        assert {"term": {"exporter_ip.keyword": "__none__"}} in captured["query"]["bool"]["must"]
+
     def test_store_unavailable_degrades(self, auth_client, monkeypatch):
         def boom(body):
             raise RuntimeError("connection refused")

@@ -75,13 +75,13 @@ class TestChatOpsSlack:
         payload = {"event": {"text": "help", "user": "U1", "channel": "C1"}}
         resp = api_client.post("/api/webhooks/slack/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["text"]
+        assert "spane commands" in resp.json()["text"]
 
     def test_unknown_intent_returns_help(self, api_client):
         payload = {"event": {"text": "completely unknown command xyz", "user": "U1", "channel": "C1"}}
         resp = api_client.post("/api/webhooks/slack/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["text"]
+        assert "spane commands" in resp.json()["text"]
 
     def test_device_status_not_found(self, api_client):
         payload = {"event": {"text": "status of nonexistent-router", "user": "U1", "channel": "C1"}}
@@ -135,7 +135,7 @@ class TestChatOpsSlack:
         payload = {"event": {"text": "<@U123BOT> help", "user": "U1", "channel": "C1"}}
         resp = api_client.post("/api/webhooks/slack/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["text"]
+        assert "spane commands" in resp.json()["text"]
 
     def test_site_status_not_found(self, api_client):
         payload = {"event": {"text": "status of site dallas", "user": "U1", "channel": "C1"}}
@@ -160,13 +160,13 @@ class TestChatOpsTeams:
         assert resp.status_code == 200
         data = resp.json()
         assert data["type"] == "message"
-        assert "NetPulse commands" in data["text"]
+        assert "spane commands" in data["text"]
 
     def test_teams_html_stripped(self, api_client):
         payload = {"text": "<p>help</p>", "from": {"name": "TestUser"}}
         resp = api_client.post("/api/webhooks/teams/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["text"]
+        assert "spane commands" in resp.json()["text"]
 
     def test_teams_no_auth_required(self, api_client):
         resp = api_client.post("/api/webhooks/teams/", data={}, format="json")
@@ -178,7 +178,7 @@ class TestChatOpsGChat:
         payload = {"message": {"text": "help", "sender": {"displayName": "TestUser"}}}
         resp = api_client.post("/api/webhooks/gchat/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["text"]
+        assert "spane commands" in resp.json()["text"]
 
     def test_gchat_no_auth_required(self, api_client):
         resp = api_client.post("/api/webhooks/gchat/", data={}, format="json")
@@ -190,13 +190,13 @@ class TestChatOpsDiscord:
         payload = {"content": "help"}
         resp = api_client.post("/api/webhooks/discord/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["content"]
+        assert "spane commands" in resp.json()["content"]
 
     def test_discord_help_via_options(self, api_client):
         payload = {"data": {"options": [{"value": "help"}]}}
         resp = api_client.post("/api/webhooks/discord/", data=payload, format="json")
         assert resp.status_code == 200
-        assert "NetPulse commands" in resp.json()["content"]
+        assert "spane commands" in resp.json()["content"]
 
     def test_discord_no_auth_required(self, api_client):
         resp = api_client.post("/api/webhooks/discord/", data={}, format="json")

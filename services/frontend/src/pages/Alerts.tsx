@@ -4,7 +4,8 @@ import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
 import AlertDetails from '../components/AlertDetails'
 import { Fragment } from 'react'
-import { fetchAlerts, acknowledgeAlert, resolveAlertEvent, fetchAlertNotifications, type Alert, type AlertNotificationRecord } from '../api/client'
+import { fetchAlerts, acknowledgeAlert, resolveAlertEvent, fetchAlertNotifications, fetchDevices, type Alert, type AlertNotificationRecord } from '../api/client'
+import { useSite } from '../store/siteStore'
 
 type View = 'false' | 'true' | 'all'
 const VIEW_TABS: { key: View; label: string }[] = [
@@ -55,6 +56,19 @@ export default function Alerts() {
   const [view, setView] = useState<View>('false')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [timeline, setTimeline] = useState<Record<number, AlertNotificationRecord[]>>({})
+  // Device ids belonging to the active site (null = no site filter). Alerts carry
+  // a device_id, so we scope client-side to devices at the selected site.
+  const { selectedSite } = useSite()
+  const [siteDeviceIds, setSiteDeviceIds] = useState<Set<number> | null>(null)
+
+  useEffect(() => {
+    if (!selectedSite) { setSiteDeviceIds(null); return }
+    let cancelled = false
+    fetchDevices({ site: selectedSite, page_size: '1000' })
+      .then((d) => { if (!cancelled) setSiteDeviceIds(new Set(d.results.map((x) => x.id))) })
+      .catch(() => { if (!cancelled) setSiteDeviceIds(new Set()) })
+    return () => { cancelled = true }
+  }, [selectedSite])
 
   const reload = (v: View) => {
     setView(v)
@@ -99,16 +113,22 @@ export default function Alerts() {
   // rule severity for ordinary alerts.
   const sevOf = (a: Alert) => a.effective_severity ?? a.severity
 
+  // Scope to the active site first (alerts whose device is at the site), then
+  // apply the severity tab filter on top.
+  const siteAlerts = siteDeviceIds
+    ? alerts.filter((a) => a.device_id != null && siteDeviceIds.has(a.device_id))
+    : alerts
+
   const filtered = severityFilter === 'all'
-    ? alerts
-    : alerts.filter((a) => sevOf(a) === severityFilter)
+    ? siteAlerts
+    : siteAlerts.filter((a) => sevOf(a) === severityFilter)
 
   const counts: Record<Severity, number> = {
-    all: alerts.length,
-    critical: alerts.filter((a) => sevOf(a) === 'critical').length,
-    high: alerts.filter((a) => sevOf(a) === 'high').length,
-    medium: alerts.filter((a) => sevOf(a) === 'medium').length,
-    low: alerts.filter((a) => sevOf(a) === 'low').length,
+    all: siteAlerts.length,
+    critical: siteAlerts.filter((a) => sevOf(a) === 'critical').length,
+    high: siteAlerts.filter((a) => sevOf(a) === 'high').length,
+    medium: siteAlerts.filter((a) => sevOf(a) === 'medium').length,
+    low: siteAlerts.filter((a) => sevOf(a) === 'low').length,
   }
 
   const handleAcknowledge = (id: number) => {

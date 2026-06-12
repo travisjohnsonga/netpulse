@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import cytoscape, { type Core, type NodeSingular, type EdgeSingular } from 'cytoscape'
 import {
-  fetchTopology, fetchDevices, fetchSites, discoverDeviceLinks,
-  type TopologyNode, type TopologyEdge, type Device, type Site,
+  fetchTopology, fetchDevices, discoverDeviceLinks,
+  type TopologyNode, type TopologyEdge, type Device,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useSite } from '../store/siteStore'
 
 type Popup =
   | { kind: 'node'; data: TopologyNode; x: number; y: number }
@@ -184,8 +185,8 @@ export default function Topology() {
 
   // Filters
   const [devices, setDevices] = useState<Device[]>([])
-  const [sites, setSites] = useState<Site[]>([])
-  const [site, setSite] = useState('')
+  // Site scoping comes from the global header selector.
+  const { selectedSite: site } = useSite()
   const [center, setCenter] = useState('')
   const [depth, setDepth] = useState('all')
   const [role, setRole] = useState('')
@@ -200,7 +201,6 @@ export default function Topology() {
 
   useEffect(() => {
     fetchDevices({ page_size: '500' }).then((d) => setDevices(d.results)).catch(() => {})
-    fetchSites().then(setSites).catch(() => {})
   }, [])
 
   const updateMinimap = useCallback(() => {
@@ -400,10 +400,6 @@ export default function Topology() {
 
       {/* Filter / view bar */}
       <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 flex-shrink-0">
-        <select className={selCls} value={site} onChange={(e) => setSite(e.target.value)}>
-          <option value="">All Sites</option>
-          {sites.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
-        </select>
         <select className={selCls} value={center} onChange={(e) => setCenter(e.target.value)}>
           <option value="">All Devices (center)</option>
           {devices.map((d) => <option key={d.id} value={String(d.id)} title={d.hostname}>{d.display_hostname || d.hostname}</option>)}

@@ -125,6 +125,32 @@ def _device_exporter_ip(device_id) -> str | None:
     return str(dev.management_ip or dev.ip_address)
 
 
+def _site_exporter_ips(site_id) -> list[str]:
+    """All exporter IPs for devices at a site (management_ip preferred, else
+    ip_address). Empty list for an unknown/empty site."""
+    from apps.devices.models import Device
+
+    ips: list[str] = []
+    for dev in Device.objects.filter(site_id=site_id).only("management_ip", "ip_address"):
+        ip = dev.management_ip or dev.ip_address
+        if ip:
+            ips.append(str(ip))
+    return ips
+
+
+def _site_filter(params) -> dict | None:
+    """If ``?site=`` is set, build a musts clause restricting flows to exporters
+    that belong to devices at that site. A site with no resolvable device IPs
+    yields a match-nothing clause (rather than silently returning the fleet)."""
+    site_id = params.get("site")
+    if not site_id:
+        return None
+    ips = _site_exporter_ips(site_id)
+    if not ips:
+        return {"term": {_IP_KW["exporter_ip"]: "__none__"}}
+    return {"terms": {_IP_KW["exporter_ip"]: ips}}
+
+
 def _src_or_dst(ip: str) -> dict:
     """bool/should clause matching flows where ``ip`` is the source OR the dest."""
     return {
@@ -229,6 +255,10 @@ class FlowQueryView(_FlowListBase):
             # Unknown device → match nothing rather than returning the whole fleet.
             musts.append({"term": {_IP_KW["exporter_ip"]: exporter or "__none__"}})
 
+        site_clause = _site_filter(params)
+        if site_clause:
+            musts.append(site_clause)
+
         for field in ("src_ip", "dst_ip"):
             value = params.get(field)
             if value:
@@ -287,9 +317,13 @@ class TopTalkersView(APIView):
 
         # flows → order by the bucket's own doc_count; bytes/packets → by sub-sum.
         order = {"_count": "desc"} if by == "flows" else {"total_bytes" if by == "bytes" else "total_packets": "desc"}
+        musts: list[dict] = [_range_filter(window)]
+        site_clause = _site_filter(params)
+        if site_clause:
+            musts.append(site_clause)
         body = {
             "size": 0,
-            "query": {"bool": {"must": [_range_filter(window)]}},
+            "query": {"bool": {"must": musts}},
             "aggs": {
                 "top_src": {
                     "terms": {
@@ -341,6 +375,10 @@ class FlowSummaryView(APIView):
         if device_id:
             exporter = _device_exporter_ip(device_id)
             musts.append({"term": {_IP_KW["exporter_ip"]: exporter or "__none__"}})
+
+        site_clause = _site_filter(params)
+        if site_clause:
+            musts.append(site_clause)
 
         body = {
             "size": 0,
@@ -567,6 +605,10 @@ class FlowSankeyView(APIView):
             if not device_ip:
                 return Response(self._empty(window))
             musts.append(_src_or_dst(device_ip))
+
+        site_clause = _site_filter(params)
+        if site_clause:
+            musts.append(site_clause)
 
         body = {
             "size": 0,

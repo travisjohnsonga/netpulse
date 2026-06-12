@@ -16,6 +16,7 @@ import {
 } from '../api/client'
 import { fmtBytes } from '../lib/bytes'
 import { useIsDark, chartColors } from '../lib/useIsDark'
+import { useSite } from '../store/siteStore'
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const
 type Window = (typeof WINDOWS)[number]
@@ -47,23 +48,26 @@ export default function Flows() {
   const isDark = useIsDark()
   // When set, the recent-flows table drills into a single IP (src OR dst).
   const [ipFilter, setIpFilter] = useState<string | null>(null)
+  // Global site filter → backend restricts flows to exporters at that site.
+  const { selectedSite } = useSite()
+  const siteParam: Record<string, string> = selectedSite ? { site: selectedSite } : {}
 
   const summaryQ = useQuery({
-    queryKey: ['flow-summary', window],
-    queryFn: () => fetchFlowSummary({ window }),
+    queryKey: ['flow-summary', window, selectedSite],
+    queryFn: () => fetchFlowSummary({ window, ...siteParam }),
   })
   const sankeyQ = useQuery({
-    queryKey: ['flow-sankey', window],
-    queryFn: () => fetchFlowSankey({ window, limit: '30' }),
+    queryKey: ['flow-sankey', window, selectedSite],
+    queryFn: () => fetchFlowSankey({ window, limit: '30', ...siteParam }),
   })
   const talkersQ = useQuery({
-    queryKey: ['flow-top-talkers', window],
-    queryFn: () => fetchTopTalkers({ window, by: 'bytes', limit: '10' }),
+    queryKey: ['flow-top-talkers', window, selectedSite],
+    queryFn: () => fetchTopTalkers({ window, by: 'bytes', limit: '10', ...siteParam }),
   })
   const flowsQ = useQuery({
-    queryKey: ['flows', window, ipFilter],
+    queryKey: ['flows', window, ipFilter, selectedSite],
     queryFn: () =>
-      ipFilter ? searchFlows(ipFilter, window, 200) : fetchFlows({ window, limit: '200' }),
+      ipFilter ? searchFlows(ipFilter, window, 200) : fetchFlows({ window, limit: '200', ...siteParam }),
   })
 
   const summary = summaryQ.data

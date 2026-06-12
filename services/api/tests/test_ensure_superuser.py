@@ -40,7 +40,7 @@ class TestEnsureSuperuser:
         _env(monkeypatch, DJANGO_SUPERUSER_USERNAME="root3",
              DJANGO_SUPERUSER_PASSWORD="S3cure!pass1", DJANGO_SUPERUSER_EMAIL="admin@netpulse")
         call_command("ensure_superuser")
-        assert User.objects.get(username="root3").email == "admin@netpulse.local"
+        assert User.objects.get(username="root3").email == "admin@spane.app"
 
     def test_repairs_existing_invalid_email(self, monkeypatch):
         u = User.objects.create_superuser(username="root4", email="x", password="orig!pass99", role="admin")
@@ -49,7 +49,7 @@ class TestEnsureSuperuser:
         _env(monkeypatch, DJANGO_SUPERUSER_USERNAME="root4", DJANGO_SUPERUSER_PASSWORD="whatever!99")
         call_command("ensure_superuser")
         u.refresh_from_db()
-        assert u.email == "admin@netpulse.local"
+        assert u.email == "admin@spane.app"
 
     def test_leaves_valid_and_blank_email_alone(self, monkeypatch):
         good = User.objects.create_superuser(username="root5", email="ops@example.com", password="p!ass1234", role="admin")
