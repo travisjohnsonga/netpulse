@@ -69,13 +69,13 @@ def discord_embed(title: str, description: str = "", severity: str = "info", fie
     """Build a Discord webhook payload with a single colour-coded embed."""
     emoji = _DISCORD_EMOJI.get(severity, "⚪")
     return {
-        "username": "NetPulse",
+        "username": "spane",
         "embeds": [{
             "title": f"{emoji} {title}"[:256],
             "description": (description or "")[:2000],
             "color": _DISCORD_COLOR.get(severity, 0x808080),
             "fields": fields or [],
-            "footer": {"text": "NetPulse Network Intelligence"},
+            "footer": {"text": "spane — unified infrastructure visibility"},
         }],
     }
 

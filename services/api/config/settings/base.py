@@ -8,6 +8,11 @@ SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
 
+# Display/brand name (was "NetPulse", now "spane"). Used for user-facing copy;
+# technical identifiers (model/class names, OpenBao paths, container/image and
+# service names, the GitHub repo) intentionally keep the legacy "netpulse" form.
+SITE_NAME = "spane"
+
 AUTH_USER_MODEL = "core.NetPulseUser"
 
 INSTALLED_APPS = [
@@ -175,7 +180,7 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() in ("1", "true", "yes")
-EMAIL_FROM = os.environ.get("EMAIL_FROM", "NetPulse Alerts <netpulse@localhost>")
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "spane Alerts <netpulse@localhost>")
 DEFAULT_FROM_EMAIL = EMAIL_FROM
 # Default to the SMTP backend; tests use the in-memory backend (pytest-django).
 EMAIL_BACKEND = os.environ.get(
@@ -375,8 +380,8 @@ REST_FRAMEWORK = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "NetPulse API",
-    "DESCRIPTION": "Push-first network intelligence platform API",
+    "TITLE": "spane API",
+    "DESCRIPTION": "spane — unified infrastructure visibility platform API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,

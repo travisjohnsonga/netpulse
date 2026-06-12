@@ -1,6 +1,6 @@
 # FortiOS (FortiGate / Fortinet) Integration Guide
 
-NetPulse supports Fortinet FortiGate firewalls (platform `fortios`). FortiOS has
+spane supports Fortinet FortiGate firewalls (platform `fortios`). FortiOS has
 **no gNMI** — telemetry is SNMP + Syslog + NetFlow.
 
 > 🔒 This guide contains **no credentials**. Store device credentials in OpenBao
@@ -62,7 +62,7 @@ present a standard ifTable cleanly); LLDP is best-effort.
 
 ## Benign / expected log noise
 
-Every NetPulse config-collection SSH session makes the Netmiko `fortinet` driver
+Every spane config-collection SSH session makes the Netmiko `fortinet` driver
 disable paging, which FortiOS logs as a `cfgpath=system.console` config event.
 The syslog normalizer tags these `fortios_benign=true` (severity floored to info)
 — they are **not** real config changes. Expect frequent SSH sessions from the

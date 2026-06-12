@@ -43,9 +43,9 @@ export default function SetupRequired({ status, onComplete }: {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 px-4">
       <div className="w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-800 p-8 text-center">
         <div className="text-4xl mb-2">🚀</div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to NetPulse</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to spane</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-          Initial setup is required before you can use NetPulse.
+          Initial setup is required before you can use spane.
         </p>
 
         <div className="mt-6 text-left">

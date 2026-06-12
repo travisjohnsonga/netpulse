@@ -330,7 +330,7 @@ export default function Devices() {
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">
               <p className="text-xs text-blue-800">
-                <strong>Tip:</strong> Start with a seed device — NetPulse will walk CDP/LLDP neighbors
+                <strong>Tip:</strong> Start with a seed device — spane will walk CDP/LLDP neighbors
                 and route tables to find the rest of your network.
               </p>
             </div>

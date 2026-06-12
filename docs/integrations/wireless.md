@@ -1,6 +1,6 @@
 # Wireless Access Point Monitoring
 
-NetPulse collects wireless telemetry from UniFi controllers via the local REST API.
+spane collects wireless telemetry from UniFi controllers via the local REST API.
 
 ## Metrics Collected
 
@@ -48,7 +48,7 @@ Score interpretation:
 | <50 | 🔴 Poor | Users experiencing problems |
 
 > **Note:** The satisfaction score is calculated by the UniFi controller,
-> not by NetPulse. NetPulse displays the score as reported by the controller.
+> not by spane. spane displays the score as reported by the controller.
 
 ## Channel Utilization
 
@@ -127,7 +127,7 @@ These are general guidelines — actual limits depend on traffic type and AP mod
 
 ## Alerts
 
-NetPulse can alert on:
+spane can alert on:
 
 - AP offline / disconnected
 - Satisfaction score below threshold
@@ -141,7 +141,7 @@ Configure alert thresholds in:
 
 ## WAN Monitoring (UDM/Gateway)
 
-For UniFi Dream Machine and other gateway devices, NetPulse also collects:
+For UniFi Dream Machine and other gateway devices, spane also collects:
 
 | Metric | Description |
 |--------|-------------|
@@ -156,7 +156,7 @@ For UniFi Dream Machine and other gateway devices, NetPulse also collects:
 
 - UniFi APs do not expose SNMP directly (monitoring requires a UniFi controller)
 - The satisfaction score algorithm is proprietary to Ubiquiti and not fully documented
-- Historical data retention depends on NetPulse InfluxDB retention settings
+- Historical data retention depends on spane InfluxDB retention settings
   (default: 90 days)
 - Some metrics (temperature) are only available on certain AP models
 

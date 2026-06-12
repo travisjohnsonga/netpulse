@@ -178,7 +178,7 @@ export default function Layout({ children }: Props) {
   const isDark = theme === 'dark' || (theme === 'system' && typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
   const allLeaves = navEntries.flatMap((e) => (isGroup(e) ? e.children : [e]))
-  const currentPage = allLeaves.find((n) => location.pathname.startsWith(n.href))?.label ?? 'NetPulse'
+  const currentPage = allLeaves.find((n) => location.pathname.startsWith(n.href))?.label ?? 'spane'
 
   return (
     <div className="h-screen overflow-hidden bg-gray-50 dark:bg-gray-950 flex">
@@ -203,7 +203,7 @@ export default function Layout({ children }: Props) {
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">
             NP
           </div>
-          <span className="font-semibold text-lg tracking-tight">NetPulse</span>
+          <span className="font-semibold text-lg tracking-tight">spane</span>
         </div>
 
         {/* Nav */}

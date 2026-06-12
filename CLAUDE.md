@@ -11,7 +11,17 @@ Guidance for Claude Code working in this repo. These instructions override defau
 
 ## Project Overview
 
-NetPulse — push-first, open-source network intelligence platform: gRPC/gNMI streaming telemetry,
+> **Naming:** the product was renamed from **NetPulse** to **spane** (lowercase
+> brand, tagline "unified infrastructure visibility", domain spane.app). Only
+> display/brand strings changed — technical identifiers intentionally keep the
+> legacy `netpulse` form: DB table names (`netpulse_*`), OpenBao paths
+> (`netpulse/...`), Docker image/container names (`netpulse-*`), systemd units
+> (`netpulse.service`, `netpulse-agent.service`), the `netpulse-net` bridge,
+> `./netpulse.sh`, Python class names (`NetPulseUser`), and the GitHub repo
+> (`travisjohnsonga/netpulse`). Agent binaries stay `netpulse-agent` until the
+> next CI build (then `spane-agent-*`).
+
+spane — push-first, open-source infrastructure-visibility platform: gRPC/gNMI streaming telemetry,
 config compliance, CVE intel, lifecycle, log anomaly detection, unified risk scoring.
 
 Stack: Python 3.13, Django 6.0 + DRF + Channels (backend), React + TypeScript + Vite + Tailwind +
@@ -24,8 +34,8 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~1574 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7.
 
-**Recently completed (agent + servers session):** NetPulse Agent end-to-end —
-OpenBao PKI auto-setup (`setup_agent_pki`: `pki` mount + "NetPulse Agent CA" EC
+**Recently completed (agent + servers session):** spane Agent end-to-end —
+OpenBao PKI auto-setup (`setup_agent_pki`: `pki` mount + "spane agent ca" EC
 P-384 root + `agent` role + policy; CA at `GET /api/agents/ca-certificate/`) ·
 nginx **mTLS termination** for agent ingestion (server-level `ssl_verify_client
 optional` against the agent CA, enforced per-location; `X-Agent-Cert-Serial` →
@@ -138,7 +148,7 @@ Network Devices, Compliance, System) · Audit log now uses real data (40+ event 
 Topology shows ALL devices (offline = red) · all CodeQL HIGH alerts resolved · ReadTheDocs (MkDocs +
 Material theme, manual GitHub webhook).
 
-**Recently completed:** default admin password `NetPulse1!` + forced change on first login ·
+**Recently completed:** default admin password `spane1!` + forced change on first login ·
 ALLOWED_HOSTS auto-detection in setup.sh · web UI defaults to ports 80/443 · CodeQL workflow + all
 HIGH alerts fixed · MkDocs docs on ReadTheDocs · Email/SMTP integration (Settings → Integrations →
 Email) · 24h periodic hostname re-check (SNMP sysName/DNS) · generic seeded hostname-rule + site
@@ -371,7 +381,7 @@ DB + secret from OpenBao at request time. Pipeline enforces `allowed_domains`, a
 (`SSO_ALLOW_LOCAL_LOGIN=true`). Stage 1 = Google OAuth2 backend; Azure AD/Okta (2), SAML (3), LDAP (4),
 login buttons + settings UI (5) are planned.
 
-## NetPulse Agent (server monitoring)
+## spane Agent (server monitoring)
 
 Lightweight Go agent for Linux/Windows server monitoring (`agent/`). Secure by
 design: mTLS outbound only (443), no inbound ports, low-privilege user, unique
@@ -394,8 +404,8 @@ OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
   inventory.
 - **Cert issuance** is behind a mockable abstraction (`apps/agents/pki.py`).
 - **OpenBao PKI is set up automatically** by `manage.py setup_agent_pki`
-  (idempotent, run from entrypoint.sh): creates the `pki` mount, the "NetPulse
-  Agent CA" EC P-384 root, the `agent` signing role (server-authoritative
+  (idempotent, run from entrypoint.sh): creates the `pki` mount, the "spane
+  agent ca" EC P-384 root, the `agent` signing role (server-authoritative
   CN/SANs via `use_csr_*=false`), and the `netpulse-agent-pki` policy. The CA
   PEM is served at `GET /api/agents/ca-certificate/` (public). Binaries are
   served at `/agent/{install,download/<platform>}` from `settings.AGENT_DIR`.
@@ -437,7 +447,7 @@ HTTPS. **Remaining agent gaps (genuinely pending):**
    GitHub Release). The mounted `agent/dist/` must be repopulated to ship new
    agent behaviour (e.g. role auto-enable).
 3. **Agent Phase-2 (NOT built):** process monitoring, log forwarding, Windows
-   Event Log collection, custom PowerShell role checks (see the NetPulse Agent
+   Event Log collection, custom PowerShell role checks (see the spane Agent
    section's "Infra follow-up").
 
 ### Collector (ingest) service builds — verify next session

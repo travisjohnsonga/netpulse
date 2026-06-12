@@ -1023,7 +1023,7 @@ export async function netboxPreview(payload: { netbox_url: string; api_key: stri
   return data
 }
 
-// ── NetPulse Agents ───────────────────────────────────────────────────────────
+// ── spane Agents ───────────────────────────────────────────────────────────
 
 export interface Agent {
   id: string

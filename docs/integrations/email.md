@@ -1,6 +1,6 @@
 # Email / SMTP Integration
 
-Configure outbound SMTP so NetPulse can send alert email. Configure under
+Configure outbound SMTP so spane can send alert email. Configure under
 **Settings → Integrations → Email**. The SMTP password is stored in OpenBao
 (`netpulse/integrations/smtp`), never in the database.
 

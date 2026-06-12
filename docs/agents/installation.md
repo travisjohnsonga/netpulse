@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- A running, reachable NetPulse server (HTTPS)
+- A running, reachable spane server (HTTPS)
 - An enrollment token (Settings → Agents → Generate Token)
-- Outbound HTTPS (port 443) from the server to NetPulse
+- Outbound HTTPS (port 443) from the server to spane
 
 !!! note "Always use the `https://` server URL"
     nginx redirects `http → https`, and a redirected POST would drop the

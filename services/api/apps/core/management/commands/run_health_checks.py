@@ -115,7 +115,7 @@ class HealthCheckRunner:
     def _render_console(results: list[CheckResult]) -> str:
         lines = [
             "╔══════════════════════════════════════╗",
-            "║     NetPulse Health Check Report     ║",
+            "║       spane Health Check Report      ║",
             "╚══════════════════════════════════════╝",
             "",
         ]

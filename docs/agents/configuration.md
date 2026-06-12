@@ -5,7 +5,7 @@ The agent reads a JSON config file written during enrollment.
 | OS | Path |
 |----|------|
 | Linux   | `/etc/netpulse-agent/config.json` |
-| Windows | `C:\ProgramData\NetPulse\config.json` |
+| Windows | `C:\ProgramData\spane\config.json` |
 
 ## Reference
 

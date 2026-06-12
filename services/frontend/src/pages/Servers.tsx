@@ -98,7 +98,7 @@ export default function Servers() {
           <div className="text-4xl mb-3">🖥️</div>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">No servers monitored yet</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
-            Install the NetPulse Agent on your Linux or Windows servers to see CPU,
+            Install the spane Agent on your Linux or Windows servers to see CPU,
             memory, disk and service metrics here.
           </p>
           <Link to="/settings/agents" className="inline-block px-4 py-2 text-sm bg-blue-600 text-white rounded-lg">

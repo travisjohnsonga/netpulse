@@ -4,7 +4,7 @@
 
 Each agent has a unique EC P-384 certificate:
 
-- Issued by NetPulse's internal CA ("NetPulse Agent CA", OpenBao PKI engine)
+- Issued by spane's internal CA ("spane agent ca", OpenBao PKI engine)
 - Issued for 1 year
 - Revocable from **Settings → Agents** (revoke marks the agent and stops
   accepting its pushes)

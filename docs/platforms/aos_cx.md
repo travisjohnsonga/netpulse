@@ -1,9 +1,9 @@
 # HPE AOS-CX Integration Guide
 
-NetPulse supports HPE Aruba Networking **AOS-CX** switches (platform `aos_cx`),
+spane supports HPE Aruba Networking **AOS-CX** switches (platform `aos_cx`),
 validated against a real **HPE 6100** (`wco2-idf5-asw-01`). AOS-CX is one of the
 few platforms with full **environment telemetry** (CPU/memory/temperature/fans/
-PSU) in NetPulse — all over SNMP.
+PSU) in spane — all over SNMP.
 
 > 🔒 This guide contains **no credentials**. Store device credentials in OpenBao
 > (Settings → Credentials) or, for local lab reference, in the gitignored
@@ -46,7 +46,7 @@ PSU) in NetPulse — all over SNMP.
 - **OS version**: trailing firmware token (`PL.10.16.1030`).
 - **Serial**: `entPhysicalSerialNum` via **WALK** — the chassis row sits at a
   vendor index (e.g. `112001`), **not** `.1`, so a scalar `.1` GET comes back
-  empty. NetPulse walks the column and takes the first real value.
+  empty. spane walks the column and takes the first real value.
 
 ## Environment Telemetry (SNMP-only)
 
@@ -114,7 +114,7 @@ the per-interface LLDP method below instead.
 
 ## LLDP neighbors
 
-NetPulse collects LLDP neighbors and persists them to the `LLDPNeighbor` table
+spane collects LLDP neighbors and persists them to the `LLDPNeighbor` table
 (scheduler every 30 min, plus the manual `collect_lldp` management command). The
 **Network → LLDP Neighbors** page lists neighbors; the **undiscovered-neighbors**
 view filters by capability and hostname and excludes phones/workstations by
@@ -184,7 +184,7 @@ The lab 6100 is Aruba Central-managed
 ## gNMI (planned)
 
 AOS-CX supports native OpenConfig gNMI dial-out on **port 8443** (TerminAttr not
-needed). NetPulse's ingest-grpc currently targets Cisco MDT on 57400; AOS-CX gNMI
+needed). spane's ingest-grpc currently targets Cisco MDT on 57400; AOS-CX gNMI
 support is planned. OpenConfig paths:
 
 ```
@@ -201,7 +201,7 @@ BGP:        /network-instances/network-instance/protocols/protocol/bgp/neighbors
 | Symptom                                  | Cause / Fix |
 |------------------------------------------|-------------|
 | "Wrong SNMP PDU digest"                  | Wrong SNMPv3 key in OpenBao — fix in Settings → Credentials. |
-| Serial/model empty over SNMP             | Chassis at a vendor index, not `.1` — NetPulse WALKs the column. |
+| Serial/model empty over SNMP             | Chassis at a vendor index, not `.1` — spane WALKs the column. |
 | Fan RPM / PSU watts show 0 / -1          | 6100 limitation — presence/count only. |
 | REST enrichment fails (400/401)          | 6100 has no REST API — falls back to SNMP automatically. |
 | Constant `hpe-restd` log noise           | Normal Aruba Central keepalives — filter with Log Filters. |

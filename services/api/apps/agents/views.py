@@ -186,7 +186,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
             device = Device.objects.create(
                 hostname=agent.hostname, ip_address=ip, management_ip=ip,
                 platform=Device.Platform.OTHER, status=Device.Status.ACTIVE,
-                site=token.site, notes="Monitored by NetPulse Agent",
+                site=token.site, notes="Monitored by spane Agent",
             )
         elif token.site_id and not device.site_id:
             device.site = token.site

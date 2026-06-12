@@ -45,7 +45,7 @@ class TeamViewSet(viewsets.ModelViewSet):
             return Response({"ok": False, "error": "no Discord webhook configured"},
                             status=status.HTTP_400_BAD_REQUEST)
         payload = channels.discord_embed(
-            "NetPulse Test Notification",
+            "spane Test Notification",
             "Discord alerting is configured correctly.", "info")
         ok, err = channels.send_discord(team.discord_webhook_url, payload)
         return Response({"ok": ok, "error": err})

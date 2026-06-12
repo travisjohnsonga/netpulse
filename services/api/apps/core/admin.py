@@ -10,8 +10,8 @@ class NetPulseUserAdmin(UserAdmin):
     list_filter   = ("role", "is_staff", "is_active")
     search_fields = ("username", "email")
     fieldsets     = UserAdmin.fieldsets + (
-        ("NetPulse", {"fields": ("role",)}),
+        ("spane", {"fields": ("role",)}),
     )
     add_fieldsets = UserAdmin.add_fieldsets + (
-        ("NetPulse", {"fields": ("role",)}),
+        ("spane", {"fields": ("role",)}),
     )

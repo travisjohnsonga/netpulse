@@ -26,7 +26,7 @@ export default function VersionBadge() {
           'text-xs px-2 py-0.5 rounded-full cursor-default',
           upd ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-800 text-gray-500',
         )}
-        title={upd ? 'Update available' : `NetPulse v${v.current_version}`}
+        title={upd ? 'Update available' : `spane v${v.current_version}`}
       >
         v{v.current_version}{upd ? ' ↑' : ''}
       </span>

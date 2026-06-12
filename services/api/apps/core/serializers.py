@@ -113,7 +113,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
 # The fixed default password the initial admin is seeded with — must be changed
 # on first login and may never be chosen as the new password.
-DEFAULT_ADMIN_PASSWORD = "NetPulse1!"
+DEFAULT_ADMIN_PASSWORD = "spane1!"
 
 
 class ChangePasswordSerializer(serializers.Serializer):

@@ -86,7 +86,7 @@ export default function Login() {
           <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
             <span className="text-white font-bold text-xl">NP</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">NetPulse</h1>
+          <h1 className="text-2xl font-bold text-white">spane</h1>
           <p className="text-gray-400 text-sm mt-1">Network Intelligence Platform</p>
         </div>
 
@@ -172,7 +172,7 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-gray-500 mt-6">
-          NetPulse — open source network intelligence
+          spane — unified infrastructure visibility
         </p>
       </div>
     </div>

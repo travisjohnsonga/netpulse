@@ -1,7 +1,7 @@
 """Initialise the OpenBao PKI secrets engine used to sign agent certificates.
 
 Idempotent — safe to run on every startup (wired into entrypoint.sh). Creates
-the ``pki`` mount, a self-signed root CA ("NetPulse Agent CA"), the ``agent``
+the ``pki`` mount, a self-signed root CA ("spane agent ca"), the ``agent``
 signing role, and the ``netpulse-agent-pki`` least-privilege policy. No-ops
 cleanly when OpenBao is disabled/unconfigured or sealed, so it never blocks the
 api container from starting.
@@ -14,7 +14,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
-CA_COMMON_NAME = "NetPulse Agent CA"
+CA_COMMON_NAME = "spane agent ca"
 CA_TTL = "87600h"   # 10y root
 ROLE_TTL = "8760h"  # 1y agent certs
 

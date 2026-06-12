@@ -48,7 +48,7 @@ _INTENTS: list[tuple[str, re.Pattern]] = [
 ]
 
 _HELP_TEXT = (
-    "NetPulse commands:\n"
+    "spane commands:\n"
     "• `status of <device>` — device status\n"
     "• `status of site <site>` — site status\n"
     "• `any alerts` — list active alerts\n"

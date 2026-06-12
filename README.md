@@ -1,14 +1,16 @@
-# NetPulse — Network Intelligence Platform
+# spane
+
+> **unified infrastructure visibility**
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Tests](https://img.shields.io/badge/tests-1135%20passing-green)
 ![Docker](https://img.shields.io/badge/docker-24%20services-blue)
 
-> Push-first, open source network intelligence platform.
-> Built for modern infrastructure, vendor-agnostic,
-> deployable on-prem via Docker Compose.
+> Unified infrastructure visibility platform. Monitor networks, servers, and
+> cloud infrastructure from a single pane of glass. Vendor-agnostic,
+> open source, deployable on-prem via Docker Compose.
 
-NetPulse handles gRPC/gNMI + Cisco MDT streaming telemetry (SNMP polling as
+spane handles gRPC/gNMI + Cisco MDT streaming telemetry (SNMP polling as
 fallback), config compliance and backup, CVE intelligence, lifecycle/EOL
 tracking, log anomaly detection, and unified risk scoring — all open source,
 all containerized.
@@ -28,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/travisjohnsonga/netpulse/main/scrip
 ```
 
 Requires: Ubuntu 22.04 or 24.04 LTS.
-Installs: Docker, Docker Compose, and NetPulse, then runs the interactive setup.
+Installs: Docker, Docker Compose, and spane, then runs the interactive setup.
 
 > **If the installer appears to hang**, it is almost always waiting for your
 > `sudo` password (the curl pipe can't forward the prompt cleanly). Cache your
@@ -134,11 +136,11 @@ Other Linux distributions may work but are not tested or supported.
 ### Optional but Recommended
 - **nmap** (for network discovery on the host): `sudo apt-get install nmap`.
   Also installed inside the containers automatically.
-- **Python 3.11+** — for helper scripts only; not required to run NetPulse.
+- **Python 3.11+** — for helper scripts only; not required to run spane.
 
 ### Network Requirements
 
-Ports that must be accessible on the NetPulse server:
+Ports that must be accessible on the spane server:
 
 | Port  | Protocol | Service                    | Direction              |
 |-------|----------|----------------------------|------------------------|
@@ -152,7 +154,7 @@ Ports that must be accessible on the NetPulse server:
 
 #### Container NAT (automatic)
 
-NetPulse automatically configures iptables to NAT container traffic through the
+spane automatically configures iptables to NAT container traffic through the
 host IP. This ensures network devices see the host server IP for SNMP and SSH
 connections.
 
@@ -178,7 +180,7 @@ sudo ./netpulse.sh fix-nat
 For full telemetry support, network devices need:
 - **SNMP v3** configured (recommended) or v2c
 - **SSH** access for config collection
-- **Syslog** forwarding to the NetPulse IP
+- **Syslog** forwarding to the spane IP
 - **gNMI/MDT** (optional, for streaming telemetry)
   - Cisco IOS-XE: MDT on port 57400
   - See **Settings → Telemetry Configuration** for device-specific
@@ -203,7 +205,7 @@ creates the admin account, and configures all services.
 
 > **Note:** the admin password must be 12+ characters.
 
-### 3. Start NetPulse
+### 3. Start spane
 ```bash
 docker compose up -d
 ```
@@ -237,7 +239,7 @@ Log in with the admin credentials set during setup.
 Default (standard ports):
 ```
 http://YOUR_IP    → redirects to HTTPS
-https://YOUR_IP   → NetPulse UI
+https://YOUR_IP   → spane UI
 ```
 Binding 80/443 needs root or `CAP_NET_BIND_SERVICE` — Docker handles this when
 it publishes the ports, so no extra config is needed. Add a proper TLS cert
@@ -277,7 +279,7 @@ restarts.
 
 ## Auto-start on Boot (Linux)
 
-To start NetPulse automatically on reboot:
+To start spane automatically on reboot:
 
 ```bash
 ./netpulse.sh install-service
@@ -301,7 +303,7 @@ sudo journalctl -u netpulse -f    # follow boot logs
 ```bash
 sudo tee /etc/systemd/system/netpulse.service << 'EOF'
 [Unit]
-Description=NetPulse Network Intelligence Platform
+Description=spane Network Intelligence Platform
 Requires=docker.service
 After=docker.service network-online.target
 
@@ -325,7 +327,7 @@ sudo systemctl enable netpulse.service
 
 ---
 
-## Updating NetPulse
+## Updating spane
 
 ```bash
 ./scripts/update.sh
@@ -426,7 +428,7 @@ Per-platform guides live in [docs/platforms/](docs/platforms/).
 
 ## SNMP MIBs
 
-NetPulse resolves SNMP OIDs to human-readable names using MIB files under
+spane resolves SNMP OIDs to human-readable names using MIB files under
 `mibs/`. Download the publicly available vendor + standard MIBs with:
 
 ```bash

@@ -109,11 +109,11 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 <span className="text-3xl">🌐</span>
               </div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-3">
-                Welcome to NetPulse
+                Welcome to spane
               </h1>
               <p className="text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
-                Your open-source network intelligence platform. NetPulse gives you real-time
-                visibility into your network infrastructure — telemetry, alerts, CVEs, and lifecycle
+                Unified infrastructure visibility. spane gives you real-time
+                insight across networks, servers, and cloud — telemetry, alerts, CVEs, and lifecycle
                 management in one place.
               </p>
               <p className="text-sm text-gray-400 dark:text-gray-500 mb-8">

@@ -25,7 +25,7 @@ export default function ApiDocs() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">API Docs</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-          Interactive OpenAPI reference for the NetPulse API. Authenticated with your current session.
+          Interactive OpenAPI reference for the spane API. Authenticated with your current session.
         </p>
       </div>
 

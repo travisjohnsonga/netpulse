@@ -80,7 +80,7 @@ export default function Certificates() {
     <div>
       <SectionHeader
         title="Certificates"
-        description="NetPulse's own HTTPS server certificate — the cert nginx serves the web UI and API with. This is not for network devices."
+        description="spane's own HTTPS server certificate — the cert nginx serves the web UI and API with. This is not for network devices."
       />
 
       {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4 max-w-3xl">{error}</div>}

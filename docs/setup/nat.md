@@ -1,8 +1,8 @@
 # Docker NAT (Container → Host IP)
 
-NetPulse container traffic must appear to come from the **host IP**, not the
+spane container traffic must appear to come from the **host IP**, not the
 Docker bridge subnet, so that network devices which restrict management by source
-IP accept SNMP/SSH/REST from NetPulse.
+IP accept SNMP/SSH/REST from spane.
 
 This is applied automatically by `scripts/setup.sh`. This guide explains what it
 does, why it's required, and how to fix it if it stops working (e.g. after a
@@ -35,7 +35,7 @@ sudo iptables -t nat -A POSTROUTING \
   -j MASQUERADE
 ```
 
-- Applied on the NetPulse bridge subnet — network `netpulse_netpulse-net`
+- Applied on the spane bridge subnet — network `netpulse_netpulse-net`
   (default `172.18.0.0/16`), **not** `netpulse_default`.
 - Idempotent shared logic lives in `scripts/nat.sh`
   (`apply_docker_nat` / `detect_docker_subnet`).

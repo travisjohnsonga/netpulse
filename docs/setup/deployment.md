@@ -39,11 +39,11 @@ optional NVD key, Cisco PSIRT, SMTP. Reads `.env.example` as template, writes
 `docker compose pull` + `up -d` and prints access URLs.
 
 After `.env` is written it can pull images and start the stack, then prints:
-`NetPulse is available at http://{COLLECTOR_IP}` and API docs at `:8000/api/docs/`.
+`spane is available at http://{COLLECTOR_IP}` and API docs at `:8000/api/docs/`.
 
 ### First login
 
-The seeded admin starts with the fixed default password **`NetPulse1!`** and is
+The seeded admin starts with the fixed default password **`spane1!`** and is
 flagged `must_change_password` — the UI **forces a password change on first
 login** before anything else is accessible. setup.sh prints (and saves to
 `~/netpulse-credentials.txt`, mode 0600) the URL / username / password.
@@ -94,7 +94,7 @@ docker compose exec openbao bao operator unseal   # run 3× with different unsea
 
 ## systemd boot service
 
-NetPulse runs as a systemd service (`/etc/systemd/system/netpulse.service`,
+spane runs as a systemd service (`/etc/systemd/system/netpulse.service`,
 `Requires=docker.service`, `WorkingDirectory=/home/<user>/netpulse`):
 
 ```bash

@@ -132,7 +132,7 @@ export default function Checks() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Service Checks</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            Agentless synthetic monitoring — NetPulse probes services externally.
+            Agentless synthetic monitoring — spane probes services externally.
           </p>
         </div>
         <button

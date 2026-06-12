@@ -169,7 +169,7 @@ def process_alert_event(alert_event) -> dict:
 
     notified = 0
     for user, email in step_email_recipients(step):
-        ok, err = channels.send_email(email, f"[NetPulse] {title}", body)
+        ok, err = channels.send_email(email, f"[spane] {title}", body)
         AlertNotification.objects.create(
             alert_event=alert_event, escalation_step=step, user=user, team=step.notify_team,
             channel="email", status=AlertNotification.Status.SENT if ok else AlertNotification.Status.FAILED,

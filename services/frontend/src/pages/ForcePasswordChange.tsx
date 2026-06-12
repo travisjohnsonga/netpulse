@@ -63,7 +63,7 @@ export default function ForcePasswordChange() {
           <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
             <span className="text-white font-bold text-xl">NP</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">NetPulse</h1>
+          <h1 className="text-2xl font-bold text-white">spane</h1>
           <p className="text-gray-400 text-sm mt-1">Set a new password</p>
         </div>
 
@@ -83,7 +83,7 @@ export default function ForcePasswordChange() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Current password</label>
               <input type="password" autoComplete="current-password" value={current}
-                onChange={(e) => setCurrent(e.target.value)} className={input} placeholder="NetPulse1!" disabled={loading} />
+                onChange={(e) => setCurrent(e.target.value)} className={input} placeholder="spane1!" disabled={loading} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New password</label>

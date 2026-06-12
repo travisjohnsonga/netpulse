@@ -187,7 +187,7 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
                   ℹ️ Pick a profile with <strong>HTTPS</strong> credentials whose username/password match a UniFi
                   controller <strong>local admin</strong> account (separate from your UI.com cloud API key). Recommended:
                   create a read-only local admin in UniFi Network → Admins &amp; Users → Add Admin (Local Access Only),
-                  then add a NetPulse credential profile with HTTPS enabled under Settings → Credentials.
+                  then add a spane credential profile with HTTPS enabled under Settings → Credentials.
                 </p>
               </>
             )}
@@ -198,7 +198,7 @@ export default function UnifiSettingsModal({ onClose }: { onClose: () => void })
             <p className="text-xs text-gray-400 mt-0.5">Find in UniFi → Settings → System → Advanced → Site ID.</p>
           </div>
           <div>
-            <label className={label}>Assign to Site (NetPulse)</label>
+            <label className={label}>Assign to Site (spane)</label>
             <select className={input} value={d.site ?? ''} onChange={(e) => set({ site: e.target.value ? Number(e.target.value) : null })}>
               <option value="">— None —</option>
               {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}

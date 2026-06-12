@@ -28,7 +28,7 @@ export default function DataRetention() {
 
   return (
     <div>
-      <SectionHeader title="Data Retention" description="How long NetPulse keeps historical records before pruning them." />
+      <SectionHeader title="Data Retention" description="How long spane keeps historical records before pruning them." />
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-5 max-w-xl space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Audit Log retention</label>

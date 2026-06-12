@@ -1,6 +1,8 @@
-# NetPulse
+# spane
 
-**Push-first, open source network intelligence platform.**
+**unified infrastructure visibility**
+
+Monitor networks, servers, and cloud infrastructure from a single pane of glass.
 
 ## Quick Install
 

@@ -76,7 +76,7 @@ class EmailSettings(TimestampedModel):
     use_tls = models.BooleanField(default=True)
     use_ssl = models.BooleanField(default=False)
     from_email = models.CharField(max_length=255, blank=True)
-    from_name = models.CharField(max_length=128, default="NetPulse")
+    from_name = models.CharField(max_length=128, default="spane")
     enabled = models.BooleanField(default=False)
 
     class Meta:

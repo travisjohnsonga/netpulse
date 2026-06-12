@@ -45,7 +45,7 @@ def register_local_collector() -> Collector:
     from apps.core.views import _netpulse_version
 
     defaults = {
-        "name": "NetPulse Local",
+        "name": "spane Local",
         "hostname": socket.getfqdn(),
         "collector_ip": _server_ip(),
         "version": _netpulse_version(),

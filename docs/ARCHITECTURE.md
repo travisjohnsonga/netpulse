@@ -1,4 +1,4 @@
-# NetPulse Architecture & Design Document
+# spane Architecture & Design Document
 
 > This document captures the full architecture, design decisions, and requirements
 > defined during the initial project design session. It serves as the authoritative
@@ -12,7 +12,7 @@ A push-first, open source network intelligence platform that solves real problem
 ignored by traditional monitoring tools. Built for modern infrastructure, vendor-agnostic,
 deployable on-prem via Docker Compose or cloud-hosted via Kubernetes.
 
-**Key Differentiator:** Most platforms poll devices on a schedule. NetPulse is built
+**Key Differentiator:** Most platforms poll devices on a schedule. spane is built
 around streaming telemetry (gRPC/gNMI, InfluxDB line protocol, OTLP) with polling
 as a fallback for legacy devices only. This is confirmed working against a real
 device (Cisco C8000V): SNMP polling and streaming telemetry run side by side, with
@@ -175,10 +175,10 @@ Executive summary view across entire estate.
 
 ---
 
-### 10. NetPulse Remote Collector (On-Prem → Central)
+### 10. spane Remote Collector (On-Prem → Central)
 
 A remote collector polls local devices and forwards their telemetry to a central
-NetPulse over a **single outbound mTLS connection** (443/8443) — no inbound
+spane over a **single outbound mTLS connection** (443/8443) — no inbound
 firewall rules on the customer network. This section reflects the design as
 **built and validated tonight**; maturity is marked per piece. Detailed proofs
 live in `scripts/t0`–`scripts/t3` (NATS substrate harnesses) and the
@@ -354,7 +354,7 @@ Enterprise authentication via external identity providers. Local admin login is
 
 ## Deployment Modes
 
-NetPulse uses a monorepo with multiple Docker Compose profiles for different
+spane uses a monorepo with multiple Docker Compose profiles for different
 deployment scenarios.
 
 ### Supported host OS
@@ -368,7 +368,7 @@ one-line installer (`scripts/install.sh`) only provisions prerequisites via
 
 ### Mode 1: Full Stack (default)
 
-Complete NetPulse installation with all services including UI, API, and all
+Complete spane installation with all services including UI, API, and all
 engines.
 
 ```bash
@@ -378,11 +378,11 @@ docker compose up -d
 ```
 
 - **Services:** all 24 services
-- **Use case:** Primary NetPulse server
+- **Use case:** Primary spane server
 
 ### Mode 2: Collector Only  [PLANNED — substrate validated, agent not built]
 
-Lightweight collector that forwards telemetry to a central NetPulse server. No
+Lightweight collector that forwards telemetry to a central spane server. No
 UI, no DB, no processing engines. The transport substrate is **validated**
 (`scripts/t0`–`scripts/t3`); the on-edge agent and packaging below are **not yet
 built** — the compose file and `setup.sh` role do not exist.
@@ -414,7 +414,7 @@ When collector mode is implemented, `setup.sh` will ask:
 
 ```
 Select deployment role:
-1) Full Stack — complete NetPulse server
+1) Full Stack — complete spane server
    (UI, API, all engines, local storage)
 2) Collector — lightweight telemetry forwarder
    (no UI, forwards to central server)
@@ -437,7 +437,7 @@ COLLECTOR_SITE=dc-west
 
 ### Collector architecture (future)
 
-See the **NetPulse Collector** section above. Implementation planned post v1.0
+See the **spane Collector** section above. Implementation planned post v1.0
 release.
 
 ---
@@ -574,7 +574,7 @@ Each microservice has its own AppRole with minimal Vault policy:
 
 ### Container NAT
 
-All NetPulse container traffic is NAT'd to the host IP address using iptables
+All spane container traffic is NAT'd to the host IP address using iptables
 MASQUERADE.
 
 **Rationale:**
@@ -687,7 +687,7 @@ MASQUERADE.
 - [x] Unified risk score (stub)
 
 ### Phase 5 — Polish & Community
-- [ ] NetPulse Collector (on-prem agent)
+- [ ] spane Collector (on-prem agent)
 - [ ] Helm chart for Kubernetes
 - [ ] Documentation site
 - [ ] Public announcement
@@ -717,7 +717,7 @@ SNMP polling of the same metrics can be skipped (adaptive polling, planned).
 
 ## Service Checks (Agentless Synthetic Monitoring)
 
-NetPulse probes services externally — no agent on the target.
+spane probes services externally — no agent on the target.
 
 - **Model**: `ServiceCheck` (type, host/port, interval, optional device + site
   association, thresholds, state) and `CheckResult` (per-probe status/latency).
@@ -836,7 +836,7 @@ See [docs/platforms/sonicwall.md](platforms/sonicwall.md) and
   - NetFlow: configured
 
 ### SNMP Security
-NetPulse generates SNMPv3 authPriv configurations by default. SNMPv2c community
+spane generates SNMPv3 authPriv configurations by default. SNMPv2c community
 strings are transmitted in plaintext and should not be used in production
 environments; the UI shows a warning when an SNMPv2c credential is configured.
 Per-platform CLI token differences are handled by the generator (IOS-XE
@@ -1094,7 +1094,7 @@ Every 60-300 seconds:
 GET /api/v1/devices → normalize → NATS
 
 **Mode 2 — Webhooks** (preferred where supported)
-Vendor pushes events to NetPulse endpoint:
+Vendor pushes events to spane endpoint:
 POST /webhooks/{vendor} → normalize → NATS
 Meraki, Mist, and UniFi all support webhooks → near real-time
 
@@ -1122,7 +1122,7 @@ Plugin model means community can add new vendors without touching core platform.
 
 ### MSP Consideration
 Meraki and Mist have multi-org APIs — one credential set manages multiple
-customer organizations. Critical for MSP deployments of NetPulse where a
+customer organizations. Critical for MSP deployments of spane where a
 single platform monitors multiple customers simultaneously.
 
 ### Integration with Platform Features
@@ -1155,12 +1155,12 @@ single platform monitors multiple customers simultaneously.
 ## ChatOps Integration
 
 ### Overview
-Engineers query NetPulse directly from chat platforms using natural language.
+Engineers query spane directly from chat platforms using natural language.
 No need to open a dashboard for quick health checks.
 
 ### Example Interaction
 Engineer: "@netpulse status of router-a"
-NetPulse: 🟡 Router-A (WAN Edge | Datacenter-1)
+spane: 🟡 Router-A (WAN Edge | Datacenter-1)
 ├── Uptime: 47 days
 ├── CPU: 34% (normal)
 ├── WAN Interface: 78% ⚠️ (trending to capacity)
@@ -1196,7 +1196,7 @@ Push alerts to designated channels without being asked:
 - EOL approaching deadlines
 
 ### Security
-- Chat user identity mapped to NetPulse RBAC
+- Chat user identity mapped to spane RBAC
 - Sensitive data never in chat responses
 - Action commands require explicit approval
 - All queries audit logged

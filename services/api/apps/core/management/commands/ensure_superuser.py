@@ -23,7 +23,7 @@ from django.db import IntegrityError
 
 # Valid default — Django's EmailField rejects address with no TLD (e.g.
 # "admin@netpulse"), which would otherwise block every profile save for the user.
-DEFAULT_ADMIN_EMAIL = "admin@netpulse.local"
+DEFAULT_ADMIN_EMAIL = "admin@spane.app"
 
 
 def _is_valid_email(value: str) -> bool:

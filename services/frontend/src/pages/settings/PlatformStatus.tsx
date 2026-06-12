@@ -66,7 +66,7 @@ export default function PlatformStatus() {
     <div>
       <SectionHeader
         title="Platform Status"
-        description="Internal NetPulse service health"
+        description="Internal spane service health"
       />
 
       {error && (
@@ -128,7 +128,7 @@ export default function PlatformStatus() {
 
       <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">
         Auto-refreshes every 30s
-        {health?.version && health.version !== 'unknown' ? ` · NetPulse ${health.version}` : ''}
+        {health?.version && health.version !== 'unknown' ? ` · spane ${health.version}` : ''}
       </p>
     </div>
   )

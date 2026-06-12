@@ -21,7 +21,7 @@ function previewStrip(hostname: string, mode: 'strip' | 'full', suffix: string):
 }
 
 export default function General() {
-  const [name, setName] = useState('NetPulse')
+  const [name, setName] = useState('spane')
   const [tz, setTz] = useState('UTC')
   const [retention, setRetention] = useState('90')
   const [saved, setSaved] = useState(false)

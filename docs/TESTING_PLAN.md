@@ -1,6 +1,6 @@
-# NetPulse Testing Plan
+# spane Testing Plan
 
-> Systematic test procedure for validating NetPulse after fresh install,
+> Systematic test procedure for validating spane after fresh install,
 > upgrades, or factory reset. Follow in order — each section builds on the
 > previous.
 
@@ -9,7 +9,7 @@
 ## Pre-Test Setup
 
 ### Environment Requirements
-- NetPulse server running (all services Up)
+- spane server running (all services Up)
 - At minimum 1 Cisco IOS-XE device
 - Recommended: router1, router2, fortinet1
 - Web browser (Chrome/Firefox recommended)

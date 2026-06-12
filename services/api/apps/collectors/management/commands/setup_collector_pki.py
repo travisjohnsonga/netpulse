@@ -38,7 +38,7 @@ class Command(BaseCommand):
             client.sys.enable_secrets_engine("pki", path=root,
                                              config={"max_lease_ttl": "87600h"})
             client.secrets.pki.generate_root(
-                type="internal", common_name="NetPulse Collector Root CA",
+                type="internal", common_name="spane collector root ca",
                 mount_point=root, extra_params={"ttl": "87600h"})
             self.stdout.write(self.style.SUCCESS(f"root PKI '{root}' + root CA created"))
         else:
@@ -49,10 +49,10 @@ class Command(BaseCommand):
             client.sys.enable_secrets_engine("pki", path=inter,
                                              config={"max_lease_ttl": "43800h"})
             csr = client.secrets.pki.generate_intermediate(
-                type="internal", common_name="NetPulse Collector Intermediate CA",
+                type="internal", common_name="spane collector intermediate ca",
                 mount_point=inter)["data"]["csr"]
             signed = client.secrets.pki.sign_intermediate(
-                csr=csr, common_name="NetPulse Collector Intermediate CA",
+                csr=csr, common_name="spane collector intermediate ca",
                 mount_point=root, extra_params={"ttl": "43800h"})["data"]["certificate"]
             client.secrets.pki.set_signed_intermediate(certificate=signed, mount_point=inter)
             self.stdout.write(self.style.SUCCESS(

@@ -1,7 +1,7 @@
 # UniFi Integration
 
-Import Ubiquiti UniFi-managed devices (APs, switches, gateways) into NetPulse.
-Each UniFi controller (often one per site) is registered once; NetPulse polls
+Import Ubiquiti UniFi-managed devices (APs, switches, gateways) into spane.
+Each UniFi controller (often one per site) is registered once; spane polls
 each enabled controller and imports its devices.
 
 Configure under **Settings → Integrations → UniFi**.
@@ -9,12 +9,12 @@ Configure under **Settings → Integrations → UniFi**.
 ## Cloud auto-discovery (recommended)
 
 Instead of adding every controller by hand, provide a single **UniFi Site
-Manager** API key and let NetPulse discover all your controllers.
+Manager** API key and let spane discover all your controllers.
 
 1. Generate an API key at **unifi.ui.com → Account → API Keys**.
-2. In NetPulse → Settings → Integrations → UniFi → **UniFi Cloud Account**, paste
+2. In spane → Settings → Integrations → UniFi → **UniFi Cloud Account**, paste
    the key and click **Test Connection** (shows the number of hosts found).
-3. Click **Discover Controllers**. NetPulse calls the Site Manager API
+3. Click **Discover Controllers**. spane calls the Site Manager API
    (`https://api.ui.com/v1/hosts`, paginated) and creates/updates a controller
    record per host — host IP from `reportedState.ipAddresses`, port `443` for
    consoles (UDM/UDR) or `8443` for CloudKeys.
@@ -36,7 +36,7 @@ For each controller, set:
   at `netpulse/integrations/unifi/{id}`).
 - **UniFi Site ID** — `default` unless you renamed it (UniFi → Settings → System
   → Advanced → Site ID).
-- **Assign to Site** — the NetPulse site imported devices are placed in.
+- **Assign to Site** — the spane site imported devices are placed in.
 - **Verify SSL** — off by default (controllers use self-signed certs).
 
 Use **Test Connection** to verify and see the device count.

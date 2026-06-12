@@ -191,7 +191,7 @@ function RegisterModal({ onClose }: { onClose: () => void }) {
       footer={<button onClick={onClose} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Done</button>}
     >
       <div className="space-y-3 text-sm text-gray-600 dark:text-gray-400">
-        <p>Generate a one-time registration token, then start the collector with it. NetPulse issues an mTLS certificate via OpenBao PKI and invalidates the token after first use.</p>
+        <p>Generate a one-time registration token, then start the collector with it. spane issues an mTLS certificate via OpenBao PKI and invalidates the token after first use.</p>
         <div className="bg-gray-900 text-gray-100 rounded-lg p-3 font-mono text-xs overflow-x-auto">
           docker run -d --name netpulse-collector \<br />
           &nbsp;&nbsp;-e NETPULSE_CLOUD_URL=https://cloud.netpulse.io \<br />

@@ -74,7 +74,7 @@ export default function ComplianceTemplates() {
     <div>
       <SectionHeader
         title="Compliance Templates"
-        description="Jinja2 templates of expected configuration, scoped by role / platform / site. NetPulse diffs each device's running config against the rendered template and flags MISSING / DRIFT / EXTRA lines."
+        description="Jinja2 templates of expected configuration, scoped by role / platform / site. spane diffs each device's running config against the rendered template and flags MISSING / DRIFT / EXTRA lines."
         action={
           <div className="flex gap-2">
             <button onClick={runAll} disabled={running}

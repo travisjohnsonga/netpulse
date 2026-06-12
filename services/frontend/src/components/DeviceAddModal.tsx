@@ -462,7 +462,7 @@ export default function DeviceAddModal({ onClose, onCreated, initial }: {
           {/* Step 2 — Credentials */}
           {step === 1 && (
             <div className="space-y-3">
-              <p className="text-sm text-gray-500 dark:text-gray-400">How should NetPulse connect to this device? SSH is required for platform auto-detection. Secrets are stored in OpenBao.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">How should spane connect to this device? SSH is required for platform auto-detection. Secrets are stored in OpenBao.</p>
               <div className="flex gap-4 text-sm">
                 <label className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300">
                   <input type="radio" checked={credMode === 'existing'} onChange={() => setCredMode('existing')} />

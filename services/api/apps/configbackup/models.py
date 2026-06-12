@@ -43,7 +43,7 @@ class ConfigBackupSettings(TimestampedModel):
     git_auth_method = models.CharField(max_length=20, choices=AuthMethod.choices, blank=True)
     # OpenBao path for git credentials — never the credential itself.
     git_vault_path = models.CharField(max_length=512, blank=True)
-    git_commit_author = models.CharField(max_length=255, default="NetPulse Config Manager")
+    git_commit_author = models.CharField(max_length=255, default="spane Config Manager")
     git_commit_email = models.EmailField(blank=True)
     git_sync_frequency = models.CharField(max_length=20, choices=SyncFrequency.choices, default=SyncFrequency.ON_BACKUP)
 

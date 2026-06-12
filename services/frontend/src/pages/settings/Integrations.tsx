@@ -42,7 +42,7 @@ const CATEGORIES: Category[] = [
   },
   {
     title: 'Alert Channels',
-    description: 'Where NetPulse delivers alert notifications.',
+    description: 'Where spane delivers alert notifications.',
     items: [
       { id: 'slack', name: 'Slack', description: 'Post alerts to Slack channels', icon: '💬', summary: '#netops', fields: [{ key: 'webhook', label: 'Incoming Webhook URL', secret: true }] },
       { id: 'teams', name: 'Microsoft Teams', description: 'Send alerts to Teams channels', icon: '👥', fields: [{ key: 'webhook', label: 'Incoming Webhook URL', secret: true }] },
@@ -53,7 +53,7 @@ const CATEGORIES: Category[] = [
   },
   {
     title: 'ChatOps',
-    description: 'Conversational queries against NetPulse data.',
+    description: 'Conversational queries against spane data.',
     items: [
       { id: 'slack_bot', name: 'Slack Bot', description: 'Query devices & alerts from Slack', icon: '🤖', fields: [{ key: 'bot_token', label: 'Bot Token', secret: true }, { key: 'signing_secret', label: 'Signing Secret', secret: true }] },
       { id: 'teams_bot', name: 'Teams Bot', description: 'Query from Microsoft Teams', icon: '🤖', fields: [{ key: 'app_id', label: 'App ID' }, { key: 'app_password', label: 'App Password', secret: true }] },

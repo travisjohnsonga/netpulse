@@ -18,7 +18,7 @@ NBT_PREFIX_ERROR = (
     "Create a new token in NetBox if you only have a legacy token."
 )
 LEGACY_V1_ERROR = (
-    "This looks like a legacy v1 token. NetPulse requires NetBox 4.5+ with "
+    "This looks like a legacy v1 token. spane requires NetBox 4.5+ with "
     "v2 tokens (key starts with nbt_). Please upgrade NetBox or generate "
     "a new v2 token."
 )

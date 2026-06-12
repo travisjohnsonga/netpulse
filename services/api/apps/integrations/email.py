@@ -122,8 +122,8 @@ def send_test_email(to_address: str) -> tuple[bool, str]:
     try:
         from django.core.mail import send_mail
         send_mail(
-            subject="NetPulse Test Email",
-            message="This is a test email from NetPulse. Your SMTP settings are working.",
+            subject="spane Test Email",
+            message="This is a test email from spane. Your SMTP settings are working.",
             from_email=_from_address(config), recipient_list=[to_address],
             connection=_connection(config, get_smtp_password()),
         )

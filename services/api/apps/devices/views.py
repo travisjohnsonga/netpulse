@@ -151,7 +151,7 @@ class DeviceRoleViewSet(viewsets.ModelViewSet):
 
 class DeviceViewSet(viewsets.ModelViewSet):
     """
-    Manage network devices — the core inventory of NetPulse.
+    Manage network devices — the core inventory of spane.
 
     Full CRUD over devices (routers, switches, firewalls, etc.). List responses
     use a lightweight serializer; retrieve returns the full record including site,

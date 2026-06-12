@@ -104,7 +104,7 @@ export default function System() {
       <section>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">About & licenses</h3>
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">NetPulse — push-first, open-source network intelligence platform.</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">spane — unified infrastructure visibility.</p>
           <div className="flex flex-wrap gap-2">
             {LICENSES.map((l) => <span key={l} className="text-xs bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-1 rounded-md">{l}</span>)}
           </div>

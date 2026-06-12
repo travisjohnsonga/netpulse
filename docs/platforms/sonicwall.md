@@ -1,12 +1,12 @@
 # SonicWall (SonicOS / SonicOSX) Integration Guide
 
-NetPulse supports SonicWall firewalls across both major OS generations:
+spane supports SonicWall firewalls across both major OS generations:
 
 - **v7** — SonicOS 7.x (e.g. TZ 670, NSa series)
 - **v8** — SonicOSX 8.x (e.g. NSv, NSsp series)
 
 The two generations differ in REST API port, authentication outcome, and SNMP
-OID layout. NetPulse handles both automatically, but the differences matter for
+OID layout. spane handles both automatically, but the differences matter for
 troubleshooting — especially config backup on v7.
 
 > 🔒 This guide contains **no credentials**. Store device credentials in OpenBao
@@ -45,12 +45,12 @@ Login is `POST /api/sonicos/auth` with body `{"override": true}`. The response
   users (even with FULL_ADMIN) return `API_AUTH_USER_CAN_MGMT`.
 - **v8**: all admin accounts return `API_AUTH_SUCCESS`.
 
-Sessions are limited — NetPulse always calls `logout()`
+Sessions are limited — spane always calls `logout()`
 (`DELETE /api/sonicos/auth`); the `SonicWallClient` context manager does this for
 you. Client: `apps/compliance/sonicwall_client.py`.
 
 ### TLS gotcha
-SonicWall management certs are self-signed, so NetPulse uses `verify=False`. The
+SonicWall management certs are self-signed, so spane uses `verify=False`. The
 api image sets `REQUESTS_CA_BUNDLE`, and `requests`' env-merge would turn a
 per-request `verify=None` into that bundle **before** `session.verify=False`
 applies. `SonicWallClient` therefore sets `session.trust_env=False` **and**
@@ -61,7 +61,7 @@ ignored.
 
 ## Config Backup
 
-NetPulse prefers the REST API over SSH for config backup and enrichment:
+spane prefers the REST API over SSH for config backup and enrichment:
 
 ```
 GET /api/sonicos/config/current
@@ -94,7 +94,7 @@ This is the single most important SonicWall caveat:
 
 SonicWall has **no Netmiko SonicOS driver**, and the SonicOS login banner
 interrupts Netmiko's generic-driver auth (the banner prints before the
-`Password:` prompt). NetPulse collects over a **direct paramiko SSH shell**
+`Password:` prompt). spane collects over a **direct paramiko SSH shell**
 (`apps/arp_mac` → `_collect_sonicwall_arp` / `_drive_sonicwall_shell`):
 
 1. Connect with `banner_timeout=30` / `auth_timeout=30` / `look_for_keys=False`
@@ -112,7 +112,7 @@ interrupts Netmiko's generic-driver auth (the banner prints before the
 A custom TextFSM template
 (`apps/collectors/templates/sonicwall_show_arp_caches.textfsm`) parses the
 IP/Type/MAC/Vendor/Interface/Timeout columns. The device-reported vendor is
-dropped — NetPulse derives it from the MAC OUI. SonicWall is **ARP-only**
+dropped — spane derives it from the MAC OUI. SonicWall is **ARP-only**
 (firewalls have no MAC address-table).
 
 ---
@@ -120,7 +120,7 @@ dropped — NetPulse derives it from the MAC OUI. SonicWall is **ARP-only**
 ## SNMP
 
 SNMPv3, enterprise OID `1.3.6.1.4.1.8741`. The CPU/memory subtree **moved**
-between major releases, so NetPulse polls **both** and uses whichever returns a
+between major releases, so spane polls **both** and uses whichever returns a
 non-zero value.
 
 | Metric       | v7 (SonicOS 7.x)        | v8 (SonicOSX 8.x)          |
@@ -151,7 +151,7 @@ MASQUERADE-NAT to the host IP. Confirmed required for SonicWall SNMP. See
 ## Environment Data (not available)
 
 SonicWall does **NOT** expose temperature, fan, or PSU data via SNMP or the REST
-API on any version. The NetPulse Environment tab correctly shows
+API on any version. The spane Environment tab correctly shows
 **"No environment data"** for SonicWall. CPU and Memory are available on the
 **Telemetry** tab.
 
@@ -175,7 +175,7 @@ API on any version. The NetPulse Environment tab correctly shows
 |-------------------------------------------|-------------|
 | Config backup 401 on v7                   | User account — use the built-in `admin` (REST port 4444). |
 | `verify=False` ignored, TLS errors        | Ensure `session.trust_env=False` + per-call `verify=` (handled by `SonicWallClient`). |
-| SNMP returns zeros                         | Wrong OID subtree for the OS version — NetPulse polls both; confirm SNMPv3 keys + Docker NAT. |
+| SNMP returns zeros                         | Wrong OID subtree for the OS version — spane polls both; confirm SNMPv3 keys + Docker NAT. |
 | ARP collection hangs / `Access denied`     | Double-password prompt — confirm the same password is re-sent on the shell. |
 | ARP output truncated with `--More--`       | `no cli pager session` not sent first. |
 | Environment tab empty                      | Expected — SonicWall exposes no environment sensors. |

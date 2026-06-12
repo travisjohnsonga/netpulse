@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# NetPulse first-run setup.
+# spane first-run setup.
 #
 # Interactive configurator: copies .env.example → .env, prompts for the values
 # that must change (admin + infrastructure credentials, collector IP, optional
@@ -238,7 +238,7 @@ prompt_secret() {
 # ── argument handling ───────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
-${BOLD}NetPulse first-run setup${N}
+${BOLD}spane first-run setup${N}
 
 Usage: scripts/setup.sh [OPTIONS]
 
@@ -286,10 +286,10 @@ esac
 # ── banner ────────────────────────────────────────────────────────────────────
 echo "${BOLD}"
 echo "╔════════════════════════════════════╗"
-echo "║      NetPulse First-Run Setup      ║"
+echo "║        spane First-Run Setup       ║"
 echo "╚════════════════════════════════════╝"
 echo "${N}"
-echo "Configures NetPulse for first deployment. Press Enter to accept the"
+echo "Configures spane for first deployment. Press Enter to accept the"
 echo "value shown in [brackets]. Secrets left blank are auto-generated."
 echo
 
@@ -413,7 +413,7 @@ echo
 # The initial admin is seeded with a FIXED default password and flagged
 # must_change_password — the UI forces a change on first login. We don't prompt
 # for (or generate) a password here; the operator sets their own after logging in.
-DEFAULT_ADMIN_PASSWORD="NetPulse1!"
+DEFAULT_ADMIN_PASSWORD="spane1!"
 echo "${BOLD}2. Admin credentials${N}"
 ask DJANGO_SUPERUSER_USERNAME "Admin username" "$(env_get DJANGO_SUPERUSER_USERNAME)"
 ask DJANGO_SUPERUSER_EMAIL    "Admin email"    "$(env_get DJANGO_SUPERUSER_EMAIL)"
@@ -503,7 +503,7 @@ echo
 url_host="$(_clean_env_value "$(env_get COLLECTOR_IP)")"
 [ -z "$url_host" ] && url_host="$(_detect_host_ip)"
 [ -z "$url_host" ] && url_host="localhost"
-if yesno "Pull and start NetPulse now?" Y; then
+if yesno "Pull and start spane now?" Y; then
   info "pulling images (this can take a while)…"
   (cd "$ROOT_DIR" && $COMPOSE pull || warn "some images could not be pulled (will build on up)")
   info "starting the stack…"
@@ -523,7 +523,7 @@ if yesno "Pull and start NetPulse now?" Y; then
   (cd "$ROOT_DIR" && ./scripts/download_mibs.sh) \
     || warn "MIB download failed — run ./scripts/download_mibs.sh later"
   echo
-  ok "NetPulse is starting!"
+  ok "spane is starting!"
   echo "   Web UI:   https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 443)  (HTTP :$(env_get FRONTEND_PORT || echo 80) redirects here)"
   echo "   API docs: http://${url_host}:$(env_get API_PORT || echo 8000)/api/docs/"
   echo
@@ -538,7 +538,7 @@ if yesno "Pull and start NetPulse now?" Y; then
   # Confirm the running api will accept browser requests to this server's IP.
   verify_allowed_hosts
   echo
-  if yesno "Install NetPulse as a systemd service to start on boot?" N; then
+  if yesno "Install spane as a systemd service to start on boot?" N; then
     install_systemd_service
   else
     info "skipped — install later with: ./netpulse.sh install-service"
@@ -558,7 +558,7 @@ show_credentials() {
   [ -z "$host" ] && host="$(_detect_host_ip)"
   [ -z "$host" ] && host="localhost"
   user="$(_clean_env_value "$(env_get DJANGO_SUPERUSER_USERNAME)")"; [ -z "$user" ] && user="admin"
-  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"   # the fixed default (NetPulse1!)
+  pass="$(env_get DJANGO_SUPERUSER_PASSWORD)"   # the fixed default (spane1!)
   https_port="$(_clean_env_value "$(env_get FRONTEND_HTTPS_PORT)")"; [ -z "$https_port" ] && https_port="443"
   if [ "$https_port" = "443" ]; then url="https://${host}"; else url="https://${host}:${https_port}"; fi
 
@@ -590,7 +590,7 @@ show_credentials() {
 
   cred_file="$HOME/netpulse-credentials.txt"
   cat > "$cred_file" <<EOF
-NetPulse Initial Credentials
+spane Initial Credentials
 Generated: $(date)
 URL: ${url}
 Username: ${user}

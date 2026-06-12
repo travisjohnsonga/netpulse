@@ -106,7 +106,7 @@ function UsersTab() {
             <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : users.length === 0 ? (
-          <EmptyState title="No users" description="Add a user to grant access to NetPulse." action={{ label: 'Add User', onClick: () => setInviting(true) }} icon="👤" />
+          <EmptyState title="No users" description="Add a user to grant access to spane." action={{ label: 'Add User', onClick: () => setInviting(true) }} icon="👤" />
         ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
