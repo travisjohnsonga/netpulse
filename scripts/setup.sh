@@ -373,10 +373,18 @@ if [ -z "$(env_get INTERNAL_DNS)" ]; then
   fi
 fi
 if [ -z "$(env_get INTERNAL_DOMAIN)" ]; then
-  internal_domain="$(resolvectl status 2>/dev/null | grep 'DNS Domain' | awk '{print $3}' | head -1)"
+  # "DNS Domain: foo.local bar.local" — take the first as INTERNAL_DOMAIN and an
+  # optional second as INTERNAL_DOMAIN2 (second dns_search entry).
+  domain_line="$(resolvectl status 2>/dev/null | grep 'DNS Domain' | head -1)"
+  internal_domain="$(echo "$domain_line" | awk '{print $3}')"
+  internal_domain2="$(echo "$domain_line" | awk '{print $4}')"
   if [ -n "$internal_domain" ]; then
     env_set INTERNAL_DOMAIN "$internal_domain"
     info "detected internal DNS domain: $internal_domain"
+  fi
+  if [ -n "$internal_domain2" ] && [ -z "$(env_get INTERNAL_DOMAIN2)" ]; then
+    env_set INTERNAL_DOMAIN2 "$internal_domain2"
+    info "detected second internal DNS domain: $internal_domain2"
   fi
 fi
 

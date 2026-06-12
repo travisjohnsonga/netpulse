@@ -3,14 +3,16 @@ name: netpulse
 # Internal DNS for containers that resolve on-prem hostnames (devices, NetBox,
 # SMTP, UniFi controllers). Docker's embedded resolver still answers service
 # names (postgres/influxdb/…); these servers are only the upstream for external
-# names. Override INTERNAL_DNS / INTERNAL_DOMAIN in .env — setup.sh auto-detects
-# them; the defaults target the current lab. Merged into outbound services via
-# `<<: *internal-dns`.
+# names. Set INTERNAL_DNS / INTERNAL_DOMAIN[2] in .env — setup.sh auto-detects
+# them from the host; falls back to a public resolver when unset. Merged into
+# outbound services via `<<: *internal-dns`.
 x-internal-dns: &internal-dns
   dns:
+    - ${INTERNAL_DNS:-8.8.8.8}
     - 8.8.8.8
   dns_search:
     - ${INTERNAL_DOMAIN:-}
+    - ${INTERNAL_DOMAIN2:-}
 
 services:
 
