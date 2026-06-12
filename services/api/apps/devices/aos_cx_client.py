@@ -407,31 +407,42 @@ class AOSCXClient:
         Return the bridge MAC address-table as normalized rows
         ``[{mac_address, vlan, interface, entry_type}]``.
 
-        AOS-CX keys the forwarding table under each VLAN's ``macs`` child; a
-        single ``GET /system/vlans?depth=4&attributes=id,macs`` expands every
-        VLAN's table in one request. Each entry is keyed ``<selector>,<mac>``
-        and carries ``mac_addr``, ``from`` (dynamic/static) and a ``port`` ref.
-        Returns ``[]`` if the table is empty or the shape is unexpected.
+        AOS-CX keys the forwarding table under each VLAN's ``macs`` child. We
+        list the VLANs (``GET /system/vlans?depth=1`` → ``{<vlan_id>: URI}``)
+        and fetch each VLAN's table separately (``GET
+        /system/vlans/<id>/macs?depth=2``). A single bulk
+        ``depth=4&attributes=id,macs`` expansion was tried first, but on busy
+        switches it routinely exceeds the request timeout and the whole table
+        comes back empty — per-VLAN requests stay well under the limit. Each
+        entry is keyed ``<selector>,<mac>`` and carries ``mac_addr``, ``from``
+        (dynamic/static) and a ``port`` ref. Returns ``[]`` if the table is
+        empty or the VLAN list is unreachable.
         """
         out: list[dict] = []
         try:
-            data = self._get("system/vlans", params={"depth": 4, "attributes": "id,macs"})
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("AOS-CX %s: vlan mac table unavailable (%s)", self.ip, exc)
+            vlans = self._get("system/vlans", params={"depth": 1})
+        except Exception as exc:  # noqa: BLE001 — no VLAN list → no MAC table
+            logger.warning("AOS-CX %s: vlan list unavailable (%s)", self.ip, exc)
             return out
-        if not isinstance(data, dict):
+        if not isinstance(vlans, dict):
             return out
-        for vkey, vlan in data.items():
-            if not isinstance(vlan, dict):
+        for vkey, _uri in vlans.items():
+            vid = _int_or_none(vkey)
+            try:
+                macs = self._get(f"system/vlans/{_enc(str(vkey))}/macs",
+                                 params={"depth": 2})
+            except Exception as exc:  # noqa: BLE001 — skip a single bad VLAN
+                logger.debug("AOS-CX %s: mac table for VLAN %s unavailable (%s)",
+                             self.ip, vkey, exc)
                 continue
-            vid = vlan.get("id") if vlan.get("id") is not None else _int_or_none(vkey)
-            macs = vlan.get("macs")
             if not isinstance(macs, dict):
                 continue
             for mkey, m in macs.items():
                 row = _parse_mac_entry(vid, mkey, m)
                 if row:
                     out.append(row)
+        logger.info("AOS-CX %s: collected %d MAC entries across %d VLANs (REST)",
+                    self.ip, len(out), len(vlans))
         return out
 
     # ── environment / sensors ─────────────────────────────────────────────────

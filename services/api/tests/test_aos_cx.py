@@ -278,20 +278,25 @@ class TestAOSCXClient:
         assert by_ip["10.150.0.2"]["vlan"] == 5
 
     def test_aos_cx_mac_table_from_vlans(self):
-        """MAC table is read from each VLAN's macs child (keyed selector,mac)."""
+        """MAC table is read per-VLAN (GET /system/vlans/<id>/macs)."""
         client = AOSCXClient("10.0.0.5")
-        client._session = _FakeSession(get_json={"system/vlans": {
-            "1": {"id": 1, "macs": {
+        client._session = _FakeSession(get_json={
+            # depth-1 VLAN list: {<vlan_id>: URI}
+            "system/vlans": {
+                "1": "/rest/v10.09/system/vlans/1",
+                "5": "/rest/v10.09/system/vlans/5",
+            },
+            "system/vlans/1/macs": {
                 "dynamic,00:09:01:12:a6:c3": {
                     "mac_addr": "00:09:01:12:a6:c3", "from": "dynamic",
                     "port": {"lag2": "/rest/v10.09/system/interfaces/lag2"}},
-            }},
-            "5": {"id": 5, "macs": {
+            },
+            "system/vlans/5/macs": {
                 "static,aa:bb:cc:00:11:22": {
                     "mac_addr": "aa:bb:cc:00:11:22", "from": "static",
                     "port": {"1/1/3": "/rest/v10.09/system/interfaces/1%2F1%2F3"}},
-            }},
-        }})
+            },
+        })
         rows = client.get_mac_table()
         by_mac = {r["mac_address"]: r for r in rows}
         assert by_mac["00:09:01:12:a6:c3"]["vlan"] == 1
