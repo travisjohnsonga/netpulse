@@ -36,6 +36,43 @@ class AlertRuleViewSet(viewsets.ModelViewSet):
     filterset_fields = ["severity", "is_active", "is_system"]
     search_fields = ["name"]
 
+    # Labels for the field-level diff surfaced in the audit log.
+    _AUDIT_LABELS = {
+        "name": "Name", "severity": "Severity", "is_active": "Active",
+        "cooldown_minutes": "Cooldown (min)", "condition": "Condition",
+    }
+
+    @staticmethod
+    def _snapshot(rule):
+        return {
+            "name": rule.name,
+            "severity": rule.severity,
+            "is_active": rule.is_active,
+            "cooldown_minutes": rule.cooldown_minutes,
+            "condition": rule.condition,
+        }
+
+    def perform_create(self, serializer):
+        rule = serializer.save()
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.ALERT_RULE_CREATED, request=self.request, target=rule,
+                  description=f'Alert rule "{rule.name}" created')
+
+    def update(self, request, *args, **kwargs):
+        from apps.core.audit import describe_changes, diff_model_changes, log_event
+        from apps.core.models import AuditLog
+        rule = self.get_object()
+        before = self._snapshot(rule)
+        response = super().update(request, *args, **kwargs)
+        rule.refresh_from_db()
+        changes = diff_model_changes(before, self._snapshot(rule), self._AUDIT_LABELS)
+        if changes:
+            log_event(AuditLog.EventType.ALERT_RULE_UPDATED, request=request, target=rule,
+                      description=describe_changes(f'Alert rule "{rule.name}"', changes),
+                      metadata={"changes": changes})
+        return response
+
     def destroy(self, request, *args, **kwargs):
         """System rules are protected — disable (is_active=False) them instead."""
         rule = self.get_object()
@@ -44,6 +81,11 @@ class AlertRuleViewSet(viewsets.ModelViewSet):
                 {"error": "System rules cannot be deleted. Disable the rule instead."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        name = rule.name
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.ALERT_RULE_DELETED, request=request, target=rule,
+                  description=f'Alert rule "{name}" deleted')
         return super().destroy(request, *args, **kwargs)
 
 

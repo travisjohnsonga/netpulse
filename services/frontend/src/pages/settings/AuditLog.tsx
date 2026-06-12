@@ -18,6 +18,9 @@ function eventIcon(eventType: string): string {
   if (eventType.startsWith('discovery')) return '🔍'
   if (eventType.startsWith('alert')) return '⚠️'
   if (eventType.startsWith('user')) return '👤'
+  if (eventType.startsWith('site')) return '🏢'
+  if (eventType.startsWith('agent')) return '🛰️'
+  if (eventType.startsWith('netbox') || eventType.startsWith('unifi')) return '🔌'
   if (eventType.startsWith('settings') || eventType.startsWith('sso') || eventType.startsWith('api_key')) return '🔧'
   return '•'
 }
@@ -38,8 +41,30 @@ const EVENT_GROUPS: { label: string; options: { value: string; label: string }[]
   { label: 'Config', options: [
     { value: 'config_pushed', label: 'Config Pushed' },
   ] },
+  { label: 'Sites', options: [
+    { value: 'site_created', label: 'Site Created' },
+    { value: 'site_updated', label: 'Site Updated' },
+    { value: 'site_deleted', label: 'Site Deleted' },
+  ] },
+  { label: 'Credentials', options: [
+    { value: 'credential_created', label: 'Credential Created' },
+    { value: 'credential_updated', label: 'Credential Updated' },
+    { value: 'credential_deleted', label: 'Credential Deleted' },
+  ] },
+  { label: 'Alerts', options: [
+    { value: 'alert_rule_created', label: 'Alert Rule Created' },
+    { value: 'alert_rule_updated', label: 'Alert Rule Updated' },
+    { value: 'alert_rule_deleted', label: 'Alert Rule Deleted' },
+  ] },
+  { label: 'Integrations', options: [
+    { value: 'netbox_import', label: 'NetBox Import' },
+    { value: 'unifi_sync', label: 'UniFi Sync' },
+    { value: 'agent_enrolled', label: 'Agent Enrolled' },
+    { value: 'agent_revoked', label: 'Agent Revoked' },
+  ] },
   { label: 'Other', options: [
     { value: 'discovery_started', label: 'Discovery Started' },
+    { value: 'discovery_completed', label: 'Discovery Completed' },
     { value: 'user_created', label: 'User Created' },
     { value: 'user_role_changed', label: 'User Role Changed' },
     { value: 'settings_changed', label: 'Settings Changed' },
@@ -203,15 +228,73 @@ function Row({ r, expanded, onToggle }: { r: AuditLogEntry; expanded: boolean; o
               {!r.success && r.error_message && (
                 <div className="md:col-span-2"><Detail label="Error"><span className="text-red-600 dark:text-red-400">{r.error_message}</span></Detail></div>
               )}
-              {r.metadata && Object.keys(r.metadata).length > 0 && (
-                <div className="md:col-span-2">
-                  <dt className="text-xs uppercase tracking-wide text-gray-400 mb-1">Metadata</dt>
-                  <pre className="text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 overflow-x-auto">{JSON.stringify(r.metadata, null, 2)}</pre>
-                </div>
-              )}
+              <MetadataPanel metadata={r.metadata} />
             </dl>
           </td>
         </tr>
+      )}
+    </>
+  )
+}
+
+interface FieldChange {
+  field: string
+  label?: string
+  before?: string | null
+  after?: string | null
+  added?: string[]
+  removed?: string[]
+}
+
+/** Renders metadata.changes as a colour-coded before/after table; any other
+ * metadata keys fall back to the raw JSON block. */
+function MetadataPanel({ metadata }: { metadata: Record<string, unknown> }) {
+  if (!metadata || Object.keys(metadata).length === 0) return null
+  const raw = metadata as Record<string, unknown>
+  const changes = Array.isArray(raw.changes) ? (raw.changes as FieldChange[]) : null
+  const other = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== 'changes'))
+  return (
+    <>
+      {changes && changes.length > 0 && (
+        <div className="md:col-span-2">
+          <dt className="text-xs uppercase tracking-wide text-gray-400 mb-1">Changes</dt>
+          <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-700">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-left">
+                  <th className="px-3 py-1.5 font-medium">Field</th>
+                  <th className="px-3 py-1.5 font-medium">Before</th>
+                  <th className="px-3 py-1.5 font-medium">After</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800">
+                {changes.map((c, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-1.5 font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">{c.label || c.field}</td>
+                    {c.added || c.removed ? (
+                      <td className="px-3 py-1.5" colSpan={2}>
+                        {c.added && c.added.length > 0 && <span className="text-green-600 dark:text-green-400">+ {c.added.join(', ')}</span>}
+                        {c.added && c.added.length > 0 && c.removed && c.removed.length > 0 && <span className="mx-2 text-gray-300">·</span>}
+                        {c.removed && c.removed.length > 0 && <span className="text-red-600 dark:text-red-400">− {c.removed.join(', ')}</span>}
+                      </td>
+                    ) : (
+                      <>
+                        <td className="px-3 py-1.5 font-mono text-xs text-red-600 dark:text-red-400 break-all">{c.before ?? <span className="text-gray-400">∅</span>}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-green-600 dark:text-green-400 break-all">{c.after ?? <span className="text-gray-400">∅</span>}</td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {Object.keys(other).length > 0 && (
+        <div className="md:col-span-2">
+          <dt className="text-xs uppercase tracking-wide text-gray-400 mb-1">Metadata</dt>
+          <pre className="text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 overflow-x-auto">{JSON.stringify(other, null, 2)}</pre>
+        </div>
       )}
     </>
   )

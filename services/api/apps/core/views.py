@@ -446,6 +446,11 @@ class HostnameDisplayView(APIView):
             suffix = ""
         SystemSetting.set("hostname_display_mode", mode)
         SystemSetting.set("domain_suffix", str(suffix).strip())
+        from .audit import log_event
+        from .models import AuditLog
+        log_event(AuditLog.EventType.SETTINGS_CHANGED, request=request,
+                  description="Settings updated: Hostname display",
+                  metadata={"changed_fields": ["hostname_display_mode", "domain_suffix"]})
         return Response(self._state())
 
 
@@ -513,6 +518,11 @@ class LldpSettingsView(APIView):
         # Canonicalise + de-dupe so stored tokens match what the filter compares.
         tokens = normalize_capabilities([str(c) for c in caps])
         SystemSetting.set("lldp_exclude_capabilities", ",".join(tokens))
+        from .audit import log_event
+        from .models import AuditLog
+        log_event(AuditLog.EventType.SETTINGS_CHANGED, request=request,
+                  description="Settings updated: LLDP capability filter",
+                  metadata={"changed_fields": ["lldp_exclude_capabilities"]})
         return Response(self._state())
 
 

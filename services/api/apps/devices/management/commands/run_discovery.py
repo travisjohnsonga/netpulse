@@ -1182,6 +1182,17 @@ class DiscoveryRunner:
             if error:
                 updates["error_message"] = error
             DiscoveryJob.objects.filter(pk=self._job.pk).update(**updates)
+            if status == DiscoveryJob.Status.COMPLETED:
+                from apps.core.audit import log_event
+                from apps.core.models import AuditLog
+                log_event(
+                    AuditLog.EventType.DISCOVERY_COMPLETED, user=self._job.created_by,
+                    target=self._job,
+                    description=(f"Discovery job '{self._job.name}' completed: "
+                                 f"{self._found} devices found"),
+                    metadata={"devices_found": self._found, "method": self._job.method,
+                              "job_id": self._job.id},
+                )
         await self._loop.run_in_executor(None, _db)
 
     async def _update_count(self, count: int) -> None:

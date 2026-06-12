@@ -80,6 +80,55 @@ class SiteViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "city", "address"]
     ordering_fields = ["name", "site_type", "created_at"]
 
+    _AUDIT_LABELS = {
+        "name": "Name", "site_type": "Type", "description": "Description",
+        "location": "Location", "address": "Address", "city": "City",
+        "state": "State", "country": "Country", "contact_name": "Contact Name",
+        "contact_email": "Contact Email", "contact_phone": "Contact Phone",
+        "notes": "Notes", "parent_site": "Parent Site",
+        "default_collector": "Default Collector",
+    }
+
+    @staticmethod
+    def _snapshot(site):
+        return {f: getattr(site, f) or "" for f in (
+            "name", "site_type", "description", "location", "address", "city",
+            "state", "country", "contact_name", "contact_email", "contact_phone",
+            "notes",
+        )} | {
+            "parent_site": str(site.parent_site) if site.parent_site_id else None,
+            "default_collector": str(site.default_collector) if site.default_collector_id else None,
+        }
+
+    def perform_create(self, serializer):
+        site = serializer.save()
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.SITE_CREATED, request=self.request, target=site,
+                  description=f'Site "{site.name}" created')
+
+    def update(self, request, *args, **kwargs):
+        from apps.core.audit import describe_changes, diff_model_changes, log_event
+        from apps.core.models import AuditLog
+        site = self.get_object()
+        before = self._snapshot(site)
+        response = super().update(request, *args, **kwargs)
+        site.refresh_from_db()
+        changes = diff_model_changes(before, self._snapshot(site), self._AUDIT_LABELS)
+        if changes:
+            log_event(AuditLog.EventType.SITE_UPDATED, request=request, target=site,
+                      description=describe_changes(f'Site "{site.name}"', changes),
+                      metadata={"changes": changes})
+        return response
+
+    def perform_destroy(self, instance):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        name = instance.name
+        log_event(AuditLog.EventType.SITE_DELETED, request=self.request, target=instance,
+                  description=f'Site "{name}" deleted')
+        instance.delete()
+
     @action(detail=True, methods=["get"], url_path="devices")
     def devices(self, request, pk=None):
         """List devices located at this site."""
@@ -221,12 +270,28 @@ class DeviceViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,
         )
 
-    def perform_update(self, serializer):
-        from apps.core.audit import log_event
+    def update(self, request, *args, **kwargs):
+        """PUT/PATCH a device, recording a field-level before/after diff in the
+        audit log (``partial_update`` routes through here too). Only emits an
+        audit event when an audited field actually changed."""
+        from apps.core.audit import (
+            DEVICE_FIELD_LABELS, describe_changes, diff_model_changes,
+            log_event, snapshot_device,
+        )
         from apps.core.models import AuditLog
-        device = serializer.save()
-        log_event(AuditLog.EventType.DEVICE_UPDATED, request=self.request, target=device,
-                  description=f"Device {device.hostname} updated")
+        instance = self.get_object()
+        before = snapshot_device(instance)
+        response = super().update(request, *args, **kwargs)
+        instance.refresh_from_db()
+        after = snapshot_device(instance)
+        changes = diff_model_changes(before, after, DEVICE_FIELD_LABELS)
+        if changes:
+            log_event(
+                AuditLog.EventType.DEVICE_UPDATED, request=request, target=instance,
+                description=describe_changes(instance.hostname, changes),
+                metadata={"changes": changes},
+            )
+        return response
 
     def perform_destroy(self, instance):
         from apps.core.audit import log_event

@@ -111,6 +111,9 @@ class InterfaceListCreateView(APIView):
         items = req.validated_data["interfaces"]
 
         # Replace the whole selection for this device.
+        before_names = set(
+            MonitoredInterface.objects.filter(device=device).values_list("if_name", flat=True)
+        )
         MonitoredInterface.objects.filter(device=device).delete()
         now = timezone.now()
         created = [
@@ -138,6 +141,25 @@ class InterfaceListCreateView(APIView):
             for it in items
         ]
         MonitoredInterface.objects.bulk_create(created)
+
+        after_names = {it["if_name"] for it in items}
+        added = sorted(after_names - before_names)
+        removed = sorted(before_names - after_names)
+        if added or removed:
+            from apps.core.audit import log_event
+            from apps.core.models import AuditLog
+            log_event(
+                AuditLog.EventType.DEVICE_UPDATED, request=request, target=device,
+                description=(f"{device.hostname}: monitored interfaces updated — "
+                             f"{len(added)} added, {len(removed)} removed"),
+                metadata={"changes": [{
+                    "field": "monitored_interfaces",
+                    "label": "Monitored Interfaces",
+                    "added": added,
+                    "removed": removed,
+                }]},
+            )
+
         qs = MonitoredInterface.objects.filter(device=device).order_by("if_name")
         return Response(MonitoredInterfaceSerializer(qs, many=True).data, status=status.HTTP_201_CREATED)
 

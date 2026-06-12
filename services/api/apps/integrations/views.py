@@ -69,11 +69,20 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
         from .unifi_client import UnifiError
         from .unifi_sync import sync_controller
         try:
-            return Response(sync_controller(c))
+            counts = sync_controller(c)
         except UnifiError as exc:
             return Response({"error": safe_detail(exc, logger, "unifi sync",
                                                   public="UniFi sync failed.")},
                             status=status.HTTP_502_BAD_GATEWAY)
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(
+            AuditLog.EventType.UNIFI_SYNC, request=request, target=c,
+            description=(f"UniFi sync {c.name}: {counts.get('imported', 0)} imported, "
+                         f"{counts.get('updated', 0)} updated, {counts.get('skipped', 0)} skipped"),
+            metadata=counts,
+        )
+        return Response(counts)
 
     @extend_schema(request=None, responses=None)
     @action(detail=False, methods=["post"], url_path="sync-all")
@@ -256,5 +265,18 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
         record.finished_at = timezone.now()
         record.save()
 
-        code = status.HTTP_201_CREATED if record.status == NetBoxImport.Status.COMPLETED else status.HTTP_502_BAD_GATEWAY
+        completed = record.status == NetBoxImport.Status.COMPLETED
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(
+            AuditLog.EventType.NETBOX_IMPORT, request=request, target=record, success=completed,
+            description=(f"NetBox import: {record.devices_imported} created, "
+                         f"{record.devices_updated} updated, {record.skipped} skipped"),
+            metadata={"sites_imported": record.sites_imported,
+                      "devices_imported": record.devices_imported,
+                      "devices_updated": record.devices_updated,
+                      "skipped": record.skipped},
+        )
+
+        code = status.HTTP_201_CREATED if completed else status.HTTP_502_BAD_GATEWAY
         return Response(NetBoxImportSerializer(record).data, status=code)

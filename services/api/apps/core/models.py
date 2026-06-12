@@ -201,6 +201,14 @@ class AuditLog(models.Model):
         ALERT_RESOLVED = "alert_resolved", "Alert Resolved"
         ALERT_RULE_CREATED = "alert_rule_created", "Alert Rule Created"
         ALERT_RULE_UPDATED = "alert_rule_updated", "Alert Rule Updated"
+        ALERT_RULE_DELETED = "alert_rule_deleted", "Alert Rule Deleted"
+        # Sites
+        SITE_CREATED = "site_created", "Site Created"
+        SITE_UPDATED = "site_updated", "Site Updated"
+        SITE_DELETED = "site_deleted", "Site Deleted"
+        # Agents
+        AGENT_ENROLLED = "agent_enrolled", "Agent Enrolled"
+        AGENT_REVOKED = "agent_revoked", "Agent Revoked"
 
     event_type = models.CharField(max_length=64, choices=EventType.choices, db_index=True)
 

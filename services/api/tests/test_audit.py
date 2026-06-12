@@ -96,3 +96,76 @@ class TestApi:
         log_event(ET.CONFIG_PUSHED, target=d, description="push")
         body = auth_client.get(f"/api/devices/{d.id}/audit/").json()
         assert len(body) == 1 and body[0]["event_type"] == "config_pushed"
+
+
+class TestDiffUtilities:
+    def test_diff_model_changes_detects_and_labels(self):
+        from apps.core.audit import diff_model_changes
+        before = {"os_version": "FL.10.12", "model": "6100", "updated_at": "t1"}
+        after = {"os_version": "FL.10.13", "model": "6100", "updated_at": "t2"}
+        changes = diff_model_changes(before, after, {"os_version": "OS Version"})
+        # Only os_version changed; updated_at is skipped, model is unchanged.
+        assert changes == [{"field": "os_version", "label": "OS Version",
+                            "before": "FL.10.12", "after": "FL.10.13"}]
+
+    def test_diff_titlecases_unlabelled_fields_and_handles_none(self):
+        from apps.core.audit import diff_model_changes
+        changes = diff_model_changes({"serial_number": None}, {"serial_number": "ABC123"})
+        assert changes[0]["label"] == "Serial Number"
+        assert changes[0]["before"] is None and changes[0]["after"] == "ABC123"
+
+    def test_snapshot_device_shape(self):
+        from apps.core.audit import snapshot_device
+        d = Device.objects.create(hostname="snap1", ip_address="10.0.0.2",
+                                  platform="aos_cx", os_version="FL.10.12")
+        snap = snapshot_device(d)
+        assert snap["hostname"] == "snap1" and snap["os_version"] == "FL.10.12"
+        assert snap["site"] is None and snap["role"] is None
+
+
+class TestFieldLevelDeviceDiff:
+    def test_patch_records_field_changes(self, auth_client):
+        d = Device.objects.create(hostname="diff-dev", ip_address="10.9.1.1",
+                                  platform="aos_cx", os_version="FL.10.12")
+        resp = auth_client.patch(f"/api/devices/{d.id}/",
+                                 {"os_version": "FL.10.13", "notes": "upgraded"}, format="json")
+        assert resp.status_code == 200, resp.content
+        ev = AuditLog.objects.get(event_type=ET.DEVICE_UPDATED, target_id=str(d.id))
+        labels = {c["label"]: (c["before"], c["after"]) for c in ev.metadata["changes"]}
+        assert labels["OS Version"] == ("FL.10.12", "FL.10.13")
+        assert "Notes" in labels
+        assert "upgraded" not in ev.description or "Notes" in ev.description
+
+    def test_no_op_patch_logs_nothing(self, auth_client):
+        d = Device.objects.create(hostname="noop-dev", ip_address="10.9.1.2",
+                                  platform="ios_xe", os_version="1.0")
+        auth_client.patch(f"/api/devices/{d.id}/", {"os_version": "1.0"}, format="json")
+        assert not AuditLog.objects.filter(event_type=ET.DEVICE_UPDATED, target_id=str(d.id)).exists()
+
+
+class TestExtendedInstrumentation:
+    def test_site_update_audited_with_diff(self, auth_client):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="WCO2", description="old")
+        resp = auth_client.patch(f"/api/sites/{site.pk}/", {"description": "new"}, format="json")
+        assert resp.status_code == 200, resp.content
+        ev = AuditLog.objects.get(event_type=ET.SITE_UPDATED, target_id=str(site.pk))
+        assert any(c["label"] == "Description" for c in ev.metadata["changes"])
+
+    def test_site_create_and_delete_audited(self, auth_client):
+        created = auth_client.post("/api/sites/", {"name": "DC-Audit"}, format="json").json()
+        assert AuditLog.objects.filter(event_type=ET.SITE_CREATED, target_id=str(created["id"])).exists()
+        auth_client.delete(f"/api/sites/{created['id']}/")
+        assert AuditLog.objects.filter(event_type=ET.SITE_DELETED, target_id=str(created["id"])).exists()
+
+    def test_credential_create_audited_without_secrets(self, auth_client):
+        resp = auth_client.post("/api/credentials/", {
+            "name": "Cisco-Audit", "ssh_enabled": True, "ssh_username": "admin",
+            "ssh_auth_method": "password", "ssh_password": "s3cret-pw",
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        ev = AuditLog.objects.get(event_type=ET.CREDENTIAL_CREATED)
+        assert "Cisco-Audit" in ev.description
+        # The secret must never appear anywhere on the audit record.
+        assert "s3cret-pw" not in ev.description
+        assert "s3cret-pw" not in str(ev.metadata)

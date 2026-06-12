@@ -44,10 +44,28 @@ class CredentialProfileViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
-        serializer.save(created_by=user)
+        profile = serializer.save(created_by=user)
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        # Never log secret values — only the profile name/protocols.
+        log_event(AuditLog.EventType.CREDENTIAL_CREATED, request=self.request, target=profile,
+                  description=f'Credential profile "{profile.name}" created')
+
+    def perform_update(self, serializer):
+        profile = serializer.save()
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        # Secret material lives in OpenBao and never reaches the audit record.
+        log_event(AuditLog.EventType.CREDENTIAL_UPDATED, request=self.request, target=profile,
+                  description=f'Credential profile "{profile.name}" updated')
 
     def perform_destroy(self, instance):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        name = instance.name
         vault.delete_secret(instance.vault_path)
+        log_event(AuditLog.EventType.CREDENTIAL_DELETED, request=self.request, target=instance,
+                  description=f'Credential profile "{name}" deleted')
         instance.delete()
 
     @action(detail=True, methods=["post"], url_path="test")

@@ -106,6 +106,10 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         agent = self.get_object()
         agent.status = Agent.Status.REVOKED
         agent.save(update_fields=["status", "updated_at"])
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.AGENT_REVOKED, request=request, target=agent,
+                  description=f"Agent revoked: {agent.hostname}")
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(request=EnrollRequestSerializer, responses=None)
@@ -162,6 +166,15 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         if token.max_uses and token.use_count >= token.max_uses:
             token.is_active = False
         token.save(update_fields=["use_count", "is_active", "updated_at"])
+
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(
+            AuditLog.EventType.AGENT_ENROLLED, request=request, target=agent,
+            description=(f"Agent {'re-' if not created else ''}enrolled: "
+                         f"{agent.hostname} ({agent.os}, {agent.arch})"),
+            metadata={"os": agent.os, "arch": agent.arch, "version": agent.version},
+        )
 
         ca = issued.get("ca_chain") or []
         return Response({

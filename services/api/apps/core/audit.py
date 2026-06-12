@@ -26,6 +26,87 @@ def scrub_sensitive(data: dict | None) -> dict:
             for k, v in data.items()}
 
 
+# Human-friendly labels for the device fields surfaced in audit diffs. Keys are
+# Device snapshot keys (see ``snapshot_device``); anything not listed falls back
+# to a title-cased version of the field name.
+DEVICE_FIELD_LABELS = {
+    "hostname": "Hostname",
+    "management_ip": "IP Address",
+    "ip_address": "IP Address",
+    "platform": "Platform",
+    "os_version": "OS Version",
+    "model": "Model",
+    "serial_number": "Serial Number",
+    "site": "Site",
+    "role": "Role",
+    "credential_profile": "Credential Profile",
+    "status": "Status",
+    "is_reachable": "Reachability",
+    "ip_locked": "IP Lock",
+    "notes": "Notes",
+}
+
+# Snapshot keys never worth surfacing in a diff (noisy/auto-managed timestamps).
+_DIFF_SKIP_FIELDS = frozenset({"updated_at", "created_at", "last_seen", "last_polled"})
+
+
+def diff_model_changes(before: dict, after: dict, field_labels: dict | None = None) -> list[dict]:
+    """Compare two model snapshots and return the changed fields.
+
+    Each entry is ``{"field", "label", "before", "after"}`` with values coerced
+    to ``str`` (or ``None``). Auto-managed/noisy fields are skipped. The result
+    is sorted by label for a stable, readable order.
+    """
+    labels = field_labels or {}
+    changes = []
+    for field in (set(before or {}) | set(after or {})):
+        if field in _DIFF_SKIP_FIELDS:
+            continue
+        old_val = (before or {}).get(field)
+        new_val = (after or {}).get(field)
+        if old_val == new_val:
+            continue
+        changes.append({
+            "field": field,
+            "label": labels.get(field, field.replace("_", " ").title()),
+            "before": None if old_val is None else str(old_val),
+            "after": None if new_val is None else str(new_val),
+        })
+    return sorted(changes, key=lambda c: c["label"])
+
+
+def snapshot_device(device) -> dict:
+    """Capture a device's audited fields for before/after diffing."""
+    return {
+        "hostname": device.hostname,
+        "management_ip": str(device.management_ip or ""),
+        "platform": device.platform,
+        "os_version": device.os_version or "",
+        "model": device.model or "",
+        "serial_number": device.serial_number or "",
+        "site": str(device.site) if device.site_id else None,
+        "role": str(device.role) if device.role_id else None,
+        "credential_profile": (
+            str(device.credential_profile) if device.credential_profile_id else None
+        ),
+        "status": device.status,
+        "is_reachable": device.is_reachable,
+        "ip_locked": device.ip_locked,
+        "notes": device.notes or "",
+    }
+
+
+def describe_changes(name: str, changes: list[dict]) -> str:
+    """Human-readable one-line summary of a field-level diff for ``name``."""
+    if not changes:
+        return f"{name} updated"
+    if len(changes) == 1:
+        c = changes[0]
+        return f'{name}: {c["label"]} changed from "{c["before"]}" to "{c["after"]}"'
+    fields = ", ".join(c["label"] for c in changes)
+    return f"{name}: {len(changes)} fields updated ({fields})"
+
+
 def client_ip(request) -> str | None:
     """Best client IP from a request, honouring X-Forwarded-For (first hop)."""
     if not request:
