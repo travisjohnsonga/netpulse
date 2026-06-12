@@ -21,7 +21,7 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 
 ## Current State (June 2026)
 
-- Tests: ~1563 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
+- Tests: ~1574 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7.
 
 **Recently completed (agent + servers session):** NetPulse Agent end-to-end —
@@ -94,6 +94,34 @@ gates: `docs/collector-production-gates.md`; proofs: `scripts/t0`–`scripts/t3`
 - **Remaining before prod creds flow:** (1) broker identity-wiring end-to-end proof (A-can't-fetch-B
   over the real transport); (2) the agent; (3) packaging + setup.sh role; (4) an api rebuild to apply
   **migration 0004** (collector identity fields — committed, not yet migrated on running stacks).
+
+**Recently completed (UniFi/NetBox/DNS/agent session):**
+- **UniFi sync IP protection** — new `Device.ip_locked` boolean (migration **0027**); when true, UniFi
+  sync skips the `management_ip`/`ip_address` update in both `_import_device` and
+  `update_linked_device_host` (non-IP fields still update). Lock/unlock toggle in the device edit modal;
+  amber lock indicator beside Management IP on the device overview. `_host_to_controller_fields`
+  (`unifi_cloud.py`) now **prefers a LAN IP over WAN** — skips `wans[].ipv4` addresses when picking the
+  mgmt IP (reported primary if not WAN → first non-WAN IPv4 in `ipAddrs`), WAN only as last resort. Fixes
+  the cloud host record reporting a console's WAN IP and clobbering a curated LAN mgmt IP.
+- **NetBox v2 tokens only (v1 removed)** — requires **NetBox 4.5+**. Two-field UI: **API Key ID** (`nbt_…`)
+  + **API Token** (secret), combined backend-side as `{key}.{secret}` and stored in OpenBao under
+  `api_key`. `_get_auth_header()` always returns `Bearer {token}`. Serializer validates the `nbt_` prefix
+  (tailored "legacy v1 token" error for 40-char-hex values) and a non-empty secret; payloads send
+  `api_key` + `api_token`.
+- **Internal DNS fix** — the `x-internal-dns` compose anchor was hardcoding a lab resolver. Now reads
+  `${INTERNAL_DNS:-8.8.8.8}` (+ 8.8.8.8 fallback) and `${INTERNAL_DOMAIN[2]:-}` for `dns_search`.
+  `INTERNAL_DOMAIN2` supported as a second search domain; `setup.sh` auto-detects DNS server + both
+  domains from `resolvectl status`; `.env.example` ships **empty defaults** (no lab IPs/domains
+  committed). Verified: api `resolv.conf` shows `ExtServers [<INTERNAL_DNS> 8.8.8.8]`, external
+  resolution works.
+- **Agent PKI CA cert sharing fixed** — api Dockerfile pre-creates `/app/ssl` with correct ownership;
+  `entrypoint.sh` `mkdir`+`chmod` before `setup_agent_pki`; nginx waits for the real CA cert (detects the
+  placeholder CN); the `ssl-certs` volume is shared between api and frontend automatically (no manual fix).
+- **Agent metrics flowing (200 OK)** — mTLS working end-to-end; cert-serial normalization correct;
+  re-enrollment graceful (**409**, not 500).
+- **Agent binary distribution** — published via **GitHub Releases** (download views redirect, fallback to
+  the `agent/dist/` mount); no `gh` CLI required for users; `agent/dist/` gitignored; `build-agent.yml`
+  triggers on `branches: [main]` push.
 
 **Recently completed (this session):** Alert expanded panels render config diffs with green/red
 syntax highlighting (reuses the `DiffViewer` component) · LLDP neighbors page added to the sidebar ·
@@ -385,6 +413,11 @@ OpenBao-PKI cert per agent, single static binary (Linux core is stdlib-only).
   custom PowerShell role checks). The Go binaries are built by CI, not in-repo.
 
 ## Pending (next session)
+
+**Short list (this session's open items):** GitHub Releases for agent binaries (download views currently
+redirect, falling back to the `agent/dist/` mount) · NetBox import preview UI polish · AOS-CX REST API
+migration · Servers page polish · agent process monitoring · agent log forwarding · `install.ps1` endpoint
+for Windows (`GET /agent/install.ps1` not yet routed) · marketing website (post v1.0).
 
 ### Agent download/install — DONE (one-liner verified end-to-end)
 `GET /agent/install` (→ `scripts/install.sh`) and `GET /agent/download/<platform>`

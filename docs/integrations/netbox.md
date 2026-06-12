@@ -1,16 +1,59 @@
 # NetBox Integration
 
-Import sites and devices from [NetBox](https://netbox.dev) (v3.x and v4.x are
-auto-detected). Configure under **Settings → Integrations → NetBox**.
+Import sites and devices from [NetBox](https://netbox.dev). Configure under
+**Settings → Integrations → NetBox**.
 
-## Connection setup
+## Requirements
 
-1. In NetBox, create an API token (Admin → API Tokens).
-2. In NetPulse → Settings → Integrations → NetBox → **Import**, enter the NetBox
-   URL and the API token, then **Test** to verify the connection/version.
+- **NetBox 4.5 or later**
+- A **v2 API token** (Key ID in the `nbt_` format)
 
-The token is written to OpenBao (`netpulse/integrations/netbox/{id}`); only the
-path is stored in the database.
+Legacy v1 API tokens are no longer supported — NetPulse authenticates with the
+NetBox 4.5+ v2 `Bearer` scheme. If you only have a legacy token, generate a new
+v2 token (below).
+
+## Generating a v2 API Token
+
+1. Log into NetBox.
+2. Click your username → **Profile**.
+3. Go to **API Tokens → Add Token**.
+4. Copy **both** values:
+   - **Key ID** — shown in the *Key* column (starts with `nbt_`).
+   - **Token** — the secret, shown **once** immediately after creation.
+5. Enter both in NetPulse under **Settings → Integrations → NetBox**:
+   - **API Key ID** = the `nbt_…` key.
+   - **API Token** = the secret value.
+
+   Then click **Test** to verify the connection and detected NetBox version.
+
+> ⚠️ The token secret is shown **only once** at creation time. Store it securely
+> — if you lose it, generate a new token.
+
+NetPulse combines the two values as `{key}.{secret}` and writes the result to
+OpenBao (`netpulse/integrations/netbox/{id}`); only the path is stored in the
+database, never the credential itself.
+
+## SSL Configuration
+
+If NetBox uses a self-signed certificate, **uncheck "Verify SSL Certificate"** in
+the NetBox integration settings. Leave it checked for any NetBox reachable over a
+publicly trusted (or internally trusted) certificate.
+
+## DNS Resolution
+
+If NetBox is reached by an internal hostname (e.g. `netbox.company.local`), the
+NetPulse containers must be able to resolve it. Set `INTERNAL_DNS` (and the
+search domain) in `.env`:
+
+```bash
+INTERNAL_DNS=10.x.x.x        # your internal DNS server
+INTERNAL_DOMAIN=company.local
+# INTERNAL_DOMAIN2=          # optional second search domain
+```
+
+`setup.sh` auto-detects these from the host (`resolvectl status`); override them
+if auto-detection is wrong. Containers then use this DNS server to resolve
+internal hostnames. See `docs/setup/deployment.md` for the full DNS notes.
 
 ## Import preview
 
