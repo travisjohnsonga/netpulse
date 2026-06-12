@@ -1,5 +1,6 @@
 import logging
 
+from django.db.models import Count, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -57,7 +58,23 @@ class SiteViewSet(viewsets.ModelViewSet):
     `devices/` action lists the devices located at a site.
     """
 
-    queryset = Site.objects.select_related("parent_site").all()
+    queryset = Site.objects.select_related("parent_site").annotate(
+        device_count=Count("devices", distinct=True),
+        devices_up=Count(
+            "devices",
+            filter=Q(devices__is_reachable=True, devices__status=Device.Status.ACTIVE),
+            distinct=True,
+        ),
+        devices_down=Count(
+            "devices",
+            filter=Q(devices__is_reachable=False)
+            | Q(devices__status__in=[Device.Status.INACTIVE, Device.Status.UNREACHABLE]),
+            distinct=True,
+        ),
+        devices_unknown=Count(
+            "devices", filter=Q(devices__is_reachable__isnull=True), distinct=True
+        ),
+    ).order_by("name")
     serializer_class = SiteSerializer
     filterset_fields = ["site_type", "parent_site"]
     search_fields = ["name", "city", "address"]

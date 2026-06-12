@@ -418,6 +418,37 @@ class TestSitesTopLevelEndpoint:
         assert child.status_code == 201
         assert child.json()["parent_site_name"] == "Region-1"
 
+    def test_device_status_breakdown(self, auth_client, site):
+        # up: reachable + active; down: unreachable status or is_reachable=False;
+        # maintenance falls in neither bucket but still counts toward the total.
+        Device.objects.create(hostname="up-1", ip_address="10.0.1.1", platform=Device.Platform.IOS_XE,
+                              site=site, is_reachable=True, status=Device.Status.ACTIVE)
+        Device.objects.create(hostname="up-2", ip_address="10.0.1.2", platform=Device.Platform.IOS_XE,
+                              site=site, is_reachable=True, status=Device.Status.ACTIVE)
+        Device.objects.create(hostname="down-1", ip_address="10.0.1.3", platform=Device.Platform.IOS_XE,
+                              site=site, is_reachable=False, status=Device.Status.UNREACHABLE)
+        Device.objects.create(hostname="maint-1", ip_address="10.0.1.4", platform=Device.Platform.IOS_XE,
+                              site=site, is_reachable=True, status=Device.Status.MAINTENANCE)
+
+        # In the list response
+        row = next(s for s in auth_client.get("/api/sites/").json()["results"] if s["id"] == site.pk)
+        assert row["device_count"] == 4
+        assert row["devices_up"] == 2
+        assert row["devices_down"] == 1
+        assert row["devices_unknown"] == 0
+
+        # And in the detail response
+        body = auth_client.get(f"/api/sites/{site.pk}/").json()
+        assert (body["device_count"], body["devices_up"], body["devices_down"]) == (4, 2, 1)
+
+    def test_status_counts_zero_on_create(self, auth_client):
+        # The create response isn't annotated — the serializer fallback must still
+        # return zeros rather than erroring.
+        body = auth_client.post("/api/sites/", {"name": "Empty-DC"}, format="json").json()
+        assert body["devices_up"] == 0
+        assert body["devices_down"] == 0
+        assert body["devices_unknown"] == 0
+
 
 class TestDetectPlatformEndpoint:
     @pytest.fixture

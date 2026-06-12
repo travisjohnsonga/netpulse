@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { fetchSites, type Site, type SiteType } from '../api/client'
 import EmptyState from '../components/EmptyState'
 import SiteFormModal from '../components/SiteFormModal'
+import SiteDeviceStatus from '../components/SiteDeviceStatus'
 
 const TYPE_BADGE: Record<SiteType, string> = {
   datacenter: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
@@ -100,7 +101,7 @@ function TableView({ sites, onOpen, onEdit }: { sites: Site[]; onOpen: (id: numb
               <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{s.name}</td>
               <td className="px-5 py-3"><TypeBadge t={s.site_type} /></td>
               <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{s.city || '—'}</td>
-              <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{s.device_count}</td>
+              <td className="px-5 py-3"><SiteDeviceStatus site={s} /></td>
               <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{s.parent_site_name || '—'}</td>
               <td className="px-5 py-3 text-right">
                 <button
@@ -140,7 +141,7 @@ function TreeView({ sites, onOpen, onEdit }: { sites: Site[]; onOpen: (id: numbe
           {depth > 0 && <span className="text-gray-300 dark:text-gray-600">└</span>}
           <span className="font-medium text-gray-800 dark:text-gray-100">{s.name}</span>
           <TypeBadge t={s.site_type} />
-          <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{s.device_count} devices</span>
+          <SiteDeviceStatus site={s} className="ml-auto" />
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(s) }}
             className="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-sm font-medium opacity-0 group-hover:opacity-100"

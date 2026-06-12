@@ -100,10 +100,36 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
   return <div className={clsx('bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4', className)}>{children}</div>
 }
 
+function StatCard({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'up' | 'down' | 'unknown' }) {
+  const toneCls =
+    tone === 'up' ? 'text-green-600 dark:text-green-400'
+    : tone === 'down' ? 'text-red-600 dark:text-red-400'
+    : tone === 'unknown' ? 'text-gray-400 dark:text-gray-500'
+    : 'text-gray-900 dark:text-gray-100'
+  return (
+    <Card className="text-center">
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</div>
+      <div className={clsx('mt-1 text-2xl font-bold tabular-nums', toneCls)}>{value}</div>
+    </Card>
+  )
+}
+
+function DeviceStats({ site }: { site: Site }) {
+  return (
+    <div className={clsx('grid gap-4', site.devices_unknown > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3')}>
+      <StatCard label="Total Devices" value={site.device_count} />
+      <StatCard label="Online" value={<span>↑ {site.devices_up}</span>} tone="up" />
+      <StatCard label="Offline" value={<span>↓ {site.devices_down}</span>} tone="down" />
+      {site.devices_unknown > 0 && <StatCard label="Unknown" value={<span>? {site.devices_unknown}</span>} tone="unknown" />}
+    </div>
+  )
+}
+
 function Overview({ site }: { site: Site }) {
   const hasGeo = site.latitude && site.longitude
   return (
     <div className="space-y-4">
+    <DeviceStats site={site} />
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Location</h3>

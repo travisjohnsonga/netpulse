@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { useSite } from '../store/siteStore'
+import SiteDeviceStatus from './SiteDeviceStatus'
 
 // Threshold above which the dropdown shows a type-to-filter box.
 const FILTER_THRESHOLD = 6
@@ -92,8 +93,9 @@ export default function SiteSelector() {
           <div className="max-h-72 overflow-y-auto">
             {matches.map((s) => (
               <button key={s.id} onClick={() => choose(String(s.id))} className={itemCls(selectedSite === String(s.id))}>
-                <span aria-hidden className="text-[10px] text-blue-500">●</span>
+                <span aria-hidden className={clsx('text-[10px]', s.devices_down > 0 ? 'text-red-500' : 'text-blue-500')}>●</span>
                 <span className="truncate">{s.name}</span>
+                <SiteDeviceStatus site={s} compact className="ml-auto pl-2 shrink-0" />
               </button>
             ))}
             {matches.length === 0 && (

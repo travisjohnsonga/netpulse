@@ -1,3 +1,4 @@
+from django.db import models
 from rest_framework import serializers
 
 from .models import (
@@ -55,13 +56,38 @@ class HostnameRuleTestSerializer(serializers.Serializer):
 
 
 class SiteSerializer(serializers.ModelSerializer):
-    device_count = serializers.IntegerField(source="devices.count", read_only=True)
+    # device_count + the up/down/unknown breakdown. The SiteViewSet annotates
+    # these on the list/detail queryset for efficiency; the fallbacks keep them
+    # correct for instances that aren't annotated (e.g. the create response).
+    device_count = serializers.SerializerMethodField()
+    devices_up = serializers.SerializerMethodField()
+    devices_down = serializers.SerializerMethodField()
+    devices_unknown = serializers.SerializerMethodField()
     parent_site_name = serializers.CharField(source="parent_site.name", read_only=True, default=None)
 
     class Meta:
         model = Site
         fields = "__all__"
         read_only_fields = ("slug", "created_at", "updated_at")
+
+    def get_device_count(self, obj):
+        val = getattr(obj, "device_count", None)
+        return val if val is not None else obj.devices.count()
+
+    def get_devices_up(self, obj):
+        val = getattr(obj, "devices_up", None)
+        return val if val is not None else obj.devices.filter(
+            is_reachable=True, status=Device.Status.ACTIVE).count()
+
+    def get_devices_down(self, obj):
+        val = getattr(obj, "devices_down", None)
+        return val if val is not None else obj.devices.filter(
+            models.Q(is_reachable=False)
+            | models.Q(status__in=[Device.Status.INACTIVE, Device.Status.UNREACHABLE])).count()
+
+    def get_devices_unknown(self, obj):
+        val = getattr(obj, "devices_unknown", None)
+        return val if val is not None else obj.devices.filter(is_reachable__isnull=True).count()
 
 
 class DeviceGroupSerializer(serializers.ModelSerializer):
