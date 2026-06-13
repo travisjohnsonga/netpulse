@@ -119,7 +119,7 @@ export default function MistSettingsModal({ onClose }: { onClose: () => void }) 
 
         {test?.connected && (
           <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-gray-200">
-            ✅ Connected as {test.email || 'token'} · {test.org_count ?? test.orgs?.length ?? 0} org(s){test.orgs?.[0] ? ` · ${test.orgs[0].name}` : ''}
+            ✅ Connected as {test.full_name || test.email || 'token'}{test.full_name && test.email ? ` (${test.email})` : ''} · {test.org_count ?? test.orgs?.length ?? 0} org(s){test.orgs?.[0] ? ` · ${test.orgs[0].name}` : ''}
           </div>
         )}
 

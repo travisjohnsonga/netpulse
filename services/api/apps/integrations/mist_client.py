@@ -28,8 +28,10 @@ class MistClient:
         # Don't let REQUESTS_CA_BUNDLE/HTTP(S)_PROXY env vars silently alter the
         # request (same defensive default used by the other cloud clients).
         self.session.trust_env = False
+        # Mist token auth: "Authorization: Token {token}". Strip stray whitespace
+        # (a trailing newline pasted into the UI silently breaks the header → 401).
         self.session.headers.update({
-            "Authorization": f"Token {api_token}",
+            "Authorization": f"Token {(api_token or '').strip()}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         })
@@ -46,9 +48,23 @@ class MistClient:
         """Current user + org membership (``/self``)."""
         return self._get("/self")
 
+    @staticmethod
+    def _orgs_from_privileges(data: dict) -> list:
+        """Extract org memberships from a ``/self`` payload's privileges list.
+
+        Mist has **no** ``/self/orgs`` endpoint — org membership is reported as
+        ``privileges`` entries on ``/self`` with ``scope == "org"``.
+        """
+        return [
+            {"id": str(p.get("org_id", "")), "name": p.get("name", "") or "",
+             "role": p.get("role", "") or ""}
+            for p in (data.get("privileges") or [])
+            if p.get("scope") == "org" and p.get("org_id")
+        ]
+
     def get_orgs(self) -> list:
-        """Organizations the token can access (``/self/orgs``)."""
-        return self._get("/self/orgs") or []
+        """Organizations the token can access (derived from ``/self`` privileges)."""
+        return self._orgs_from_privileges(self.get_self())
 
     def get_sites(self, org_id: str) -> list:
         """All sites in an org (``/orgs/{org_id}/sites``)."""
@@ -65,32 +81,24 @@ class MistClient:
     def resolve_org(self) -> tuple[str, str]:
         """Return ``(org_id, org_name)`` for the token's first accessible org.
 
-        Prefers ``/self/orgs``; falls back to the ``privileges`` list on
-        ``/self`` (where org-scoped tokens report their org). Raises
-        :class:`MistError` when the token has no org.
+        Org membership comes from the ``/self`` privileges (scope == "org").
+        Raises :class:`MistError` when the token has no org.
         """
         orgs = self.get_orgs()
         if orgs:
-            o = orgs[0]
-            return str(o.get("id", "")), o.get("name", "") or ""
-        for priv in (self.get_self() or {}).get("privileges", []) or []:
-            if priv.get("org_id"):
-                return str(priv["org_id"]), priv.get("name", "") or ""
+            return orgs[0]["id"], orgs[0]["name"]
         raise MistError("The Mist API token has no accessible organization.")
 
     def test_connection(self) -> dict:
-        """Verify the token and return identity + org summary."""
+        """Verify the token and return identity + org summary (from ``/self``)."""
         data = self.get_self()
-        orgs = self.get_orgs()
-        if not orgs:
-            # Org-scoped tokens expose their org via privileges, not /self/orgs.
-            orgs = [{"id": p.get("org_id"), "name": p.get("name", "")}
-                    for p in (data.get("privileges") or []) if p.get("org_id")]
+        orgs = self._orgs_from_privileges(data)
         return {
             "connected": True,
             "email": data.get("email", "") or "",
+            "full_name": data.get("full_name", "") or "",
             "org_count": len(orgs),
-            "orgs": [{"id": str(o.get("id", "")), "name": o.get("name", "") or ""} for o in orgs],
+            "orgs": orgs,
         }
 
 

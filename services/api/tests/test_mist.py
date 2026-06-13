@@ -34,33 +34,46 @@ class _MistStub:
 
 # ── client ────────────────────────────────────────────────────────────────────
 class TestClient:
-    def test_test_connection_uses_orgs(self, monkeypatch):
-        c = MistClient("tok")
-        monkeypatch.setattr(c, "get_self", lambda: {"email": "travis@forgent.com"})
-        monkeypatch.setattr(c, "get_orgs", lambda: [{"id": "o1", "name": "Forgent Power"}])
-        r = c.test_connection()
-        assert r == {"connected": True, "email": "travis@forgent.com",
-                     "org_count": 1, "orgs": [{"id": "o1", "name": "Forgent Power"}]}
+    # Mist has no /self/orgs endpoint — orgs come from /self privileges (scope=org).
+    SELF = {
+        "email": "travis@forgent.com",
+        "full_name": "Travis Johnson",
+        "privileges": [
+            {"scope": "org", "org_id": "o1", "name": "Forgent Power", "role": "admin"},
+            {"scope": "site", "site_id": "s1", "name": "HQ"},  # non-org → ignored
+        ],
+    }
 
-    def test_test_connection_falls_back_to_privileges(self, monkeypatch):
-        # Org-scoped tokens expose the org via /self privileges, not /self/orgs.
+    def test_test_connection_extracts_orgs_from_privileges(self, monkeypatch):
         c = MistClient("tok")
-        monkeypatch.setattr(c, "get_self", lambda: {
-            "email": "svc@forgent.com",
-            "privileges": [{"org_id": "o9", "name": "Scoped Org"}]})
-        monkeypatch.setattr(c, "get_orgs", lambda: [])
+        monkeypatch.setattr(c, "get_self", lambda: self.SELF)
         r = c.test_connection()
-        assert r["org_count"] == 1 and r["orgs"][0]["id"] == "o9"
+        assert r == {
+            "connected": True, "email": "travis@forgent.com",
+            "full_name": "Travis Johnson", "org_count": 1,
+            "orgs": [{"id": "o1", "name": "Forgent Power", "role": "admin"}],
+        }
+
+    def test_get_orgs_derives_from_self(self, monkeypatch):
+        c = MistClient("tok")
+        monkeypatch.setattr(c, "get_self", lambda: self.SELF)
+        assert c.get_orgs() == [{"id": "o1", "name": "Forgent Power", "role": "admin"}]
+
+    def test_resolve_org(self, monkeypatch):
+        c = MistClient("tok")
+        monkeypatch.setattr(c, "get_self", lambda: self.SELF)
+        assert c.resolve_org() == ("o1", "Forgent Power")
 
     def test_resolve_org_raises_without_org(self, monkeypatch):
         c = MistClient("tok")
-        monkeypatch.setattr(c, "get_orgs", lambda: [])
-        monkeypatch.setattr(c, "get_self", lambda: {"privileges": []})
+        monkeypatch.setattr(c, "get_self", lambda: {"email": "x@y.com", "privileges": []})
         with pytest.raises(MistError):
             c.resolve_org()
 
-    def test_sets_token_header(self):
-        c = MistClient("secret-tok")
+    def test_sets_token_header_and_strips_whitespace(self):
+        assert MistClient("secret-tok").session.headers["Authorization"] == "Token secret-tok"
+        # A pasted trailing newline must not corrupt the header (→ 401).
+        c = MistClient("  secret-tok\n")
         assert c.session.headers["Authorization"] == "Token secret-tok"
         assert c.session.trust_env is False
 

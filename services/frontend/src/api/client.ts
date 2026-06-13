@@ -1381,10 +1381,11 @@ export interface MistIntegration {
   device_count: number
   api_token_set?: boolean
 }
-export interface MistOrg { id: string; name: string }
+export interface MistOrg { id: string; name: string; role?: string }
 export interface MistTestResult {
   connected: boolean
   email?: string
+  full_name?: string
   org_count?: number
   orgs?: MistOrg[]
   error?: string
