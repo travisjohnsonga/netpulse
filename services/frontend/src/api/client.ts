@@ -534,6 +534,9 @@ export interface UnifiApStatus {
   os_version: string
   site_name: string | null
   controller_name: string | null
+  // Vendor of the AP, for badging/filtering on the fleet Wireless page.
+  source?: 'unifi' | 'mist' | ''
+  vendor?: string
   state: number
   satisfaction: number | null
   client_count: number

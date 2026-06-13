@@ -156,16 +156,27 @@ class UnifiApStatusSerializer(serializers.ModelSerializer):
     os_version = serializers.CharField(source="device.os_version", read_only=True)
     site_name = serializers.CharField(source="device.site.name", read_only=True, default=None)
     controller_name = serializers.CharField(source="controller.name", read_only=True, default=None)
+    # Source/vendor so the fleet Wireless page can badge + filter UniFi vs Mist.
+    source = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
 
     class Meta:
         model = UnifiApStatus
         fields = (
             "device_id", "hostname", "ip_address", "model", "os_version",
-            "site_name", "controller_name", "state", "satisfaction",
-            "client_count", "cpu_pct", "memory_pct", "temperature_c",
-            "uptime_seconds", "uplink_speed_mbps", "uplink_type", "radios",
-            "last_collected",
+            "site_name", "controller_name", "source", "vendor", "state",
+            "satisfaction", "client_count", "cpu_pct", "memory_pct",
+            "temperature_c", "uptime_seconds", "uplink_speed_mbps", "uplink_type",
+            "radios", "last_collected",
         )
+
+    def get_source(self, obj) -> str:
+        from .wireless import wireless_source
+        return wireless_source((obj.device.platform if obj.device_id else "") or "")
+
+    def get_vendor(self, obj) -> str:
+        from .wireless import wireless_vendor
+        return wireless_vendor((obj.device.platform if obj.device_id else "") or "")
 
 
 class UnifiConsoleStatusSerializer(serializers.ModelSerializer):

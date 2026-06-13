@@ -41,6 +41,14 @@ function statusBadge(ap: UnifiApStatus): { label: string; cls: string } {
   return { label: '✅ Online', cls: 'text-green-600 dark:text-green-400' }
 }
 
+// Vendor badge: UniFi (blue) vs Mist (orange). `source` is the coarse vendor key
+// from the API; fall back to the human `vendor` label or '—'.
+function VendorBadge({ ap }: { ap: UnifiApStatus }) {
+  if (ap.source === 'unifi') return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">🔵 UniFi</span>
+  if (ap.source === 'mist') return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">🟠 Mist</span>
+  return <span className="text-gray-400">{ap.vendor || '—'}</span>
+}
+
 /** Horizontal bar for a single channel in the congestion heatmap. */
 function ChannelBar({ ch, util, apCount }: { ch: string; util: number; apCount: number }) {
   const filled = Math.round(util / 10)
@@ -63,6 +71,7 @@ export default function Wireless() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [scoreFilter, setScoreFilter] = useState('')
+  const [vendorFilter, setVendorFilter] = useState('')
   // Site scoping comes from the global header selector (APs carry a site_name,
   // so match on the selected site's display name).
   const { selectedSite, selectedSiteName } = useSite()
@@ -84,6 +93,7 @@ export default function Wireless() {
     return list.filter((a) => {
       if (q && !a.hostname.toLowerCase().includes(q) && !(a.model || '').toLowerCase().includes(q)) return false
       if (selectedSite && a.site_name !== selectedSiteName) return false
+      if (vendorFilter && a.source !== vendorFilter) return false
       if (statusFilter === 'online' && a.state !== 1) return false
       if (statusFilter === 'offline' && a.state === 1) return false
       if (statusFilter === 'degraded' && !(a.state === 1 && a.satisfaction != null && a.satisfaction < 70)) return false
@@ -92,7 +102,7 @@ export default function Wireless() {
       if (scoreFilter === 'red' && !(a.satisfaction != null && a.satisfaction < 70)) return false
       return true
     })
-  }, [data, search, selectedSite, selectedSiteName, statusFilter, scoreFilter])
+  }, [data, search, selectedSite, selectedSiteName, vendorFilter, statusFilter, scoreFilter])
 
   if (loading) {
     return <div className="py-20 flex justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
@@ -103,8 +113,8 @@ export default function Wireless() {
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
         <EmptyState
           icon="📶"
-          title="No wireless controllers configured"
-          description="Connect a UniFi controller to import access points and see live wireless telemetry here."
+          title="No wireless access points found"
+          description="Connect a UniFi controller or Juniper Mist account to import access points and see them here."
           action={{ label: 'Go to Settings → Integrations', onClick: () => navigate('/settings/integrations') }}
         />
       </div>
@@ -150,6 +160,11 @@ export default function Wireless() {
       <div className="flex flex-wrap items-center gap-2">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name / model…"
           className={clsx(selectCls, 'flex-1 min-w-[180px]')} />
+        <select value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)} className={selectCls}>
+          <option value="">All Vendors</option>
+          <option value="unifi">UniFi</option>
+          <option value="mist">Mist</option>
+        </select>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectCls}>
           <option value="">All Status</option>
           <option value="online">Online</option>
@@ -171,6 +186,7 @@ export default function Wireless() {
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left">
                 <th className="px-4 py-2 font-medium">Name</th>
+                <th className="px-4 py-2 font-medium">Vendor</th>
                 <th className="px-4 py-2 font-medium">Site</th>
                 <th className="px-4 py-2 font-medium">Model</th>
                 <th className="px-4 py-2 font-medium">Clients</th>
@@ -183,13 +199,14 @@ export default function Wireless() {
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {aps.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-400">No APs match the filters</td></tr>
+                <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-400">No APs match the filters</td></tr>
               ) : aps.map((ap) => {
                 const st = statusBadge(ap)
                 return (
                   <tr key={ap.device_id} onClick={() => navigate(`/devices/${ap.device_id}?tab=wireless`)}
                     className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
                     <td className="px-4 py-2 font-medium text-gray-800 dark:text-gray-100">{ap.hostname}</td>
+                    <td className="px-4 py-2"><VendorBadge ap={ap} /></td>
                     <td className="px-4 py-2 text-gray-500">{ap.site_name || '—'}</td>
                     <td className="px-4 py-2 text-gray-500">{ap.model || '—'}</td>
                     <td className="px-4 py-2">{ap.client_count}</td>

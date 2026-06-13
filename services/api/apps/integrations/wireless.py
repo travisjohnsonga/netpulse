@@ -1,11 +1,17 @@
 """
-Wireless (UniFi AP) fleet API — /api/wireless/.
+Wireless AP fleet API — /api/wireless/.
 
-Reads the per-AP snapshots persisted by the UniFi-telemetry scheduler task
-(apps.integrations.unifi_telemetry → UnifiApStatus). The rolling time-series
-lives in InfluxDB and is served per-device via /api/devices/{id}/unifi-ap/;
-these endpoints serve the fleet overview (summary cards, AP table, channel
-heatmap) for the Wireless page.
+Covers every wireless access point, regardless of vendor:
+- UniFi APs come with rich telemetry (per-AP snapshots persisted by the
+  UniFi-telemetry scheduler task, apps.integrations.unifi_telemetry →
+  UnifiApStatus; rolling time-series in InfluxDB).
+- Mist APs are currently inventory-only (imported by apps.integrations.mist_sync
+  as platform 'mist_ap'); per-AP Mist telemetry is a planned follow-up, so they
+  surface here built from the Device record alone (no radios/score yet).
+
+Only access points belong on this page — switches/gateways/consoles
+(mist_sw/mist_gw/unifi_sw/unifi_udm/…) live on the Network Devices page. These
+endpoints serve the fleet overview (summary cards, AP table, channel heatmap).
 """
 from __future__ import annotations
 
@@ -14,6 +20,25 @@ from collections import defaultdict
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+# The only platforms shown on the Wireless page (access points). NOT switches/
+# gateways/consoles — those are Network Devices.
+WIRELESS_AP_PLATFORMS = ["unifi_ap", "mist_ap"]
+
+
+def wireless_source(platform: str) -> str:
+    """Coarse vendor key for badging/filtering: 'unifi' | 'mist' | ''."""
+    p = (platform or "").lower()
+    if p.startswith("mist"):
+        return "mist"
+    if p.startswith("unifi"):
+        return "unifi"
+    return ""
+
+
+def wireless_vendor(platform: str) -> str:
+    """Human vendor label for the AP table."""
+    return {"unifi": "UniFi", "mist": "Mist"}.get(wireless_source(platform), "")
 
 
 def _ap_queryset():
@@ -26,6 +51,54 @@ def _ap_queryset():
 def _serialize_aps(qs):
     from .serializers import UnifiApStatusSerializer
     return UnifiApStatusSerializer(qs, many=True).data
+
+
+def _device_ap_entry(device) -> dict:
+    """A wireless-AP row built from a Device alone (no telemetry snapshot) — used
+    for AP platforms we inventory but don't yet collect AP telemetry for (Mist).
+    Mirrors the UnifiApStatusSerializer shape so the frontend treats them
+    uniformly; telemetry-only fields are null/empty."""
+    platform = device.platform or ""
+    return {
+        "device_id": device.id,
+        "hostname": device.hostname,
+        "ip_address": device.ip_address,
+        "model": device.model or "",
+        "os_version": device.os_version or "",
+        "site_name": device.site.name if device.site_id else None,
+        "controller_name": None,
+        "source": wireless_source(platform),
+        "vendor": wireless_vendor(platform),
+        # No live telemetry yet: derive online/offline from device reachability.
+        "state": 1 if device.is_reachable else 0,
+        "satisfaction": None,
+        "client_count": 0,
+        "cpu_pct": None,
+        "memory_pct": None,
+        "temperature_c": None,
+        "uptime_seconds": None,
+        "uplink_speed_mbps": None,
+        "uplink_type": "",
+        "radios": [],
+        "last_collected": None,
+    }
+
+
+def _all_ap_entries() -> list:
+    """Every wireless AP across vendors: UniFi telemetry snapshots plus inventory
+    rows for AP platforms without a snapshot (Mist, or a not-yet-polled UniFi AP)."""
+    from apps.devices.models import Device
+
+    aps = list(_serialize_aps(_ap_queryset()))
+    covered = {a["device_id"] for a in aps}
+    extras = (Device.objects
+              .filter(platform__in=WIRELESS_AP_PLATFORMS)
+              .exclude(id__in=covered)
+              .select_related("site")
+              .order_by("hostname"))
+    aps.extend(_device_ap_entry(d) for d in extras)
+    aps.sort(key=lambda a: (a["hostname"] or "").lower())
+    return aps
 
 
 def _summary(aps: list) -> dict:
@@ -75,7 +148,7 @@ def _channel_utilization(aps: list) -> dict:
 @permission_classes([IsAuthenticated])
 def wireless_summary(request):
     """Fleet summary cards + full AP list + channel-utilization heatmap data."""
-    aps = _serialize_aps(_ap_queryset())
+    aps = _all_ap_entries()
     data = _summary(aps)
     data["aps"] = aps
     data["channel_utilization"] = _channel_utilization(aps)
@@ -85,5 +158,5 @@ def wireless_summary(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def wireless_aps(request):
-    """Flat list of every AP's latest snapshot."""
-    return Response(_serialize_aps(_ap_queryset()))
+    """Flat list of every wireless AP (UniFi snapshots + Mist inventory rows)."""
+    return Response(_all_ap_entries())

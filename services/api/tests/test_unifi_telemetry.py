@@ -215,6 +215,38 @@ class TestEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1 and data[0]["client_count"] == 3
+        assert data[0]["source"] == "unifi" and data[0]["vendor"] == "UniFi"
+
+    def test_wireless_includes_mist_aps_from_inventory(self, auth_client):
+        # UniFi AP has a telemetry snapshot; the Mist AP is inventory-only (no
+        # snapshot) but must still appear, built from the Device record.
+        u = Device.objects.create(hostname="uap-1", ip_address="10.0.0.50", platform="unifi_ap")
+        UnifiApStatus.objects.create(device=u, state=1, client_count=3, radios=[])
+        Device.objects.create(hostname="mist-ap-1", ip_address="10.0.0.60",
+                              platform="mist_ap", is_reachable=True)
+        resp = auth_client.get("/api/wireless/aps/")
+        assert resp.status_code == 200
+        by_host = {a["hostname"]: a for a in resp.json()}
+        assert set(by_host) == {"uap-1", "mist-ap-1"}
+        mist = by_host["mist-ap-1"]
+        assert mist["source"] == "mist" and mist["vendor"] == "Mist"
+        assert mist["state"] == 1 and mist["radios"] == [] and mist["satisfaction"] is None
+
+    def test_wireless_offline_mist_ap_reflects_reachability(self, auth_client):
+        Device.objects.create(hostname="mist-down", ip_address="10.0.0.61",
+                              platform="mist_ap", is_reachable=False)
+        body = auth_client.get("/api/wireless/summary/").json()
+        assert body["total_aps"] == 1 and body["online"] == 0 and body["offline"] == 1
+        assert body["aps"][0]["state"] == 0
+
+    def test_wireless_excludes_switches_and_gateways(self, auth_client):
+        # Switches/gateways/consoles belong on Network Devices, not Wireless.
+        for i, (host, plat) in enumerate([("mist-sw", "mist_sw"), ("mist-gw", "mist_gw"),
+                                          ("unifi-sw", "unifi_sw"), ("unifi-udm", "unifi_udm")]):
+            Device.objects.create(hostname=host, ip_address=f"10.0.1.{i + 1}", platform=plat)
+        Device.objects.create(hostname="mist-ap", ip_address="10.0.1.99", platform="mist_ap")
+        hosts = {a["hostname"] for a in auth_client.get("/api/wireless/aps/").json()}
+        assert hosts == {"mist-ap"}  # only the AP
 
     def test_device_unifi_ap_endpoint(self, auth_client, monkeypatch):
         dev = Device.objects.create(hostname="AP-2", ip_address="10.0.0.51",
