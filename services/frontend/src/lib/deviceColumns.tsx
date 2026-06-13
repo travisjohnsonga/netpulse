@@ -4,6 +4,7 @@ import { type Device, type PingSummary, reachabilityOf, reachabilityReason } fro
 import { sshUrl, sshTooltip } from './ssh'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
 import RoleBubble from '../components/RoleBubble'
+import VendorLogo from '../components/VendorLogo'
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
@@ -109,7 +110,15 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
       )
     },
   },
-  { key: 'vendor', label: 'Vendor', default: true, sortKey: 'vendor', render: (d) => <span className="text-gray-600">{dash(d.vendor)}</span> },
+  {
+    key: 'vendor', label: 'Vendor', default: true, sortKey: 'vendor',
+    render: (d) => (
+      <span className="inline-flex items-center gap-2 text-gray-600">
+        <VendorLogo platform={d.platform} vendor={d.vendor} size={20} />
+        <span>{dash(d.vendor)}</span>
+      </span>
+    ),
+  },
   { key: 'platform', label: 'Platform', default: true, sortKey: 'platform', render: (d) => <span className="text-gray-600">{dash(d.platform)}</span> },
   { key: 'site', label: 'Site', default: true, sortKey: 'site__name', render: (d) => <span className="text-gray-600">{dash(d.site_name)}</span> },
   { key: 'management_ip', label: 'Mgmt IP', default: false, render: (d) => <span className="font-mono text-xs text-gray-600">{dash(d.management_ip)}</span> },

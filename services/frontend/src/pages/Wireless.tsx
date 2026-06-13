@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { fetchWirelessSummary, type WirelessSummary, type UnifiApStatus, type UnifiRadio } from '../api/client'
 import StatCard from '../components/StatCard'
 import EmptyState from '../components/EmptyState'
+import VendorLogo from '../components/VendorLogo'
 import { useSite } from '../store/siteStore'
 
 function fmtUptime(secs: number | null | undefined): string {
@@ -41,13 +42,6 @@ function statusBadge(ap: UnifiApStatus): { label: string; cls: string } {
   return { label: '✅ Online', cls: 'text-green-600 dark:text-green-400' }
 }
 
-// Vendor badge: UniFi (blue) vs Mist (orange). `source` is the coarse vendor key
-// from the API; fall back to the human `vendor` label or '—'.
-function VendorBadge({ ap }: { ap: UnifiApStatus }) {
-  if (ap.source === 'unifi') return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">🔵 UniFi</span>
-  if (ap.source === 'mist') return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">🟠 Mist</span>
-  return <span className="text-gray-400">{ap.vendor || '—'}</span>
-}
 
 /** Horizontal bar for a single channel in the congestion heatmap. */
 function ChannelBar({ ch, util, apCount }: { ch: string; util: number; apCount: number }) {
@@ -206,7 +200,7 @@ export default function Wireless() {
                   <tr key={ap.device_id} onClick={() => navigate(`/devices/${ap.device_id}?tab=wireless`)}
                     className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
                     <td className="px-4 py-2 font-medium text-gray-800 dark:text-gray-100">{ap.hostname}</td>
-                    <td className="px-4 py-2"><VendorBadge ap={ap} /></td>
+                    <td className="px-4 py-2"><VendorLogo vendor={ap.source} size={20} showName /></td>
                     <td className="px-4 py-2 text-gray-500">{ap.site_name || '—'}</td>
                     <td className="px-4 py-2 text-gray-500">{ap.model || '—'}</td>
                     <td className="px-4 py-2">{ap.client_count}</td>
