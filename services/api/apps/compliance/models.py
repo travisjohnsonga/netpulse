@@ -215,3 +215,122 @@ class DiscoveredPlatformModel(models.Model):
 
     def __str__(self):
         return f"{self.platform}/{self.model}/{self.os_version} (x{self.device_count})"
+
+
+class InterfaceComplianceRule(TimestampedModel):
+    """
+    LLDP-aware per-interface compliance rule. A rule selects switch interfaces by
+    a *trigger* (most powerfully, the LLDP capability the connected neighbour
+    advertises — e.g. ``wlan-ap`` catches every AP regardless of vendor) and runs
+    a list of config ``checks`` against each matching interface's config block.
+    See apps.compliance.interface_compliance.
+    """
+
+    class Trigger(models.TextChoices):
+        LLDP_CAPABILITY = "lldp_capability", "LLDP Neighbor Capability"
+        LLDP_PLATFORM = "lldp_neighbor_platform", "LLDP Neighbor Platform"
+        LLDP_ROLE = "lldp_neighbor_role", "LLDP Neighbor Role"
+        INTERFACE_DESCRIPTION = "interface_description", "Interface Description Pattern"
+        MANUAL = "manual", "Manual Interface Tag"
+
+    name = models.CharField(max_length=128)
+    description = models.TextField(blank=True)
+    trigger = models.CharField(
+        max_length=32, choices=Trigger.choices, default=Trigger.LLDP_CAPABILITY)
+    trigger_value = models.CharField(
+        max_length=256,
+        help_text=(
+            "lldp_capability: capability name (wlan-access-point, telephone, "
+            "bridge, router, station). lldp_neighbor_platform: comma-separated "
+            "platforms. interface_description: regex. manual: comma-separated "
+            "hostname:interface."),
+    )
+    # The SWITCH platform to limit the rule to (NOT the neighbour's). Blank = any.
+    platform = models.CharField(
+        max_length=64, blank=True, help_text="Switch platform filter, e.g. aos_cx")
+    checks = models.JSONField(default=list, help_text="List of config checks")
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class InterfaceComplianceResult(TimestampedModel):
+    """Latest per-interface result for an InterfaceComplianceRule run."""
+    rule = models.ForeignKey(
+        InterfaceComplianceRule, on_delete=models.CASCADE, related_name="results")
+    device = models.ForeignKey(
+        "devices.Device", on_delete=models.CASCADE,
+        related_name="interface_compliance_results")
+    interface = models.CharField(max_length=255)
+    # The neighbour that triggered the match + what matched (capability/platform).
+    neighbor = models.CharField(max_length=255, blank=True)
+    trigger_match = models.CharField(max_length=128, blank=True)
+    passed = models.BooleanField(default=True)
+    # Per-check outcomes (all of them, with passed flags); the UI shows ✅/❌.
+    findings = models.JSONField(default=list)
+    checks_total = models.IntegerField(default=0)
+    checked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rule", "device", "interface"],
+                name="uniq_iface_compliance_result"),
+        ]
+        indexes = [models.Index(fields=["device", "rule"])]
+
+    def __str__(self):
+        return f"{self.device}/{self.interface} ({'pass' if self.passed else 'fail'})"
+
+
+class RoleConsistencyRule(TimestampedModel):
+    """
+    Cross-device consistency rule: compare a piece of config (VLAN database, NTP
+    servers, DNS, SNMP, AAA, banner) across all devices sharing a role/platform/
+    site and flag drift. The "expected" set is the majority vote across the group.
+    See apps.compliance.role_consistency.
+    """
+
+    class CheckType(models.TextChoices):
+        VLAN = "vlan_consistency", "VLAN Consistency"
+        NTP = "ntp_consistency", "NTP Server Consistency"
+        DNS = "dns_consistency", "DNS Server Consistency"
+        BANNER = "banner_consistency", "Login Banner Consistency"
+        SNMP = "snmp_consistency", "SNMP Community Consistency"
+        AAA = "aaa_consistency", "AAA/RADIUS Consistency"
+
+    class Severity(models.TextChoices):
+        ERROR = "error", "Error"
+        WARNING = "warning", "Warning"
+        INFO = "info", "Info"
+
+    name = models.CharField(max_length=128)
+    description = models.TextField(blank=True)
+    check_type = models.CharField(
+        max_length=32, choices=CheckType.choices, default=CheckType.VLAN)
+    role = models.ForeignKey(
+        "devices.DeviceRole", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="consistency_rules", help_text="Compare devices with this role")
+    platform = models.CharField(
+        max_length=64, blank=True, help_text="Limit to this platform")
+    site = models.ForeignKey(
+        "devices.Site", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="consistency_rules", help_text="Limit to this site (blank = all)")
+    excluded_vlans = models.JSONField(
+        default=list, help_text="VLAN IDs to exclude from comparison, e.g. [1, 999]")
+    severity = models.CharField(
+        max_length=20, choices=Severity.choices, default=Severity.WARNING)
+    enabled = models.BooleanField(default=True)
+    # Last-run summary so the rule list shows a result badge without re-running.
+    last_run = models.DateTimeField(null=True, blank=True)
+    last_summary = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name

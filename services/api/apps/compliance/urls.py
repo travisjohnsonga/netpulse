@@ -10,7 +10,10 @@ from .views import (
     ComplianceTemplateResultViewSet,
     ComplianceTemplateViewSet,
     DiscoveredPlatformModelViewSet,
+    InterfaceComplianceResultViewSet,
+    InterfaceComplianceRuleViewSet,
     OSComplianceSummaryView,
+    RoleConsistencyRuleViewSet,
 )
 
 router = DefaultRouter()
@@ -21,6 +24,9 @@ router.register("templates", ComplianceTemplateViewSet)
 router.register("template-results", ComplianceTemplateResultViewSet)
 router.register("os-versions", ApprovedOSVersionViewSet)
 router.register("discovered-platforms", DiscoveredPlatformModelViewSet)
+router.register("interface-rules", InterfaceComplianceRuleViewSet, basename="interface-rule")
+router.register("interface-results", InterfaceComplianceResultViewSet, basename="interface-result")
+router.register("role-rules", RoleConsistencyRuleViewSet, basename="role-rule")
 
 urlpatterns = [
     path("check/", ComplianceCheckView.as_view(), name="compliance-check"),

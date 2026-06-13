@@ -17,6 +17,9 @@ from .models import (
     ComplianceTemplate,
     ComplianceTemplateResult,
     DiscoveredPlatformModel,
+    InterfaceComplianceResult,
+    InterfaceComplianceRule,
+    RoleConsistencyRule,
 )
 from .serializers import (
     ApprovedOSVersionSerializer,
@@ -26,6 +29,9 @@ from .serializers import (
     ComplianceTemplateResultSerializer,
     ComplianceTemplateSerializer,
     DiscoveredPlatformModelSerializer,
+    InterfaceComplianceResultSerializer,
+    InterfaceComplianceRuleSerializer,
+    RoleConsistencyRuleSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -254,3 +260,58 @@ class OSComplianceSummaryView(APIView):
     def get(self, request):
         from .os_policy import os_summary
         return Response(os_summary())
+
+
+class InterfaceComplianceRuleViewSet(viewsets.ModelViewSet):
+    """
+    LLDP-aware interface compliance rules. `run/` evaluates the rule against
+    every matching switch interface and returns + persists the results.
+    """
+
+    queryset = InterfaceComplianceRule.objects.prefetch_related("results").all()
+    serializer_class = InterfaceComplianceRuleSerializer
+    filterset_fields = ["trigger", "platform", "enabled"]
+    search_fields = ["name", "description"]
+    ordering = ["name"]
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk=None):
+        from .interface_compliance import run_interface_compliance
+        return Response(run_interface_compliance(self.get_object()))
+
+
+class InterfaceComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+    """Read-only interface-compliance results; filter by device_id / rule_id."""
+
+    serializer_class = InterfaceComplianceResultSerializer
+    queryset = InterfaceComplianceResult.objects.select_related("device", "rule").all()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        did = self.request.query_params.get("device_id")
+        rid = self.request.query_params.get("rule_id")
+        if did:
+            qs = qs.filter(device_id=did)
+        if rid:
+            qs = qs.filter(rule_id=rid)
+        return qs
+
+
+class RoleConsistencyRuleViewSet(viewsets.ModelViewSet):
+    """
+    Cross-device consistency rules (VLAN/NTP/DNS/SNMP/AAA/banner). `run/` compares
+    the configured item across the scoped group and returns drift per device.
+    """
+
+    queryset = RoleConsistencyRule.objects.select_related("role", "site").all()
+    serializer_class = RoleConsistencyRuleSerializer
+    filterset_fields = ["check_type", "platform", "role", "site", "enabled"]
+    search_fields = ["name", "description"]
+    ordering = ["name"]
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk=None):
+        from .role_consistency import run_role_consistency
+        return Response(run_role_consistency(self.get_object()))

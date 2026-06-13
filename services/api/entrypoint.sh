@@ -74,6 +74,10 @@ if [ "$SEED_SUPERUSER" = "1" ]; then
     echo "[entrypoint] seeding example compliance templates..."
     python manage.py seed_compliance_templates || echo "[entrypoint] compliance-template seed had issues (continuing)"
 
+    # Seed example interface-compliance + role-consistency rules (disabled by default).
+    echo "[entrypoint] seeding example compliance rules..."
+    python manage.py seed_compliance_rules || echo "[entrypoint] compliance-rule seed had issues (continuing)"
+
     # Seed SSO providers from any SOCIAL_AUTH_* env vars (idempotent).
     echo "[entrypoint] seeding SSO providers from env..."
     python manage.py seed_sso_providers || echo "[entrypoint] SSO provider seed had issues (continuing)"

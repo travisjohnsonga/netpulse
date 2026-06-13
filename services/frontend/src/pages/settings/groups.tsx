@@ -14,6 +14,8 @@ import LldpSettings from './LldpSettings'
 import ComplianceTemplates from './ComplianceTemplates'
 import OSVersions from './OSVersions'
 import FleetInventory from './FleetInventory'
+import InterfaceRules from './InterfaceRules'
+import RoleConsistency from './RoleConsistency'
 import General from './General'
 import Certificates from './Certificates'
 import System from './System'
@@ -47,6 +49,8 @@ export function ComplianceSettings() {
     { id: 'templates', label: 'Templates', element: <ComplianceTemplates /> },
     { id: 'os-versions', label: 'OS Versions', element: <OSVersions /> },
     { id: 'fleet-inventory', label: 'Fleet Inventory', element: <FleetInventory /> },
+    { id: 'interface-rules', label: 'Interface Rules', element: <InterfaceRules /> },
+    { id: 'role-consistency', label: 'Role Consistency', element: <RoleConsistency /> },
   ]} />
 }
 

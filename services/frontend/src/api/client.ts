@@ -2622,6 +2622,125 @@ export async function previewComplianceTemplate(id: number, deviceId: number): P
   return data
 }
 
+// ── Interface compliance rules (LLDP-aware) ───────────────────────────────────
+export interface InterfaceCheck {
+  type: string
+  value?: string
+  vlan_type?: string
+  description?: string
+  severity?: string
+}
+export interface InterfaceComplianceRule {
+  id: number
+  name: string
+  description: string
+  trigger: string
+  trigger_display?: string
+  trigger_value: string
+  platform: string
+  checks: InterfaceCheck[]
+  enabled: boolean
+  result_summary?: { total: number; passing: number; failing: number }
+}
+export interface InterfaceCheckResult extends InterfaceCheck { passed: boolean }
+export interface InterfaceRunRow {
+  device_id: number
+  switch: string
+  interface: string
+  neighbor: string
+  trigger_match: string
+  checks: InterfaceCheckResult[]
+  findings: InterfaceCheckResult[]
+  passed: boolean
+}
+export interface InterfaceRunResult {
+  rule_id: number
+  rule: string
+  summary: { matched: number; passing: number; failing: number }
+  results: InterfaceRunRow[]
+}
+
+export async function fetchInterfaceRules(): Promise<InterfaceComplianceRule[]> {
+  const { data } = await api.get<InterfaceComplianceRule[] | Paginated<InterfaceComplianceRule>>('/compliance/interface-rules/')
+  return unwrap(data)
+}
+export async function createInterfaceRule(payload: Partial<InterfaceComplianceRule>): Promise<InterfaceComplianceRule> {
+  const { data } = await api.post<InterfaceComplianceRule>('/compliance/interface-rules/', payload)
+  return data
+}
+export async function updateInterfaceRule(id: number, payload: Partial<InterfaceComplianceRule>): Promise<InterfaceComplianceRule> {
+  const { data } = await api.patch<InterfaceComplianceRule>(`/compliance/interface-rules/${id}/`, payload)
+  return data
+}
+export async function deleteInterfaceRule(id: number): Promise<void> {
+  await api.delete(`/compliance/interface-rules/${id}/`)
+}
+export async function runInterfaceRule(id: number): Promise<InterfaceRunResult> {
+  const { data } = await api.post<InterfaceRunResult>(`/compliance/interface-rules/${id}/run/`)
+  return data
+}
+
+// ── Role consistency rules (cross-device drift) ───────────────────────────────
+export interface RoleConsistencyRule {
+  id: number
+  name: string
+  description: string
+  check_type: string
+  check_type_display?: string
+  role: number | null
+  role_name?: string | null
+  platform: string
+  site: number | null
+  site_name?: string | null
+  excluded_vlans: number[]
+  severity: string
+  enabled: boolean
+  last_run: string | null
+  last_summary?: RoleRunResult | Record<string, never>
+}
+export interface RoleRunRow {
+  device_id: number
+  device: string
+  status: 'pass' | 'fail'
+  missing: number[] | string[]
+  extra: number[] | string[]
+  has: number[] | string[]
+  expected: number[] | string[]
+  remediation: string
+}
+export interface RoleRunResult {
+  rule_id?: number
+  rule?: string
+  status: 'complete' | 'skip'
+  reason?: string
+  check_type?: string
+  expected?: (number | string)[]
+  total_devices?: number
+  passing?: number
+  failing?: number
+  results?: RoleRunRow[]
+}
+
+export async function fetchRoleRules(): Promise<RoleConsistencyRule[]> {
+  const { data } = await api.get<RoleConsistencyRule[] | Paginated<RoleConsistencyRule>>('/compliance/role-rules/')
+  return unwrap(data)
+}
+export async function createRoleRule(payload: Partial<RoleConsistencyRule>): Promise<RoleConsistencyRule> {
+  const { data } = await api.post<RoleConsistencyRule>('/compliance/role-rules/', payload)
+  return data
+}
+export async function updateRoleRule(id: number, payload: Partial<RoleConsistencyRule>): Promise<RoleConsistencyRule> {
+  const { data } = await api.patch<RoleConsistencyRule>(`/compliance/role-rules/${id}/`, payload)
+  return data
+}
+export async function deleteRoleRule(id: number): Promise<void> {
+  await api.delete(`/compliance/role-rules/${id}/`)
+}
+export async function runRoleRule(id: number): Promise<RoleRunResult> {
+  const { data } = await api.post<RoleRunResult>(`/compliance/role-rules/${id}/run/`)
+  return data
+}
+
 export interface DeviceCVE {
   id: number
   device: number
