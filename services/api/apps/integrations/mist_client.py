@@ -117,3 +117,29 @@ def _read_api_token() -> str:
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not read Mist API token: %s", exc)
         return ""
+
+
+def write_mist_secret(integration, api_token: str | None = None) -> None:
+    """Write the Mist secret bundle to OpenBao: ``api_token`` plus the non-secret
+    context the sync path needs (``org_id``, ``api_host``).
+
+    Preserves the stored token when ``api_token`` is None so saving other settings
+    (region, org) doesn't wipe it. No-op when there's no token to anchor the
+    bundle (an empty secret isn't useful and would just churn OpenBao).
+    """
+    from apps.credentials import vault
+
+    from .models import MIST_VAULT_PATH
+    existing = {}
+    try:
+        existing = vault.read_secret(MIST_VAULT_PATH) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not read existing Mist secret: %s", exc)
+    token = ((api_token or existing.get("api_token") or "")).strip()
+    if not token:
+        return
+    vault.write_secret(MIST_VAULT_PATH, {
+        "api_token": token,
+        "org_id": integration.org_id or "",
+        "api_host": integration.api_host or DEFAULT_MIST_HOST,
+    })

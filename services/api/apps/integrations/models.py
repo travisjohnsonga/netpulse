@@ -222,7 +222,8 @@ class UnifiApStatus(TimestampedModel):
         return f"AP status for {self.device_id}"
 
 
-# OpenBao path holding the Juniper Mist cloud API token (key "api_token").
+# OpenBao path holding the Juniper Mist secret bundle: "api_token" plus the
+# non-secret context the sync path needs ("org_id", "api_host").
 MIST_VAULT_PATH = "netpulse/integrations/mist"
 
 

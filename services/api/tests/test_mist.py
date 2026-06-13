@@ -228,8 +228,42 @@ class TestEndpoints:
         assert auth_client.get("/api/integrations/mist/").status_code == 200
         resp = auth_client.put("/api/integrations/mist/", {"api_token": "tok-abc", "enabled": True}, format="json")
         assert resp.status_code == 200
-        assert writes.get("netpulse/integrations/mist") == {"api_token": "tok-abc"}
+        # The secret bundle carries the token + non-secret context (org_id/api_host).
+        assert writes.get("netpulse/integrations/mist") == {
+            "api_token": "tok-abc", "org_id": "", "api_host": "api.mist.com"}
         assert "api_token" not in resp.json()  # write-only
+
+    def test_put_stores_full_secret_bundle(self, auth_client, monkeypatch):
+        store = {}
+        monkeypatch.setattr("apps.credentials.vault.read_secret", lambda p: store.get(p, {}))
+        monkeypatch.setattr("apps.credentials.vault.write_secret", lambda p, d: store.__setitem__(p, dict(d)))
+        auth_client.put("/api/integrations/mist/",
+                        {"api_token": "tok-1", "api_host": "api.gc4.mist.com"}, format="json")
+        assert store["netpulse/integrations/mist"] == {
+            "api_token": "tok-1", "org_id": "", "api_host": "api.gc4.mist.com"}
+
+    def test_put_region_change_preserves_stored_token(self, auth_client, monkeypatch):
+        # Changing only the region (no token in payload) keeps the stored token
+        # and updates api_host in the bundle; org_id comes from the DB (truth).
+        integ = MistIntegration.load(); integ.org_id = "o1"; integ.save()
+        store = {"netpulse/integrations/mist": {"api_token": "keep-me", "org_id": "o1", "api_host": "api.mist.com"}}
+        monkeypatch.setattr("apps.credentials.vault.read_secret", lambda p: store.get(p, {}))
+        monkeypatch.setattr("apps.credentials.vault.write_secret", lambda p, d: store.__setitem__(p, dict(d)))
+        auth_client.put("/api/integrations/mist/", {"api_host": "api.gc4.mist.com"}, format="json")
+        assert store["netpulse/integrations/mist"] == {
+            "api_token": "keep-me", "org_id": "o1", "api_host": "api.gc4.mist.com"}
+
+    def test_test_endpoint_mirrors_org_id_to_vault(self, auth_client, monkeypatch):
+        store = {"netpulse/integrations/mist": {"api_token": "tok-1", "api_host": "api.gc4.mist.com"}}
+        monkeypatch.setattr("apps.credentials.vault.read_secret", lambda p: store.get(p, {}))
+        monkeypatch.setattr("apps.credentials.vault.write_secret", lambda p, d: store.__setitem__(p, dict(d)))
+        monkeypatch.setattr(
+            "apps.integrations.mist_client.MistClient",
+            lambda *a, **k: type("C", (), {"test_connection": lambda self: {
+                "connected": True, "orgs": [{"id": "ORG-9", "name": "Forgent"}]}})())
+        auth_client.post("/api/integrations/mist/test/", {"api_token": "tok-1"}, format="json")
+        assert MistIntegration.load().org_id == "ORG-9"
+        assert store["netpulse/integrations/mist"]["org_id"] == "ORG-9"  # mirrored to vault
 
     def test_test_endpoint(self, auth_client, monkeypatch):
         # The view imports MistClient from mist_client at call time.

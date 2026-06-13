@@ -15,6 +15,7 @@ const MIST_REGIONS: { host: string; label: string }[] = [
   { host: 'api.mist.com', label: 'Global 01 — Americas' },
   { host: 'api.gc1.mist.com', label: 'Global 02 — Americas' },
   { host: 'api.ac2.mist.com', label: 'Global 03 — Americas' },
+  { host: 'api.gc4.mist.com', label: 'Global 04 — Americas' },
   { host: 'api.eu.mist.com', label: 'EMEA 01 — Germany' },
   { host: 'api.eu2.mist.com', label: 'EMEA 02 — England' },
   { host: 'api.ap.mist.com', label: 'APAC 01 — Australia' },

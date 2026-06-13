@@ -214,12 +214,11 @@ class MistIntegrationSerializer(serializers.ModelSerializer):
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
-        # Only touch OpenBao when a non-blank token is supplied, so saving other
-        # settings doesn't wipe the stored secret.
-        if api_token:
-            from apps.credentials import vault
-            from .models import MIST_VAULT_PATH
-            vault.write_secret(MIST_VAULT_PATH, {"api_token": api_token})
+        # Mirror the secret bundle (api_token + org_id + api_host) into OpenBao.
+        # write_mist_secret preserves the stored token when none is supplied, so
+        # saving the region/org alone doesn't wipe the token.
+        from .mist_client import write_mist_secret
+        write_mist_secret(instance, api_token=api_token)
         return instance
 
 

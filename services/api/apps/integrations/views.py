@@ -186,13 +186,16 @@ class MistViewSet(viewsets.ViewSet):
                     exc, logger, "mist test-connection",
                     public="Could not connect to Juniper Mist. Check the API token.")},
                 status=status.HTTP_502_BAD_GATEWAY)
-        # Persist the discovered org context so the UI shows it after a restart.
+        # Persist the discovered org context so the UI shows it after a restart,
+        # and mirror org_id into the OpenBao secret bundle.
         if result.get("orgs"):
             from .models import MistIntegration
+            from .mist_client import write_mist_secret
             account = MistIntegration.load()
             account.org_id = result["orgs"][0]["id"]
             account.org_name = result["orgs"][0]["name"]
             account.save(update_fields=["org_id", "org_name", "updated_at"])
+            write_mist_secret(account)
         return Response(result)
 
     @extend_schema(request=None, responses=None)
