@@ -197,7 +197,7 @@ def sync_mist() -> dict:
 
     counts = {"sites": 0, "imported": 0, "updated": 0, "skipped": 0}
     try:
-        client = MistClient(token)
+        client = MistClient(token, api_host=integration.api_host)
         org_id = integration.org_id or ""
         org_name = integration.org_name or ""
         if not org_id:

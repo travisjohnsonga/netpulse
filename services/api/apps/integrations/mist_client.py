@@ -1,10 +1,11 @@
 """
-Juniper Mist cloud API client (https://api.mist.com).
+Juniper Mist cloud API client.
 
-Mist is a cloud-only platform: a single org API token (``Authorization: Token
-{token}``) lists the org's sites and their managed devices (APs/switches/
-gateways). The token lives in OpenBao at MIST_VAULT_PATH; this client only ever
-receives the plaintext token at call time.
+Mist is a cloud-only platform with several regional API endpoints — an org's
+token is only valid against its own region's host (the wrong host → 401). A
+single org API token (``Authorization: Token {token}``) lists the org's sites
+and their managed devices (APs/switches/gateways). The token lives in OpenBao at
+MIST_VAULT_PATH; this client only ever receives the plaintext token at call time.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-MIST_BASE = "https://api.mist.com/api/v1"
+DEFAULT_MIST_HOST = "api.mist.com"
 
 
 class MistError(Exception):
@@ -20,9 +21,14 @@ class MistError(Exception):
 
 
 class MistClient:
-    def __init__(self, api_token: str, timeout: int = 15):
+    def __init__(self, api_token: str, api_host: str = DEFAULT_MIST_HOST, timeout: int = 15):
         import requests
 
+        # The regional API host (e.g. api.mist.com, api.eu.mist.com). Strip any
+        # accidental scheme/path the user pasted so we always build a clean URL.
+        host = (api_host or DEFAULT_MIST_HOST).strip().rstrip("/")
+        host = host.replace("https://", "").replace("http://", "").split("/")[0]
+        self.base_url = f"https://{host or DEFAULT_MIST_HOST}/api/v1"
         self.timeout = timeout
         self.session = requests.Session()
         # Don't let REQUESTS_CA_BUNDLE/HTTP(S)_PROXY env vars silently alter the
@@ -38,7 +44,7 @@ class MistClient:
 
     def _get(self, path: str, timeout: int | None = None):
         try:
-            resp = self.session.get(f"{MIST_BASE}{path}", timeout=timeout or self.timeout)
+            resp = self.session.get(f"{self.base_url}{path}", timeout=timeout or self.timeout)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:  # noqa: BLE001

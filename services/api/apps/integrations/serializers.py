@@ -195,8 +195,8 @@ class MistIntegrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = MistIntegration
         fields = (
-            "name", "org_id", "org_name", "enabled", "last_sync", "last_error",
-            "site_count", "device_count", "api_token", "api_token_set",
+            "name", "api_host", "org_id", "org_name", "enabled", "last_sync",
+            "last_error", "site_count", "device_count", "api_token", "api_token_set",
         )
         read_only_fields = ("org_id", "org_name", "last_sync", "last_error",
                             "site_count", "device_count")

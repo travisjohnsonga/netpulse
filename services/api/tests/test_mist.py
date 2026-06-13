@@ -70,6 +70,13 @@ class TestClient:
         with pytest.raises(MistError):
             c.resolve_org()
 
+    def test_base_url_uses_region_host(self):
+        assert MistClient("t").base_url == "https://api.mist.com/api/v1"
+        assert MistClient("t", api_host="api.eu.mist.com").base_url == "https://api.eu.mist.com/api/v1"
+        # Tolerate a pasted scheme / trailing slash; blank falls back to default.
+        assert MistClient("t", api_host="https://api.ac2.mist.com/").base_url == "https://api.ac2.mist.com/api/v1"
+        assert MistClient("t", api_host="").base_url == "https://api.mist.com/api/v1"
+
     def test_sets_token_header_and_strips_whitespace(self):
         assert MistClient("secret-tok").session.headers["Authorization"] == "Token secret-tok"
         # A pasted trailing newline must not corrupt the header (→ 401).
@@ -177,6 +184,20 @@ class TestSync:
         mist_sync.sync_mist()
         assert Device.objects.get(hostname="AP-2").site_id == np_site.id
 
+    def test_sync_uses_configured_api_host(self, roles, monkeypatch):
+        integ = MistIntegration.load()
+        integ.api_host = "api.eu.mist.com"
+        integ.save()
+        captured = {}
+
+        def _factory(token, api_host="api.mist.com", **k):
+            captured["host"] = api_host
+            return _MistStub(sites=[])
+        monkeypatch.setattr("apps.integrations.mist_client._read_api_token", lambda: "tok")
+        monkeypatch.setattr("apps.integrations.mist_client.MistClient", _factory)
+        mist_sync.sync_mist()
+        assert captured["host"] == "api.eu.mist.com"
+
     def test_sync_without_token_raises(self, monkeypatch):
         monkeypatch.setattr("apps.integrations.mist_client._read_api_token", lambda: "")
         with pytest.raises(MistError):
@@ -224,6 +245,23 @@ class TestEndpoints:
         assert body["connected"] is True and body["email"] == "travis@forgent.com"
         # Org context persisted for display after restart.
         assert MistIntegration.load().org_name == "Forgent Power"
+
+    def test_put_saves_api_host(self, auth_client, monkeypatch):
+        monkeypatch.setattr("apps.credentials.vault.write_secret", lambda p, d: None)
+        resp = auth_client.put("/api/integrations/mist/", {"api_host": "api.ap.mist.com"}, format="json")
+        assert resp.status_code == 200 and resp.json()["api_host"] == "api.ap.mist.com"
+        assert MistIntegration.load().api_host == "api.ap.mist.com"
+
+    def test_test_endpoint_passes_api_host(self, auth_client, monkeypatch):
+        captured = {}
+
+        def _factory(token, api_host="api.mist.com", **k):
+            captured["host"] = api_host
+            return type("C", (), {"test_connection": lambda self: {"connected": True, "orgs": []}})()
+        monkeypatch.setattr("apps.integrations.mist_client.MistClient", _factory)
+        auth_client.post("/api/integrations/mist/test/",
+                         {"api_token": "k", "api_host": "api.ap.mist.com"}, format="json")
+        assert captured["host"] == "api.ap.mist.com"
 
     def test_test_endpoint_no_token(self, auth_client):
         resp = auth_client.post("/api/integrations/mist/test/", {}, format="json")

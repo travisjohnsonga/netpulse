@@ -237,6 +237,14 @@ class MistIntegration(TimestampedModel):
     survives an api restart.
     """
     name = models.CharField(max_length=128, default="Mist")
+    # Regional API endpoint — a token is only valid against its own region's host
+    # (wrong host → 401). Find it from the portal URL: manage.XX.mist.com →
+    # api.XX.mist.com.
+    api_host = models.CharField(
+        max_length=128, default="api.mist.com",
+        help_text=("API endpoint for your region. Find it from your portal URL: "
+                   "manage.XX.mist.com → api.XX.mist.com"),
+    )
     # Org context, auto-populated from the API on test/sync.
     org_id = models.CharField(max_length=64, blank=True, help_text="Auto-populated from the API")
     org_name = models.CharField(max_length=128, blank=True)

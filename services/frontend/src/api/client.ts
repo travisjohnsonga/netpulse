@@ -1372,6 +1372,7 @@ export async function discoverUnifiControllers(): Promise<{ discovered: number; 
 // ── Juniper Mist (Settings → Integrations → Mist) ─────────────────────────────
 export interface MistIntegration {
   name: string
+  api_host: string
   org_id: string
   org_name: string
   enabled: boolean
@@ -1413,8 +1414,11 @@ export async function saveMist(payload: Partial<MistIntegration> & { api_token?:
   const { data } = await api.put<MistIntegration>('/integrations/mist/', payload)
   return data
 }
-export async function testMist(apiToken?: string): Promise<MistTestResult> {
-  const { data } = await api.post<MistTestResult>('/integrations/mist/test/', apiToken ? { api_token: apiToken } : {})
+export async function testMist(apiToken?: string, apiHost?: string): Promise<MistTestResult> {
+  const body: Record<string, string> = {}
+  if (apiToken) body.api_token = apiToken
+  if (apiHost) body.api_host = apiHost
+  const { data } = await api.post<MistTestResult>('/integrations/mist/test/', body)
   return data
 }
 export async function syncMist(): Promise<MistSyncResult> {

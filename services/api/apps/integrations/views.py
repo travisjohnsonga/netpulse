@@ -170,12 +170,16 @@ class MistViewSet(viewsets.ViewSet):
     def test(self, request):
         """Verify the API token and return the user's email + org list."""
         from .mist_client import MistClient, MistError, _read_api_token
+        from .models import MistIntegration
         token = (request.data or {}).get("api_token") or _read_api_token()
         if not token:
             return Response({"connected": False, "error": "No API token configured"},
                             status=status.HTTP_400_BAD_REQUEST)
+        # Use the region host from the request (lets the user test before saving),
+        # else the saved one — a token only works against its own region (else 401).
+        api_host = (request.data or {}).get("api_host") or MistIntegration.load().api_host
         try:
-            result = MistClient(token).test_connection()
+            result = MistClient(token, api_host=api_host).test_connection()
         except MistError as exc:
             return Response(
                 {"connected": False, "error": safe_detail(
