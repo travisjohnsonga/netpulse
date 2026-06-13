@@ -73,7 +73,9 @@ def build_edges(topology_links, lldp_neighbors, dev_ids) -> list[dict]:
 
     Combines discovered TopologyLink rows with LLDP-neighbor matches: a device
     the fleet *sees* via LLDP but that doesn't report LLDP itself (e.g. a UniFi
-    AP, which is seen by its uplink switch) still gets an edge. Parallel links
+    or Juniper Mist AP, which is seen by its uplink switch) still gets an edge —
+    matching is platform-agnostic, keyed on the resolved ``matched_device``, so
+    every wireless-AP platform is covered. Parallel links
     between the same pair (LAG / redundant uplinks) collapse into one edge
     carrying ``link_count`` + per-link port detail, so the map draws a single
     line with an "x2"/"x3" badge instead of overlapping duplicates.

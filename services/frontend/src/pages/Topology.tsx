@@ -21,27 +21,52 @@ const DEFAULT_ROLE_COLOR = '#607D8B'
 // APs at the bottom.
 interface RoleStyle { shape: string; color: string; size: number; icon: string; tier: number }
 const NODE_STYLES: Record<string, RoleStyle> = {
-  router:        { shape: 'ellipse',         color: '#FF9800', size: 46, icon: '🔀', tier: 0 },
-  firewall:      { shape: 'round-triangle',  color: '#f44336', size: 46, icon: '🛡', tier: 0 },
+  router:        { shape: 'ellipse',         color: '#FF9800', size: 44, icon: '🔀', tier: 0 },
+  firewall:      { shape: 'round-triangle',  color: '#f44336', size: 44, icon: '🛡', tier: 0 },
+  controller:    { shape: 'ellipse',         color: '#009688', size: 44, icon: '☁', tier: 0 },
   'core-switch': { shape: 'diamond',         color: '#2196F3', size: 52, icon: '◆', tier: 1 },
   distribution:  { shape: 'hexagon',         color: '#00BCD4', size: 46, icon: '⬡', tier: 2 },
-  'access-switch':{ shape: 'round-rectangle', color: '#4CAF50', size: 40, icon: '▪', tier: 3 },
-  'wireless-ap': { shape: 'ellipse',         color: '#9C27B0', size: 34, icon: '📶', tier: 4 },
+  'access-switch':{ shape: 'round-rectangle', color: '#4CAF50', size: 40, icon: '▦', tier: 3 },
+  server:        { shape: 'round-rectangle', color: '#607D8B', size: 40, icon: '🖥', tier: 3 },
+  'wireless-ap': { shape: 'ellipse',         color: '#9C27B0', size: 32, icon: '📶', tier: 4 },
   default:       { shape: 'ellipse',         color: DEFAULT_ROLE_COLOR, size: 38, icon: '●', tier: 2 },
+}
+
+// Universal (vendor-neutral) role glyphs drawn INSIDE each node as a white SVG.
+// Simple original shapes — switch grid, shield, router cross, wifi waves, server
+// racks, cloud — encoded as data URIs and used as the cytoscape background-image.
+const ICON_SVG: Record<string, string> = {
+  switch: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='2' y='8' width='20' height='8' rx='2' fill='none' stroke='#fff' stroke-width='1.7'/><rect x='5' y='11' width='2' height='2' rx='.5' fill='#fff'/><rect x='9' y='11' width='2' height='2' rx='.5' fill='#fff'/><rect x='13' y='11' width='2' height='2' rx='.5' fill='#fff'/><rect x='17' y='11' width='2' height='2' rx='.5' fill='#fff'/><line x1='7' y1='8' x2='7' y2='5' stroke='#fff' stroke-width='1.7'/><line x1='17' y1='8' x2='17' y2='5' stroke='#fff' stroke-width='1.7'/></svg>",
+  firewall: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2 3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7z' fill='none' stroke='#fff' stroke-width='1.7'/><line x1='8' y1='10' x2='16' y2='10' stroke='#fff' stroke-width='1.6'/><line x1='8' y1='13' x2='14' y2='13' stroke='#fff' stroke-width='1.6'/><line x1='8' y1='16' x2='12' y2='16' stroke='#fff' stroke-width='1.6'/></svg>",
+  router: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9' fill='none' stroke='#fff' stroke-width='1.6'/><line x1='12' y1='3' x2='12' y2='21' stroke='#fff' stroke-width='1.3'/><line x1='3' y1='12' x2='21' y2='12' stroke='#fff' stroke-width='1.3'/><polyline points='9,6 12,3 15,6' fill='none' stroke='#fff' stroke-width='1.6'/><polyline points='18,9 21,12 18,15' fill='none' stroke='#fff' stroke-width='1.6'/></svg>",
+  ap: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 12.55a11 11 0 0 1 14.08 0' fill='none' stroke='#fff' stroke-width='1.7' stroke-linecap='round'/><path d='M1.42 9a16 16 0 0 1 21.16 0' fill='none' stroke='#fff' stroke-width='1.7' stroke-linecap='round'/><path d='M8.53 16.11a6 6 0 0 1 6.95 0' fill='none' stroke='#fff' stroke-width='1.7' stroke-linecap='round'/><circle cx='12' cy='20' r='1.5' fill='#fff'/></svg>",
+  server: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='2' y='3' width='20' height='7' rx='1' fill='none' stroke='#fff' stroke-width='1.6'/><rect x='2' y='14' width='20' height='7' rx='1' fill='none' stroke='#fff' stroke-width='1.6'/><circle cx='6' cy='6.5' r='1' fill='#fff'/><circle cx='6' cy='17.5' r='1' fill='#fff'/></svg>",
+  controller: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z' fill='none' stroke='#fff' stroke-width='1.6'/></svg>",
+  default: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='5' fill='#fff'/></svg>",
+}
+const ROLE_ICON_KEY: Record<string, keyof typeof ICON_SVG> = {
+  router: 'router', firewall: 'firewall', controller: 'controller',
+  'core-switch': 'switch', distribution: 'switch', 'access-switch': 'switch',
+  server: 'server', 'wireless-ap': 'ap', default: 'default',
+}
+function nodeIconUri(roleKeyStr: string): string {
+  const svg = ICON_SVG[ROLE_ICON_KEY[roleKeyStr] ?? 'default']
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
 // Map a node's role slug / role name / platform to one of the NODE_STYLES keys.
 function roleKey(n: TopologyNode): string {
   const r = `${n.role_slug || ''} ${n.role || ''}`.toLowerCase()
   const t = (n.type || '').toLowerCase()
-  if (t === 'unifi_ap' || r.includes('wireless') || /\bap\b/.test(r)) return 'wireless-ap'
+  if (t === 'unifi_ap' || t === 'mist_ap' || r.includes('wireless') || /\bap\b/.test(r)) return 'wireless-ap'
   if (r.includes('firewall') || t.includes('fortios') || t.includes('panos') || t.includes('sonicwall') || t.includes('asa')) return 'firewall'
   // UniFi consoles/gateways (UDM, Cloud Key, UXG, USG) sit at the gateway tier.
-  if (t === 'unifi_udm' || t === 'unifi_gw' || t === 'unifi_ucg' || t === 'unifi_uckp') return 'router'
+  if (t === 'unifi_udm' || t === 'unifi_gw' || t === 'unifi_ucg' || t === 'unifi_uckp') return 'controller'
+  if (r.includes('server') || t === 'linux' || t === 'windows') return 'server'
   if (r.includes('core')) return 'core-switch'
   if (r.includes('distrib')) return 'distribution'
-  if (r.includes('access') || t === 'aos_cx' || t === 'nxos' || t === 'eos' || t === 'unifi_sw') return 'access-switch'
-  if (r.includes('router') || r.includes('wan') || t.startsWith('ios') || t === 'junos') return 'router'
+  if (r.includes('access') || t === 'aos_cx' || t === 'nxos' || t === 'eos' || t === 'unifi_sw' || t === 'mist_sw') return 'access-switch'
+  if (r.includes('router') || r.includes('wan') || t.startsWith('ios') || t === 'junos' || t === 'mist_gw') return 'router'
   return 'default'
 }
 function styleFor(n: TopologyNode): RoleStyle {
@@ -98,9 +123,12 @@ function buildHierarchyLayout(
   edges: TopologyEdge[],
   tierOf: (n: TopologyNode) => number,
 ): Record<string, { x: number; y: number }> {
-  const CANVAS_W = 1400
   const TIER_Y: Record<number, number> = { 0: 80, 1: 240, 2: 400, 3: 560, 4: 740 }
   const yFor = (t: number) => TIER_Y[t] ?? 80 + t * 160
+  // Fixed AP spacing (no longer shrinks when a switch has many APs), a minimum
+  // width budget per switch, side padding, and a minimum canvas width.
+  const AP_SPACING = 42, MIN_SEG = 120, GROUP_GAP = 36, SIDE_PAD = 60
+  const MIN_CANVAS = 1400, UPPER_MIN_GAP = 150
 
   const byId: Record<string, TopologyNode> = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const tier: Record<string, number> = Object.fromEntries(nodes.map((n) => [n.id, tierOf(n)]))
@@ -114,52 +142,90 @@ function buildHierarchyLayout(
     const [p, c] = tier[a] < tier[b] ? [a, b] : [b, a]
     if (!parent.has(c)) parent.set(c, p)
   }
+  const childrenOf = new Map<string, string[]>(nodes.map((n) => [n.id, []]))
+  for (const [c, p] of parent) childrenOf.get(p)?.push(c)
 
   const cmpLabel = (x: string, y: string) => (byId[x]?.label || '').localeCompare(byId[y]?.label || '')
   const tiers: Record<number, TopologyNode[]> = {}
   nodes.forEach((n) => { (tiers[tier[n.id]] ||= []).push(n) })
   const tierKeys = Object.keys(tiers).map(Number).sort((a, b) => a - b)
-  const apTier = tierKeys.length ? tierKeys[tierKeys.length - 1] : 0
-
   const pos: Record<string, { x: number; y: number }> = {}
-  const spreadEven = (arr: TopologyNode[], y: number, yOffset = 0) =>
-    arr.forEach((n, i) => { pos[n.id] = { x: (CANVAS_W / (arr.length + 1)) * (i + 1), y: y + yOffset } })
+  if (!tierKeys.length) return pos
+  const apTier = tierKeys[tierKeys.length - 1]
+  // The "switch tier" is the one directly above the APs — its nodes own the AP
+  // clusters and drive the horizontal budget.
+  const switchTier = tierKeys.length >= 2 ? tierKeys[tierKeys.length - 2] : apTier - 1
 
-  // Upper tiers, top-down: order by parent x (already placed), then spread evenly.
-  for (const t of tierKeys) {
-    if (t === apTier) continue
-    const arr = [...tiers[t]].sort((a, b) => {
-      const pa = parent.get(a.id), pb = parent.get(b.id)
-      const xa = pa && pos[pa] ? pos[pa].x : 0
-      const xb = pb && pos[pb] ? pos[pb].x : 0
-      return (xa - xb) || cmpLabel(a.id, b.id)
-    })
-    spreadEven(arr, yFor(t))
-  }
-
-  // Deepest tier (APs): cluster each group centred under its parent switch.
-  const groups = new Map<string, TopologyNode[]>()
+  // Group APs under their parent switch (only when the parent is on the switch
+  // tier, so the switch is positioned before we centre its children).
+  const apGroups = new Map<string, TopologyNode[]>()
   const orphans: TopologyNode[] = []
   for (const ap of tiers[apTier] || []) {
     const p = parent.get(ap.id)
-    if (p && pos[p]) {
-      if (!groups.has(p)) groups.set(p, [])
-      groups.get(p)!.push(ap)
+    if (p && tier[p] === switchTier) {
+      if (!apGroups.has(p)) apGroups.set(p, [])
+      apGroups.get(p)!.push(ap)
     } else {
       orphans.push(ap)
     }
   }
-  groups.forEach((aps, switchId) => {
-    const sx = pos[switchId].x
-    const sorted = [...aps].sort((a, b) => cmpLabel(a.id, b.id))
-    const spacing = Math.min(44, 220 / Math.max(1, sorted.length))
-    const startX = sx - (spacing * (sorted.length - 1)) / 2
-    sorted.forEach((ap, i) => { pos[ap.id] = { x: startX + spacing * i, y: yFor(apTier) } })
-  })
-  // Orphan APs (no matched uplink) spread on a row just below their tier.
-  spreadEven(orphans.sort((a, b) => cmpLabel(a.id, b.id)), yFor(apTier), 60)
 
-  nodes.forEach((n) => { if (!(n.id in pos)) pos[n.id] = { x: CANVAS_W / 2, y: yFor(tier[n.id]) } })
+  // Width budget for a switch = its AP children's spread (fixed spacing) padded,
+  // floored at MIN_SEG so AP-less switches still get breathing room.
+  const segWidth = (id: string): number => {
+    const kids = apGroups.get(id)
+    const span = kids && kids.length > 1 ? (kids.length - 1) * AP_SPACING : 0
+    return Math.max(MIN_SEG, span + GROUP_GAP)
+  }
+
+  // Lay out the switch tier left→right, each switch centred in its allocated
+  // segment so switches with many APs claim proportionally more width.
+  const switchNodes = [...(tiers[switchTier] || [])].sort((a, b) => {
+    const pa = parent.get(a.id), pb = parent.get(b.id)
+    return cmpLabel(pa || a.id, pb || b.id) || cmpLabel(a.id, b.id)
+  })
+  let cursor = SIDE_PAD
+  for (const sw of switchNodes) {
+    const w = segWidth(sw.id)
+    pos[sw.id] = { x: cursor + w / 2, y: yFor(switchTier) }
+    cursor += w
+  }
+  const canvasW = Math.max(MIN_CANVAS, cursor + SIDE_PAD)
+
+  // APs centred under their switch with fixed spacing.
+  apGroups.forEach((aps, switchId) => {
+    const sx = pos[switchId]?.x ?? canvasW / 2
+    const sorted = [...aps].sort((a, b) => cmpLabel(a.id, b.id))
+    const startX = sx - (AP_SPACING * (sorted.length - 1)) / 2
+    sorted.forEach((ap, i) => { pos[ap.id] = { x: startX + AP_SPACING * i, y: yFor(apTier) } })
+  })
+
+  // Tiers above the switch tier (and any between switch & AP tiers): position
+  // each node over the centroid of its already-placed children, then enforce a
+  // minimum gap left→right so siblings don't overlap. Nodes without placed
+  // children fall in after their neighbours.
+  const otherTiers = tierKeys.filter((t) => t !== switchTier && t !== apTier)
+    .sort((a, b) => b - a) // closest-to-APs first (bottom-up) so centroids cascade
+  for (const t of otherTiers) {
+    const placed = tiers[t].map((n) => {
+      const kids = (childrenOf.get(n.id) || []).filter((k) => pos[k])
+      const cx = kids.length ? kids.reduce((s, k) => s + pos[k].x, 0) / kids.length : null
+      return { n, cx }
+    }).sort((a, b) => (a.cx ?? Infinity) - (b.cx ?? Infinity) || cmpLabel(a.n.id, b.n.id))
+    let prev = -Infinity
+    for (const { n, cx } of placed) {
+      const x = Math.max(cx ?? prev + UPPER_MIN_GAP, prev + UPPER_MIN_GAP)
+      pos[n.id] = { x, y: yFor(t) }
+      prev = x
+    }
+  }
+
+  // Orphan APs (no matched uplink) spread on a row just below their tier.
+  orphans.sort((a, b) => cmpLabel(a.id, b.id)).forEach((n, i) => {
+    pos[n.id] = { x: (canvasW / (orphans.length + 1)) * (i + 1), y: yFor(apTier) + 60 }
+  })
+
+  nodes.forEach((n) => { if (!(n.id in pos)) pos[n.id] = { x: canvasW / 2, y: yFor(tier[n.id]) } })
   return pos
 }
 
@@ -251,7 +317,8 @@ export default function Topology() {
         ...nodes.map((n) => ({
           data: {
             id: n.id,
-            label: `${styleFor(n).icon} ${n.label}${isAP(n) && n.client_count != null ? `\n${n.client_count} clients` : ''}`,
+            label: `${n.label}${isAP(n) && n.client_count != null ? `\n${n.client_count} clients` : ''}`,
+            icon: nodeIconUri(roleKey(n)),
             color: nodeColor(n), shape: styleFor(n).shape, size: styleFor(n).size, raw: n,
           },
           classes: isOffline(n) ? 'offline' : '',
@@ -273,6 +340,14 @@ export default function Topology() {
       style: [
         { selector: 'node', style: {
           'background-color': 'data(color)',
+          // Universal role glyph drawn inside the node (white SVG over the role colour).
+          'background-image': 'data(icon)',
+          'background-fit': 'none',
+          'background-width': '58%',
+          'background-height': '58%',
+          'background-position-x': '50%',
+          'background-position-y': '50%',
+          'background-clip': 'none',
           label: showLabels ? 'data(label)' : '', 'font-size': 10, color: '#1f2937', 'text-wrap': 'wrap',
           'text-valign': 'bottom', 'text-margin-y': 4, 'text-halign': 'center',
           'text-background-color': '#ffffff', 'text-background-opacity': 0.85, 'text-background-padding': '2px',
@@ -456,7 +531,7 @@ export default function Topology() {
                 <button onClick={() => setLegendOpen(false)} className="text-gray-400 hover:text-gray-600">×</button>
               </div>
               <div className="px-3 py-2 space-y-1 text-gray-600 dark:text-gray-300">
-                {(['router', 'firewall', 'core-switch', 'distribution', 'access-switch', 'wireless-ap'] as const).map((k) => (
+                {(['router', 'firewall', 'controller', 'core-switch', 'distribution', 'access-switch', 'server', 'wireless-ap'] as const).map((k) => (
                   <div key={k} className="flex items-center gap-2">
                     <span style={{ color: NODE_STYLES[k].color }}>{NODE_STYLES[k].icon}</span>
                     <span className="capitalize">{k.replace('-', ' ')}</span>
