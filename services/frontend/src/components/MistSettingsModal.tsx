@@ -127,13 +127,27 @@ export default function MistSettingsModal({ onClose }: { onClose: () => void }) 
           </p>
         </div>
 
+        <div className="rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 px-3 py-2 text-xs text-blue-800 dark:text-blue-300 space-y-1">
+          <p>
+            ℹ️ <strong>Token Type:</strong> Use a <strong>User API Token</strong> (not an Org API Token).
+            Org tokens do not support the <span className="font-mono">/self</span> endpoint required for authentication.
+          </p>
+          <p>
+            To create one: <span className="font-mono">manage.&lt;region&gt;.mist.com → My Profile → API Tokens → Create Token</span>.
+          </p>
+          <p>
+            💡 Create a dedicated <strong>service-account user</strong> for the integration rather than using a personal
+            account, so it survives staff changes.
+          </p>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Token</label>
           <input type="password" autoComplete="new-password" value={token} onChange={(e) => setToken(e.target.value)}
             placeholder={acct?.api_token_set ? '•••••••• (leave blank to keep)' : 'Authorization: Token …'}
             className={input} />
           <p className="text-xs text-gray-400 mt-1">
-            ℹ️ Generate at <span className="font-mono">manage.mist.com → My Account → API Tokens</span>. 🔒 Stored securely in OpenBao.
+            🔒 Stored securely in OpenBao.
           </p>
           <button onClick={save} disabled={busy || (!token && host === (acct?.api_host ?? ''))} className="mt-2 px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-200">Save</button>
         </div>
