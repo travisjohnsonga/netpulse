@@ -169,6 +169,10 @@ class Device(TimestampedModel):
         UNIFI_UDM = "unifi_udm", "UniFi Dream Machine"
         UNIFI_UCKP = "unifi_uckp", "UniFi CloudKey"
         UNIFI_UCG = "unifi_ucg", "UniFi Console Gateway"
+        # Juniper Mist (cloud-managed; imported from api.mist.com).
+        MIST_AP = "mist_ap", "Mist Access Point"
+        MIST_SW = "mist_sw", "Mist Switch"
+        MIST_GW = "mist_gw", "Mist Gateway"
         OTHER = "other", "Other"
 
     hostname = models.CharField(max_length=255, unique=True, db_index=True)

@@ -222,6 +222,68 @@ class UnifiApStatus(TimestampedModel):
         return f"AP status for {self.device_id}"
 
 
+# OpenBao path holding the Juniper Mist cloud API token (key "api_token").
+MIST_VAULT_PATH = "netpulse/integrations/mist"
+
+
+class MistIntegration(TimestampedModel):
+    """
+    Singleton Juniper Mist cloud account. One API token (stored in OpenBao at
+    MIST_VAULT_PATH) auto-discovers the org's sites and devices from the Mist
+    cloud (https://api.mist.com). Only non-secret connection state lives here;
+    use ``load()`` to fetch the single row.
+
+    State is persisted in the DB (not session/memory) so a connected account
+    survives an api restart.
+    """
+    name = models.CharField(max_length=128, default="Mist")
+    # Org context, auto-populated from the API on test/sync.
+    org_id = models.CharField(max_length=64, blank=True, help_text="Auto-populated from the API")
+    org_name = models.CharField(max_length=128, blank=True)
+    enabled = models.BooleanField(default=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=512, blank=True)
+    site_count = models.IntegerField(default=0)
+    device_count = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Mist Integration"
+        verbose_name_plural = "Mist Integration"
+
+    def __str__(self):
+        return f"{self.name} ({self.org_name or 'unconfigured'})"
+
+    @classmethod
+    def load(cls) -> "MistIntegration":
+        obj = cls.objects.first()
+        if obj is None:
+            obj = cls.objects.create()
+        return obj
+
+
+class MistSite(TimestampedModel):
+    """
+    A Juniper Mist site discovered from the cloud. Optionally linked to a NetPulse
+    Site so synced devices inherit it. Keyed by the Mist site UUID (``mist_id``).
+    """
+    mist_id = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=128)
+    site = models.ForeignKey(
+        "devices.Site", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="mist_sites",
+    )
+    address = models.CharField(max_length=255, blank=True)
+    country_code = models.CharField(max_length=4, blank=True)
+    device_count = models.IntegerField(default=0)
+    last_sync = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.mist_id})"
+
+
 class UnifiConsoleStatus(TimestampedModel):
     """
     Latest telemetry snapshot for a UniFi console / gateway (UDM, UDM-Pro, Cloud

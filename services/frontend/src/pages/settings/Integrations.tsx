@@ -3,6 +3,7 @@ import Modal from '../../components/Modal'
 import NetBoxImportModal from '../../components/NetBoxImportModal'
 import EmailSettingsModal from '../../components/EmailSettingsModal'
 import UnifiSettingsModal from '../../components/UnifiSettingsModal'
+import MistSettingsModal from '../../components/MistSettingsModal'
 import { SectionHeader } from '../Settings'
 
 // Integration catalog. Connection state isn't persisted to a backend yet — the
@@ -34,7 +35,7 @@ const CATEGORIES: Category[] = [
     description: 'Poll cloud-managed networking platforms via their APIs.',
     items: [
       { id: 'meraki', name: 'Cisco Meraki', description: 'Cloud-managed networking', icon: '☁️', summary: '3 orgs synced', fields: [{ key: 'api_key', label: 'API Key', secret: true }, { key: 'org', label: 'Organization ID(s)' }] },
-      { id: 'mist', name: 'Juniper Mist', description: 'AI-driven Wi-Fi & WAN', icon: '🤖', summary: '1 org synced', fields: [{ key: 'token', label: 'API Token', secret: true }, { key: 'org', label: 'Org ID' }] },
+      { id: 'mist', name: 'Juniper Mist', description: 'AI-driven Wi-Fi & WAN', icon: '🤖', fields: [] },
       { id: 'unifi', name: 'Ubiquiti UniFi', description: 'Self-hosted UniFi Network', icon: '📶', fields: [{ key: 'host', label: 'Controller URL', placeholder: 'https://unifi.local' }, { key: 'user', label: 'Username' }, { key: 'pass', label: 'Password', secret: true }] },
       { id: 'cradlepoint', name: 'Cradlepoint', description: 'NetCloud cellular routers', icon: '📡', fields: [{ key: 'cp_api_id', label: 'CP-API-ID', secret: true }, { key: 'cp_api_key', label: 'CP-API-KEY', secret: true }] },
       { id: 'netbox', name: 'NetBox', description: 'Import sites & devices from NetBox (v3/v4)', icon: '🗄', fields: [] },
@@ -72,6 +73,7 @@ export default function Integrations() {
   const [netboxOpen, setNetboxOpen] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
   const [unifiOpen, setUnifiOpen] = useState(false)
+  const [mistOpen, setMistOpen] = useState(false)
 
   const statusOf = (id: string): Status => (id in connected ? 'connected' : 'not_configured')
 
@@ -111,10 +113,10 @@ export default function Integrations() {
                         {status === 'connected' ? connected[it.id] : ''}
                       </span>
                       <button
-                        onClick={() => (it.id === 'netbox' ? setNetboxOpen(true) : it.id === 'email' ? setEmailOpen(true) : it.id === 'unifi' ? setUnifiOpen(true) : setSetup(it))}
+                        onClick={() => (it.id === 'netbox' ? setNetboxOpen(true) : it.id === 'email' ? setEmailOpen(true) : it.id === 'unifi' ? setUnifiOpen(true) : it.id === 'mist' ? setMistOpen(true) : setSetup(it))}
                         className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300"
                       >
-                        {it.id === 'netbox' ? 'Import' : it.id === 'email' || it.id === 'unifi' ? 'Configure' : status === 'connected' ? 'Configure' : 'Connect'}
+                        {it.id === 'netbox' ? 'Import' : it.id === 'email' || it.id === 'unifi' || it.id === 'mist' ? 'Configure' : status === 'connected' ? 'Configure' : 'Connect'}
                       </button>
                     </div>
                   </div>
@@ -144,6 +146,7 @@ export default function Integrations() {
       {netboxOpen && <NetBoxImportModal onClose={() => setNetboxOpen(false)} />}
       {emailOpen && <EmailSettingsModal onClose={() => setEmailOpen(false)} />}
       {unifiOpen && <UnifiSettingsModal onClose={() => setUnifiOpen(false)} />}
+      {mistOpen && <MistSettingsModal onClose={() => setMistOpen(false)} />}
     </div>
   )
 }

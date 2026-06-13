@@ -1369,6 +1369,62 @@ export async function discoverUnifiControllers(): Promise<{ discovered: number; 
   return data
 }
 
+// ── Juniper Mist (Settings → Integrations → Mist) ─────────────────────────────
+export interface MistIntegration {
+  name: string
+  org_id: string
+  org_name: string
+  enabled: boolean
+  last_sync: string | null
+  last_error: string
+  site_count: number
+  device_count: number
+  api_token_set?: boolean
+}
+export interface MistOrg { id: string; name: string }
+export interface MistTestResult {
+  connected: boolean
+  email?: string
+  org_count?: number
+  orgs?: MistOrg[]
+  error?: string
+}
+export interface MistSite {
+  id: number
+  mist_id: string
+  name: string
+  site: number | null
+  site_name?: string | null
+  address: string
+  country_code: string
+  device_count: number
+  last_sync: string | null
+}
+export interface MistSyncResult {
+  sites: number; imported: number; updated: number; skipped: number
+}
+
+export async function fetchMist(): Promise<MistIntegration> {
+  const { data } = await api.get<MistIntegration>('/integrations/mist/')
+  return data
+}
+export async function saveMist(payload: Partial<MistIntegration> & { api_token?: string }): Promise<MistIntegration> {
+  const { data } = await api.put<MistIntegration>('/integrations/mist/', payload)
+  return data
+}
+export async function testMist(apiToken?: string): Promise<MistTestResult> {
+  const { data } = await api.post<MistTestResult>('/integrations/mist/test/', apiToken ? { api_token: apiToken } : {})
+  return data
+}
+export async function syncMist(): Promise<MistSyncResult> {
+  const { data } = await api.post<MistSyncResult>('/integrations/mist/sync/')
+  return data
+}
+export async function fetchMistSites(): Promise<MistSite[]> {
+  const { data } = await api.get<MistSite[] | Paginated<MistSite>>('/integrations/mist/sites/')
+  return unwrap(data)
+}
+
 // ── Config backup settings ───────────────────────────────────────────────────
 
 export interface ConfigBackupSettings {

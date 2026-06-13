@@ -138,6 +138,90 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_502_BAD_GATEWAY)
 
 
+class MistViewSet(viewsets.ViewSet):
+    """
+    Singleton Juniper Mist cloud account (Settings → Integrations → Mist).
+
+    ``retrieve`` (GET) / ``update`` (PUT) manage the account + API token;
+    ``test`` verifies the token and returns org info; ``sync`` imports the org's
+    sites + devices; ``sites`` lists the discovered Mist sites. State is in the
+    DB (MistIntegration), so a connected account survives an api restart.
+    """
+
+    def _account_data(self):
+        from .models import MistIntegration
+        from .serializers import MistIntegrationSerializer
+        return MistIntegrationSerializer(MistIntegration.load()).data
+
+    @extend_schema(responses=None)
+    def retrieve(self, request):
+        return Response(self._account_data())
+
+    @extend_schema(request=None, responses=None)
+    def update(self, request):
+        from .models import MistIntegration
+        from .serializers import MistIntegrationSerializer
+        ser = MistIntegrationSerializer(MistIntegration.load(), data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(self._account_data())
+
+    @extend_schema(request=None, responses=None)
+    def test(self, request):
+        """Verify the API token and return the user's email + org list."""
+        from .mist_client import MistClient, MistError, _read_api_token
+        token = (request.data or {}).get("api_token") or _read_api_token()
+        if not token:
+            return Response({"connected": False, "error": "No API token configured"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = MistClient(token).test_connection()
+        except MistError as exc:
+            return Response(
+                {"connected": False, "error": safe_detail(
+                    exc, logger, "mist test-connection",
+                    public="Could not connect to Juniper Mist. Check the API token.")},
+                status=status.HTTP_502_BAD_GATEWAY)
+        # Persist the discovered org context so the UI shows it after a restart.
+        if result.get("orgs"):
+            from .models import MistIntegration
+            account = MistIntegration.load()
+            account.org_id = result["orgs"][0]["id"]
+            account.org_name = result["orgs"][0]["name"]
+            account.save(update_fields=["org_id", "org_name", "updated_at"])
+        return Response(result)
+
+    @extend_schema(request=None, responses=None)
+    def sync(self, request):
+        """Import the org's sites + devices into inventory."""
+        from .mist_client import MistError
+        from .mist_sync import sync_mist
+        try:
+            counts = sync_mist()
+        except MistError as exc:
+            return Response({"error": safe_detail(exc, logger, "mist sync",
+                                                  public="Mist sync failed.")},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        from .models import MistIntegration
+        log_event(
+            AuditLog.EventType.MIST_SYNC, request=request, target=MistIntegration.load(),
+            description=(f"Mist sync: {counts.get('sites', 0)} site(s), "
+                         f"{counts.get('imported', 0)} imported, "
+                         f"{counts.get('updated', 0)} updated, {counts.get('skipped', 0)} skipped"),
+            metadata=counts,
+        )
+        return Response(counts)
+
+    @extend_schema(responses=None)
+    def sites(self, request):
+        """List the Mist sites discovered by the last sync."""
+        from .models import MistSite
+        from .serializers import MistSiteSerializer
+        return Response(MistSiteSerializer(MistSite.objects.all(), many=True).data)
+
+
 class EmailSettingsView(APIView):
     """GET / PUT the singleton SMTP configuration (Settings → Integrations → Email)."""
 

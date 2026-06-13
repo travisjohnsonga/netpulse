@@ -133,6 +133,19 @@ gates: `docs/collector-production-gates.md`; proofs: `scripts/t0`–`scripts/t3`
   the `agent/dist/` mount); no `gh` CLI required for users; `agent/dist/` gitignored; `build-agent.yml`
   triggers on `branches: [main]` push.
 
+**Recently completed (Mist session):** **Juniper Mist wireless integration** (cloud-only, mirrors the
+UniFi pattern) — `MistIntegration` singleton + `MistSite` models (integrations migration **0013**;
+device-platform choices `mist_ap`/`mist_sw`/`mist_gw` → devices migration **0028**; AuditLog
+`mist_sync` event → core migration **0009**). API token stored in OpenBao at `netpulse/integrations/mist`
+(key `api_token`, write-only). `MistClient` (api.mist.com, `Authorization: Token …`) + `mist_sync`
+(org → sites → devices, merges `/devices` inventory with `/stats/devices` for ip/version/status, keyed
+by MAC→IP→hostname, honours `ip_locked`). Endpoints `GET/PUT /api/integrations/mist/`,
+`POST …/test/`, `POST …/sync/`, `GET …/sites/` (singleton `MistViewSet`, explicit url mapping).
+Scheduler `mist_sync` task (6h, `MIST_SYNC_INTERVAL_S`, skips when no enabled account). Frontend
+Settings → Integrations → Mist modal (`MistSettingsModal`: token save, Test Connection showing
+email/org, Sync Now, discovered-sites table). State is DB-backed so a connected account survives an
+api restart. Tests: `tests/test_mist.py` (21).
+
 **Recently completed (this session):** Alert expanded panels render config diffs with green/red
 syntax highlighting (reuses the `DiffViewer` component) · LLDP neighbors page added to the sidebar ·
 LLDP neighbors now persisted to the `LLDPNeighbor` table (scheduler every 30 min + manual

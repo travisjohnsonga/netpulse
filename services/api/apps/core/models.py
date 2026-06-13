@@ -191,6 +191,7 @@ class AuditLog(models.Model):
         # Integrations
         NETBOX_IMPORT = "netbox_import", "NetBox Import"
         UNIFI_SYNC = "unifi_sync", "UniFi Sync"
+        MIST_SYNC = "mist_sync", "Mist Sync"
         # System
         SETTINGS_CHANGED = "settings_changed", "Settings Changed"
         API_KEY_CREATED = "api_key_created", "API Key Created"

@@ -3,8 +3,8 @@ import re
 from rest_framework import serializers
 
 from .models import (
-    EmailSettings, NetBoxImport, SMTP_VAULT_PATH, UnifiApStatus,
-    UnifiCloudAccount, UnifiConsoleStatus, UnifiController,
+    EmailSettings, MistIntegration, MistSite, NetBoxImport, SMTP_VAULT_PATH,
+    UnifiApStatus, UnifiCloudAccount, UnifiConsoleStatus, UnifiController,
 )
 
 # NetPulse requires NetBox 4.5+ v2 API tokens. A v2 token is split into a Key ID
@@ -184,6 +184,53 @@ class UnifiConsoleStatusSerializer(serializers.ModelSerializer):
             "uptime_seconds", "loadavg_1", "loadavg_5", "loadavg_15",
             "num_adopted", "num_disconnected", "num_pending", "wans", "last_collected",
         )
+
+
+class MistIntegrationSerializer(serializers.ModelSerializer):
+    """Singleton Juniper Mist account. The API token is write-only (stored in
+    OpenBao); ``api_token_set`` reports whether one is currently stored."""
+    api_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    api_token_set = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MistIntegration
+        fields = (
+            "name", "org_id", "org_name", "enabled", "last_sync", "last_error",
+            "site_count", "device_count", "api_token", "api_token_set",
+        )
+        read_only_fields = ("org_id", "org_name", "last_sync", "last_error",
+                            "site_count", "device_count")
+
+    def get_api_token_set(self, obj) -> bool:
+        from apps.credentials import vault
+        from .models import MIST_VAULT_PATH
+        try:
+            return bool((vault.read_secret(MIST_VAULT_PATH) or {}).get("api_token"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def update(self, instance, validated_data):
+        api_token = validated_data.pop("api_token", None)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        # Only touch OpenBao when a non-blank token is supplied, so saving other
+        # settings doesn't wipe the stored secret.
+        if api_token:
+            from apps.credentials import vault
+            from .models import MIST_VAULT_PATH
+            vault.write_secret(MIST_VAULT_PATH, {"api_token": api_token})
+        return instance
+
+
+class MistSiteSerializer(serializers.ModelSerializer):
+    site_name = serializers.CharField(source="site.name", read_only=True, default=None)
+
+    class Meta:
+        model = MistSite
+        fields = ("id", "mist_id", "name", "site", "site_name", "address",
+                  "country_code", "device_count", "last_sync")
+        read_only_fields = fields
 
 
 class UnifiCloudAccountSerializer(serializers.ModelSerializer):
