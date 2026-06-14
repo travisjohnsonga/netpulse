@@ -55,6 +55,7 @@ _AUTH_FAILURE_PATTERNS = [
     "failed password", "invalid user", "access denied", "login failed",
     "failed login", "bad password", "login authentication failed",
     "authentication rejected", "%sec_login-4-login_failed",
+    "rejected due to", "public key validation",
 ]
 # Success phrases — used only to (a) exclude false positives from the failure set
 # and (b) detect a success that FOLLOWS failures (possible successful brute force).
@@ -63,11 +64,21 @@ _AUTH_SUCCESS_PATTERNS = [
     "login successful", "login succeeded", "%sec_login-5-login_success",
     "accepted password", "session opened for user",
 ]
+# Collector-side noise that contains failure-ish words but is NOT a principal's
+# authentication failure (the SSH client aborting on a changed device host key —
+# a known_hosts mismatch, not a credential event). Excluded from auth failures.
+_AUTH_NOISE_PATTERNS = ["host key verification"]
 
 # A username failing on this many distinct devices, or this many times overall,
 # is flagged as notable (credential issue / brute force).
 _MULTI_DEVICE_FLAG = 3
 _BRUTE_FORCE_FLAG = 5
+
+# Success-after-failures: a success counts as a possible breach only with at
+# least this many failures by the same user on the same device within the window
+# immediately before it.
+_SAF_MIN_FAILS = 3
+_SAF_WINDOW = timedelta(minutes=15)
 
 # Best-effort username extraction from heterogeneous vendor syslog.
 _USER_RES = [
@@ -109,9 +120,12 @@ def _extract_user(msg: str):
 
 
 def _classify_auth(message: str):
-    """Return 'success', 'failure', or None for an auth syslog message.
-    Success takes precedence so 'succeeded with RADIUS' is never a failure."""
+    """Return 'success', 'failure', or None for an auth syslog message. Noise
+    (host-key verification) and success take precedence so neither is ever
+    miscounted as a failure."""
     m = (message or "").lower()
+    if any(p in m for p in _AUTH_NOISE_PATTERNS):
+        return None
     if any(p in m for p in _AUTH_SUCCESS_PATTERNS):
         return "success"
     if any(p in m for p in _AUTH_FAILURE_PATTERNS):
@@ -138,45 +152,68 @@ def _device_security_events(start, end, site_ids=None) -> dict:
     """
     from apps.logs.views import _device_identifiers, _execute
 
-    musts = [
-        {"range": {"@timestamp": {"gte": start.isoformat(), "lte": end.isoformat()}}},
-        {"bool": {"should": [{"match_phrase": {"message": p}}
-                             for p in (_AUTH_FAILURE_PATTERNS + _AUTH_SUCCESS_PATTERNS)],
-                  "minimum_should_match": 1}},
-    ]
+    time_range = {"range": {"@timestamp": {"gte": start.isoformat(), "lte": end.isoformat()}}}
+    site_filter = []
     if site_ids:
         from apps.devices.models import Device
         ids = _device_identifiers(Device.objects.filter(site_id__in=site_ids))
         if ids:
-            musts.append({"bool": {"should": [
+            site_filter = [{"bool": {"should": [
                 {"terms": {"hostname.keyword": ids}},
-                {"terms": {"source_ip.keyword": ids}}], "minimum_should_match": 1}})
+                {"terms": {"source_ip.keyword": ids}}], "minimum_should_match": 1}}]
 
-    body = {"query": {"bool": {"must": musts}},
-            "sort": [{"@timestamp": {"order": "desc"}}], "size": 1000}
+    def _phrase_should(patterns):
+        return {"bool": {"should": [{"match_phrase": {"message": p}} for p in patterns],
+                         "minimum_should_match": 1}}
+
+    def _row(hit):
+        src = hit.get("_source", {})
+        message = src.get("message") or ""
+        ts = src.get("@timestamp") or src.get("timestamp")
+        dt = _parse_ts(ts)
+        return {"time": ts, "dt": dt, "hostname": src.get("hostname"),
+                "source_ip": src.get("source_ip"), "username": _extract_user(message),
+                "severity": src.get("severity_name"), "message": message[:300],
+                "after_hours": _is_after_hours(dt) if dt else False}
+
+    # Query FAILURES only — excluding success + collector-noise phrases. Doing this
+    # separately matters: successes can outnumber failures 400:1, so a combined
+    # query capped at `size` would let successes crowd the real failures out.
+    fail_body = {
+        "query": {"bool": {
+            "must": [time_range, _phrase_should(_AUTH_FAILURE_PATTERNS)] + site_filter,
+            "must_not": [{"match_phrase": {"message": p}}
+                         for p in (_AUTH_SUCCESS_PATTERNS + _AUTH_NOISE_PATTERNS)]}},
+        "sort": [{"@timestamp": {"order": "desc"}}], "size": 1000}
     empty = {"total_failures": 0, "unique_sources": 0, "device_count": 0,
              "groups": [], "flags": [], "success_after_failures": [],
              "after_hours_failures": 0, "login_failures": []}
     try:
-        raw = _execute(body)
+        raw = _execute(fail_body)
     except Exception as exc:  # noqa: BLE001 — store unavailable must not break the report
         logger.debug("device security-events OpenSearch query failed: %s", exc)
         return {**empty, "available": False, "note": _NO_SYSLOG_NOTE}
+    # Client-side guard: re-classify each hit so a success/noise line the ES
+    # analyzer tokenized unexpectedly can never be counted as a failure.
+    failures = [_row(h) for h in raw.get("hits", {}).get("hits", [])
+                if _classify_auth((h.get("_source") or {}).get("message") or "") == "failure"]
 
-    failures, successes = [], []
-    for hit in raw.get("hits", {}).get("hits", []):
-        src = hit.get("_source", {})
-        message = src.get("message") or ""
-        kind = _classify_auth(message)
-        if kind is None:
-            continue
-        ts = src.get("@timestamp") or src.get("timestamp")
-        dt = _parse_ts(ts)
-        row = {"time": ts, "dt": dt, "hostname": src.get("hostname"),
-               "source_ip": src.get("source_ip"), "username": _extract_user(message),
-               "severity": src.get("severity_name"), "message": message[:300],
-               "after_hours": _is_after_hours(dt) if dt else False}
-        (successes if kind == "success" else failures).append(row)
+    # Successes are fetched only to detect a success that FOLLOWS failures, and
+    # only for the (few) users who actually failed — keeps this bounded.
+    successes = []
+    fail_usernames = sorted({f["username"] for f in failures if f["username"]})
+    if fail_usernames:
+        succ_body = {
+            "query": {"bool": {"must": [
+                time_range, _phrase_should(_AUTH_SUCCESS_PATTERNS),
+                _phrase_should(fail_usernames)] + site_filter}},
+            "sort": [{"@timestamp": {"order": "desc"}}], "size": 500}
+        try:
+            sraw = _execute(succ_body)
+            successes = [_row(h) for h in sraw.get("hits", {}).get("hits", [])
+                         if _classify_auth((h.get("_source") or {}).get("message") or "") == "success"]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("device security-events success query failed: %s", exc)
 
     # Group failures by username (falling back to source IP when unknown).
     groups: dict = {}
@@ -215,20 +252,26 @@ def _device_security_events(start, end, site_ids=None) -> dict:
                 f"⚠️ {label} {g['count']} failures from {', '.join(gl['source_ips']) or 'unknown'} "
                 f"{gl['time_range']} — possible brute force.")
 
-    # Success-after-failures: a success for a user who also failed earlier today.
-    fail_users = {}
+    # Success-after-failures (possible successful brute force): a success on a
+    # device that saw REPEATED failures by the same user shortly before. Scoped
+    # to same-(user,device), a minimum failure count, and a tight window so a
+    # legit account that merely fails occasionally (e.g. a rejected SSH key then
+    # a normal password login) is NOT flagged. One entry per (user, device).
+    fail_by_ud: dict = {}
     for f in failures:
-        if f["username"] and f["dt"]:
-            fail_users.setdefault(f["username"], []).append(f)
-    saf = []
-    for s in successes:
-        u, sdt = s["username"], s["dt"]
-        if not u or not sdt:
+        if f["username"] and f["dt"] and f["hostname"]:
+            fail_by_ud.setdefault((f["username"], f["hostname"]), []).append(f["dt"])
+    saf, seen_ud = [], set()
+    for s in sorted(successes, key=lambda x: x["dt"] or timezone.now()):
+        u, host, sdt = s["username"], s["hostname"], s["dt"]
+        if not (u and host and sdt) or (u, host) in seen_ud:
             continue
-        earlier = [x for x in fail_users.get(u, []) if x["dt"] and x["dt"] <= sdt]
-        if earlier:
-            saf.append({"username": u, "device": s["hostname"], "time": s["time"],
-                        "fail_count": len(earlier), "at": _hhmm(sdt)})
+        recent = [d for d in fail_by_ud.get((u, host), [])
+                  if d <= sdt and (sdt - d) <= _SAF_WINDOW]
+        if len(recent) >= _SAF_MIN_FAILS:
+            seen_ud.add((u, host))
+            saf.append({"username": u, "device": host, "time": s["time"],
+                        "fail_count": len(recent), "at": _hhmm(sdt)})
 
     sources = {f["source_ip"] for f in failures if f["source_ip"]}
     devices = {f["hostname"] for f in failures if f["hostname"]}
@@ -381,16 +424,15 @@ _COMPLIANCE_FAIL_BELOW = 70
 _TREND_DELTA = 5.0
 
 
-def _day_scores(day_start, day_end, dev_ids=None) -> dict:
+def _scores_asof(as_of, dev_ids=None) -> dict:
     """
-    device_id -> averaged compliance score for the day, from the latest stored
-    ComplianceTemplateResult per (device, template) within the window. Reads the
-    persisted template-compliance history only — no live device calls — so it is
-    cheap enough for the daily report.
+    device_id -> averaged compliance score AS OF ``as_of``, from the latest stored
+    ComplianceTemplateResult per (device, template) at or before that time. Using
+    as-of (not a single day's window) means a device still has a score even on a
+    day it wasn't re-evaluated. Reads persisted history only — no live calls.
     """
     from apps.compliance.models import ComplianceTemplateResult as CTR
-    qs = CTR.objects.filter(checked_at__gte=day_start, checked_at__lte=day_end,
-                            score__isnull=False)
+    qs = CTR.objects.filter(checked_at__lte=as_of, score__isnull=False)
     if dev_ids is not None:
         qs = qs.filter(device_id__in=dev_ids)
     seen, per_dev = set(), {}
@@ -404,19 +446,54 @@ def _day_scores(day_start, day_end, dev_ids=None) -> dict:
     return {did: round(sum(v) / len(v), 1) for did, v in per_dev.items()}
 
 
+def _latest_findings(as_of, dev_ids=None) -> dict:
+    """device_id -> up to 3 short issue strings from the device's latest CTR."""
+    from apps.compliance.models import ComplianceTemplateResult as CTR
+    qs = CTR.objects.filter(checked_at__lte=as_of)
+    if dev_ids is not None:
+        qs = qs.filter(device_id__in=dev_ids)
+    seen, out = set(), {}
+    for r in qs.order_by("device_id", "-checked_at").only(
+            "device_id", "findings", "missing_count", "extra_count", "drift_count"):
+        if r.device_id in seen:
+            continue
+        seen.add(r.device_id)
+        issues = []
+        for f in (r.findings or [])[:3]:
+            if isinstance(f, dict):
+                label = f.get("type") or f.get("message") or f.get("rule") or ""
+                line = f.get("line") or f.get("expected") or ""
+                issues.append((f"{label}: {line}".strip(": ") or str(f))[:48])
+            else:
+                issues.append(str(f)[:48])
+        if not issues:
+            parts = []
+            if r.missing_count:
+                parts.append(f"{r.missing_count} missing")
+            if r.extra_count:
+                parts.append(f"{r.extra_count} extra")
+            if r.drift_count:
+                parts.append(f"{r.drift_count} drift")
+            if parts:
+                issues = [", ".join(parts) + " line(s)"]
+        out[r.device_id] = issues
+    return out
+
+
 def _compliance_events(start, end, site_ids=None) -> dict:
     from apps.alerts.models import AlertEvent
     from apps.compliance.device_score import score_to_grade
+    from apps.configbackup.stats import unsaved_config_devices
     from apps.devices.models import Device
 
     dev_ids = None
     if site_ids:
         dev_ids = list(Device.objects.filter(site_id__in=site_ids).values_list("id", flat=True))
 
-    # Current fleet state + day-over-day trend from stored template scores.
-    today = _day_scores(start, end, dev_ids)
-    prev_start, prev_end = start - timedelta(days=1), end - timedelta(days=1)
-    prev = _day_scores(prev_start, prev_end, dev_ids)
+    # Current fleet state (as of end of the report day) vs the prior day's state.
+    today = _scores_asof(end, dev_ids)
+    prev = _scores_asof(start, dev_ids)   # start = 00:00 of report day = end of prev day
+    findings_by_dev = _latest_findings(end, dev_ids)
 
     devmap = {d.id: d for d in Device.objects.select_related("site")
               .filter(id__in=set(today) | set(prev))}
@@ -432,7 +509,8 @@ def _compliance_events(start, end, site_ids=None) -> dict:
     failing = sorted(
         ({"hostname": devmap[d].hostname if d in devmap else str(d),
           "score": s, "grade": score_to_grade(s),
-          "site": (devmap[d].site.name if d in devmap and devmap[d].site else None)}
+          "site": (devmap[d].site.name if d in devmap and devmap[d].site else None),
+          "top_issues": findings_by_dev.get(d, [])}
          for d, s in today.items() if s < _COMPLIANCE_FAIL_BELOW),
         key=lambda r: r["score"])
 
@@ -451,8 +529,20 @@ def _compliance_events(start, end, site_ids=None) -> dict:
     degraded.sort(key=lambda r: r["delta"])
     improved.sort(key=lambda r: -r["delta"])
 
-    # Standing unsaved-config signal (daily new/resolved alerts + current total).
-    from apps.configbackup.stats import unsaved_config_devices
+    # Unsaved-config devices (running != startup) — enriched with site + last
+    # checked for the compliance detail page's "run write memory" action list.
+    unsaved = unsaved_config_devices()
+    if dev_ids is not None:
+        keep = set(dev_ids)
+        unsaved = [u for u in unsaved if u["id"] in keep]
+    usite = {d.id: d for d in Device.objects.select_related("site")
+             .filter(id__in=[u["id"] for u in unsaved])}
+    unsaved_devices = [{
+        "hostname": u["hostname"],
+        "site": (usite[u["id"]].site.name if u["id"] in usite and usite[u["id"]].site else None),
+        "last_checked": u["checked_at"].isoformat() if u.get("checked_at") else None,
+    } for u in unsaved]
+
     new_failures = [{
         "hostname": e.labels.get("device", ""),
         "check": e.labels.get("alert_type", "compliance"),
@@ -478,7 +568,8 @@ def _compliance_events(start, end, site_ids=None) -> dict:
         "failing_devices": failing[:20],
         "degraded": degraded,
         "improved": improved,
-        "unsaved_configs": len(unsaved_config_devices()),
+        "unsaved_configs": len(unsaved_devices),
+        "unsaved_devices": unsaved_devices,
         "new_failures": new_failures,
         "resolved": resolved,
     }
@@ -720,15 +811,27 @@ def _alerts_summary(start, end) -> dict:
     qs = AlertEvent.objects.filter(created_at__gte=start, created_at__lte=end).select_related("rule")
     by_sev = Counter()
     by_type = Counter()
+    critical_events = []
     for e in qs:
-        by_sev[(e.rule.severity if e.rule else "info")] += 1
+        sev = e.rule.severity if e.rule else "info"
+        by_sev[sev] += 1
         by_type[e.labels.get("alert_type", "other")] += 1
+        if sev in ("critical", "high") and len(critical_events) < 50:
+            ann = e.annotations or {}
+            critical_events.append({
+                "time": e.created_at.isoformat(),
+                "device": e.labels.get("hostname") or e.labels.get("device") or "",
+                "severity": sev,
+                "alert": ann.get("title") or (e.rule.name if e.rule else "alert"),
+            })
+    critical_events.sort(key=lambda x: x["time"])
     total = sum(by_sev.values())
     return {
         "total": total,
         "critical": by_sev.get("critical", 0), "high": by_sev.get("high", 0),
         "medium": by_sev.get("medium", 0), "low": by_sev.get("low", 0) + by_sev.get("info", 0),
         "by_type": dict(by_type),
+        "critical_events": critical_events,
     }
 
 

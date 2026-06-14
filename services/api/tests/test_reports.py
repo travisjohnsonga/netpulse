@@ -140,11 +140,14 @@ class TestDailyOps:
         assert any("3 devices" in f for f in sec["flags"])
 
     def test_success_after_failures_flagged(self, fleet, monkeypatch):
+        # Requires REPEATED failures on the same device shortly before a success.
         when = timezone.now() - __import__("datetime").timedelta(days=1)
         hits = [
-            {"_source": {"@timestamp": when.replace(hour=10, minute=21).isoformat(),
+            {"_source": {"@timestamp": when.replace(hour=10, minute=m).isoformat(),
                          "hostname": "sw-1", "source_ip": "10.0.0.7",
-                         "message": "Login failed [user: travis-admin]"}},
+                         "message": "Login failed [user: travis-admin]"}}
+            for m in (21, 22, 23)
+        ] + [
             {"_source": {"@timestamp": when.replace(hour=10, minute=25).isoformat(),
                          "hostname": "sw-1", "source_ip": "10.0.0.7",
                          "message": "%SEC_LOGIN-5-LOGIN_SUCCESS: login successful [user: travis-admin]"}},
@@ -152,10 +155,28 @@ class TestDailyOps:
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": hits}})
         data = dops.build_daily_ops(date=when.date().isoformat())
         sec = data["security_events"]
-        assert sec["total_failures"] == 1  # the success is not a failure
+        assert sec["total_failures"] == 3  # the success is not a failure
         saf = sec["success_after_failures"]
         assert len(saf) == 1
-        assert saf[0]["username"] == "travis-admin" and saf[0]["fail_count"] == 1
+        assert saf[0]["username"] == "travis-admin" and saf[0]["fail_count"] == 3
+
+    def test_success_after_failures_not_flagged_for_single_failure(self, fleet, monkeypatch):
+        # A lone failure then a success (e.g. rejected SSH key then password OK)
+        # is normal operation, NOT a brute force — must not be flagged.
+        when = timezone.now() - __import__("datetime").timedelta(days=1)
+        hits = [
+            {"_source": {"@timestamp": when.replace(hour=10, minute=21).isoformat(),
+                         "hostname": "sw-1", "source_ip": "10.0.0.7",
+                         "message": "SSH session for user travis-admin rejected due to failed "
+                                    "public key validation"}},
+            {"_source": {"@timestamp": when.replace(hour=10, minute=25).isoformat(),
+                         "hostname": "sw-1", "source_ip": "10.0.0.7",
+                         "message": "login successful [user: travis-admin]"}},
+        ]
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": hits}})
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        assert data["security_events"]["total_failures"] == 1
+        assert data["security_events"]["success_after_failures"] == []
 
     def test_spane_admin_actions_and_after_hours(self, fleet, monkeypatch):
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
@@ -204,6 +225,40 @@ class TestDailyOps:
         assert any(r["hostname"] == "sw-1" for r in ce["failing_devices"])
         assert any(r["hostname"] == "sw-1" and r["delta"] == -20.0 for r in ce["degraded"])
         assert any(r["hostname"] == "sw-2" and r["delta"] == 30.0 for r in ce["improved"])
+
+    def test_compliance_score_asof_when_not_checked_on_report_day(self, fleet, monkeypatch):
+        # Score must still appear on a report day with no checks (as-of latest).
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        import datetime as _dt
+        from apps.compliance.models import ComplianceTemplate, ComplianceTemplateResult as CTR
+        d1 = fleet["devices"][0]
+        tmpl = ComplianceTemplate.objects.create(name="base", template_content="x")
+        day = (timezone.now() - _dt.timedelta(days=1)).date()
+        # only an OLD result, two days before the report day
+        old_t = timezone.make_aware(_dt.datetime.combine(day - _dt.timedelta(days=2), _dt.time(8, 0)))
+        r = CTR.objects.create(device=d1, template=tmpl, status=CTR.Status.NON_COMPLIANT, score=55)
+        CTR.objects.filter(pk=r.pk).update(checked_at=old_t)
+        data = dops.build_daily_ops(date=day.isoformat())
+        ce = data["compliance_events"]
+        assert ce["fleet_avg_today"] == 55.0   # carried forward as-of, not "no scores"
+        assert ce["total_failing_devices"] == 1
+
+    def test_alerts_critical_events(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        import datetime as _dt
+        from apps.alerts.models import AlertEvent, AlertRule
+        when = timezone.now() - _dt.timedelta(days=1)
+        rule = AlertRule.objects.create(name="device-unreachable",
+                                        severity=AlertRule.Severity.CRITICAL, condition={})
+        e = AlertEvent.objects.create(rule=rule, state=AlertEvent.State.FIRING,
+                                      labels={"hostname": "sw-1"},
+                                      annotations={"title": "Device sw-1 unreachable"})
+        AlertEvent.objects.filter(pk=e.pk).update(created_at=when)
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        al = data["alerts_summary"]
+        assert al["critical"] == 1
+        assert any(c["device"] == "sw-1" and "unreachable" in c["alert"].lower()
+                   for c in al["critical_events"])
 
     def test_service_checks_not_configured(self, fleet, monkeypatch):
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})

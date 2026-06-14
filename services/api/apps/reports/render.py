@@ -19,6 +19,22 @@ GREEN = "#16a34a"
 AMBER = "#d97706"
 RED = "#dc2626"
 
+# Daily Operations report palette (richer, for the redesigned multi-page PDF).
+NAVY = "#1a1a2e"       # section header / page chrome
+ACCENT = "#4f86c6"     # spane blue accent
+SUCCESS = "#27ae60"
+WARNING = "#f39c12"
+ERROR = "#e74c3c"
+TEXT = "#2c3e50"
+LIGHT = "#ecf0f1"
+WHITE = "#ffffff"
+
+
+def _grade_box_color(grade):
+    """Colour for a letter-grade chip: A green, B blue, C orange, D/F red."""
+    return {"A": SUCCESS, "B": ACCENT, "C": WARNING, "D": ERROR, "F": "#922b21"}.get(
+        grade or "", MUTED)
+
 
 def _hex(colors, h):
     return colors.HexColor(h)
@@ -225,124 +241,390 @@ def compliance_summary_csv(data: dict) -> bytes:
 
 
 # ── Daily Operations ─────────────────────────────────────────────────────────
+def _daily_styles():
+    """Typography for the Daily Operations report (separate from the shared set)."""
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    base = getSampleStyleSheet()["Normal"]
+
+    def st(name, **kw):
+        kw.setdefault("fontName", "Helvetica")
+        if "textColor" in kw:
+            kw["textColor"] = _hex(colors, kw["textColor"])
+        return ParagraphStyle(name, parent=base, **kw)
+
+    return {
+        "title": st("d_title", fontName="Helvetica-Bold", fontSize=22, textColor=NAVY, spaceAfter=2),
+        "subtitle": st("d_sub", fontSize=11, textColor=TEXT, spaceAfter=1),
+        "body": st("d_body", fontSize=9, textColor=TEXT, spaceAfter=2),
+        "small": st("d_small", fontSize=8, textColor=MUTED, spaceAfter=1),
+        "mono": st("d_mono", fontName="Courier", fontSize=8, textColor=TEXT),
+        "note": st("d_note", fontSize=8.5, textColor=ERROR, spaceBefore=2, spaceAfter=2),
+        "box_title": st("d_boxt", fontName="Helvetica-Bold", fontSize=8.5, textColor=WHITE, alignment=1),
+        "box_big": st("d_boxb", fontName="Helvetica-Bold", fontSize=20, textColor=TEXT, alignment=1),
+        "box_sub": st("d_boxs", fontSize=7.5, textColor=TEXT, alignment=1),
+    }
+
+
+def _content_width():
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    return letter[0] - 1.4 * inch  # matches the 0.7in L/R margins
+
+
+def _section(flow, styles, text):
+    """A dark navy full-width section header bar with white bold text."""
+    from reportlab.lib import colors
+    from reportlab.platypus import Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+    flow.append(Spacer(1, 8))
+    p = Paragraph(text, ParagraphStyle("sh", fontName="Helvetica-Bold", fontSize=11,
+                                       textColor=_hex(colors, WHITE)))
+    t = Table([[p]], colWidths=[_content_width()])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _hex(colors, NAVY)),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    flow.append(t)
+    flow.append(Spacer(1, 6))
+
+
+def _dtable(data, col_widths=None, header_bg=ACCENT):
+    """Daily-report table: accent header, alternating rows, light borders."""
+    from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), _hex(colors, header_bg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("TEXTCOLOR", (0, 1), (-1, -1), _hex(colors, TEXT)),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.5, _hex(colors, "#d5dbdb")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, _hex(colors, LIGHT)]),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return t
+
+
+def _stat_box(styles, title, big, sub_lines, color):
+    """One coloured summary box (title band + big number + sub lines)."""
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Table, TableStyle
+    rows = [[Paragraph(title, styles["box_title"])], [Paragraph(big, styles["box_big"])]]
+    rows += [[Paragraph(ln, styles["box_sub"])] for ln in sub_lines]
+    t = Table(rows, colWidths=[1.55 * 72])
+    style = [
+        ("BACKGROUND", (0, 0), (0, 0), _hex(colors, color)),
+        ("BACKGROUND", (0, 1), (0, -1), _hex(colors, "#fbfcfc")),
+        ("BOX", (0, 0), (-1, -1), 1, _hex(colors, color)),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (0, 0), 4), ("BOTTOMPADDING", (0, 0), (0, 0), 4),
+        ("TOPPADDING", (0, 1), (0, 1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, -1), (0, -1), 6),
+    ]
+    t.setStyle(TableStyle(style))
+    return t
+
+
+def _page_decorator(report_date, generated):
+    """Return an onPage(canvas, doc) drawing the branded header + footer."""
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.lib.pagesizes import letter
+
+    def _draw(canvas, doc):
+        w, h = letter
+        canvas.saveState()
+        # Header
+        canvas.setFont("Helvetica-Bold", 11)
+        canvas.setFillColor(_hex(colors, ACCENT))
+        canvas.drawString(0.7 * inch, h - 0.45 * inch, "spane")
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(_hex(colors, MUTED))
+        canvas.drawRightString(w - 0.7 * inch, h - 0.45 * inch,
+                               f"Daily Ops — {report_date} | Page {doc.page}")
+        canvas.setStrokeColor(_hex(colors, ACCENT))
+        canvas.setLineWidth(1)
+        canvas.line(0.7 * inch, h - 0.52 * inch, w - 0.7 * inch, h - 0.52 * inch)
+        # Footer
+        canvas.setStrokeColor(_hex(colors, "#d5dbdb"))
+        canvas.setLineWidth(0.5)
+        canvas.line(0.7 * inch, 0.55 * inch, w - 0.7 * inch, 0.55 * inch)
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(_hex(colors, MUTED))
+        canvas.drawString(0.7 * inch, 0.4 * inch, f"Generated by spane | {generated}")
+        canvas.drawRightString(w - 0.7 * inch, 0.4 * inch, "CONFIDENTIAL — Internal Use Only")
+        canvas.restoreState()
+
+    return _draw
+
+
+def _outage_timeline(av, styles):
+    """A 24h timeline Drawing with one bar per outage, positioned by time of day."""
+    from reportlab.graphics.shapes import Drawing, Line, Rect, String
+    from reportlab.lib import colors
+
+    outages = av.get("went_down") or []
+    width = _content_width()
+    left, axis_w = 6, width - 12
+    row_h, top_pad = 11, 18
+    d = Drawing(width, top_pad + row_h * max(1, len(outages)) + 6)
+    # Axis
+    y0 = d.height - 10
+    d.add(Line(left, y0, left + axis_w, y0, strokeColor=_hex(colors, MUTED), strokeWidth=0.5))
+    for hh in (0, 6, 12, 18, 24):
+        x = left + axis_w * hh / 24
+        d.add(Line(x, y0 - 2, x, y0 + 2, strokeColor=_hex(colors, MUTED), strokeWidth=0.5))
+        d.add(String(x - 6, y0 + 4, f"{hh:02d}:00", fontSize=6, fillColor=_hex(colors, MUTED)))
+
+    def _mins(iso):
+        # minutes-into-day from an ISO timestamp's HH:MM (UTC).
+        try:
+            hh, mm = int(iso[11:13]), int(iso[14:16])
+            return hh * 60 + mm
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    for i, o in enumerate(outages[:12]):
+        y = y0 - top_pad - i * row_h
+        s = _mins(o.get("down_at"))
+        e = _mins(o.get("recovered_at")) if o.get("recovered_at") else 24 * 60
+        if s is None:
+            continue
+        x1 = left + axis_w * s / 1440
+        x2 = left + axis_w * min(1440, max(e, s + 4)) / 1440
+        d.add(Rect(x1, y, max(2, x2 - x1), row_h - 3, fillColor=_hex(colors, ERROR), strokeColor=None))
+        d.add(String(left, y + 1, (o.get("hostname") or "")[:22], fontSize=6,
+                     fillColor=_hex(colors, TEXT)))
+        d.add(String(min(left + axis_w - 40, x2 + 3), y + 1, f"{o.get('duration_minutes', 0)}m",
+                     fontSize=6, fillColor=_hex(colors, MUTED)))
+    return d
+
+
 def daily_ops_pdf(data: dict) -> bytes:
-    from reportlab.platypus import Paragraph, Spacer
-    styles = _styles()
-    buf, doc = _doc("spane Daily Operations")
-    flow = []
-    _header(flow, styles, "Daily Operations Report", f"{data['report_date']} — All Sites")
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (PageBreak, Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    styles = _daily_styles()
+    buf = io.BytesIO()
+    rdate = data["report_date"]
+    gen = (data.get("generated_at") or "")[:16].replace("T", " ")
+    doc = SimpleDocTemplate(
+        buf, pagesize=letter, title="spane Daily Operations",
+        leftMargin=0.7 * inch, rightMargin=0.7 * inch,
+        topMargin=0.85 * inch, bottomMargin=0.75 * inch)
 
     sec = data["security_events"]
-    flow.append(Paragraph("1 · Device Security Events", styles["h2"]))
-    flow.append(Paragraph(
-        f"{sec['total_failures']} authentication failure(s) from "
-        f"{sec['unique_sources']} unique source(s) across {sec.get('device_count', 0)} device(s).",
-        styles["body"]))
-    if sec.get("groups"):
-        rows = [["Username", "Source IP / Devices", "Count", "Time"]]
-        for g in sec["groups"][:20]:
-            srcs = ", ".join(g.get("source_ips") or []) or "—"
-            if g.get("device_count", 0) > 1:
-                srcs = f"{srcs} · {g['device_count']} devices"
-            rows.append([g.get("username") or "(unknown)", srcs[:40], g["count"],
-                         g.get("time_range", "")])
-        flow.append(_table(rows, col_widths=[130, 200, 50, 80]))
-    elif sec.get("note"):
-        flow.append(Paragraph(sec["note"], styles["small"]))
-    for fl in sec.get("flags", [])[:10]:
-        flow.append(Paragraph(fl, styles["small"]))
-    saf = sec.get("success_after_failures") or []
-    if saf:
-        for s in saf[:10]:
-            flow.append(Paragraph(
-                f"⚠️ SUCCESS AFTER FAILURES: {s['username']} failed {s['fail_count']} time(s) "
-                f"then succeeded at {s.get('at', '')} on {s.get('device') or 'unknown'} — "
-                f"review immediately.", styles["small"]))
-    elif sec.get("total_failures"):
-        flow.append(Paragraph("No successes-after-failures detected.", styles["small"]))
-
     av = data["device_availability"]
-    flow.append(Paragraph("2 · Device Availability", styles["h2"]))
-    flow.append(Paragraph(
-        f"Fleet availability {av['availability_pct']}% · {av['total_outages']} outage(s), "
-        f"{av['total_downtime_minutes']} min total downtime.", styles["body"]))
-    if av["went_down"]:
-        rows = [["Device", "Down at", "Duration (min)", "Site"]]
-        rows += [[o["hostname"], (o["down_at"] or "")[11:19], o["duration_minutes"], o["site"] or ""]
-                 for o in av["went_down"]]
-        flow.append(_table(rows))
-
     ce = data["compliance_events"]
-    flow.append(Paragraph("3 · Compliance Status", styles["h2"]))
-    if ce.get("fleet_avg_today") is not None:
+    svc = data.get("service_checks", {})
+    cc = data["config_changes"]
+    ch = data["collection_health"]
+    ah = data["agent_health"]
+    al = data["alerts_summary"]
+    sp = data.get("spane_access_events", {})
+
+    flow = []
+
+    # ── Page 1: Executive summary ────────────────────────────────────────────
+    flow.append(Paragraph("Daily Operations Report", styles["title"]))
+    flow.append(Paragraph(f"{rdate} — All Sites", styles["subtitle"]))
+    flow.append(Paragraph(f"Generated {gen} UTC", styles["small"]))
+    flow.append(Spacer(1, 12))
+
+    # Four colored stat boxes across.
+    sec_color = ERROR if sec.get("total_failures") else SUCCESS
+    av_color = ERROR if av.get("total_outages") else SUCCESS
+    score = ce.get("fleet_avg_today")
+    comp_color = _grade_box_color(ce.get("fleet_grade"))
+    al_color = ERROR if al.get("critical") else (WARNING if al.get("total") else SUCCESS)
+    boxes = [
+        _stat_box(styles, "SECURITY", str(sec.get("total_failures", 0)),
+                  [f"{sec.get('unique_sources', 0)} sources", f"{sec.get('device_count', 0)} devices"],
+                  sec_color),
+        _stat_box(styles, "AVAILABILITY", f"{av.get('availability_pct', 100)}%",
+                  [f"{av.get('total_outages', 0)} outages", f"{av.get('total_downtime_minutes', 0)} min down"],
+                  av_color),
+        _stat_box(styles, "COMPLIANCE", f"{score}/100" if score is not None else "—",
+                  [f"Grade {ce.get('fleet_grade') or '—'}", f"{ce.get('unsaved_configs', 0)} unsaved"],
+                  comp_color),
+        _stat_box(styles, "ALERTS", str(al.get("total", 0)),
+                  [f"{al.get('critical', 0)} critical", f"{al.get('low', 0)} low"], al_color),
+    ]
+    grid = Table([boxes], colWidths=[_content_width() / 4] * 4)
+    grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                              ("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+    flow.append(grid)
+    flow.append(Spacer(1, 14))
+
+    # One-line section summaries.
+    def _ok(label):
+        return f"<font color='{SUCCESS}'>✔</font> {label}"
+
+    def _warn(label):
+        return f"<font color='{ERROR}'>!</font> {label}"
+
+    flow.append(Paragraph("Summary", styles["subtitle"]))
+    sec_line = (f"{sec['total_failures']} auth failures, {sec['unique_sources']} sources"
+                if sec.get("total_failures") else "No device auth failures")
+    av_line = (f"{av['total_outages']} outages, {av['total_downtime_minutes']} min downtime"
+               if av.get("total_outages") else "No outages")
+    comp_line = (f"{ce['total_failing_devices']} below threshold, {ce['unsaved_configs']} unsaved configs"
+                 if (ce.get("total_failing_devices") or ce.get("unsaved_configs")) else "Fleet compliant")
+    svc_line = (f"{svc.get('total_passing', 0)} passed, {svc.get('total_failures', 0)} failed"
+                if svc.get("configured") else "No service checks configured")
+    cc_line = f"{len(cc)} change(s) detected" if cc else "No config changes"
+    coll_line = (f"{ch['successful']}/{ch['total_attempts']} collected ({ch.get('success_rate', 0)}%)"
+                 if ch.get("total_attempts") else "No collection attempts logged")
+    ah_line = f"{ah['online']}/{ah['total_agents']} agents online"
+    sp_line = (f"{sp.get('total_failures', 0)} failed logins, "
+               f"{len(sp.get('after_hours_logins', []))} after-hours")
+    for n, (line, bad) in enumerate([
+        (sec_line, sec.get("total_failures")), (av_line, av.get("total_outages")),
+        (comp_line, ce.get("total_failing_devices") or ce.get("unsaved_configs")),
+        (svc_line, svc.get("total_failures")), (cc_line, len(cc)),
+        (coll_line, ch.get("failed")), (ah_line, ah.get("offline")),
+        (sp_line, sp.get("total_failures")),
+    ], start=1):
+        flow.append(Paragraph(f"{n}. " + (_warn(line) if bad else _ok(line)), styles["body"]))
+    flow.append(Spacer(1, 8))
+    flow.append(Paragraph("See following pages for details.", styles["small"]))
+
+    # ── Detail pages (conditional) ───────────────────────────────────────────
+    # Security — only if failures.
+    if sec.get("total_failures"):
+        flow.append(PageBreak())
+        _section(flow, styles, "1 · Device Security Events")
+        flow.append(Paragraph(
+            f"<b>{sec['total_failures']}</b> authentication failure(s) from "
+            f"<b>{sec['unique_sources']}</b> source(s) across <b>{sec.get('device_count', 0)}</b> "
+            f"device(s).", styles["body"]))
+        if sec.get("groups"):
+            rows = [["Username", "Source IP / Devices", "Count", "Time Range"]]
+            for g in sec["groups"][:25]:
+                srcs = ", ".join(g.get("source_ips") or []) or "—"
+                if g.get("device_count", 0) > 1:
+                    srcs = f"{srcs}\n({g['device_count']} devices)"
+                rows.append([Paragraph(g.get("username") or "(unknown)", styles["mono"]),
+                             Paragraph(srcs, styles["small"]), g["count"], g.get("time_range", "")])
+            flow.append(_dtable(rows, col_widths=[130, 230, 45, 90], header_bg=ERROR))
+        for fl in sec.get("flags", [])[:10]:
+            flow.append(Paragraph(fl, styles["note"]))
+        # Affected device list for the top group.
+        if sec.get("groups") and sec["groups"][0].get("device_count", 0) > 1:
+            devs = ", ".join(sec["groups"][0].get("devices") or [])
+            flow.append(Paragraph(f"Affected devices: {devs}", styles["small"]))
+        for s in (sec.get("success_after_failures") or [])[:10]:
+            flow.append(Paragraph(
+                f"⚠️ SUCCESS AFTER FAILURES: {s['username']} failed {s['fail_count']} time(s) then "
+                f"succeeded at {s.get('at', '')} on {s.get('device') or 'unknown'} — review immediately.",
+                styles["note"]))
+
+    # Availability — only if outages.
+    if av.get("total_outages"):
+        flow.append(PageBreak())
+        _section(flow, styles, "2 · Device Availability")
+        flow.append(Paragraph(
+            f"<b>{av['total_outages']}</b> outage(s), {av['total_downtime_minutes']} min total "
+            f"downtime · fleet availability {av['availability_pct']}%.", styles["body"]))
+        flow.append(Spacer(1, 4))
+        flow.append(_outage_timeline(av, styles))
+        flow.append(Spacer(1, 6))
+        rows = [["Device", "Down At", "Recovered", "Dur (min)", "Site"]]
+        for o in av["went_down"][:40]:
+            rows.append([o["hostname"], (o["down_at"] or "")[11:19],
+                         (o["recovered_at"] or "still down")[11:19] if o.get("recovered_at") else "still down",
+                         o["duration_minutes"], o.get("site") or ""])
+        flow.append(_dtable(rows, col_widths=[150, 80, 90, 70, 110], header_bg=ERROR))
+
+    # Compliance — always.
+    flow.append(PageBreak())
+    _section(flow, styles, "3 · Compliance Status")
+    if score is not None:
         trend = ""
         if ce.get("fleet_avg_delta") is not None and ce.get("fleet_avg_prev") is not None:
             arrow = "↑" if ce["fleet_avg_delta"] > 0 else ("↓" if ce["fleet_avg_delta"] < 0 else "→")
-            trend = f" {arrow} from {ce['fleet_avg_prev']} yesterday"
+            trend = f"  {arrow} from {ce['fleet_avg_prev']} previous day"
         flow.append(Paragraph(
-            f"Fleet score: {ce['fleet_avg_today']}/100 ({ce.get('fleet_grade') or '—'}){trend}. "
-            f"{ce['total_failing_devices']} device(s) currently failing; "
-            f"{ce.get('unsaved_configs', 0)} with unsaved configs.", styles["body"]))
+            f"<b>Fleet score: {score}/100  Grade {ce.get('fleet_grade') or '—'}</b>{trend}",
+            styles["body"]))
     else:
+        flow.append(Paragraph("No stored compliance scores yet.", styles["body"]))
+    if ce.get("unsaved_devices"):
+        flow.append(Spacer(1, 4))
         flow.append(Paragraph(
-            f"No stored compliance scores for this period. "
-            f"{ce.get('unsaved_configs', 0)} device(s) with unsaved configs.", styles["body"]))
+            f"<b>{len(ce['unsaved_devices'])} device(s) with unsaved configurations</b>", styles["body"]))
+        rows = [["Device", "Site", "Last Checked"]]
+        rows += [[u["hostname"], u.get("site") or "", (u.get("last_checked") or "")[:16].replace("T", " ")]
+                 for u in ce["unsaved_devices"][:30]]
+        flow.append(_dtable(rows, col_widths=[180, 130, 130], header_bg=WARNING))
+        flow.append(Paragraph(
+            "⚠️ Action required: run 'write memory' on the listed devices — unsaved changes "
+            "are lost on reboot.", styles["note"]))
     if ce.get("failing_devices"):
-        rows = [["Device", "Score", "Grade", "Site"]]
-        rows += [[d["hostname"], d["score"], d["grade"], d.get("site") or ""]
-                 for d in ce["failing_devices"]]
-        flow.append(_table(rows, col_widths=[200, 60, 50, 100], header_bg=RED))
+        flow.append(Spacer(1, 6))
+        flow.append(Paragraph("Devices below compliance threshold (&lt;70)", styles["body"]))
+        rows = [["Device", "Score", "Grade", "Top Issues"]]
+        for d in ce["failing_devices"]:
+            rows.append([d["hostname"], d["score"], d["grade"],
+                         Paragraph("; ".join(d.get("top_issues") or []) or "—", styles["small"])])
+        flow.append(_dtable(rows, col_widths=[150, 50, 45, 195], header_bg=ERROR))
     if ce.get("degraded") or ce.get("improved"):
         flow.append(Spacer(1, 4))
-        flow.append(Paragraph("Score changes from previous day:", styles["small"]))
+        flow.append(Paragraph("Score changes from previous day", styles["body"]))
         for d in ce.get("degraded", [])[:10]:
             flow.append(Paragraph(
-                f"↓ {d['hostname']} ({d['score_prev']}→{d['score_today']})", styles["small"]))
+                f"<font color='{ERROR}'>↓</font> {d['hostname']} ({d['score_prev']}→{d['score_today']})",
+                styles["small"]))
         for d in ce.get("improved", [])[:10]:
             flow.append(Paragraph(
-                f"↑ {d['hostname']} ({d['score_prev']}→{d['score_today']})", styles["small"]))
+                f"<font color='{SUCCESS}'>↑</font> {d['hostname']} ({d['score_prev']}→{d['score_today']})",
+                styles["small"]))
 
-    svc = data.get("service_checks", {})
-    flow.append(Paragraph("4 · Service Check Failures", styles["h2"]))
-    if not svc.get("configured"):
-        flow.append(Paragraph(svc.get("note") or "No service checks configured.", styles["small"]))
-    else:
+    # Service checks — only if failures.
+    if svc.get("configured") and svc.get("total_failures"):
+        flow.append(PageBreak())
+        _section(flow, styles, "4 · Service Check Failures")
         flow.append(Paragraph(
-            f"{svc['total_executions']} check execution(s): {svc['total_passing']} passed"
+            f"{svc['total_executions']} execution(s): {svc['total_passing']} passed"
             f"{f' ({svc['pass_rate']}%)' if svc.get('pass_rate') is not None else ''}, "
-            f"{svc['total_failures']} failed across {svc['affected_checks']} check(s).",
+            f"<b>{svc['total_failures']} failed</b> across {svc['affected_checks']} check(s).",
             styles["body"]))
-        if svc.get("summaries"):
-            rows = [["Check", "Device", "Type", "Fails", "Avg Dur", "Window"]]
-            for s in svc["summaries"][:25]:
-                dur = f"{s['avg_duration_s']}s" if s.get("avg_duration_s") is not None else "—"
-                win = f"{(s['first_failure'] or '')[11:16]}–{(s['last_failure'] or '')[11:16]}"
-                rows.append([s["check_name"][:24], (s["device"] or "")[:16], s["check_type"],
-                             s["failure_count"], dur, win])
-            flow.append(_table(rows, col_widths=[140, 110, 50, 45, 60, 95], header_bg=RED))
-            for s in svc["summaries"][:25]:
-                if s.get("correlated_outage"):
-                    co = s["correlated_outage"]
-                    flow.append(Paragraph(
-                        f"⟲ Correlated with device outage: {co['hostname']} was unreachable "
-                        f"{(co['down_at'] or '')[11:16]}–{(co.get('recovered_at') or 'now')[11:16]} "
-                        f"(matches {s['check_name']} failures).", styles["small"]))
+        rows = [["Check", "Device", "Type", "Fails", "Avg Dur", "Window"]]
+        for s in svc["summaries"][:25]:
+            dur = f"{s['avg_duration_s']}s" if s.get("avg_duration_s") is not None else "—"
+            win = f"{(s['first_failure'] or '')[11:16]}–{(s['last_failure'] or '')[11:16]}"
+            rows.append([s["check_name"][:24], (s["device"] or "")[:16], s["check_type"],
+                         s["failure_count"], dur, win])
+        flow.append(_dtable(rows, col_widths=[140, 110, 50, 45, 60, 95], header_bg=ERROR))
+        for s in svc["summaries"][:25]:
+            if s.get("correlated_outage"):
+                co = s["correlated_outage"]
+                flow.append(Paragraph(
+                    f"⟲ Correlated with device outage: {co['hostname']} unreachable "
+                    f"{(co['down_at'] or '')[11:16]}–{(co.get('recovered_at') or 'now')[11:16]} "
+                    f"(matches {s['check_name']}).", styles["small"]))
 
-    cc = data["config_changes"]
-    flow.append(Paragraph("5 · Configuration Changes", styles["h2"]))
-    if not cc:
-        flow.append(Paragraph("No config changes detected.", styles["small"]))
-    else:
-        # Summary table first.
+    # Config changes — only if any.
+    if cc:
+        flow.append(PageBreak())
+        _section(flow, styles, "5 · Configuration Changes")
         rows = [["Device", "+", "-", "Detected"]]
         rows += [[c["hostname"], f"+{c['lines_added']}", f"-{c['lines_removed']}",
                   (c["detected_at"] or "")[11:19]] for c in cc]
-        flow.append(_table(rows, col_widths=[210, 50, 50, 90]))
+        flow.append(_dtable(rows, col_widths=[230, 50, 50, 90]))
         flow.append(Spacer(1, 8))
-        # Then a colour-coded diff per device.
         for c in cc:
             prev = (c.get("previous_backup_at") or "")[11:19]
-            head = f"{c['hostname']} — config change at {(c['detected_at'] or '')[11:19]}"
+            head = f"{c['hostname']} — change at {(c['detected_at'] or '')[11:19]}"
             if prev:
                 head += f"  ·  previous backup {prev}"
             flow.append(Paragraph(head, styles["small"]))
@@ -350,56 +632,67 @@ def daily_ops_pdf(data: dict) -> bytes:
             flow.append(tbl if tbl is not None else Paragraph("(no diff available)", styles["small"]))
             flow.append(Spacer(1, 8))
 
-    ch = data["collection_health"]
-    flow.append(Paragraph("6 · Collection Health", styles["h2"]))
-    flow.append(Paragraph(
-        f"{ch['total_attempts']} attempt(s) across {ch.get('device_count', 0)} device(s) — "
-        f"{ch.get('success_rate', 0)}% success.", styles["body"]))
-    if ch.get("by_status"):
-        rows = [["Status", "Count", "Rate"]]
-        rows += [[s["status"], s["count"], f"{s['rate']}%"] for s in ch["by_status"]]
-        flow.append(_table(rows, col_widths=[150, 80, 80]))
-    if ch["failed_devices"]:
-        flow.append(Spacer(1, 4))
-        rows = [["Device", "Error", "Attempts"]]
-        rows += [[f["hostname"], f["error"], f["attempts"]] for f in ch["failed_devices"]]
-        flow.append(_table(rows, header_bg=RED))
+    # Collection health — only if failures.
+    if ch.get("failed"):
+        flow.append(PageBreak())
+        _section(flow, styles, "6 · Collection Health")
+        flow.append(Paragraph(
+            f"{ch['total_attempts']} attempt(s) across {ch.get('device_count', 0)} device(s) — "
+            f"{ch.get('success_rate', 0)}% success.", styles["body"]))
+        if ch.get("by_status"):
+            rows = [["Status", "Count", "Rate"]]
+            rows += [[s["status"], s["count"], f"{s['rate']}%"] for s in ch["by_status"]]
+            flow.append(_dtable(rows, col_widths=[180, 90, 90]))
+        if ch.get("failed_devices"):
+            flow.append(Spacer(1, 4))
+            rows = [["Device", "Error", "Attempts"]]
+            rows += [[f["hostname"], f["error"], f["attempts"]] for f in ch["failed_devices"][:40]]
+            flow.append(_dtable(rows, header_bg=ERROR))
 
-    ah = data["agent_health"]
-    al = data["alerts_summary"]
-    flow.append(Paragraph("7 · Agent Health & Alerts", styles["h2"]))
-    flow.append(Paragraph(
-        f"Agents: {ah['online']}/{ah['total_agents']} online. "
-        f"Alerts: {al['total']} ({al['critical']} crit, {al['high']} high, "
-        f"{al['medium']} med, {al['low']} low).", styles["body"]))
-    flow.append(Spacer(1, 4))
+    # Alerts — only if any.
+    if al.get("total"):
+        flow.append(PageBreak())
+        _section(flow, styles, "7 · Alerts")
+        flow.append(Paragraph(
+            f"<b>{al['total']}</b> alert(s): {al['critical']} critical, {al['high']} high, "
+            f"{al['medium']} medium, {al['low']} low. Agents {ah['online']}/{ah['total_agents']} online.",
+            styles["body"]))
+        if al.get("critical_events"):
+            rows = [["Device", "Alert", "Severity", "Time"]]
+            for e in al["critical_events"][:40]:
+                rows.append([e.get("device") or "—", (e.get("alert") or "")[:40],
+                             e.get("severity", ""), (e.get("time") or "")[11:19]])
+            flow.append(_dtable(rows, col_widths=[140, 200, 70, 70], header_bg=ERROR))
 
-    sp = data.get("spane_access_events", {})
-    flow.append(Paragraph("8 · spane Access Events", styles["h2"]))
-    flow.append(Paragraph(
-        f"{sp.get('total_failures', 0)} failed login(s); "
-        f"{len(sp.get('after_hours_logins', []))} after-hours login(s); "
-        f"{len(sp.get('new_source_ips', []))} new source IP(s); "
-        f"{len(sp.get('admin_actions', []))} admin action(s).", styles["body"]))
-    if sp.get("login_failures"):
-        rows = [["Failed login", "User", "Source IP"]]
-        rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
-                 for e in sp["login_failures"][:20]]
-        flow.append(_table(rows, col_widths=[100, 120, 120], header_bg=RED))
-    if sp.get("after_hours_logins"):
-        flow.append(Spacer(1, 4))
-        rows = [["After-hours login", "User", "Source IP"]]
-        rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
-                 for e in sp["after_hours_logins"][:20]]
-        flow.append(_table(rows, col_widths=[100, 120, 120]))
-    if sp.get("admin_actions"):
-        flow.append(Spacer(1, 4))
-        rows = [["Admin action", "User", "Action", "Target"]]
-        rows += [[(e["time"] or "")[11:19], e["username"], e["event_type"],
-                  (e.get("target") or "")[:30]] for e in sp["admin_actions"][:20]]
-        flow.append(_table(rows, col_widths=[80, 110, 130, 110]))
+    # spane access — only if failures, after-hours, or admin actions.
+    if sp.get("total_failures") or sp.get("after_hours_logins") or sp.get("admin_actions"):
+        flow.append(PageBreak())
+        _section(flow, styles, "8 · spane Access Events")
+        flow.append(Paragraph(
+            f"{sp.get('total_failures', 0)} failed login(s); "
+            f"{len(sp.get('after_hours_logins', []))} after-hours; "
+            f"{len(sp.get('new_source_ips', []))} new source IP(s); "
+            f"{len(sp.get('admin_actions', []))} admin action(s).", styles["body"]))
+        if sp.get("login_failures"):
+            rows = [["Failed login", "User", "Source IP"]]
+            rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
+                     for e in sp["login_failures"][:20]]
+            flow.append(_dtable(rows, col_widths=[110, 160, 130], header_bg=ERROR))
+        if sp.get("after_hours_logins"):
+            flow.append(Spacer(1, 4))
+            rows = [["After-hours login", "User", "Source IP"]]
+            rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
+                     for e in sp["after_hours_logins"][:20]]
+            flow.append(_dtable(rows, col_widths=[110, 160, 130], header_bg=WARNING))
+        if sp.get("admin_actions"):
+            flow.append(Spacer(1, 4))
+            rows = [["Admin action", "User", "Action", "Target"]]
+            rows += [[(e["time"] or "")[11:19], e["username"], e["event_type"],
+                      (e.get("target") or "")[:28]] for e in sp["admin_actions"][:20]]
+            flow.append(_dtable(rows, col_widths=[90, 120, 130, 110]))
 
-    doc.build(flow, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    deco = _page_decorator(rdate, gen)
+    doc.build(flow, onFirstPage=deco, onLaterPages=deco)
     return buf.getvalue()
 
 
