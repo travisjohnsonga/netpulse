@@ -1508,6 +1508,69 @@ export async function fetchCollectionHealth(): Promise<CollectionHealth> {
   return data
 }
 
+// ── regulatory frameworks ────────────────────────────────────────────────────
+export type ControlStatus = 'satisfied' | 'partial' | 'gap' | 'not_applicable'
+
+export interface FrameworkCounts {
+  satisfied: number
+  partial: number
+  gap: number
+  not_applicable: number
+}
+
+export interface FrameworkSummary {
+  key: string
+  name: string
+  description: string
+  version: string
+  coverage: number | null
+  counts: FrameworkCounts
+  total_controls: number
+}
+
+export interface ControlAssessment {
+  control_id: string
+  title: string
+  description: string
+  category: string
+  mapping_key: string
+  weight: number
+  status: ControlStatus
+  summary: string
+  metrics: Record<string, unknown>
+  evidence: string[]
+}
+
+export interface FrameworkReport {
+  framework: { key: string; name: string; description: string; version: string }
+  coverage: number | null
+  counts: FrameworkCounts
+  total_controls: number
+  controls: ControlAssessment[]
+}
+
+export async function fetchFrameworks(): Promise<FrameworkSummary[]> {
+  const { data } = await api.get<FrameworkSummary[]>('/frameworks/')
+  return data
+}
+
+export async function fetchFramework(key: string): Promise<FrameworkReport> {
+  const { data } = await api.get<FrameworkReport>(`/frameworks/${key}/`)
+  return data
+}
+
+// Download the PDF evidence package (auth header needed → fetch as blob).
+export async function downloadFrameworkReport(key: string, name: string): Promise<void> {
+  const resp = await api.get(`/frameworks/${key}/report/`, { responseType: 'blob' })
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `spane-${key}-evidence.pdf`
+  a.click()
+  URL.revokeObjectURL(url)
+  void name
+}
+
 // ── Logs ─────────────────────────────────────────────────────────────────────
 
 export interface LogEntry {

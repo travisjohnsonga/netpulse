@@ -16,6 +16,7 @@ import Flows from './pages/Flows'
 import Checks from './pages/Checks'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
+import Compliance from './pages/Compliance'
 import Settings from './pages/Settings'
 import Polling from './pages/settings/Polling'
 import HostnameRules from './pages/settings/HostnameRules'
@@ -133,6 +134,7 @@ function AppRoutes() {
                 <Route path="/lookup" element={<Navigate to="/network/lookup" replace />} />
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />
+                <Route path="/compliance" element={<Compliance />} />
                 <Route path="/settings" element={<Settings />}>
                   <Route index element={<Navigate to="users" replace />} />
                   {/* Grouped (tabbed) settings */}

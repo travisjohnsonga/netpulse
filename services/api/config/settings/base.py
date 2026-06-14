@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "apps.mibs",
     "apps.arp_mac",
     "apps.sso",
+    "apps.frameworks",
 ]
 
 MIDDLEWARE = [

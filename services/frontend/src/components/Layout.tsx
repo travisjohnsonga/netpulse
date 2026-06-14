@@ -61,6 +61,7 @@ const navEntries: NavEntry[] = [
   { label: 'Checks', href: '/checks', icon: '✓' },
   { label: 'CVE', href: '/cve', icon: '🛡', divider: true },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
+  { label: 'Compliance', href: '/compliance', icon: '📋' },
   { label: 'API Docs', href: '/api-docs', icon: '📖', divider: true },
   { label: 'Settings', href: '/settings', icon: '⚙' },
 ]

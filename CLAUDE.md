@@ -146,6 +146,46 @@ Settings → Integrations → Mist modal (`MistSettingsModal`: token save, Test 
 email/org, Sync Now, discovered-sites table). State is DB-backed so a connected account survives an
 api restart. Tests: `tests/test_mist.py` (21).
 
+**Recently completed (config-compliance session — 2026-06-14):**
+- **AOS-CX config-collection hang fixed** — Netmiko's interactive `send_command` blocked on the AOS-CX
+  `--More--` pager; config backup now uses a dedicated path (`collect_aos_cx_config`): REST
+  `GET /fullconfigs/running-config` first, then a paramiko `exec_command` SSH fallback (bounded 15s/30s) —
+  Netmiko is avoided for aos_cx. `tests/test_aos_cx.py`.
+- **Config-collection audit log** — new `ConfigCollectionLog` (configbackup migration **0003**): one row per
+  *attempt* on every outcome (success/unchanged/failed/timeout/auth_failed/empty) with `duration_ms`,
+  transport `method` (rest/ssh/netconf/netmiko via a thread-local consumed in `collect_one`),
+  `bytes_collected`, `config_changed`. APIs: `GET /api/configbackup/collection-log/` (filters
+  device_id/status/since, paginated), `GET /api/configbackup/collection-stats/` (24h summary +
+  never-collected + failing devices + `unsaved_configs`), `GET /api/devices/{id}/collection-log/`. Stats in
+  `apps/configbackup/stats.py`. Frontend: history table on the device Configuration tab, a Collection Health
+  panel (Settings → Compliance → Config Health), and a dashboard widget. `tests/test_collection_log.py`.
+- **Weighted device compliance score** (`apps/compliance/device_score.py`) — replaces the template-only
+  average with a renormalised weighted score over the components that apply: Template **50%**, Interface
+  Rules **30%**, Role Consistency **20%**, Running/Startup Match **20%** (renormalised by the sum of present
+  weights). Grade A/B/C/D/F. `GET /api/devices/{id}/compliance/` now returns `score`/`grade`/`breakdown` +
+  `interface_rule_findings` (with the failing `interface_config` block + a platform `suggested_fix` from
+  `SUGGESTED_FIXES`) + `role_consistency_findings` + `startup_status`; `overall_score`/`results`
+  (template-only) retained for back-compat. Compliance tab redesigned (score header + breakdown bars,
+  Template / Interface Rule / Role Consistency sections, copyable fixes). `tests/test_device_score.py`.
+- **Running-vs-startup config check** — `check_running_startup_match(device)` in
+  `apps/compliance/collector.py`: AOS-CX compares running vs startup over REST (`AOSCXClient.get_startup_config`),
+  Cisco ios/ios_xe use `show archive config differences`. `collect_one` reconciles after each collection,
+  stamping `DeviceConfig.startup_match`/`startup_diff`/`startup_checked_at` (configbackup migration **0004**),
+  and fires a standing MEDIUM **"Startup config not saved"** alert (`alert_type=config_unsaved`, deduped,
+  auto-resolves). Surfaced in the compliance tab (green/red diff + copyable `write memory`), a dashboard
+  "Unsaved Configs" banner, and a saved/unsaved badge on the Configuration tab. `tests/test_startup_config.py`.
+- **Regulatory compliance reporting** — new app `apps/frameworks`: `RegulatoryFramework` + `FrameworkControl`
+  (migration 0001 + data-seed 0002; `seed_frameworks`). Six frameworks with representative control catalogs
+  (SOX ITGC, ISO 27001, NIST CSF 2.0, PCI-DSS 4.0, HIPAA Security Rule, CIS Controls v8). An evidence engine
+  (`evidence.py` collectors → `engine.py`) maps **live spane data** (asset inventory, config compliance,
+  backups, change audit, running/startup, CVEs, OS lifecycle, OpenBao secrets posture, RBAC, audit logging,
+  TLS, segmentation) to control statuses (satisfied/partial/gap/n-a) with a renormalised coverage score.
+  APIs: `GET /api/frameworks/`, `GET /api/frameworks/{key}/`, `GET /api/frameworks/{key}/report/` (PDF
+  evidence package via **reportlab**, added to requirements). Frontend page at `/compliance` (sidebar
+  "Compliance"): framework cards + coverage, drill-in to controls + evidence, download PDF.
+  `tests/test_frameworks.py`. NOTE: control catalogs are representative subsets mapped to available signals,
+  not verbatim reproductions of the standards; PARTIAL controls may require manual attestation.
+
 **Recently completed (this session):** Alert expanded panels render config diffs with green/red
 syntax highlighting (reuses the `DiffViewer` component) · LLDP neighbors page added to the sidebar ·
 LLDP neighbors now persisted to the `LLDPNeighbor` table (scheduler every 30 min + manual

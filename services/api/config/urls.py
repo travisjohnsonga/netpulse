@@ -59,6 +59,7 @@ urlpatterns = [
     path("api/checks/",       include("apps.checks.urls")),
     path("api/alerting/",     include("apps.alerting.urls")),
     path("api/mibs/",         include("apps.mibs.urls")),
+    path("api/",              include("apps.frameworks.urls")),
     path("api/settings/polling/", PollingSettingsView.as_view(), name="polling-settings"),
     path("api/settings/system/",  SystemSettingsView.as_view(),  name="system-settings"),
     path("api/settings/audit-retention/", AuditRetentionView.as_view(), name="audit-retention"),

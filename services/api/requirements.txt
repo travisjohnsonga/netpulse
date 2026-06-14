@@ -57,6 +57,9 @@ pysnmp~=7.1
 requests~=2.32       # AOS-CX REST API client (apps.devices.aos_cx_client)
 Jinja2~=3.1
 
+# PDF evidence packages (apps.frameworks regulatory reports) — pure-Python, no system libs
+reportlab~=4.2
+
 # WSGI server + static files
 gunicorn~=23.0   # >=23.0 fixes CVE-2024-6827 (Transfer-Encoding request smuggling)
 whitenoise[brotli]~=6.7
