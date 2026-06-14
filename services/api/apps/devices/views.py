@@ -585,6 +585,7 @@ class DeviceViewSet(viewsets.ModelViewSet):
             "template_findings": template_data,
             "interface_rule_findings": data["interface_rule_findings"],
             "role_consistency_findings": data["role_consistency_findings"],
+            "startup_status": data["startup_status"],
         })
 
     @action(detail=True, methods=["get"], url_path="audit")

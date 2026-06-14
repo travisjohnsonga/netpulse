@@ -118,6 +118,14 @@ class AOSCXClient:
         """
         return self._get("fullconfigs/running-config")
 
+    def get_startup_config(self) -> dict:
+        """
+        Return the saved startup configuration from
+        ``GET /fullconfigs/startup-config`` (the config loaded on next boot).
+        Compared against the running config to detect unsaved changes.
+        """
+        return self._get("fullconfigs/startup-config")
+
     # ── interfaces (wired into enrichment in Stage 2) ────────────────────────
     def get_interfaces(self) -> list[dict]:
         """

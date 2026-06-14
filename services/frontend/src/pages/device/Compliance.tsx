@@ -7,7 +7,7 @@ import {
   type ComplianceTemplateResult, type ComplianceFinding,
   type ApprovedOSVersion, type OSInventoryStatus,
   type DeviceComplianceResponse, type ComplianceBreakdownItem,
-  type InterfaceRuleFinding, type RoleConsistencyFinding,
+  type InterfaceRuleFinding, type RoleConsistencyFinding, type StartupStatus,
 } from '../../api/client'
 import EmptyState from '../../components/EmptyState'
 import OSStatusBadge from '../../components/OSStatusBadge'
@@ -125,6 +125,8 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
         <ScoreHeader score={data?.score ?? null} grade={data?.grade ?? 'N/A'} breakdown={breakdown} />
       )}
 
+      {data?.startup_status && <StartupCard status={data.startup_status} />}
+
       {hasTemplates && (
         <Section title="Template Findings">
           <div className="space-y-3">
@@ -178,6 +180,54 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
           </div>
         </details>
       )}
+    </div>
+  )
+}
+
+function StartupCard({ status }: { status: StartupStatus }) {
+  const unsaved = status.added + status.removed
+  function relTime(iso: string | null): string {
+    if (!iso) return 'unknown'
+    const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+    if (secs < 60) return 'just now'
+    const mins = Math.round(secs / 60)
+    if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`
+    const hrs = Math.round(mins / 60)
+    if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`
+    return `${Math.round(hrs / 24)} day(s) ago`
+  }
+
+  if (status.match) {
+    return (
+      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3">
+        <div className="text-sm font-medium text-green-800 dark:text-green-300">✅ Running/Startup Config Match</div>
+        <div className="text-xs text-green-700 dark:text-green-400 mt-0.5">Last checked: {relTime(status.checked_at)}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 rounded-lg p-4 space-y-3">
+      <div>
+        <div className="text-sm font-semibold text-amber-800 dark:text-amber-300">⚠️ Running/Startup Config Mismatch</div>
+        <p className="text-sm text-amber-700 dark:text-amber-400 mt-0.5">
+          Running config has {unsaved} unsaved change{unsaved === 1 ? '' : 's'}. These will be <strong>LOST on next reboot!</strong>
+        </p>
+      </div>
+      {status.diff && (
+        <div>
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Diff (running vs startup)</div>
+          <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-700 rounded p-3 overflow-x-auto max-h-64">
+            {status.diff.split('\n').map((line, i) => (
+              <div key={i} className={clsx(
+                line.startsWith('+') && !line.startsWith('+++') && 'text-green-600 dark:text-green-400',
+                line.startsWith('-') && !line.startsWith('---') && 'text-red-600 dark:text-red-400',
+              )}>{line || ' '}</div>
+            ))}
+          </pre>
+        </div>
+      )}
+      <CopyBlock label="Connect to the device and run:" text="write memory" />
     </div>
   )
 }

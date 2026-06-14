@@ -80,6 +80,7 @@ class DeviceConfigSerializer(serializers.ModelSerializer):
             "id", "device", "config_type", "collected_at", "collected_by",
             "content", "content_hash", "changed_from_previous", "diff_summary",
             "git_commit_sha", "compliance_status",
+            "startup_match", "startup_checked_at",
         ]
 
 

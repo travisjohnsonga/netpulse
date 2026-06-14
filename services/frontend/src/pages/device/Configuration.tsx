@@ -13,6 +13,8 @@ interface DeviceConfigRow {
   content_hash: string
   changed_from_previous: boolean
   diff_summary: string | null
+  startup_match: boolean | null
+  startup_checked_at: string | null
 }
 
 interface CollectionLogRow {
@@ -240,6 +242,8 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{label}</p>
                   {c.changed_from_previous && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">changed</span>}
+                  {i === 0 && c.startup_match === false && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" title="Running config differs from startup — unsaved">⚠️ unsaved</span>}
+                  {i === 0 && c.startup_match === true && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" title="Running config matches startup">✅ saved</span>}
                 </div>
                 <p className="text-xs text-gray-400 dark:text-gray-500">{c.collected_by} · {relativeTime(c.collected_at)}</p>
               </button>

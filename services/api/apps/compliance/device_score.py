@@ -194,6 +194,28 @@ def get_role_score(findings) -> float | None:
     return round(passing / len(findings) * 100, 1)
 
 
+# ── component 4: running vs startup config ───────────────────────────────────
+def get_startup_status(device) -> dict | None:
+    """Latest running-vs-startup reconciliation for the device, or None if never checked."""
+    from apps.configbackup.models import DeviceConfig
+    cfg = (DeviceConfig.objects
+           .filter(device=device, config_type=DeviceConfig.ConfigType.RUNNING)
+           .exclude(startup_match__isnull=True)
+           .order_by("-collected_at").first())
+    if cfg is None:
+        return None
+    diff = cfg.startup_diff or ""
+    added = sum(1 for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
+    removed = sum(1 for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---"))
+    return {
+        "match": cfg.startup_match,
+        "diff": diff,
+        "added": added,
+        "removed": removed,
+        "checked_at": cfg.startup_checked_at.isoformat() if cfg.startup_checked_at else None,
+    }
+
+
 # ── overall ──────────────────────────────────────────────────────────────────
 def calculate_device_compliance_score(device) -> dict:
     """Weighted overall score + grade + per-component breakdown + findings."""
@@ -203,6 +225,7 @@ def calculate_device_compliance_score(device) -> dict:
     iface_score = get_interface_score(iface_findings)
     role_findings = get_role_consistency_findings(device)
     role_score = get_role_score(role_findings)
+    startup = get_startup_status(device)
 
     breakdown: list[dict] = []
     weighted_sum = 0.0
@@ -224,6 +247,21 @@ def calculate_device_compliance_score(device) -> dict:
         breakdown.append({"name": "Role Consistency", "score": role_score, "weight": 20})
         weighted_sum += role_score * 0.2
         weight_total += 0.2
+    # Running/startup mismatch is always a finding when checked — a mismatch
+    # hard-penalises the score (weight 20, renormalised with the rest).
+    if startup is not None:
+        startup_score = 100.0 if startup["match"] else 0.0
+        unsaved = startup["added"] + startup["removed"]
+        breakdown.append({
+            "name": "Running/Startup Match", "score": startup_score, "weight": 20,
+            "match": startup["match"],
+            "message": (
+                "Running and startup configs match" if startup["match"]
+                else f"WARNING: running config has {unsaved} line(s) not saved to "
+                     "startup. Device will lose these changes on next reboot!"),
+        })
+        weighted_sum += startup_score * 0.2
+        weight_total += 0.2
 
     overall = round(min(100.0, max(0.0, weighted_sum / weight_total)), 1) if weight_total else None
 
@@ -235,4 +273,5 @@ def calculate_device_compliance_score(device) -> dict:
         "template_results": template_results,
         "interface_rule_findings": iface_findings,
         "role_consistency_findings": role_findings,
+        "startup_status": startup,
     }

@@ -343,6 +343,21 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Unsaved configs (running != startup → lost on reboot) */}
+      {collectionHealth && collectionHealth.unsaved_configs > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-800 rounded-lg px-5 py-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              ⚠️ Unsaved Configs: {collectionHealth.unsaved_configs} device{collectionHealth.unsaved_configs === 1 ? '' : 's'}
+            </span>
+            <a href="/settings/compliance" className="text-sm text-blue-600 hover:text-blue-800">View</a>
+          </div>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+            Running config differs from startup — changes will be lost on reboot ({collectionHealth.unsaved_config_devices.map((d) => d.hostname).join(', ')}).
+          </p>
+        </div>
+      )}
+
       {/* Empty state when no devices */}
       {safeDevices.length === 0 && !apiError && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">

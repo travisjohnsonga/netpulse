@@ -86,6 +86,16 @@ class DeviceConfig(TimestampedModel):
     git_commit_sha = models.CharField(max_length=64, blank=True)
     local_path = models.CharField(max_length=512, blank=True)
     compliance_status = models.CharField(max_length=32, blank=True)
+    # Running-vs-startup reconciliation: True when the running config matches the
+    # saved startup config, False on a mismatch (unsaved changes that would be
+    # lost on reboot), None when not checked / unsupported platform.
+    startup_match = models.BooleanField(
+        null=True,
+        help_text="True if running config matches startup config; None if not checked.")
+    startup_diff = models.TextField(
+        blank=True, help_text="Diff between running and startup configs if they differ.")
+    startup_checked_at = models.DateTimeField(
+        null=True, blank=True, help_text="When the startup match was last checked.")
 
     class Meta(TimestampedModel.Meta):
         indexes = [models.Index(fields=["device", "config_type", "-collected_at"])]

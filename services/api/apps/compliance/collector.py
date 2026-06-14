@@ -323,6 +323,194 @@ def collect_aos_cx_config(device, profile, creds: dict) -> str:
     return config
 
 
+def _diff_counts(diff: str) -> tuple[int, int]:
+    """(added, removed) line counts from a unified diff, ignoring the +++/--- headers."""
+    added = sum(1 for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
+    removed = sum(1 for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---"))
+    return added, removed
+
+
+def _config_text(data) -> str:
+    """Normalise an AOS-CX config payload (JSON document or text) to comparable text."""
+    import json
+    if isinstance(data, (dict, list)):
+        return json.dumps(data, indent=2, sort_keys=True)
+    return str(data or "")
+
+
+def _check_aos_cx_startup(device) -> dict:
+    """Compare AOS-CX running vs startup config over REST."""
+    from apps.devices.aos_cx_client import AOSCXClient
+
+    profile = device.credential_profile
+    if not profile:
+        return {"checked": False, "match": None, "error": "no credentials"}
+    creds = get_credentials(device)
+    username = (profile.ssh_username or "") or creds.get("ssh_username", "")
+    password = creds.get("ssh_password", "")
+    try:
+        with AOSCXClient(device_host(device)) as client:
+            client.login(username, password)
+            running = _config_text(client.get_running_config())
+            startup = _config_text(client.get_startup_config())
+    except Exception as exc:  # noqa: BLE001
+        return {"checked": False, "match": None, "error": str(exc)[:300]}
+
+    if running.strip() == startup.strip():
+        return {"checked": True, "match": True, "diff": "", "method": "rest", "added": 0, "removed": 0}
+    diff = "\n".join(difflib.unified_diff(
+        startup.splitlines(), running.splitlines(),
+        fromfile="startup-config", tofile="running-config", lineterm=""))
+    added, removed = _diff_counts(diff)
+    return {"checked": True, "match": False, "diff": diff, "method": "rest",
+            "added": added, "removed": removed}
+
+
+def _check_cisco_startup(device) -> dict:
+    """Compare Cisco running vs startup via ``show archive config differences``."""
+    from netmiko import ConnectHandler  # lazy
+
+    profile = device.credential_profile
+    if not profile:
+        return {"checked": False, "match": None, "error": "no credentials"}
+    creds = get_credentials(device)
+    params = {
+        "device_type": netmiko_device_type(device.vendor, device.platform),
+        "host": device_host(device),
+        "username": profile.ssh_username or "",
+        "password": creds.get("ssh_password", ""),
+        "port": (profile.ssh_port or 22) or 22,
+        "fast_cli": False,
+        "conn_timeout": 30,
+    }
+    if params["device_type"] == "autodetect":
+        params["device_type"] = "cisco_ios"
+    try:
+        conn = ConnectHandler(**params)
+        try:
+            output = conn.send_command(
+                "show archive config differences nvram:startup-config system:running-config",
+                read_timeout=60)
+        finally:
+            conn.disconnect()
+    except Exception as exc:  # noqa: BLE001
+        return {"checked": False, "match": None, "error": str(exc)[:300]}
+
+    text = output or ""
+    if not text.strip() or "no differences" in text.lower():
+        return {"checked": True, "match": True, "diff": "", "method": "ssh", "added": 0, "removed": 0}
+    added, removed = _diff_counts(text)
+    return {"checked": True, "match": False, "diff": text, "method": "ssh",
+            "added": added, "removed": removed}
+
+
+def check_running_startup_match(device) -> dict:
+    """
+    Compare a device's running config against its saved startup config.
+
+    A mismatch means there are unsaved changes that will be lost on the next
+    reboot — a common cause of post-outage incidents. Returns
+    ``{checked, match, diff, method, error, added, removed}``; ``checked`` is
+    False (and ``match`` None) for unsupported platforms or on any error, so the
+    caller can treat it as "unknown" rather than a failure.
+    """
+    platform = (device.platform or "").lower()
+    if platform == "aos_cx":
+        return _check_aos_cx_startup(device)
+    if platform in ("ios", "ios_xe"):
+        return _check_cisco_startup(device)
+    return {"checked": False, "match": None, "error": f"not supported for {platform or 'unknown'}"}
+
+
+_CONFIG_UNSAVED_RULE_NAME = "Startup config not saved"
+
+
+def _config_unsaved_rule():
+    """Get/create the system AlertRule for running-vs-startup mismatches (WARNING)."""
+    from apps.alerts.models import AlertRule
+    rule, _ = AlertRule.objects.get_or_create(
+        name=_CONFIG_UNSAVED_RULE_NAME,
+        defaults={
+            "description": "Warns when a device's running config differs from its saved "
+                           "startup config (unsaved changes lost on reboot).",
+            "severity": AlertRule.Severity.MEDIUM,
+            "condition": {"rule_type": "config_unsaved"},
+            "cooldown_minutes": 0,
+            "is_system": True,
+        },
+    )
+    return rule
+
+
+def _reconcile_startup_alert(device, result: dict) -> None:
+    """Fire a standing WARNING on a mismatch; resolve it when configs match again."""
+    from apps.alerts.models import AlertEvent
+
+    if not result.get("checked"):
+        return
+    open_qs = AlertEvent.objects.filter(
+        state=AlertEvent.State.FIRING,
+        labels__alert_type="config_unsaved",
+        labels__device_id=device.id,
+    )
+    if result.get("match"):
+        # Saved now — resolve any open mismatch alert.
+        for ev in open_qs:
+            ev.state = AlertEvent.State.RESOLVED
+            ev.resolved_at = timezone.now()
+            ev.resolution_note = "Running config now matches startup."
+            ev.save(update_fields=["state", "resolved_at", "resolution_note"])
+        return
+    if open_qs.exists():
+        return  # already firing — don't spam a new event each collection
+    unsaved = (result.get("added", 0) or 0) + (result.get("removed", 0) or 0)
+    AlertEvent.objects.create(
+        rule=_config_unsaved_rule(),
+        state=AlertEvent.State.FIRING,
+        labels={
+            "source": "config_backup", "device": device.hostname, "device_id": device.id,
+            "severity": "warning", "alert_type": "config_unsaved",
+        },
+        annotations={
+            "title": f"Startup config not saved: {device.hostname}",
+            "message": (
+                f"Running config on {device.hostname} has {unsaved} unsaved change(s). "
+                f"These will be lost on reboot. Run 'write memory' to save."),
+            "severity": "warning", "unsaved_lines": unsaved,
+        },
+    )
+
+
+def update_startup_match(device, target_cfg) -> dict | None:
+    """
+    Run the running-vs-startup check and persist it onto ``target_cfg`` (the
+    DeviceConfig to stamp — the just-stored snapshot, or the latest existing one
+    when the config was unchanged). Fires/resolves the config_unsaved alert.
+    Best-effort: returns the check result, or None when there's nothing to stamp.
+    """
+    if target_cfg is None:
+        return None
+    try:
+        result = check_running_startup_match(device)
+    except Exception as exc:  # noqa: BLE001 — startup check must not break collection
+        logger.warning("startup check failed for %s: %s", device.hostname, exc)
+        return None
+    if not result.get("checked"):
+        return result
+    target_cfg.startup_match = bool(result.get("match"))
+    target_cfg.startup_diff = result.get("diff", "") or ""
+    target_cfg.startup_checked_at = timezone.now()
+    target_cfg.save(update_fields=["startup_match", "startup_diff", "startup_checked_at"])
+    if not result.get("match"):
+        logger.warning("%s: running/startup mismatch — %d line(s) differ",
+                       device.hostname, (result.get("added", 0) + result.get("removed", 0)))
+    try:
+        _reconcile_startup_alert(device, result)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("startup alert reconcile failed for %s: %s", device.hostname, exc)
+    return result
+
+
 def _fetch_running_config(device, creds: dict) -> str:
     """
     Dispatch to the right protocol and return the running config text.
@@ -498,6 +686,16 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
             run_compliance_for_device(device, config_snapshot=cfg)
         except Exception as exc:  # noqa: BLE001 — compliance must not break collection
             logger.warning("compliance run after collection failed for %s: %s", device.hostname, exc)
+
+    # Reconcile running-vs-startup config (unsaved-changes detection). Stamp the
+    # just-stored snapshot, or — when the config was unchanged — the latest
+    # existing one, so the startup status on the newest snapshot stays current.
+    target_cfg = cfg or (
+        DeviceConfig.objects
+        .filter(device=device, config_type=DeviceConfig.ConfigType.RUNNING)
+        .order_by("-collected_at").first()
+    )
+    update_startup_match(device, target_cfg)
 
     elapsed = time.monotonic() - start
     if cfg is None:

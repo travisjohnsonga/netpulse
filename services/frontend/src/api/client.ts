@@ -1499,6 +1499,8 @@ export interface CollectionHealth {
   last_24h: CollectionWindow
   devices_never_collected: number
   devices_failing: FailingDevice[]
+  unsaved_configs: number
+  unsaved_config_devices: { id: number; hostname: string; checked_at: string | null }[]
 }
 
 export async function fetchCollectionHealth(): Promise<CollectionHealth> {
@@ -2593,6 +2595,8 @@ export interface ComplianceBreakdownItem {
   weight: number
   passing?: number
   total?: number
+  match?: boolean
+  message?: string
 }
 
 export interface IfaceComplianceCheck {
@@ -2626,6 +2630,14 @@ export interface RoleConsistencyFinding {
   remediation: string
 }
 
+export interface StartupStatus {
+  match: boolean | null
+  diff: string
+  added: number
+  removed: number
+  checked_at: string | null
+}
+
 export interface DeviceComplianceResponse {
   overall_score: number | null
   results: ComplianceTemplateResult[]
@@ -2636,6 +2648,7 @@ export interface DeviceComplianceResponse {
   template_findings: ComplianceTemplateResult[]
   interface_rule_findings: InterfaceRuleFinding[]
   role_consistency_findings: RoleConsistencyFinding[]
+  startup_status: StartupStatus | null
 }
 
 export async function fetchDeviceCompliance(deviceId: number): Promise<DeviceComplianceResponse> {

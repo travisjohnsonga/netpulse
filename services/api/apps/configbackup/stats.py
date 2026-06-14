@@ -14,9 +14,31 @@ from django.utils import timezone
 
 from apps.devices.models import Device
 
-from .models import ConfigCollectionLog
+from .models import ConfigCollectionLog, DeviceConfig
 
 _REACHED = set(ConfigCollectionLog.REACHED_STATUSES)
+
+
+def unsaved_config_devices() -> list[dict]:
+    """
+    Devices whose latest running-config snapshot has running != startup
+    (unsaved changes that will be lost on reboot). Each device's newest RUNNING
+    snapshot is the source of truth for its current saved/unsaved state.
+    """
+    seen: set[int] = set()
+    out: list[dict] = []
+    for cfg in (DeviceConfig.objects
+                .filter(config_type=DeviceConfig.ConfigType.RUNNING)
+                .exclude(startup_match__isnull=True)
+                .select_related("device")
+                .order_by("device_id", "-collected_at")):
+        if cfg.device_id in seen:
+            continue
+        seen.add(cfg.device_id)
+        if cfg.startup_match is False:
+            out.append({"id": cfg.device_id, "hostname": cfg.device.hostname,
+                        "checked_at": cfg.startup_checked_at})
+    return out
 
 
 def _window_counts(since) -> dict:
@@ -96,8 +118,11 @@ def collection_health() -> dict:
         .exclude(id__in=collected_ids)
         .count()
     )
+    unsaved = unsaved_config_devices()
     return {
         "last_24h": _window_counts(since),
         "devices_never_collected": never,
         "devices_failing": failing_devices(),
+        "unsaved_configs": len(unsaved),
+        "unsaved_config_devices": unsaved,
     }
