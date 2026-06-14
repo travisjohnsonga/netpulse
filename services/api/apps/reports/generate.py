@@ -52,7 +52,7 @@ def _build_kwargs(report_type: str, params: dict) -> dict:
 
 
 def generate(report_type: str, fmt: str, params: dict, *, user=None, source="on-demand"):
-    """Build + render + store. Returns (GeneratedReport, content_bytes)."""
+    """Build + render + store. Returns (GeneratedReport, content_bytes, data)."""
     spec = _SPEC.get(report_type)
     if spec is None:
         raise ValueError(f"Unknown report type: {report_type}")
@@ -63,4 +63,4 @@ def generate(report_type: str, fmt: str, params: dict, *, user=None, source="on-
     content = spec["formats"][fmt](data)
     report = store_report(report_type=report_type, fmt=fmt, content=content,
                           params=params, user=user, source=source)
-    return report, content if isinstance(content, bytes) else content.encode("utf-8")
+    return report, content if isinstance(content, bytes) else content.encode("utf-8"), data

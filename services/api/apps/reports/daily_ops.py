@@ -135,21 +135,77 @@ def _compliance_events(start, end) -> dict:
             "total_failing_devices": len(unsaved_config_devices())}
 
 
+# Cap the per-change diff so a huge config churn can't blow up the report.
+_MAX_DIFF_LINES = 600
+
+
+def _short_summary(diff_lines) -> str:
+    """A concise human description from a unified diff (top-level stanzas touched)."""
+    added, removed = [], []
+    for ln in diff_lines:
+        if ln.startswith("+") and not ln.startswith("+++"):
+            body = ln[1:]
+            if body and not body[0].isspace() and body.strip():
+                added.append(body.strip())
+        elif ln.startswith("-") and not ln.startswith("---"):
+            body = ln[1:]
+            if body and not body[0].isspace() and body.strip():
+                removed.append(body.strip())
+    parts = []
+    if added:
+        parts.append("added: " + ", ".join(list(dict.fromkeys(added))[:3]))
+    if removed:
+        parts.append("removed: " + ", ".join(list(dict.fromkeys(removed))[:3]))
+    return ("; ".join(parts))[:200]
+
+
+def _full_diff(prev_content, cur_content, prev_at, cur_at) -> str:
+    """Unified diff between two config snapshots (capped)."""
+    import difflib
+    lines = list(difflib.unified_diff(
+        (prev_content or "").splitlines(), (cur_content or "").splitlines(),
+        fromfile=f"config at {prev_at}", tofile=f"config at {cur_at}", lineterm=""))
+    if len(lines) > _MAX_DIFF_LINES:
+        lines = lines[:_MAX_DIFF_LINES] + [f"… (diff truncated at {_MAX_DIFF_LINES} lines)"]
+    return "\n".join(lines)
+
+
 def _config_changes(start, end, site_ids) -> list:
     from apps.configbackup.models import DeviceConfig
-    qs = DeviceConfig.objects.select_related("device").filter(
-        changed_from_previous=True, collected_at__gte=start, collected_at__lte=end)
+    qs = (DeviceConfig.objects
+          .select_related("device", "device__site", "device__role")
+          .filter(changed_from_previous=True, collected_at__gte=start, collected_at__lte=end)
+          .order_by("collected_at"))
     if site_ids:
         qs = qs.filter(device__site_id__in=site_ids)
     out = []
     for c in qs:
-        diff = c.diff_summary or ""
-        added = sum(1 for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
-        removed = sum(1 for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---"))
+        dev = c.device
+        prev = (DeviceConfig.objects
+                .filter(device=dev, config_type=c.config_type, collected_at__lt=c.collected_at)
+                .order_by("-collected_at").first())
+        # Prefer an on-the-fly diff of the two snapshots; fall back to the stored
+        # (normalized) diff_summary when there's no prior snapshot.
+        if prev is not None:
+            diff = _full_diff(prev.content, c.content, prev.collected_at.isoformat(),
+                              c.collected_at.isoformat())
+        else:
+            diff = c.diff_summary or ""
+        diff_lines = diff.splitlines()
+        added = sum(1 for ln in diff_lines if ln.startswith("+") and not ln.startswith("+++"))
+        removed = sum(1 for ln in diff_lines if ln.startswith("-") and not ln.startswith("---"))
         out.append({
-            "hostname": c.device.hostname, "detected_at": c.collected_at.isoformat(),
+            "hostname": dev.hostname,
+            "site": dev.site.name if dev.site else None,
+            "role": dev.role.name if dev.role else None,
+            "platform": dev.platform or None,
+            "detected_at": c.collected_at.isoformat(),
+            "collected_by": c.collected_by,
             "lines_added": added, "lines_removed": removed,
-            "diff_summary": (diff[:200] if diff else ""), "collected_by": c.collected_by,
+            "diff_summary": _short_summary(diff_lines),
+            "diff": diff,
+            "previous_backup_at": prev.collected_at.isoformat() if prev else None,
+            "current_backup_at": c.collected_at.isoformat(),
         })
     return out
 

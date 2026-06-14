@@ -29,6 +29,7 @@ nav:
   - Compliance:
     - Overview: compliance/overview.md
     - Interface & Role Rules: compliance/interface-rules.md
+  - Reports: reports.md
   - Integrations:
     - UniFi: integrations/unifi.md
     - Wireless Monitoring: integrations/wireless.md

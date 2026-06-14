@@ -28,9 +28,11 @@ def fleet():
 
 
 def _cfg(device, **kw):
+    kw.setdefault("content", "x")
+    kw.setdefault("content_hash", "z" * 8)
     return DeviceConfig.objects.create(
         device=device, config_type=DeviceConfig.ConfigType.RUNNING,
-        collected_at=timezone.now(), content="x", content_hash="z" * 8, **kw)
+        collected_at=timezone.now(), **kw)
 
 
 # ── Compliance Summary builder ───────────────────────────────────────────────
@@ -80,20 +82,50 @@ class TestDailyOps:
         data = dops.build_daily_ops(date=when.date().isoformat())
         assert any(cc["hostname"] == "sw-1" for cc in data["config_changes"])
 
+    def test_config_change_full_diff_computed_on_the_fly(self, fleet):
+        import datetime as _dt
+        dev = fleet["devices"][0]
+        day = (timezone.now() - _dt.timedelta(days=1)).date()
+        prev_at = timezone.make_aware(_dt.datetime.combine(day, _dt.time(7, 0)))
+        cur_at = timezone.make_aware(_dt.datetime.combine(day, _dt.time(19, 0)))
+        p = _cfg(dev, content="hostname sw-1\nvlan 10\n")
+        DeviceConfig.objects.filter(pk=p.pk).update(collected_at=prev_at, content_hash="a" * 8)
+        c = _cfg(dev, changed_from_previous=True, content="hostname sw-1\nvlan 10\nvlan 55\n")
+        DeviceConfig.objects.filter(pk=c.pk).update(collected_at=cur_at, content_hash="b" * 8)
+
+        data = dops.build_daily_ops(date=day.isoformat())
+        change = next(cc for cc in data["config_changes"] if cc["hostname"] == "sw-1")
+        assert change["lines_added"] == 1 and change["lines_removed"] == 0
+        assert "+vlan 55" in change["diff"]
+        assert change["previous_backup_at"] is not None
+        assert change["current_backup_at"] is not None
+        assert change["site"] == "WCO2" and change["role"] == "Access Switch"
+        assert "vlan 55" in change["diff_summary"]
+
+
+class TestEmailContent:
+    def test_daily_ops_email_summary(self, fleet):
+        from apps.reports.tasks import email_content
+        data = dops.build_daily_ops()
+        subject, body = email_content(ReportType.DAILY_OPS, data, timezone.now())
+        assert subject.startswith("spane Daily Ops Report - ")
+        assert "Quick Summary:" in body
+        assert "Powered by spane" in body
+
 
 # ── generate() + storage ─────────────────────────────────────────────────────
 
 class TestGenerate:
     @pytest.mark.parametrize("fmt,head", [("pdf", b"%PDF-"), ("csv", None), ("json", b"{")])
     def test_compliance_formats(self, fleet, fmt, head):
-        report, content = generate(ReportType.COMPLIANCE_SUMMARY, fmt, {}, source="test")
+        report, content, _data = generate(ReportType.COMPLIANCE_SUMMARY, fmt, {}, source="test")
         assert isinstance(report, GeneratedReport)
         assert report.file_size == len(content)
         if head:
             assert content[:len(head)] == head
 
     def test_daily_ops_html(self, fleet):
-        _report, content = generate(ReportType.DAILY_OPS, "html", {}, source="test")
+        _report, content, _data = generate(ReportType.DAILY_OPS, "html", {}, source="test")
         assert b"<html" in content.lower() or b"<!doctype" in content.lower()
 
     def test_unsupported_format_raises(self, fleet):

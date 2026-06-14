@@ -103,6 +103,42 @@ def _score_bar(score, width=200):
     return d
 
 
+def _diff_table(diff_text, max_lines=90, max_cols=110):
+    """A colour-coded unified-diff block: green adds, red removes, grey context."""
+    from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
+    lines = (diff_text or "").splitlines()
+    if not lines:
+        return None
+    truncated = len(lines) > max_lines
+    lines = lines[:max_lines]
+    rows = [[(ln[:max_cols] if ln else " ")] for ln in lines]
+    if truncated:
+        rows.append([f"… (diff truncated at {max_lines} lines)"])
+    style = [
+        ("FONTNAME", (0, 0), (-1, -1), "Courier"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 0.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+        ("BOX", (0, 0), (-1, -1), 0.4, _hex(colors, "#d1d5db")),
+    ]
+    for i, ln in enumerate(lines):
+        if ln.startswith("+") and not ln.startswith("+++"):
+            style += [("BACKGROUND", (0, i), (0, i), _hex(colors, "#dcfce7")),
+                      ("TEXTCOLOR", (0, i), (0, i), _hex(colors, "#166534"))]
+        elif ln.startswith("-") and not ln.startswith("---"):
+            style += [("BACKGROUND", (0, i), (0, i), _hex(colors, "#fee2e2")),
+                      ("TEXTCOLOR", (0, i), (0, i), _hex(colors, "#991b1b"))]
+        elif ln.startswith("@@"):
+            style.append(("TEXTCOLOR", (0, i), (0, i), _hex(colors, BRAND)))
+        else:
+            style += [("BACKGROUND", (0, i), (0, i), _hex(colors, "#f9fafb")),
+                      ("TEXTCOLOR", (0, i), (0, i), _hex(colors, MUTED))]
+    t = Table(rows, colWidths=[480])
+    t.setStyle(TableStyle(style))
+    return t
+
+
 def _page_footer(canvas, doc):
     from reportlab.lib import colors
     canvas.saveState()
@@ -226,13 +262,25 @@ def daily_ops_pdf(data: dict) -> bytes:
 
     cc = data["config_changes"]
     flow.append(Paragraph("4 · Configuration Changes", styles["h2"]))
-    if cc:
-        rows = [["Device", "Time", "+/-", "Summary"]]
-        rows += [[c["hostname"], (c["detected_at"] or "")[11:19],
-                  f"+{c['lines_added']}/-{c['lines_removed']}", c["diff_summary"][:60]] for c in cc[:25]]
-        flow.append(_table(rows, col_widths=[110, 60, 50, 240]))
-    else:
+    if not cc:
         flow.append(Paragraph("No config changes detected.", styles["small"]))
+    else:
+        # Summary table first.
+        rows = [["Device", "+", "-", "Detected"]]
+        rows += [[c["hostname"], f"+{c['lines_added']}", f"-{c['lines_removed']}",
+                  (c["detected_at"] or "")[11:19]] for c in cc]
+        flow.append(_table(rows, col_widths=[210, 50, 50, 90]))
+        flow.append(Spacer(1, 8))
+        # Then a colour-coded diff per device.
+        for c in cc:
+            prev = (c.get("previous_backup_at") or "")[11:19]
+            head = f"{c['hostname']} — config change at {(c['detected_at'] or '')[11:19]}"
+            if prev:
+                head += f"  ·  previous backup {prev}"
+            flow.append(Paragraph(head, styles["small"]))
+            tbl = _diff_table(c.get("diff") or "")
+            flow.append(tbl if tbl is not None else Paragraph("(no diff available)", styles["small"]))
+            flow.append(Spacer(1, 8))
 
     ch = data["collection_health"]
     flow.append(Paragraph("5 · Collection Health", styles["h2"]))
@@ -284,9 +332,31 @@ def daily_ops_html(data: dict) -> bytes:
     ch = data["collection_health"]
     ah = data["agent_health"]
     al = data["alerts_summary"]
+    import html as _html
+
+    def _diff_html(diff_text):
+        out = []
+        for ln in (diff_text or "").splitlines():
+            esc = _html.escape(ln) or "&nbsp;"
+            if ln.startswith("+") and not ln.startswith("+++"):
+                out.append(f'<div style="background:#dcfce7;color:#166534">{esc}</div>')
+            elif ln.startswith("-") and not ln.startswith("---"):
+                out.append(f'<div style="background:#fee2e2;color:#991b1b">{esc}</div>')
+            elif ln.startswith("@@"):
+                out.append(f'<div style="color:#2563eb">{esc}</div>')
+            else:
+                out.append(f'<div style="color:#6b7280">{esc}</div>')
+        return "".join(out)
+
     rows = "".join(
         f"<tr><td>{c['hostname']}</td><td>{c['detected_at'][11:19]}</td>"
         f"<td>+{c['lines_added']}/-{c['lines_removed']}</td><td>{c['diff_summary']}</td></tr>"
+        for c in data["config_changes"])
+    diff_blocks = "".join(
+        f"<h3 style='margin-bottom:2px'>{c['hostname']} — {c['detected_at'][11:19]}"
+        f"{(' · prev backup ' + c['previous_backup_at'][11:19]) if c.get('previous_backup_at') else ''}</h3>"
+        f"<pre style='font-family:Courier,monospace;font-size:12px;border:1px solid #d1d5db;"
+        f"border-radius:4px;overflow-x:auto;margin:0 0 12px'>{_diff_html(c.get('diff'))}</pre>"
         for c in data["config_changes"])
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <title>spane Daily Operations — {data['report_date']}</title>
@@ -302,6 +372,7 @@ tr:nth-child(even){{background:#f3f4f6}}</style></head><body>
 ({av['total_downtime_minutes']} min downtime).</p>
 <h2>Collection Health</h2><p>{ch['successful']}/{ch['total_attempts']} succeeded; {ch['failed']} failed.</p>
 <h2>Config Changes</h2><table><tr><th>Device</th><th>Time</th><th>+/-</th><th>Summary</th></tr>{rows or '<tr><td colspan=4>None</td></tr>'}</table>
+{diff_blocks}
 <h2>Agents &amp; Alerts</h2><p>Agents {ah['online']}/{ah['total_agents']} online ·
 Alerts {al['total']} ({al['critical']} crit, {al['high']} high).</p>
 <p style="color:#6b7280;font-size:12px">Generated by spane · {data['generated_at'][:19].replace('T',' ')} UTC</p>

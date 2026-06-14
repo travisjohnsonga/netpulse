@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _generate_and_respond(report_type, fmt, params, request):
     """Generate a report and return it inline (JSON body or file download)."""
     try:
-        report, content = generate(report_type, fmt, params, user=request.user, source="on-demand")
+        report, content, _data = generate(report_type, fmt, params, user=request.user, source="on-demand")
     except ValueError as exc:
         return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     if fmt == "json":

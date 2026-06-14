@@ -161,8 +161,14 @@ branded header/alternating-row tables/score bar/page numbers), CSV, JSON, and HT
 (new `MEDIA_ROOT` setting; served only via the authed download endpoint). Scheduled delivery wired into
 `run_scheduler` (`scheduled_reports` task, hour-gated + same-day-deduped, emails the artifact via the
 SMTP integration). Frontend `/reports` page (sidebar "Reports"): two report cards + Generate-Now modal
-(format/group-by/date) + Schedule modal (frequency/hour/day/format/recipients + existing-schedule
-management) + Recent Reports table. `tests/test_reports.py` (18). NOTE: the Compliance Summary's
+(format/group-by/date) + **Preview** modal (in-browser daily-ops preview with expandable, syntax-
+highlighted config diffs) + Schedule modal (frequency/hour/day/format/recipients + existing-schedule
+management) + Recent Reports table. The Daily Operations `config_changes` carry the **full unified diff**
+(computed on the fly from the previous vs current `DeviceConfig.content`, capped at 600 lines) plus
+site/role/platform, `previous_backup_at`/`current_backup_at`, and a short derived `diff_summary`; PDF
+renders a summary table then per-device colour-coded diffs (green/red/grey, Courier), HTML mirrors it,
+and scheduled emails carry a "Quick Summary" body (`email_content`) with per-device change lines + the
+PDF attached (`generate()` returns the data dict alongside the file). `tests/test_reports.py` (21). NOTE: the Compliance Summary's
 role-consistency VLAN checks hit live devices over REST (existing behavior), so a full-fleet PDF can
 take ~1 min; reports are on-demand/scheduled so this is acceptable. Daily-ops downtime is derived from
 `Device.unreachable_since` (no discrete outage-history table yet) — start-of-outage accurate,

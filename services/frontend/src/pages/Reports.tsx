@@ -40,7 +40,7 @@ function fmtBytes(n: number | null): string {
 
 export default function Reports() {
   const qc = useQueryClient()
-  const [modal, setModal] = useState<{ def: ReportDef; mode: 'generate' | 'schedule' } | null>(null)
+  const [modal, setModal] = useState<{ def: ReportDef; mode: 'generate' | 'schedule' | 'preview' } | null>(null)
   const reportsQ = useQuery({ queryKey: ['reports'], queryFn: fetchReports })
 
   const close = () => setModal(null)
@@ -62,6 +62,8 @@ export default function Reports() {
             <div className="mt-4 flex gap-2">
               <button onClick={() => setModal({ def, mode: 'generate' })}
                 className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Generate Now</button>
+              <button onClick={() => setModal({ def, mode: 'preview' })}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Preview</button>
               <button onClick={() => setModal({ def, mode: 'schedule' })}
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Schedule</button>
             </div>
@@ -73,6 +75,113 @@ export default function Reports() {
 
       {modal && modal.mode === 'generate' && <GenerateModal def={modal.def} onClose={close} onDone={onDone} />}
       {modal && modal.mode === 'schedule' && <ScheduleModal def={modal.def} onClose={close} onDone={onDone} />}
+      {modal && modal.mode === 'preview' && <PreviewModal def={modal.def} onClose={close} />}
+    </div>
+  )
+}
+
+// ── preview (in-browser, before download) ────────────────────────────────────
+interface ConfigChange {
+  hostname: string
+  detected_at: string
+  previous_backup_at: string | null
+  lines_added: number
+  lines_removed: number
+  diff_summary: string
+  diff: string
+}
+
+function DiffView({ diff }: { diff: string }) {
+  return (
+    <pre className="text-xs font-mono border border-gray-200 dark:border-gray-700 rounded overflow-x-auto max-h-72">
+      {diff.split('\n').map((line, i) => {
+        const add = line.startsWith('+') && !line.startsWith('+++')
+        const rem = line.startsWith('-') && !line.startsWith('---')
+        const hunk = line.startsWith('@@')
+        return (
+          <div key={i} className={
+            add ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 px-2'
+              : rem ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 px-2'
+                : hunk ? 'text-blue-600 dark:text-blue-400 px-2'
+                  : 'text-gray-500 dark:text-gray-400 px-2'
+          }>{line || ' '}</div>
+        )
+      })}
+    </pre>
+  )
+}
+
+function ConfigChangeRow({ c }: { c: ConfigChange }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="border border-gray-200 dark:border-gray-700 rounded">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50">
+        <span className="font-mono text-gray-900 dark:text-gray-100">{c.hostname}</span>
+        <span className="text-green-600 dark:text-green-400">↑{c.lines_added}</span>
+        <span className="text-red-600 dark:text-red-400">↓{c.lines_removed}</span>
+        <span className="text-gray-400">{(c.detected_at || '').slice(11, 16)}</span>
+        <span className="ml-auto text-xs text-blue-600 dark:text-blue-400">{open ? 'Hide diff ▴' : 'Show diff ▾'}</span>
+      </button>
+      {open && <div className="px-3 pb-3"><DiffView diff={c.diff || '(no diff)'} /></div>}
+    </div>
+  )
+}
+
+function PreviewModal({ def, onClose }: { def: ReportDef; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ['report-preview', def.endpoint],
+    queryFn: () => generateReport(def.endpoint, { format: 'json' }) as Promise<Record<string, unknown>>,
+  })
+  const data = q.data as Record<string, unknown> | undefined
+  const changes = (data?.config_changes as ConfigChange[]) || []
+  const sec = data?.security_events as { total_failures?: number } | undefined
+  const av = data?.device_availability as { availability_pct?: number; total_outages?: number } | undefined
+  const ch = data?.collection_health as { successful?: number; total_attempts?: number } | undefined
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-3xl max-h-[85vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-gray-900 dark:text-gray-100">Preview — {def.title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        {q.isLoading ? (
+          <div className="py-10 text-center text-sm text-gray-400">Building preview…</div>
+        ) : !data ? (
+          <div className="py-10 text-center text-sm text-red-600">Failed to build preview.</div>
+        ) : def.endpoint === 'daily-ops' ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <Stat label="Login failures" value={sec?.total_failures ?? 0} />
+              <Stat label="Availability" value={`${av?.availability_pct ?? 100}%`} />
+              <Stat label="Collection" value={`${ch?.successful ?? 0}/${ch?.total_attempts ?? 0}`} />
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Config Changes ({changes.length} device{changes.length === 1 ? '' : 's'})</h4>
+              {changes.length === 0 ? (
+                <p className="text-sm text-gray-400">No config changes in this period.</p>
+              ) : (
+                <div className="space-y-2">{changes.map((c, i) => <ConfigChangeRow key={i} c={c} />)}</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-700 rounded p-3 overflow-auto max-h-[60vh]">{JSON.stringify(data, null, 2)}</pre>
+        )}
+        <div className="mt-4 flex justify-end">
+          <button onClick={() => generateReport(def.endpoint, { format: 'pdf' })}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Download PDF</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="bg-gray-50 dark:bg-gray-900/40 rounded-lg px-3 py-2 border border-gray-200 dark:border-gray-700">
+      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="text-lg font-bold text-gray-900 dark:text-gray-100">{value}</div>
     </div>
   )
 }
