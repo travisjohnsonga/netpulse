@@ -17,6 +17,7 @@ from .serializers import (
     ComplianceSummaryRequestSerializer,
     DailyOpsRequestSerializer,
     GeneratedReportSerializer,
+    OpsReportRequestSerializer,
     ReportScheduleSerializer,
 )
 from .storage import content_type, download_filename
@@ -64,6 +65,22 @@ class DailyOpsView(APIView):
         d = req.validated_data
         params = {
             "date": d["date"].isoformat() if d.get("date") else None,
+            "site_ids": d.get("site_ids") or [],
+        }
+        return _generate_and_respond(ReportType.DAILY_OPS, d["format"], params, request)
+
+
+class OpsReportView(APIView):
+    """Operations report for any reporting period (daily/weekly/monthly/quarterly)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        req = OpsReportRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        d = req.validated_data
+        params = {
+            "period": d["period"],
+            "end_date": d["end_date"].isoformat() if d.get("end_date") else None,
             "site_ids": d.get("site_ids") or [],
         }
         return _generate_and_respond(ReportType.DAILY_OPS, d["format"], params, request)

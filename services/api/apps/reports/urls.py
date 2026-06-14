@@ -7,6 +7,7 @@ from .views import (
     DailyOpsScheduleView,
     DailyOpsView,
     GeneratedReportViewSet,
+    OpsReportView,
     ReportScheduleViewSet,
 )
 
@@ -20,4 +21,5 @@ urlpatterns = [
     path("compliance-summary/schedule/", ComplianceScheduleView.as_view(), name="report-compliance-schedule"),
     path("daily-ops/", DailyOpsView.as_view(), name="report-daily-ops"),
     path("daily-ops/schedule/", DailyOpsScheduleView.as_view(), name="report-daily-ops-schedule"),
+    path("ops/", OpsReportView.as_view(), name="report-ops"),
 ] + router.urls

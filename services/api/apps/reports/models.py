@@ -46,6 +46,7 @@ class ReportSchedule(TimestampedModel):
         DAILY = "daily", "Daily"
         WEEKLY = "weekly", "Weekly"
         MONTHLY = "monthly", "Monthly"
+        QUARTERLY = "quarterly", "Quarterly"
 
     report_type = models.CharField(max_length=32, choices=ReportType.choices)
     frequency = models.CharField(max_length=16, choices=Frequency.choices, default=Frequency.DAILY)

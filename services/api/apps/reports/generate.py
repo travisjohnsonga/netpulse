@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from . import render
 from .compliance_summary import build_compliance_summary
-from .daily_ops import build_daily_ops
+from .daily_ops import build_ops_report
 from .models import ReportType
 from .storage import store_report
 
@@ -23,7 +23,7 @@ _SPEC = {
         },
     },
     ReportType.DAILY_OPS: {
-        "build": build_daily_ops,
+        "build": build_ops_report,
         "formats": {
             "pdf": render.daily_ops_pdf,
             "csv": render.daily_ops_csv,
@@ -47,7 +47,9 @@ def _build_kwargs(report_type: str, params: dict) -> dict:
             "include_score_breakdown": params.get("include_score_breakdown", True),
         }
     if report_type == ReportType.DAILY_OPS:
-        return {"date": params.get("date"), "site_ids": params.get("site_ids") or None}
+        return {"period": params.get("period") or "daily",
+                "end_date": params.get("end_date") or params.get("date"),
+                "site_ids": params.get("site_ids") or None}
     return {}
 
 

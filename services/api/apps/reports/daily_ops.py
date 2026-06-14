@@ -40,6 +40,54 @@ def _day_bounds(date_str=None):
     return start, end, d
 
 
+# Reporting periods for the Operations report. `days` is the nominal span (used
+# for trend bucketing hints); the actual window is computed in _period_bounds.
+PERIOD_OPTIONS = {
+    "daily":     {"label": "Daily",     "days": 1,  "title": "Daily Operations Report"},
+    "weekly":    {"label": "Weekly",    "days": 7,  "title": "Weekly Operations Report"},
+    "monthly":   {"label": "Monthly",   "days": 30, "title": "Monthly Operations Report"},
+    "quarterly": {"label": "Quarterly", "days": 90, "title": "Quarterly Operations Report"},
+}
+
+_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _period_bounds(period="daily", end_date=None):
+    """
+    Resolve a reporting period to (start_dt, end_dt, start_date, end_date, label).
+
+    daily   → the single day; weekly → the 7 days ending end_date; monthly → the
+    end_date's calendar month-to-date; quarterly → its calendar quarter-to-date.
+    end_date defaults to yesterday (UTC).
+    """
+    period = period if period in PERIOD_OPTIONS else "daily"
+    if end_date:
+        d = (datetime.strptime(end_date, "%Y-%m-%d").date()
+             if isinstance(end_date, str) else end_date)
+    else:
+        d = (timezone.now() - timedelta(days=1)).date()
+
+    if period == "weekly":
+        start_d, end_d = d - timedelta(days=6), d
+        label = (f"{start_d.strftime('%b %-d')}–{end_d.strftime('%-d, %Y')} · "
+                 f"Week {d.isocalendar().week} of {d.year}")
+    elif period == "monthly":
+        start_d, end_d = d.replace(day=1), d
+        label = d.strftime("%B %Y")
+    elif period == "quarterly":
+        q = (d.month - 1) // 3
+        start_d, end_d = d.replace(month=q * 3 + 1, day=1), d
+        label = f"Q{q + 1} {d.year} ({_MONTH_ABBR[q * 3]}–{_MONTH_ABBR[q * 3 + 2]})"
+    else:  # daily
+        start_d, end_d = d, d
+        label = d.strftime("%B %-d, %Y")
+
+    start = timezone.make_aware(datetime.combine(start_d, time.min))
+    end = timezone.make_aware(datetime.combine(end_d, time.max))
+    return start, end, start_d, end_d, label
+
+
 def _is_after_hours(dt) -> bool:
     # Timestamps are stored in UTC; compare the UTC hour for determinism.
     return dt.hour >= AFTER_HOURS_START or dt.hour < AFTER_HOURS_END
@@ -835,34 +883,150 @@ def _alerts_summary(start, end) -> dict:
     }
 
 
-def build_daily_ops(*, date=None, site_ids=None) -> dict:
-    start, end, day = _day_bounds(date)
+def _pct_change(cur, prev):
+    if not prev:
+        return None
+    return round((cur - prev) / prev * 100, 1)
+
+
+def _comparison(start, end, site_ids, security, availability) -> dict:
+    """Period-over-period deltas (this period vs the immediately preceding one)."""
+    delta = end - start
+    prev_end = start - timedelta(microseconds=1)
+    prev_start = prev_end - delta
+    prev_sec = _device_security_events(prev_start, prev_end, site_ids)
+    prev_av = _device_availability(prev_start, prev_end, site_ids)
+    return {
+        "security_failures_prev": prev_sec["total_failures"],
+        "security_failures_change_pct": _pct_change(
+            security["total_failures"], prev_sec["total_failures"]),
+        "outages_prev": prev_av["total_outages"],
+        "outages_change_pct": _pct_change(
+            availability["total_outages"], prev_av["total_outages"]),
+        "downtime_prev": prev_av["total_downtime_minutes"],
+        "downtime_change_pct": _pct_change(
+            availability["total_downtime_minutes"], prev_av["total_downtime_minutes"]),
+    }
+
+
+def _security_histogram(start, end, site_ids, day_keys) -> list:
+    """Per-day device auth-failure counts via one OpenSearch date_histogram."""
+    from apps.logs.views import _device_identifiers, _execute
+    must = [{"range": {"@timestamp": {"gte": start.isoformat(), "lte": end.isoformat()}}},
+            {"bool": {"should": [{"match_phrase": {"message": p}} for p in _AUTH_FAILURE_PATTERNS],
+                      "minimum_should_match": 1}}]
+    if site_ids:
+        from apps.devices.models import Device
+        ids = _device_identifiers(Device.objects.filter(site_id__in=site_ids))
+        if ids:
+            must.append({"bool": {"should": [
+                {"terms": {"hostname.keyword": ids}},
+                {"terms": {"source_ip.keyword": ids}}], "minimum_should_match": 1}})
+    body = {"query": {"bool": {"must": must, "must_not": [
+        {"match_phrase": {"message": p}} for p in (_AUTH_SUCCESS_PATTERNS + _AUTH_NOISE_PATTERNS)]}},
+        "size": 0, "aggs": {"per_day": {"date_histogram": {
+            "field": "@timestamp", "calendar_interval": "day", "format": "yyyy-MM-dd"}}}}
+    try:
+        raw = _execute(body)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("security histogram failed: %s", exc)
+        return [None] * len(day_keys)
+    m = {b.get("key_as_string"): b.get("doc_count", 0)
+         for b in raw.get("aggregations", {}).get("per_day", {}).get("buckets", [])}
+    return [m.get(k, 0) for k in day_keys]
+
+
+def _trends(start_d, end_d, start, end, site_ids, availability) -> dict:
+    """Per-day series for the period's trend charts (weekly/monthly/quarterly)."""
+    from django.db.models import Avg
+    from django.db.models.functions import TruncDate
+
+    from apps.compliance.models import ComplianceTemplateResult as CTR
+
+    days, d = [], start_d
+    while d <= end_d and len(days) < 92:
+        days.append(d.isoformat())
+        d += timedelta(days=1)
+
+    comp_qs = CTR.objects.filter(checked_at__gte=start, checked_at__lte=end, score__isnull=False)
+    if site_ids:
+        from apps.devices.models import Device
+        ids = list(Device.objects.filter(site_id__in=site_ids).values_list("id", flat=True))
+        comp_qs = comp_qs.filter(device_id__in=ids)
+    comp_map = {}
+    for row in (comp_qs.annotate(day=TruncDate("checked_at")).values("day")
+                .annotate(avg=Avg("score"))):
+        if row["day"]:
+            comp_map[row["day"].isoformat()] = round(row["avg"], 1)
+
+    downtime = {k: 0 for k in days}
+    for o in availability.get("went_down", []):
+        key = (o.get("down_at") or "")[:10]
+        if key in downtime:
+            downtime[key] += o.get("duration_minutes", 0)
+
+    return {
+        "days": days,
+        "compliance": [comp_map.get(k) for k in days],
+        "availability_downtime": [downtime.get(k, 0) for k in days],
+        "security": _security_histogram(start, end, site_ids, days),
+    }
+
+
+def build_ops_report(*, period="daily", end_date=None, site_ids=None) -> dict:
+    """
+    Operations report for a reporting period (daily/weekly/monthly/quarterly).
+
+    Reuses the per-section builders over the resolved [start, end] window and adds
+    period metadata, plus period-over-period comparison and per-day trend series
+    for multi-day periods (for the trend charts).
+    """
+    opt = PERIOD_OPTIONS.get(period) or PERIOD_OPTIONS["daily"]
+    period = period if period in PERIOD_OPTIONS else "daily"
+    start, end, start_d, end_d, date_label = _period_bounds(period, end_date)
+    multiday = period != "daily"
+
     security = _device_security_events(start, end, site_ids)
     spane_access = _spane_access_events(start, end)
     availability = _device_availability(start, end, site_ids)
     service_checks = _service_checks(start, end, site_ids, availability["went_down"])
     config_changes = _config_changes(start, end, site_ids)
     collection = _collection_health(start, end, site_ids)
+    compliance = _compliance_events(start, end, site_ids)
+    alerts = _alerts_summary(start, end)
+
     logger.info(
-        "Daily ops %s: %d outages, %d service-check failures, %d config changes, "
-        "%d device auth failures, %d spane login failures, %d collection-log attempts",
-        day, availability["total_outages"], service_checks["total_failures"],
-        len(config_changes), security["total_failures"], spane_access["total_failures"],
-        collection["total_attempts"],
+        "Ops report (%s) %s..%s: %d outages, %d service-check failures, %d config "
+        "changes, %d device auth failures, %d collection-log attempts",
+        period, start_d, end_d, availability["total_outages"],
+        service_checks["total_failures"], len(config_changes),
+        security["total_failures"], collection["total_attempts"],
     )
+
     return {
-        "report_date": day.isoformat(),
+        "report_date": end_d.isoformat(),
+        "period_name": period,
+        "period_label": opt["label"],
+        "report_title": opt["title"],
+        "date_label": date_label,
         "generated_at": timezone.now().isoformat(),
         "period": {"start": start.isoformat(), "end": end.isoformat()},
         # Section 1: security events reported BY network devices (syslog).
         "security_events": security,
         "device_availability": availability,
-        "compliance_events": _compliance_events(start, end, site_ids),
+        "compliance_events": compliance,
         "service_checks": service_checks,
         "config_changes": config_changes,
         "collection_health": collection,
         "agent_health": _agent_health(),
-        "alerts_summary": _alerts_summary(start, end),
+        "alerts_summary": alerts,
         # Section 7: spane's own access audit (who logged into spane).
         "spane_access_events": spane_access,
+        "comparison": _comparison(start, end, site_ids, security, availability) if multiday else None,
+        "trends": _trends(start_d, end_d, start, end, site_ids, availability) if multiday else None,
     }
+
+
+def build_daily_ops(*, date=None, site_ids=None) -> dict:
+    """Backward-compatible daily wrapper around :func:`build_ops_report`."""
+    return build_ops_report(period="daily", end_date=date, site_ids=site_ids)

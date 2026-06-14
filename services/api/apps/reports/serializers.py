@@ -45,5 +45,14 @@ class DailyOpsRequestSerializer(serializers.Serializer):
     site_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
 
 
+class OpsReportRequestSerializer(serializers.Serializer):
+    """Operations report over a reporting period (daily/weekly/monthly/quarterly)."""
+    period = serializers.ChoiceField(
+        choices=["daily", "weekly", "monthly", "quarterly"], default="daily")
+    format = serializers.ChoiceField(choices=["pdf", "csv", "html", "json"], default="pdf")
+    end_date = serializers.DateField(required=False, allow_null=True)
+    site_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
+
+
 REPORT_TYPES = {"compliance-summary": ReportType.COMPLIANCE_SUMMARY,
                 "daily-ops": ReportType.DAILY_OPS}

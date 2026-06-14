@@ -333,7 +333,7 @@ def _stat_box(styles, title, big, sub_lines, color):
     return t
 
 
-def _page_decorator(report_date, generated):
+def _page_decorator(header_label, generated):
     """Return an onPage(canvas, doc) drawing the branded header + footer."""
     from reportlab.lib import colors
     from reportlab.lib.units import inch
@@ -349,7 +349,7 @@ def _page_decorator(report_date, generated):
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(_hex(colors, MUTED))
         canvas.drawRightString(w - 0.7 * inch, h - 0.45 * inch,
-                               f"Daily Ops — {report_date} | Page {doc.page}")
+                               f"{header_label} | Page {doc.page}")
         canvas.setStrokeColor(_hex(colors, ACCENT))
         canvas.setLineWidth(1)
         canvas.line(0.7 * inch, h - 0.52 * inch, w - 0.7 * inch, h - 0.52 * inch)
@@ -408,6 +408,39 @@ def _outage_timeline(av, styles):
     return d
 
 
+def _trend_chart(days, values, color_hex, kind="line"):
+    """A small line/bar trend chart Drawing, or None on any error / no data."""
+    try:
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.charts.barcharts import VerticalBarChart
+        from reportlab.graphics.charts.linecharts import HorizontalLineChart
+        from reportlab.lib import colors
+        vals = [float(v) if v is not None else 0.0 for v in values]
+        if not vals:
+            return None
+        width, height = _content_width(), 95
+        d = Drawing(width, height)
+        ch = VerticalBarChart() if kind == "bar" else HorizontalLineChart()
+        ch.x, ch.y = 28, 18
+        ch.width, ch.height = width - 45, height - 30
+        ch.data = [vals]
+        names = [k[5:] for k in days]  # MM-DD
+        step = max(1, len(names) // 8)
+        ch.categoryAxis.categoryNames = [n if i % step == 0 else "" for i, n in enumerate(names)]
+        ch.categoryAxis.labels.fontSize = 6
+        ch.valueAxis.labels.fontSize = 6
+        ch.valueAxis.valueMin = 0
+        if kind == "bar":
+            ch.bars[0].fillColor = _hex(colors, color_hex)
+        else:
+            ch.lines[0].strokeColor = _hex(colors, color_hex)
+            ch.lines[0].strokeWidth = 1.5
+        d.add(ch)
+        return d
+    except Exception:  # noqa: BLE001 — charts must never break report generation
+        return None
+
+
 def daily_ops_pdf(data: dict) -> bytes:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import inch
@@ -435,8 +468,10 @@ def daily_ops_pdf(data: dict) -> bytes:
     flow = []
 
     # ── Page 1: Executive summary ────────────────────────────────────────────
-    flow.append(Paragraph("Daily Operations Report", styles["title"]))
-    flow.append(Paragraph(f"{rdate} — All Sites", styles["subtitle"]))
+    title = data.get("report_title", "Daily Operations Report")
+    date_label = data.get("date_label", rdate)
+    flow.append(Paragraph(title, styles["title"]))
+    flow.append(Paragraph(f"{date_label} — All Sites", styles["subtitle"]))
     flow.append(Paragraph(f"Generated {gen} UTC", styles["small"]))
     flow.append(Spacer(1, 12))
 
@@ -495,6 +530,38 @@ def daily_ops_pdf(data: dict) -> bytes:
         (sp_line, sp.get("total_failures")),
     ], start=1):
         flow.append(Paragraph(f"{n}. " + (_warn(line) if bad else _ok(line)), styles["body"]))
+    # Period-over-period comparison line (multi-day periods).
+    comp = data.get("comparison")
+    if comp:
+        def _delta(pct):
+            if pct is None:
+                return ""
+            arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "→")
+            return f" ({arrow} {abs(pct)}% vs prev)"
+        flow.append(Spacer(1, 6))
+        flow.append(Paragraph(
+            f"vs previous period — auth failures {comp['security_failures_prev']}"
+            f"{_delta(comp['security_failures_change_pct'])}; outages {comp['outages_prev']}"
+            f"{_delta(comp['outages_change_pct'])}; downtime {comp['downtime_prev']} min"
+            f"{_delta(comp['downtime_change_pct'])}.", styles["small"]))
+
+    # Trend charts (multi-day periods).
+    trends = data.get("trends")
+    if trends and trends.get("days"):
+        flow.append(Spacer(1, 8))
+        flow.append(Paragraph("Trends", styles["subtitle"]))
+        days = trends["days"]
+        for label, series, color, kind in [
+            ("Availability — downtime minutes/day", trends.get("availability_downtime"), ACCENT, "line"),
+            ("Compliance — avg fleet score/day", trends.get("compliance"), SUCCESS, "line"),
+            ("Security — auth failures/day", trends.get("security"), ERROR, "bar"),
+        ]:
+            chart = _trend_chart(days, series or [], color, kind)
+            if chart is not None:
+                flow.append(Paragraph(label, styles["small"]))
+                flow.append(chart)
+                flow.append(Spacer(1, 6))
+
     flow.append(Spacer(1, 8))
     flow.append(Paragraph("See following pages for details.", styles["small"]))
 
@@ -691,7 +758,8 @@ def daily_ops_pdf(data: dict) -> bytes:
                       (e.get("target") or "")[:28]] for e in sp["admin_actions"][:20]]
             flow.append(_dtable(rows, col_widths=[90, 120, 130, 110]))
 
-    deco = _page_decorator(rdate, gen)
+    header_label = f"{data.get('period_label', 'Daily')} Ops — {data.get('date_label', rdate)}"
+    deco = _page_decorator(header_label, gen)
     doc.build(flow, onFirstPage=deco, onLaterPages=deco)
     return buf.getvalue()
 

@@ -73,6 +73,9 @@ def _is_due(schedule: ReportSchedule, now) -> bool:
         return False
     if schedule.frequency == ReportSchedule.Frequency.MONTHLY and now.day != schedule.day_of_month:
         return False
+    if schedule.frequency == ReportSchedule.Frequency.QUARTERLY and not (
+            now.day == schedule.day_of_month and now.month in (1, 4, 7, 10)):
+        return False
     # Don't double-fire within the same calendar day.
     if schedule.last_run and schedule.last_run.date() == now.date():
         return False

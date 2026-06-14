@@ -1614,7 +1614,7 @@ function _downloadBlob(blob: Blob, filename: string) {
 
 // Generate a report; downloads the file (pdf/csv/html) or returns the JSON body.
 export async function generateReport(
-  endpoint: 'compliance-summary' | 'daily-ops',
+  endpoint: 'compliance-summary' | 'daily-ops' | 'ops',
   body: Record<string, unknown>,
 ): Promise<unknown | void> {
   const fmt = (body.format as string) || 'pdf'

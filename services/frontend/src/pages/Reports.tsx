@@ -247,10 +247,18 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   )
 }
 
+const PERIODS = [
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'quarterly', label: 'Quarterly' },
+] as const
+
 function GenerateModal({ def, onClose, onDone }: { def: ReportDef; onClose: () => void; onDone: () => void }) {
   const [format, setFormat] = useState(def.formats[0])
   const [groupBy, setGroupBy] = useState<string[]>(['site', 'role', 'platform'])
   const [date, setDate] = useState<'yesterday' | 'today' | string>('yesterday')
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'quarterly'>('daily')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -263,10 +271,20 @@ function GenerateModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
       const body: Record<string, unknown> = { format }
       if (def.hasGroupBy) body.group_by = groupBy
       if (def.hasDate) {
-        body.date = date === 'today' ? new Date().toISOString().slice(0, 10)
+        const endDate = date === 'today' ? new Date().toISOString().slice(0, 10)
           : date === 'yesterday' ? null : date
+        if (period === 'daily') {
+          body.date = endDate
+          await generateReport(def.endpoint, body)
+        } else {
+          // Weekly/monthly/quarterly go through the period-aware ops endpoint.
+          body.period = period
+          body.end_date = endDate
+          await generateReport('ops', body)
+        }
+      } else {
+        await generateReport(def.endpoint, body)
       }
-      await generateReport(def.endpoint, body)
       onDone()
     } catch {
       setErr('Generation failed.'); setBusy(false)
@@ -300,7 +318,18 @@ function GenerateModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
         )}
         {def.hasDate && (
           <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Date</label>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Period</label>
+            <select className={inputCls} value={period}
+              onChange={(e) => setPeriod(e.target.value as typeof period)}>
+              {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
+        )}
+        {def.hasDate && (
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+              {period === 'daily' ? 'Date' : 'Period ending'}
+            </label>
             <select className={inputCls} value={['yesterday', 'today'].includes(date) ? date : 'pick'}
               onChange={(e) => setDate(e.target.value === 'pick' ? new Date().toISOString().slice(0, 10) : e.target.value)}>
               <option value="yesterday">Yesterday</option>

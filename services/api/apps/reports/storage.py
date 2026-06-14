@@ -52,7 +52,15 @@ def store_report(*, report_type: str, fmt: str, content, params: dict,
 
 
 def download_filename(report: GeneratedReport) -> str:
-    return f"spane-{report.report_type}-{report.generated_at:%Y%m%d}.{report.format}"
+    # Operations reports get a period-specific prefix (daily/weekly/monthly/
+    # quarterly-ops); other report types keep the report_type prefix.
+    from .models import ReportType
+    prefix = report.report_type
+    if report.report_type == ReportType.DAILY_OPS:
+        period = (report.parameters or {}).get("period") or "daily"
+        prefix = {"daily": "daily-ops", "weekly": "weekly-ops",
+                  "monthly": "monthly-ops", "quarterly": "quarterly-ops"}.get(period, "daily-ops")
+    return f"spane-{prefix}-{report.generated_at:%Y%m%d}.{report.format}"
 
 
 def email_report(recipients, subject: str, body: str,
