@@ -3,6 +3,7 @@ import socket
 import urllib.parse
 
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.decorators import action
@@ -12,11 +13,12 @@ from rest_framework.views import APIView
 from apps.credentials import vault
 
 from .diff import generate_diff
-from .models import ConfigBackupSettings, DeviceConfig
+from .models import ConfigBackupSettings, ConfigCollectionLog, DeviceConfig
 
 logger = logging.getLogger(__name__)
 from .serializers import (
     ConfigBackupSettingsSerializer,
+    ConfigCollectionLogSerializer,
     ConfigDiffRequestSerializer,
     ConfigDiffResponseSerializer,
     DeviceConfigSerializer,
@@ -90,6 +92,45 @@ class DeviceConfigViewSet(viewsets.ReadOnlyModelViewSet):
             new = data.get("new", "")
 
         return Response(generate_diff(old, new, context=data.get("context", 3)))
+
+
+class ConfigCollectionLogListView(generics.ListAPIView):
+    """
+    Paginated history of config-collection *attempts* (every run, including
+    unchanged/failed), newest first.
+
+    Filters: ``device_id`` (or ``device``), ``status`` (success/unchanged/
+    failed/timeout/auth_failed/empty), and ``since`` (ISO date/datetime).
+    """
+
+    serializer_class = ConfigCollectionLogSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = ConfigCollectionLog.objects.select_related("device").all()
+        params = self.request.query_params
+        device_id = params.get("device_id") or params.get("device")
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        status_f = params.get("status")
+        if status_f:
+            qs = qs.filter(status=status_f)
+        since = params.get("since")
+        if since:
+            parsed = parse_datetime(since) or parse_date(since)
+            if parsed is not None:
+                qs = qs.filter(collected_at__gte=parsed)
+        return qs
+
+
+class ConfigCollectionStatsView(APIView):
+    """Fleet-wide config-collection health (24h summary + failing devices)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .stats import collection_health
+        return Response(collection_health())
 
 
 class ConfigBackupSettingsView(generics.RetrieveUpdateAPIView):

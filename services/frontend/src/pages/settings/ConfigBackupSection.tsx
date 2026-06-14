@@ -4,6 +4,7 @@ import {
   fetchConfigBackup, saveConfigBackup, testGit, syncConfigNow,
   type ConfigBackupSettings,
 } from '../../api/client'
+import CollectionHealthPanel from './CollectionHealthPanel'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
@@ -83,6 +84,8 @@ export default function ConfigBackupSection() {
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Configuration Backup</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">Where device configs are stored and optionally mirrored to git.</p>
       </div>
+
+      <CollectionHealthPanel />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Local storage */}

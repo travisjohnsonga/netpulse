@@ -92,3 +92,53 @@ class DeviceConfig(TimestampedModel):
 
     def __str__(self):
         return f"{self.device} {self.config_type} @ {self.collected_at:%Y-%m-%d}"
+
+
+class ConfigCollectionLog(models.Model):
+    """
+    One row per config-collection *attempt* — written on every run regardless of
+    outcome, including when the config was unchanged (and so no DeviceConfig was
+    stored). This is the audit trail that answers "when did we last reach this
+    device?", "is collection silently failing?", and "what's our success rate?".
+
+    Distinct from DeviceConfig: DeviceConfig is the (deduplicated) config content
+    store; ConfigCollectionLog is the attempt history.
+    """
+
+    class Status(models.TextChoices):
+        SUCCESS = "success", "Success"            # reached + config changed/new baseline
+        UNCHANGED = "unchanged", "Unchanged"      # reached, config identical to last stored
+        FAILED = "failed", "Failed"               # generic failure
+        TIMEOUT = "timeout", "Timeout"
+        AUTH_FAILED = "auth_failed", "Auth Failed"
+        EMPTY = "empty", "Empty Response"
+
+    # Statuses that mean the device was actually reached and collection succeeded.
+    REACHED_STATUSES = (Status.SUCCESS, Status.UNCHANGED)
+
+    device = models.ForeignKey(
+        "devices.Device", on_delete=models.CASCADE, related_name="collection_logs")
+    collected_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    collected_by = models.CharField(
+        max_length=64, default="scheduled",
+        help_text="scheduled, manual, api, enrichment")
+    duration_ms = models.IntegerField(
+        null=True, blank=True, help_text="Collection duration in milliseconds")
+    error_message = models.CharField(max_length=512, blank=True)
+    config_changed = models.BooleanField(
+        null=True, help_text="None if not reached; True/False when reached")
+    bytes_collected = models.IntegerField(null=True, blank=True)
+    method = models.CharField(
+        max_length=32, blank=True, help_text="rest, ssh, netconf, netmiko")
+
+    class Meta:
+        ordering = ["-collected_at"]
+        indexes = [
+            models.Index(fields=["device", "-collected_at"]),
+            models.Index(fields=["-collected_at"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.device} {self.status} @ {self.collected_at:%Y-%m-%d %H:%M}"

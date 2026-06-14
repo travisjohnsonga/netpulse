@@ -1475,6 +1475,37 @@ export async function syncConfigNow(): Promise<{ ok: boolean; message: string; l
   return data
 }
 
+// ── config-collection health ────────────────────────────────────────────────
+export interface CollectionWindow {
+  total: number
+  success: number       // reached (changed + unchanged)
+  unchanged: number
+  failed: number
+  timeout: number
+  auth_failed: number
+  empty: number
+  success_rate: number | null
+}
+
+export interface FailingDevice {
+  id: number
+  hostname: string
+  last_success: string | null
+  consecutive_failures: number
+  last_error: string
+}
+
+export interface CollectionHealth {
+  last_24h: CollectionWindow
+  devices_never_collected: number
+  devices_failing: FailingDevice[]
+}
+
+export async function fetchCollectionHealth(): Promise<CollectionHealth> {
+  const { data } = await api.get<CollectionHealth>('/configbackup/collection-stats/')
+  return data
+}
+
 // ── Logs ─────────────────────────────────────────────────────────────────────
 
 export interface LogEntry {

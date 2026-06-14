@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import ConfigBackupSettings, DeviceConfig
+from .models import ConfigBackupSettings, ConfigCollectionLog, DeviceConfig
 
 
 class ConfigBackupSettingsSerializer(serializers.ModelSerializer):
@@ -80,4 +80,17 @@ class DeviceConfigSerializer(serializers.ModelSerializer):
             "id", "device", "config_type", "collected_at", "collected_by",
             "content", "content_hash", "changed_from_previous", "diff_summary",
             "git_commit_sha", "compliance_status",
+        ]
+
+
+class ConfigCollectionLogSerializer(serializers.ModelSerializer):
+    device_hostname = serializers.CharField(source="device.hostname", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = ConfigCollectionLog
+        fields = [
+            "id", "device", "device_hostname", "collected_at", "status",
+            "status_label", "collected_by", "duration_ms", "error_message",
+            "config_changed", "bytes_collected", "method",
         ]

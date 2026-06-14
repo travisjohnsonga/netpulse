@@ -5,6 +5,7 @@ import type { EChartsOption } from 'echarts'
 import StatCard from '../components/StatCard'
 import EmptyState from '../components/EmptyState'
 import DeviceLink from '../components/DeviceLink'
+import { useQuery } from '@tanstack/react-query'
 import {
   fetchDevices,
   fetchAlerts,
@@ -13,6 +14,7 @@ import {
   fetchDeviceReachability,
   fetchReachabilitySummary,
   fetchTopTalkers,
+  fetchCollectionHealth,
   reachabilityOf,
   type Device,
   type Alert,
@@ -142,6 +144,12 @@ export default function Dashboard() {
     .map((c) => ({ c, days: typeof c.last_details?.days_remaining === 'number' ? (c.last_details.days_remaining as number) : null }))
     .filter((x) => x.days != null && x.days <= 30)
     .sort((a, b) => (a.days as number) - (b.days as number))
+
+  const { data: collectionHealth } = useQuery({
+    queryKey: ['collection-health'],
+    queryFn: fetchCollectionHealth,
+    refetchInterval: 60_000,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -284,6 +292,33 @@ export default function Dashboard() {
               : 'green'}
           action={{ label: 'View checks', href: '/checks' }}
         />
+        {collectionHealth && (() => {
+          const rate = collectionHealth.last_24h.success_rate
+          const failing = collectionHealth.devices_failing.length
+          return (
+            <StatCard
+              title="Config Collection"
+              value={rate == null ? '—' : `${rate}%`}
+              subtitle={rate == null ? 'no attempts yet' : '24h success rate'}
+              color={rate == null ? 'blue' : rate >= 95 ? 'green' : rate >= 80 ? 'yellow' : 'red'}
+              action={{ label: 'Collection health', href: '/settings/compliance' }}
+              footer={(failing > 0 || collectionHealth.devices_never_collected > 0) ? (
+                <div className="mt-3 space-y-1 text-xs">
+                  {failing > 0 && (
+                    <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                      <span className="w-2 h-2 rounded-full bg-red-500" />{failing} device{failing === 1 ? '' : 's'} failing
+                    </span>
+                  )}
+                  {collectionHealth.devices_never_collected > 0 && (
+                    <span className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-500">
+                      <span className="w-2 h-2 rounded-full bg-yellow-500" />{collectionHealth.devices_never_collected} never collected
+                    </span>
+                  )}
+                </div>
+              ) : undefined}
+            />
+          )
+        })()}
       </div>
 
       {/* Certificates expiring soon (from TLS service checks) */}

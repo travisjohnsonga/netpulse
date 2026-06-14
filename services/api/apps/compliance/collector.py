@@ -19,15 +19,31 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 
 from django.conf import settings
 from django.utils import timezone
 
-from apps.configbackup.models import ConfigBackupSettings, DeviceConfig
+from apps.configbackup.models import ConfigBackupSettings, ConfigCollectionLog, DeviceConfig
 from apps.credentials import vault
 
 logger = logging.getLogger(__name__)
+
+# The transport actually used to fetch the last config is recorded here by the
+# fetch path and consumed once by collect_one when it writes the attempt log.
+# Thread-local so concurrent collections don't clobber each other's value.
+_collection_ctx = threading.local()
+
+
+def _record_method(method: str) -> None:
+    _collection_ctx.method = method
+
+
+def _consume_method() -> str:
+    method = getattr(_collection_ctx, "method", "")
+    _collection_ctx.method = ""
+    return method
 
 # NetPulse platform → Netmiko device_type.
 _NETMIKO_TYPES = {
@@ -296,11 +312,15 @@ def collect_aos_cx_config(device, profile, creds: dict) -> str:
     AOS-CX ``--More--`` pager.
     """
     try:
-        return _fetch_aos_cx_via_rest(device, profile, creds)
+        config = _fetch_aos_cx_via_rest(device, profile, creds)
+        _record_method("rest")
+        return config
     except Exception as exc:  # noqa: BLE001 — REST unreachable → SSH fallback
         logger.debug("AOS-CX REST config failed for %s, falling back to SSH: %s",
                      device.hostname, exc)
-    return _fetch_aos_cx_via_ssh(device, profile, creds)
+    config = _fetch_aos_cx_via_ssh(device, profile, creds)
+    _record_method("ssh")
+    return config
 
 
 def _fetch_running_config(device, creds: dict) -> str:
@@ -315,11 +335,15 @@ def _fetch_running_config(device, creds: dict) -> str:
     profile = device.credential_profile
     platform = (device.platform or "").lower()
     if platform == "sonicwall":
+        _record_method("rest")
         return collect_sonicwall_config(device, profile, creds)
     if platform == "aos_cx":
+        # collect_aos_cx_config records "rest" or "ssh" depending on which path won.
         return collect_aos_cx_config(device, profile, creds)
     if profile and profile.netconf_enabled and not profile.ssh_enabled:
+        _record_method("netconf")
         return _fetch_via_netconf(device, profile, creds)
+    _record_method("netmiko")
     return _fetch_via_ssh(device, profile, creds)
 
 
@@ -410,6 +434,23 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     loop.
     """
     start = time.monotonic()
+
+    def _log(status, *, changed=None, content=None, error=""):
+        """Write one ConfigCollectionLog row for this attempt (best-effort)."""
+        try:
+            ConfigCollectionLog.objects.create(
+                device=device,
+                status=status,
+                collected_by=collected_by,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error_message=(error or "")[:512],
+                config_changed=changed,
+                bytes_collected=len(content) if content else None,
+                method=_consume_method(),
+            )
+        except Exception as exc:  # noqa: BLE001 — logging must not break collection
+            logger.warning("collection-log write failed for %s: %s", device.hostname, exc)
+
     creds = get_credentials(device)
     try:
         content = _fetch_running_config(device, creds)
@@ -418,15 +459,19 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
         if "Auth" in name:
             _mark_credential_failed(device, f"{name}: authentication failed")
             logger.error("auth failure collecting %s (%s)", device.hostname, name)
+            _log(ConfigCollectionLog.Status.AUTH_FAILED, error=f"{name}: authentication failed")
             return {"ok": False, "error": "auth_failed"}
         if "Timeout" in name or "timeout" in str(exc).lower():
             logger.warning("timeout collecting %s: %s", device.hostname, exc)
+            _log(ConfigCollectionLog.Status.TIMEOUT, error=str(exc))
             return {"ok": False, "error": "timeout"}
         logger.error("error collecting %s: %s", device.hostname, exc)
+        _log(ConfigCollectionLog.Status.FAILED, error=str(exc))
         return {"ok": False, "error": "error"}
 
     if not content or not content.strip():
         logger.warning("empty config returned for %s — skipping", device.hostname)
+        _log(ConfigCollectionLog.Status.EMPTY, error="empty config returned")
         return {"ok": False, "error": "empty"}
 
     cfg = store_config(device, content, collected_by)
@@ -457,6 +502,7 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     elapsed = time.monotonic() - start
     if cfg is None:
         logger.info("config unchanged for %s (%s) — %.2fs", device.hostname, device.platform or "?", elapsed)
+        _log(ConfigCollectionLog.Status.UNCHANGED, changed=False, content=content)
         return {"ok": True, "stored": False, "changed": False, "config": None}
 
     if cfg.changed_from_previous:
@@ -465,4 +511,5 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     else:
         logger.info("config stored (initial baseline) for %s (%s) — %d bytes, %.2fs",
                     device.hostname, device.platform or "?", len(content), elapsed)
+    _log(ConfigCollectionLog.Status.SUCCESS, changed=cfg.changed_from_previous, content=content)
     return {"ok": True, "stored": True, "changed": cfg.changed_from_previous, "config": cfg}

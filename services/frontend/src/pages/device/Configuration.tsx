@@ -15,6 +15,78 @@ interface DeviceConfigRow {
   diff_summary: string | null
 }
 
+interface CollectionLogRow {
+  id: number
+  collected_at: string
+  status: string
+  status_label: string
+  collected_by: string
+  duration_ms: number | null
+  error_message: string
+  config_changed: boolean | null
+  method: string
+}
+
+// status → { emoji, label colour } for the collection-history table.
+const COLLECTION_STATUS_STYLE: Record<string, { icon: string; cls: string }> = {
+  success: { icon: '✅', cls: 'text-green-600 dark:text-green-400' },
+  unchanged: { icon: '✅', cls: 'text-green-600 dark:text-green-400' },
+  failed: { icon: '⛔', cls: 'text-red-600 dark:text-red-400' },
+  timeout: { icon: '⏱', cls: 'text-amber-600 dark:text-amber-400' },
+  auth_failed: { icon: '🔑', cls: 'text-red-600 dark:text-red-400' },
+  empty: { icon: '∅', cls: 'text-gray-500 dark:text-gray-400' },
+}
+
+function CollectionHistory({ deviceId }: { deviceId: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['device-collection-log', deviceId],
+    queryFn: () =>
+      api.get(`/devices/${deviceId}/collection-log/?limit=25`).then((r) => r.data as CollectionLogRow[]),
+  })
+  const rows = data ?? []
+  if (isLoading || rows.length === 0) return null
+
+  return (
+    <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Collection History</h3>
+        <p className="text-xs text-gray-400 dark:text-gray-500">Every collection attempt — proves the device was reached even when the config didn’t change.</p>
+      </div>
+      <div className="overflow-x-auto max-h-80">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left">
+              <th className="px-4 py-2 font-medium">Time</th>
+              <th className="px-4 py-2 font-medium">Status</th>
+              <th className="px-4 py-2 font-medium">Changed</th>
+              <th className="px-4 py-2 font-medium">Method</th>
+              <th className="px-4 py-2 font-medium">Duration</th>
+              <th className="px-4 py-2 font-medium">By</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+            {rows.map((r) => {
+              const style = COLLECTION_STATUS_STYLE[r.status] ?? { icon: '•', cls: 'text-gray-500' }
+              return (
+                <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                  <td className="px-4 py-2 text-gray-700 dark:text-gray-300 whitespace-nowrap" title={new Date(r.collected_at).toLocaleString()}>{relativeTime(r.collected_at)}</td>
+                  <td className={clsx('px-4 py-2 font-medium whitespace-nowrap', style.cls)} title={r.error_message || undefined}>
+                    {style.icon} {r.status_label}
+                  </td>
+                  <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{r.config_changed === null ? '—' : r.config_changed ? 'Yes' : 'No'}</td>
+                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400 uppercase text-xs">{r.method || '—'}</td>
+                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">{r.duration_ms == null ? '—' : `${r.duration_ms} ms`}</td>
+                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">{r.collected_by}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // UTC hours at which config-manager collects (mirrors the backend default
 // CONFIG_COLLECTION_HOUR_1 / _2). Used to show the schedule + next-run estimate.
 const COLLECTION_HOURS_UTC = [7, 19]
@@ -138,6 +210,7 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
         <button onClick={collectNow} disabled={collecting} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {collecting ? 'Collecting…' : 'Collect Now'}
         </button>
+        <CollectionHistory deviceId={deviceId} />
       </div>
     )
   }
@@ -199,6 +272,7 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
         </pre>
       </div>
       </div>
+      <CollectionHistory deviceId={deviceId} />
     </div>
   )
 }

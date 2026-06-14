@@ -595,6 +595,16 @@ class DeviceViewSet(viewsets.ModelViewSet):
         ).select_related("user")[:limit]
         return Response(AuditLogSerializer(rows, many=True).data)
 
+    @action(detail=True, methods=["get"], url_path="collection-log")
+    def collection_log(self, request, pk=None):
+        """Recent config-collection attempts for this device (most recent first)."""
+        from apps.configbackup.models import ConfigCollectionLog
+        from apps.configbackup.serializers import ConfigCollectionLogSerializer
+        device = self.get_object()
+        limit = min(int(request.query_params.get("limit", 25)), 200)
+        rows = ConfigCollectionLog.objects.filter(device=device)[:limit]
+        return Response(ConfigCollectionLogSerializer(rows, many=True).data)
+
     @extend_schema(summary="Re-run SNMP/SSH enrichment + interface/LLDP discovery", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="enrich")
     def enrich(self, request, pk=None):

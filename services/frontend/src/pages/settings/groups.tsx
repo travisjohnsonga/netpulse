@@ -16,6 +16,7 @@ import OSVersions from './OSVersions'
 import FleetInventory from './FleetInventory'
 import InterfaceRules from './InterfaceRules'
 import RoleConsistency from './RoleConsistency'
+import CollectionHealthPanel from './CollectionHealthPanel'
 import General from './General'
 import Certificates from './Certificates'
 import System from './System'
@@ -51,6 +52,15 @@ export function ComplianceSettings() {
     { id: 'fleet-inventory', label: 'Fleet Inventory', element: <FleetInventory /> },
     { id: 'interface-rules', label: 'Interface Rules', element: <InterfaceRules /> },
     { id: 'role-consistency', label: 'Role Consistency', element: <RoleConsistency /> },
+    { id: 'config-health', label: 'Config Health', element: (
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Config Collection Health</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Success rate and failing devices across the fleet. Backup destinations are configured under Settings → Data Sources.</p>
+        </div>
+        <CollectionHealthPanel />
+      </section>
+    ) },
   ]} />
 }
 
