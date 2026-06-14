@@ -5,19 +5,24 @@ Aggregates a single day's operational signal across security (logins), device
 availability, compliance events, config changes, collection health, agent
 health and alerts.
 
-Note: spane does not yet persist a discrete outage-history table, so device
-downtime is derived from ``Device.unreachable_since`` — accurate for the start
-of an outage and for still-down devices; recovery times within the day are
-approximate.
+Device downtime is reconstructed from the ``device-unreachable`` AlertEvent
+history (the reachability monitor opens a FIRING event when a device goes down
+and the recovery path flips that same event to RESOLVED, stamping resolved_at
+with the recovery time). This captures outages that started AND recovered within
+the day — which ``Device.unreachable_since`` alone cannot, since it is reset to
+NULL on recovery.
 """
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import datetime, time, timedelta
 
 from django.utils import timezone
 
 from apps.core.models import AuditLog
+
+logger = logging.getLogger(__name__)
 
 AFTER_HOURS_START = 20  # 20:00 UTC
 AFTER_HOURS_END = 6     # 06:00 UTC
@@ -39,7 +44,96 @@ def _is_after_hours(dt) -> bool:
     return dt.hour >= AFTER_HOURS_START or dt.hour < AFTER_HOURS_END
 
 
-def _security_events(start, end) -> dict:
+# Network-device authentication-failure phrases as they appear in syslog across
+# vendors (Cisco/Arista "Login failed"/"authentication failure", Linux/OpenSSH
+# "Failed password"/"Invalid user", firewalls "access denied", etc.).
+_AUTH_FAILURE_PATTERNS = [
+    "authentication failure", "authentication failed", "failed password",
+    "invalid user", "access denied", "login failed", "failed login",
+    "auth failure", "bad password", "login authentication failed",
+    "%sec_login-4-login_failed", "tacacs", "radius",
+]
+
+_NO_SYSLOG_NOTE = (
+    "No device authentication events found in syslog for this period. "
+    "Forward TACACS+/RADIUS and device auth syslog to spane (UDP/TCP 514) for "
+    "full device authentication tracking."
+)
+
+
+def _parse_ts(value):
+    """Parse an ISO/epoch timestamp string from a log doc into an aware datetime."""
+    if not value:
+        return None
+    from django.utils.dateparse import parse_datetime
+    try:
+        dt = parse_datetime(str(value))
+    except (TypeError, ValueError):
+        dt = None
+    if dt is not None and timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.utc)
+    return dt
+
+
+def _device_security_events(start, end, site_ids=None) -> dict:
+    """
+    Authentication / security events reported BY network devices, mined from the
+    normalized syslog in OpenSearch (``netpulse-logs-*``) — distinct from spane's
+    own login audit (see :func:`_spane_access_events`).
+
+    Degrades gracefully: any OpenSearch error (store down, no index) yields an
+    empty result with ``available=False`` so the report still renders.
+    """
+    from apps.logs.views import _device_identifiers, _execute
+
+    musts = [
+        {"range": {"@timestamp": {"gte": start.isoformat(), "lte": end.isoformat()}}},
+        {"bool": {"should": [{"match_phrase": {"message": p}} for p in _AUTH_FAILURE_PATTERNS],
+                  "minimum_should_match": 1}},
+    ]
+    if site_ids:
+        from apps.devices.models import Device
+        ids = _device_identifiers(Device.objects.filter(site_id__in=site_ids))
+        if ids:
+            musts.append({"bool": {"should": [
+                {"terms": {"hostname.keyword": ids}},
+                {"terms": {"source_ip.keyword": ids}}], "minimum_should_match": 1}})
+
+    body = {"query": {"bool": {"must": musts}},
+            "sort": [{"@timestamp": {"order": "desc"}}], "size": 500}
+    try:
+        raw = _execute(body)
+    except Exception as exc:  # noqa: BLE001 — store unavailable must not break the report
+        logger.debug("device security-events OpenSearch query failed: %s", exc)
+        return {"login_failures": [], "total_failures": 0, "unique_sources": 0,
+                "after_hours_failures": 0, "available": False, "note": _NO_SYSLOG_NOTE}
+
+    failures = []
+    for hit in raw.get("hits", {}).get("hits", []):
+        src = hit.get("_source", {})
+        ts = src.get("@timestamp") or src.get("timestamp")
+        dt = _parse_ts(ts)
+        failures.append({
+            "time": ts,
+            "hostname": src.get("hostname"),
+            "source_ip": src.get("source_ip"),
+            "severity": src.get("severity_name"),
+            "message": (src.get("message") or "")[:300],
+            "after_hours": _is_after_hours(dt) if dt else False,
+        })
+    sources = {f["source_ip"] for f in failures if f["source_ip"]}
+    return {
+        "login_failures": failures,
+        "total_failures": len(failures),
+        "unique_sources": len(sources),
+        "after_hours_failures": sum(1 for f in failures if f["after_hours"]),
+        "available": True,
+        "note": "" if failures else _NO_SYSLOG_NOTE,
+    }
+
+
+def _spane_access_events(start, end) -> dict:
+    """spane's OWN access audit (who logged into spane), from AuditLog."""
     base = AuditLog.objects.filter(created_at__gte=start, created_at__lte=end)
     failures = list(base.filter(event_type=AuditLog.EventType.LOGIN_FAILED)
                     .values("created_at", "username", "ip_address", "error_message"))
@@ -73,35 +167,70 @@ def _security_events(start, end) -> dict:
 
 
 def _device_availability(start, end, site_ids) -> dict:
+    """
+    Reconstruct the day's outages from device-unreachable AlertEvents.
+
+    The reachability monitor (via the stream-processor) opens a FIRING event
+    ``rule="device-unreachable"``, ``labels.source="reachability_monitor"``,
+    ``annotations.title="Device X unreachable"`` when a device goes down. On
+    recovery the SAME event is flipped to RESOLVED with ``resolved_at`` set to
+    the recovery time (a separate FIRING "reachable again" event is also emitted
+    — we skip those). So: created_at = down time, resolved_at = recovery time,
+    still-FIRING = still down.
+    """
+    from apps.alerts.models import AlertEvent
     from apps.devices.models import Device
     now = timezone.now()
-    qs = Device.objects.select_related("site", "role")
-    if site_ids:
-        qs = qs.filter(site_id__in=site_ids)
 
-    went_down = []
-    still_down = []
-    total_downtime = 0
-    for d in qs.filter(unreachable_since__gte=start, unreachable_since__lte=end):
-        down_at = d.unreachable_since
-        recovered = d.is_reachable  # recovered if reachable again
-        end_t = (now if not recovered else d.last_reachability_check or now)
-        minutes = max(0, int((end_t - down_at).total_seconds() // 60)) if down_at else 0
+    dev_qs = Device.objects.select_related("site", "role")
+    if site_ids:
+        dev_qs = dev_qs.filter(site_id__in=site_ids)
+    # device_id -> Device for site/role labelling (and site scoping below).
+    dev_meta = {d.id: d for d in dev_qs}
+
+    # Outages that *started* in the window. Filter to the device-unreachable rule
+    # + reachability_monitor source so latency alerts (same source, different
+    # rule) are excluded; the title check then drops the paired "reachable again"
+    # recovery events (done in Python — JSON icontains is unreliable on SQLite).
+    down_events = (AlertEvent.objects
+                   .filter(rule__name="device-unreachable",
+                           labels__source="reachability_monitor",
+                           created_at__gte=start, created_at__lte=end)
+                   .order_by("created_at"))
+
+    went_down, still_down, total_downtime = [], [], 0
+    for e in down_events:
+        title = (e.annotations or {}).get("title", "")
+        if "unreachable" not in title.lower():  # excludes "reachable again"
+            continue
+        did = e.labels.get("device_id")
+        try:
+            did = int(did) if did is not None else None
+        except (TypeError, ValueError):
+            did = None
+        if site_ids and did not in dev_meta:
+            continue  # outside the requested sites
+        dev = dev_meta.get(did)
+        recovered = e.state == AlertEvent.State.RESOLVED and e.resolved_at is not None
+        recovered_at = e.resolved_at if recovered else None
+        end_t = recovered_at or now
+        minutes = max(0, int((end_t - e.created_at).total_seconds() // 60))
         total_downtime += minutes
         row = {
-            "hostname": d.hostname, "down_at": down_at.isoformat() if down_at else None,
-            "recovered_at": None if not recovered else (d.last_reachability_check.isoformat()
-                                                        if d.last_reachability_check else None),
+            "hostname": e.labels.get("hostname") or (dev.hostname if dev else ""),
+            "down_at": e.created_at.isoformat(),
+            "recovered_at": recovered_at.isoformat() if recovered_at else None,
             "duration_minutes": minutes,
-            "site": d.site.name if d.site else None,
-            "role": d.role.name if d.role else None,
+            "site": dev.site.name if dev and dev.site else None,
+            "role": dev.role.name if dev and dev.role else None,
+            "still_down": not recovered,
         }
         went_down.append(row)
         if not recovered:
             still_down.append(row)
 
-    monitored = qs.filter(status__in=[Device.Status.ACTIVE, Device.Status.UNREACHABLE]).count()
-    reachable = qs.filter(is_reachable=True).count()
+    monitored = dev_qs.filter(status__in=[Device.Status.ACTIVE, Device.Status.UNREACHABLE]).count()
+    reachable = dev_qs.filter(is_reachable=True).count()
     availability = round(reachable / monitored * 100, 1) if monitored else 100.0
     return {
         "went_down": went_down, "still_down": still_down,
@@ -267,15 +396,30 @@ def _alerts_summary(start, end) -> dict:
 
 def build_daily_ops(*, date=None, site_ids=None) -> dict:
     start, end, day = _day_bounds(date)
+    security = _device_security_events(start, end, site_ids)
+    spane_access = _spane_access_events(start, end)
+    availability = _device_availability(start, end, site_ids)
+    config_changes = _config_changes(start, end, site_ids)
+    collection = _collection_health(start, end, site_ids)
+    logger.info(
+        "Daily ops %s: %d outages, %d config changes, %d device auth failures, "
+        "%d spane logins, %d collection-log attempts",
+        day, availability["total_outages"], len(config_changes),
+        security["total_failures"], len(spane_access["successful_logins"]),
+        collection["total_attempts"],
+    )
     return {
         "report_date": day.isoformat(),
         "generated_at": timezone.now().isoformat(),
         "period": {"start": start.isoformat(), "end": end.isoformat()},
-        "security_events": _security_events(start, end),
-        "device_availability": _device_availability(start, end, site_ids),
+        # Section 1: security events reported BY network devices (syslog).
+        "security_events": security,
+        "device_availability": availability,
         "compliance_events": _compliance_events(start, end),
-        "config_changes": _config_changes(start, end, site_ids),
-        "collection_health": _collection_health(start, end, site_ids),
+        "config_changes": config_changes,
+        "collection_health": collection,
         "agent_health": _agent_health(),
         "alerts_summary": _alerts_summary(start, end),
+        # Section 7: spane's own access audit (who logged into spane).
+        "spane_access_events": spane_access,
     }

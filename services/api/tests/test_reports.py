@@ -61,19 +61,108 @@ class TestComplianceSummary:
 class TestDailyOps:
     def test_sections_present(self, fleet):
         data = dops.build_daily_ops()
-        for key in ("security_events", "device_availability", "compliance_events",
-                    "config_changes", "collection_health", "agent_health", "alerts_summary"):
+        for key in ("security_events", "spane_access_events", "device_availability",
+                    "compliance_events", "config_changes", "collection_health",
+                    "agent_health", "alerts_summary"):
             assert key in data
 
-    def test_login_failures_counted(self, fleet):
-        # an event "yesterday" (the default report day)
+    def test_spane_access_login_failures_counted(self, fleet, monkeypatch):
+        # spane's OWN login audit now lives in the spane_access_events section.
+        # Stub OpenSearch (device events) so the result is independent of live syslog.
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
         when = timezone.now() - __import__("datetime").timedelta(days=1)
         log = AuditLog.objects.create(event_type=AuditLog.EventType.LOGIN_FAILED,
                                       username="admin", ip_address="10.150.1.45")
         AuditLog.objects.filter(pk=log.pk).update(created_at=when)
         data = dops.build_daily_ops(date=when.date().isoformat())
-        assert data["security_events"]["total_failures"] == 1
-        assert data["security_events"]["unique_sources"] == 1
+        assert data["spane_access_events"]["total_failures"] == 1
+        assert data["spane_access_events"]["unique_sources"] == 1
+        # The AuditLog login must NOT show up as a device security event.
+        assert data["security_events"]["total_failures"] == 0
+
+    def test_device_security_events_from_syslog(self, fleet, monkeypatch):
+        # Device auth failures come from OpenSearch syslog (netpulse-logs-*).
+        when = timezone.now() - __import__("datetime").timedelta(days=1)
+        fake = {"hits": {"hits": [
+            {"_source": {"@timestamp": when.replace(hour=22).isoformat(),
+                         "hostname": "sw-1", "source_ip": "10.0.0.9",
+                         "severity_name": "warning",
+                         "message": "%SEC_LOGIN-4-LOGIN_FAILED: Login failed user=foo"}},
+            {"_source": {"@timestamp": when.replace(hour=12).isoformat(),
+                         "hostname": "sw-2", "source_ip": "10.0.0.9",
+                         "message": "Failed password for invalid user bar"}},
+        ]}}
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: fake)
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        sec = data["security_events"]
+        assert sec["available"] is True
+        assert sec["total_failures"] == 2
+        assert sec["unique_sources"] == 1  # both from 10.0.0.9
+        assert sec["after_hours_failures"] == 1  # the 22:00 one
+        assert sec["note"] == ""
+
+    def test_device_security_events_degrade_gracefully(self, fleet, monkeypatch):
+        def _boom(body):
+            raise RuntimeError("opensearch down")
+        monkeypatch.setattr("apps.logs.views._execute", _boom)
+        data = dops.build_daily_ops()
+        sec = data["security_events"]
+        assert sec["available"] is False
+        assert sec["total_failures"] == 0
+        assert "TACACS" in sec["note"]
+
+    def test_outages_from_alert_events(self, fleet):
+        # Reconstruct outages from device-unreachable AlertEvents: a recovered
+        # outage (resolved) and a still-down one (firing).
+        import datetime as _dt
+        from apps.alerts.models import AlertEvent, AlertRule
+        d1, d2 = fleet["devices"]
+        day = (timezone.now() - _dt.timedelta(days=1)).date()
+        down_at = timezone.make_aware(_dt.datetime.combine(day, _dt.time(10, 0)))
+        up_at = timezone.make_aware(_dt.datetime.combine(day, _dt.time(10, 30)))
+        rule = AlertRule.objects.create(name="device-unreachable",
+                                        severity=AlertRule.Severity.HIGH, condition={})
+
+        def _ev(dev, state, resolved_at=None):
+            e = AlertEvent.objects.create(
+                rule=rule, state=state,
+                labels={"source": "reachability_monitor", "device_id": dev.id,
+                        "hostname": dev.hostname},
+                annotations={"title": f"Device {dev.hostname} unreachable"},
+                resolved_at=resolved_at)
+            AlertEvent.objects.filter(pk=e.pk).update(created_at=down_at)
+            return e
+
+        _ev(d1, AlertEvent.State.RESOLVED, resolved_at=up_at)   # recovered
+        _ev(d2, AlertEvent.State.FIRING)                        # still down
+
+        data = dops.build_daily_ops(date=day.isoformat())
+        av = data["device_availability"]
+        assert av["total_outages"] == 2
+        downs = {o["hostname"]: o for o in av["went_down"]}
+        assert downs["sw-1"]["recovered_at"] is not None
+        assert downs["sw-1"]["duration_minutes"] == 30
+        assert downs["sw-1"]["still_down"] is False
+        assert downs["sw-2"]["still_down"] is True
+        assert any(o["hostname"] == "sw-2" for o in av["still_down"])
+
+    def test_outage_skips_reachable_again_events(self, fleet):
+        # The paired "reachable again" FIRING event must not be counted as an outage.
+        import datetime as _dt
+        from apps.alerts.models import AlertEvent, AlertRule
+        d1 = fleet["devices"][0]
+        day = (timezone.now() - _dt.timedelta(days=1)).date()
+        when = timezone.make_aware(_dt.datetime.combine(day, _dt.time(11, 0)))
+        rule = AlertRule.objects.create(name="device-unreachable",
+                                        severity=AlertRule.Severity.INFO, condition={})
+        e = AlertEvent.objects.create(
+            rule=rule, state=AlertEvent.State.FIRING,
+            labels={"source": "reachability_monitor", "device_id": d1.id,
+                    "hostname": d1.hostname},
+            annotations={"title": f"Device {d1.hostname} reachable again"})
+        AlertEvent.objects.filter(pk=e.pk).update(created_at=when)
+        data = dops.build_daily_ops(date=day.isoformat())
+        assert data["device_availability"]["total_outages"] == 0
 
     def test_config_changes_listed(self, fleet):
         when = timezone.now() - __import__("datetime").timedelta(days=1)

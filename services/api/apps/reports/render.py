@@ -233,15 +233,18 @@ def daily_ops_pdf(data: dict) -> bytes:
     _header(flow, styles, "Daily Operations Report", f"{data['report_date']} — All Sites")
 
     sec = data["security_events"]
-    flow.append(Paragraph("1 · Security Events", styles["h2"]))
+    flow.append(Paragraph("1 · Device Security Events", styles["h2"]))
     flow.append(Paragraph(
-        f"{sec['total_failures']} login failure(s) from {sec['unique_sources']} source(s); "
-        f"{len(sec['after_hours_logins'])} after-hours login(s); "
-        f"{len(sec['new_source_ips'])} new source IP(s).", styles["body"]))
+        f"{sec['total_failures']} device authentication failure(s) from "
+        f"{sec['unique_sources']} source(s); {sec.get('after_hours_failures', 0)} after-hours.",
+        styles["body"]))
     if sec["login_failures"]:
-        rows = [["Time", "User", "Source IP"]]
-        rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""] for e in sec["login_failures"][:20]]
-        flow.append(_table(rows, col_widths=[80, 120, 120]))
+        rows = [["Time", "Device", "Source IP", "Message"]]
+        rows += [[(e["time"] or "")[11:19], e.get("hostname") or "", e.get("source_ip") or "",
+                  (e.get("message") or "")[:60]] for e in sec["login_failures"][:20]]
+        flow.append(_table(rows, col_widths=[60, 110, 90, 200]))
+    elif sec.get("note"):
+        flow.append(Paragraph(sec["note"], styles["small"]))
 
     av = data["device_availability"]
     flow.append(Paragraph("2 · Device Availability", styles["h2"]))
@@ -300,6 +303,19 @@ def daily_ops_pdf(data: dict) -> bytes:
         f"{al['medium']} med, {al['low']} low).", styles["body"]))
     flow.append(Spacer(1, 4))
 
+    sp = data.get("spane_access_events", {})
+    flow.append(Paragraph("7 · spane Access Events", styles["h2"]))
+    flow.append(Paragraph(
+        f"{len(sp.get('successful_logins', []))} login(s), "
+        f"{sp.get('total_failures', 0)} failed; "
+        f"{len(sp.get('after_hours_logins', []))} after-hours; "
+        f"{len(sp.get('new_source_ips', []))} new source IP(s).", styles["body"]))
+    if sp.get("login_failures"):
+        rows = [["Time", "User", "Source IP"]]
+        rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
+                 for e in sp["login_failures"][:20]]
+        flow.append(_table(rows, col_widths=[80, 120, 120]))
+
     doc.build(flow, onFirstPage=_page_footer, onLaterPages=_page_footer)
     return buf.getvalue()
 
@@ -309,9 +325,13 @@ def daily_ops_csv(data: dict) -> bytes:
     w = csv.writer(out)
     w.writerow(["section", "key", "value"])
     sec = data["security_events"]
-    w.writerow(["security", "total_failures", sec["total_failures"]])
-    w.writerow(["security", "unique_sources", sec["unique_sources"]])
-    w.writerow(["security", "after_hours_logins", len(sec["after_hours_logins"])])
+    w.writerow(["device_security", "total_failures", sec["total_failures"]])
+    w.writerow(["device_security", "unique_sources", sec["unique_sources"]])
+    w.writerow(["device_security", "after_hours_failures", sec.get("after_hours_failures", 0)])
+    sp = data.get("spane_access_events", {})
+    w.writerow(["spane_access", "total_failures", sp.get("total_failures", 0)])
+    w.writerow(["spane_access", "successful_logins", len(sp.get("successful_logins", []))])
+    w.writerow(["spane_access", "after_hours_logins", len(sp.get("after_hours_logins", []))])
     av = data["device_availability"]
     w.writerow(["availability", "availability_pct", av["availability_pct"]])
     w.writerow(["availability", "total_outages", av["total_outages"]])
@@ -332,6 +352,7 @@ def daily_ops_html(data: dict) -> bytes:
     ch = data["collection_health"]
     ah = data["agent_health"]
     al = data["alerts_summary"]
+    sp = data.get("spane_access_events", {})
     import html as _html
 
     def _diff_html(diff_text):
@@ -366,8 +387,8 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d1d5db;padd
 tr:nth-child(even){{background:#f3f4f6}}</style></head><body>
 <p style="color:#6b7280">spane — unified infrastructure visibility</p>
 <h1>Daily Operations Report</h1><p>{data['report_date']} — All Sites</p>
-<h2>Security</h2><p>{sec['total_failures']} login failures from {sec['unique_sources']} sources;
-{len(sec['after_hours_logins'])} after-hours logins; {len(sec['new_source_ips'])} new IPs.</p>
+<h2>Device Security Events</h2><p>{sec['total_failures']} device auth failures from {sec['unique_sources']} sources;
+{sec.get('after_hours_failures', 0)} after-hours.{(' ' + sec['note']) if sec.get('note') else ''}</p>
 <h2>Availability</h2><p>Fleet availability {av['availability_pct']}% · {av['total_outages']} outages
 ({av['total_downtime_minutes']} min downtime).</p>
 <h2>Collection Health</h2><p>{ch['successful']}/{ch['total_attempts']} succeeded; {ch['failed']} failed.</p>
@@ -375,6 +396,8 @@ tr:nth-child(even){{background:#f3f4f6}}</style></head><body>
 {diff_blocks}
 <h2>Agents &amp; Alerts</h2><p>Agents {ah['online']}/{ah['total_agents']} online ·
 Alerts {al['total']} ({al['critical']} crit, {al['high']} high).</p>
+<h2>spane Access Events</h2><p>{len(sp.get('successful_logins', []))} logins, {sp.get('total_failures', 0)} failed;
+{len(sp.get('after_hours_logins', []))} after-hours; {len(sp.get('new_source_ips', []))} new IPs.</p>
 <p style="color:#6b7280;font-size:12px">Generated by spane · {data['generated_at'][:19].replace('T',' ')} UTC</p>
 </body></html>"""
     return html.encode("utf-8")

@@ -135,6 +135,7 @@ function PreviewModal({ def, onClose }: { def: ReportDef; onClose: () => void })
   const data = q.data as Record<string, unknown> | undefined
   const changes = (data?.config_changes as ConfigChange[]) || []
   const sec = data?.security_events as { total_failures?: number } | undefined
+  const sp = data?.spane_access_events as { successful_logins?: unknown[]; total_failures?: number } | undefined
   const av = data?.device_availability as { availability_pct?: number; total_outages?: number } | undefined
   const ch = data?.collection_health as { successful?: number; total_attempts?: number } | undefined
 
@@ -151,8 +152,9 @@ function PreviewModal({ def, onClose }: { def: ReportDef; onClose: () => void })
           <div className="py-10 text-center text-sm text-red-600">Failed to build preview.</div>
         ) : def.endpoint === 'daily-ops' ? (
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-3 text-sm">
-              <Stat label="Login failures" value={sec?.total_failures ?? 0} />
+            <div className="grid grid-cols-4 gap-3 text-sm">
+              <Stat label="Device auth failures" value={sec?.total_failures ?? 0} />
+              <Stat label="spane logins" value={sp?.successful_logins?.length ?? 0} />
               <Stat label="Availability" value={`${av?.availability_pct ?? 100}%`} />
               <Stat label="Collection" value={`${ch?.successful ?? 0}/${ch?.total_attempts ?? 0}`} />
             </div>

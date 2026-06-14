@@ -17,6 +17,7 @@ def email_content(report_type: str, data: dict, when) -> tuple[str, str]:
     date_h = when.strftime("%b %d, %Y")
     if report_type == ReportType.DAILY_OPS:
         sec = data.get("security_events", {})
+        sp = data.get("spane_access_events", {})
         av = data.get("device_availability", {})
         ce = data.get("compliance_events", {})
         ch = data.get("collection_health", {})
@@ -25,8 +26,10 @@ def email_content(report_type: str, data: dict, when) -> tuple[str, str]:
         lines = [
             f"spane Daily Operations Report — {data.get('report_date', date_h)} — {site}",
             "", "Quick Summary:",
-            f"- Security: {sec.get('total_failures', 0)} login failures, "
-            f"{len(sec.get('after_hours_logins', []))} after-hours",
+            f"- Device Security: {sec.get('total_failures', 0)} device auth failures, "
+            f"{sec.get('after_hours_failures', 0)} after-hours",
+            f"- spane Access: {len(sp.get('successful_logins', []))} login(s), "
+            f"{sp.get('total_failures', 0)} failed",
             f"- Availability: {av.get('total_outages', 0)} outage(s) "
             f"({av.get('total_downtime_minutes', 0)} min, {av.get('availability_pct', 100)}%)",
             f"- Config Changes: {len(cc)} device(s) changed",
