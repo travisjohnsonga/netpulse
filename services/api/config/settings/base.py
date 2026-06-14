@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "apps.arp_mac",
     "apps.sso",
     "apps.frameworks",
+    "apps.reports",
 ]
 
 MIDDLEWARE = [
@@ -476,6 +477,12 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Generated reports (apps.reports) are written under MEDIA_ROOT/reports/{y}/{m}/.
+# Served only via the authenticated /api/reports/{id}/download/ endpoint — never
+# exposed as a public static route.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", str(BASE_DIR / "media")))
 
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},

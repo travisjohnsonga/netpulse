@@ -146,6 +146,28 @@ Settings → Integrations → Mist modal (`MistSettingsModal`: token save, Test 
 email/org, Sync Now, discovered-sites table). State is DB-backed so a connected account survives an
 api restart. Tests: `tests/test_mist.py` (21).
 
+**Recently completed (reports session — 2026-06-14):** **Reporting subsystem** — new app
+`apps.reports` (migration 0001; `GeneratedReport` history + `ReportSchedule`). Two reports:
+**Compliance Summary** (`build_compliance_summary` — fleet weighted scores grouped by site/role/platform
++ findings-by-severity + startup-mismatch list; reuses `device_score` with a shared role-consistency
+cache so a fleet report evaluates each rule once, not per device) and **Daily Operations**
+(`build_daily_ops` — security/login events from AuditLog, device availability from
+`Device.unreachable_since`, compliance events from AlertEvent, config changes from DeviceConfig,
+collection health from ConfigCollectionLog, agent health, alerts summary). Renderers: PDF (reportlab,
+branded header/alternating-row tables/score bar/page numbers), CSV, JSON, and HTML (daily-ops). APIs:
+`POST /api/reports/{compliance-summary,daily-ops}/` (format-aware → file download or JSON body),
+`GET /api/reports/` (history), `GET /api/reports/{id}/download/`, per-type
+`…/schedule/` (GET/POST) + `…/schedules/{id}/` CRUD. Reports stored under `MEDIA_ROOT/reports/{y}/{m}/`
+(new `MEDIA_ROOT` setting; served only via the authed download endpoint). Scheduled delivery wired into
+`run_scheduler` (`scheduled_reports` task, hour-gated + same-day-deduped, emails the artifact via the
+SMTP integration). Frontend `/reports` page (sidebar "Reports"): two report cards + Generate-Now modal
+(format/group-by/date) + Schedule modal (frequency/hour/day/format/recipients + existing-schedule
+management) + Recent Reports table. `tests/test_reports.py` (18). NOTE: the Compliance Summary's
+role-consistency VLAN checks hit live devices over REST (existing behavior), so a full-fleet PDF can
+take ~1 min; reports are on-demand/scheduled so this is acceptable. Daily-ops downtime is derived from
+`Device.unreachable_since` (no discrete outage-history table yet) — start-of-outage accurate,
+intra-day recovery approximate.
+
 **Recently completed (config-compliance session — 2026-06-14):**
 - **AOS-CX config-collection hang fixed** — Netmiko's interactive `send_command` blocked on the AOS-CX
   `--More--` pager; config backup now uses a dedicated path (`collect_aos_cx_config`): REST

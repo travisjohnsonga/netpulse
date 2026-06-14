@@ -47,6 +47,10 @@ AUDIT_LOG_RETENTION_DAYS = int(os.environ.get("AUDIT_LOG_RETENTION_DAYS", "90"))
 COLLECTOR_HEARTBEAT_INTERVAL_S = int(os.environ.get("COLLECTOR_HEARTBEAT_INTERVAL_S", "60"))
 # How often to sweep remote collectors and flip stale ones to OFFLINE.
 COLLECTOR_OFFLINE_CHECK_INTERVAL_S = int(os.environ.get("COLLECTOR_OFFLINE_CHECK_INTERVAL_S", "120"))
+# Scheduled-report delivery: check for due ReportSchedules frequently (the task
+# itself is hour-gated + same-day deduped, so a short interval just means it
+# fires promptly within the target hour).
+REPORT_SCHEDULE_INTERVAL_S = int(os.environ.get("REPORT_SCHEDULE_INTERVAL_S", str(15 * 60)))
 DEFAULT_TICK_S = 300
 
 
@@ -87,6 +91,7 @@ class Command(BaseCommand):
             ["audit_purge", AUDIT_PURGE_INTERVAL_S, self._purge_audit_log, False, None],
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
             ["collector_offline_sweep", COLLECTOR_OFFLINE_CHECK_INTERVAL_S, self._collector_offline_sweep, True, None],
+            ["scheduled_reports", REPORT_SCHEDULE_INTERVAL_S, self._run_scheduled_reports, False, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -247,3 +252,10 @@ class Command(BaseCommand):
         n = stale.update(status=Collector.Status.OFFLINE)
         if n:
             logger.info("scheduler: marked %d remote collector(s) offline (stale heartbeat)", n)
+
+    def _run_scheduled_reports(self):
+        # Generate + email any due report schedules (hour-gated, same-day deduped).
+        from apps.reports.tasks import run_due_schedules
+        fired = run_due_schedules()
+        if fired:
+            logger.info("scheduler: generated %d scheduled report(s)", fired)

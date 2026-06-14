@@ -17,6 +17,7 @@ import Checks from './pages/Checks'
 import CVE from './pages/CVE'
 import Lifecycle from './pages/Lifecycle'
 import Compliance from './pages/Compliance'
+import Reports from './pages/Reports'
 import Settings from './pages/Settings'
 import Polling from './pages/settings/Polling'
 import HostnameRules from './pages/settings/HostnameRules'
@@ -135,6 +136,7 @@ function AppRoutes() {
                 <Route path="/cve" element={<CVE />} />
                 <Route path="/lifecycle" element={<Lifecycle />} />
                 <Route path="/compliance" element={<Compliance />} />
+                <Route path="/reports" element={<Reports />} />
                 <Route path="/settings" element={<Settings />}>
                   <Route index element={<Navigate to="users" replace />} />
                   {/* Grouped (tabbed) settings */}

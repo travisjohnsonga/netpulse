@@ -1571,6 +1571,88 @@ export async function downloadFrameworkReport(key: string, name: string): Promis
   void name
 }
 
+// ── reports ──────────────────────────────────────────────────────────────────
+export type ReportTypeKey = 'compliance_summary' | 'daily_ops'
+
+export interface GeneratedReportRow {
+  id: number
+  report_type: ReportTypeKey
+  report_type_display: string
+  title: string
+  generated_at: string
+  generated_by_username: string | null
+  source: string
+  parameters: Record<string, unknown>
+  file_size: number | null
+  format: string
+}
+
+export interface ReportScheduleRow {
+  id: number
+  report_type: ReportTypeKey
+  report_type_display: string
+  frequency: 'daily' | 'weekly' | 'monthly'
+  hour: number
+  day_of_week: number
+  day_of_month: number
+  fmt: string
+  recipients: string[]
+  parameters: Record<string, unknown>
+  enabled: boolean
+  last_run: string | null
+  last_status: string
+}
+
+function _downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// Generate a report; downloads the file (pdf/csv/html) or returns the JSON body.
+export async function generateReport(
+  endpoint: 'compliance-summary' | 'daily-ops',
+  body: Record<string, unknown>,
+): Promise<unknown | void> {
+  const fmt = (body.format as string) || 'pdf'
+  if (fmt === 'json') {
+    const { data } = await api.post(`/reports/${endpoint}/`, body)
+    return data
+  }
+  const resp = await api.post(`/reports/${endpoint}/`, body, { responseType: 'blob' })
+  _downloadBlob(resp.data as Blob, `spane-${endpoint}.${fmt}`)
+}
+
+export async function fetchReports(): Promise<GeneratedReportRow[]> {
+  const { data } = await api.get<GeneratedReportRow[] | Paginated<GeneratedReportRow>>('/reports/')
+  return unwrap(data)
+}
+
+export async function downloadReport(id: number, filename: string): Promise<void> {
+  const resp = await api.get(`/reports/${id}/download/`, { responseType: 'blob' })
+  _downloadBlob(resp.data as Blob, filename)
+}
+
+export async function fetchReportSchedules(endpoint: 'compliance-summary' | 'daily-ops'): Promise<ReportScheduleRow[]> {
+  const { data } = await api.get<ReportScheduleRow[]>(`/reports/${endpoint}/schedule/`)
+  return data
+}
+
+export async function createReportSchedule(
+  endpoint: 'compliance-summary' | 'daily-ops',
+  body: Record<string, unknown>,
+): Promise<ReportScheduleRow> {
+  const { data } = await api.post<ReportScheduleRow>(`/reports/${endpoint}/schedule/`, body)
+  return data
+}
+
+export async function deleteReportSchedule(id: number): Promise<void> {
+  await api.delete(`/reports/schedules/${id}/`)
+}
+
 // ── Logs ─────────────────────────────────────────────────────────────────────
 
 export interface LogEntry {

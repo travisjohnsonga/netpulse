@@ -153,8 +153,12 @@ def get_interface_score(findings) -> float | None:
 
 
 # ── component 3: role consistency ────────────────────────────────────────────
-def get_role_consistency_findings(device) -> list[dict]:
-    """This device's row from every enabled role-consistency rule that scopes it."""
+def get_role_consistency_findings(device, role_cache=None) -> list[dict]:
+    """This device's row from every enabled role-consistency rule that scopes it.
+
+    ``role_cache`` (an optional dict) memoises each rule's full-group evaluation
+    by rule id, so scoring a whole fleet doesn't re-run the same rule once per
+    member device (O(N²) → O(N))."""
     from .models import RoleConsistencyRule
     from .role_consistency import run_role_consistency
 
@@ -167,7 +171,12 @@ def get_role_consistency_findings(device) -> list[dict]:
         if rule.site_id and rule.site_id != device.site_id:
             continue
         try:
-            res = run_role_consistency(rule, persist=False)
+            if role_cache is not None and rule.id in role_cache:
+                res = role_cache[rule.id]
+            else:
+                res = run_role_consistency(rule, persist=False)
+                if role_cache is not None:
+                    role_cache[rule.id] = res
         except Exception as exc:  # noqa: BLE001 — one bad rule must not break the tab
             logger.warning("role-consistency %s failed for %s: %s", rule.name, device.hostname, exc)
             continue
@@ -217,13 +226,16 @@ def get_startup_status(device) -> dict | None:
 
 
 # ── overall ──────────────────────────────────────────────────────────────────
-def calculate_device_compliance_score(device) -> dict:
-    """Weighted overall score + grade + per-component breakdown + findings."""
+def calculate_device_compliance_score(device, role_cache=None) -> dict:
+    """Weighted overall score + grade + per-component breakdown + findings.
+
+    Pass a shared ``role_cache`` dict when scoring many devices (e.g. a fleet
+    report) to evaluate each role-consistency rule once instead of per device."""
     template_results = get_template_results(device)
     template_score = get_template_score(template_results)
     iface_findings = get_interface_rule_findings(device)
     iface_score = get_interface_score(iface_findings)
-    role_findings = get_role_consistency_findings(device)
+    role_findings = get_role_consistency_findings(device, role_cache=role_cache)
     role_score = get_role_score(role_findings)
     startup = get_startup_status(device)
 
