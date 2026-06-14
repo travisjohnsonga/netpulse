@@ -174,6 +174,56 @@ take ~1 min; reports are on-demand/scheduled so this is acceptable. Daily-ops do
 `Device.unreachable_since` (no discrete outage-history table yet) — start-of-outage accurate,
 intra-day recovery approximate.
 
+**Recently completed (Operations report overhaul — supersedes much of the block above):** the Daily
+Operations report's data queries were corrected and the report was substantially expanded.
+`apps/reports/daily_ops.py` now builds via `build_ops_report(period, end_date, site_ids)`;
+`build_daily_ops()` is a thin `period="daily"` wrapper (back-compat). Section-by-section:
+- **Device availability** is reconstructed from `device-unreachable` **AlertEvent** history (created_at =
+  down, resolved_at = recovery, still-FIRING = still down) — captures outages that recovered the same
+  day, which `Device.unreachable_since` (reset on recovery) could not.
+- **Security events (§1)** = authentication **failures FROM network devices**, mined from OpenSearch
+  syslog (`netpulse-logs-*` via `apps.logs.views._execute`). Failures are queried **separately** with
+  `must_not` on success + collector-noise (`host key verification`) phrases — successes can outnumber
+  failures ~400:1 and would otherwise crowd them out of the size cap. Bare `radius`/`tacacs` are NOT
+  failure patterns (they match "succeeded with RADIUS"). Grouped by user with brute-force / multi-device
+  flags; **success-after-failures** flags only ≥3 failures on the SAME device within 15 min before a
+  success. Degrades gracefully (empty + "forward TACACS+/RADIUS syslog" note) when OpenSearch is down.
+- **spane Access Events (§8, new)** = spane's OWN audit (`AuditLog`): failed logins, after-hours logins,
+  new source IPs, admin/config actions — routine successful logins are NOT listed.
+- **Compliance (§3)** uses **as-of scoring** from `ComplianceTemplateResult` (latest per device ≤ report
+  day, no live calls) → fleet score/grade + day-over-day trend (degraded/improved), unsaved-config
+  device list (hostname/site/last-checked), per-device top issues. (`ComplianceResult` has no
+  score/checked_at — don't use it for scores.)
+- **Service Check Failures (§4, new)** from `CheckResult` (down/degraded), grouped per check with
+  duration stats and **correlation** to device outages (±5 min).
+- **Collection Health (§6)** adds a per-status breakdown (success/unchanged/timeout/auth_failed/…) +
+  success rate. (`collect_one()` already writes `ConfigCollectionLog` on every exit path.)
+- **Alerts (§7)** gains a critical/high event list.
+- **Reporting periods:** daily / weekly / monthly / quarterly (`PERIOD_OPTIONS`, `_period_bounds`).
+  Multi-day periods add period-over-period **comparison** and per-day **trend** series (compliance avg
+  via ORM `TruncDate`, downtime bucketed from outages, security via one OpenSearch `date_histogram`).
+  New endpoint **`POST /api/reports/ops/`** `{period,end_date,format,site_ids}` (`OpsReportView`);
+  `/api/reports/daily-ops/` still works. `ReportSchedule.Frequency` gains **QUARTERLY** (reports
+  migration **0002**; fires the 1st of Jan/Apr/Jul/Oct); the report period rides in
+  `schedule.parameters`. Period-aware filenames (`spane-{daily,weekly,monthly,quarterly}-ops-*`).
+- **PDF redesign** (`render.daily_ops_pdf`): page-1 executive summary (branded title + four
+  colour-coded stat boxes + numbered one-line section summaries + comparison + trend charts), then
+  **conditional** detail pages (compliance always; others only when they have content). Branded
+  header/footer on every page ("CONFIDENTIAL — Internal Use Only", page numbers), navy section bars,
+  accent/alternating tables, grade colour chips, 24h outage timeline. New palette + helpers
+  (`_daily_styles`, `_section`, `_dtable`, `_stat_box`, `_page_decorator`, `_outage_timeline`,
+  `_trend_chart`).
+- **Report history delete:** `GeneratedReportViewSet` is now `DestroyModelMixin` (DELETE
+  `/api/reports/{id}/`, removes the file too) + `POST /api/reports/bulk-delete/` `{ids:[…]}`; the
+  frontend Recent Reports table has per-row + select-all checkboxes and a bulk "Delete N selected".
+- **Security (CodeQL exception-exposure):** `_generate_and_respond` scrubs the `ValueError` via
+  `safe_detail`; `frameworks/views.py` (list/retrieve/PDF) and the devices `compliance` endpoint wrap
+  their live-data/PDF operations in `internal_error_response` so no exception text reaches clients.
+  (esbuild Dependabot alert was already resolved — lockfile is 0.25.12 with an `overrides` pin.)
+- `setup.sh` validates `INTERNAL_DNS` and clears a non-IP value (e.g. a literal `10.x.x.x`) so a bad
+  placeholder can't trigger docker-compose's "invalid DNS address" boot failure.
+`tests/test_reports.py` ≈49 tests.
+
 **Recently completed (config-compliance session — 2026-06-14):**
 - **AOS-CX config-collection hang fixed** — Netmiko's interactive `send_command` blocked on the AOS-CX
   `--More--` pager; config backup now uses a dedicated path (`collect_aos_cx_config`): REST

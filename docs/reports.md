@@ -22,41 +22,71 @@ whole fleet**, not once per device.
 `POST /api/reports/compliance-summary/` — body
 `{format, group_by, site_ids, include_score_breakdown, as_of}`.
 
-## Daily Operations
+## Operations report (daily / weekly / monthly / quarterly)
 
-A single day's operational signal (default: yesterday, UTC):
+The Operations report covers a reporting **period** (default: yesterday, UTC).
+Daily shows raw events; weekly/monthly/quarterly add period-over-period
+comparison and per-day trend charts. Sections:
 
-- **Security** — login failures/successes, after-hours logins, new source IPs.
-- **Availability** — outages (from `Device.unreachable_since`), fleet availability %.
-- **Compliance events** — new/resolved failures, currently-failing devices.
-- **Config changes** — every changed `DeviceConfig`, with the **full unified diff**
-  (computed on the fly from previous vs current config), `lines_added`/`removed`,
-  site/role/platform, and `previous_backup_at`/`current_backup_at`.
-- **Collection health** — success rate + failed devices.
-- **Agent health** + **alerts summary** (by severity / type).
+- **Device security events** — authentication **failures reported BY network
+  devices**, mined from the normalized syslog in OpenSearch (`netpulse-logs-*`).
+  Grouped by user with brute-force / multi-device flags; a *success-after-
+  failures* finding flags ≥3 failures on the same device shortly before a
+  success (possible breach). Collector-side `host key verification` noise and
+  RADIUS/TACACS *successes* are excluded. Degrades to a "forward TACACS+/RADIUS
+  syslog" note when OpenSearch is unavailable.
+- **Availability** — outages reconstructed from `device-unreachable` AlertEvent
+  history (so same-day recoveries are captured), fleet availability %, a 24h
+  outage timeline.
+- **Compliance status** — fleet score + grade (as-of `ComplianceTemplateResult`,
+  no live calls), day-over-day trend (degraded/improved), unsaved-config device
+  list (run `write memory`), and devices below threshold with top issues.
+- **Service check failures** — `ServiceCheck`/`CheckResult` down/degraded,
+  grouped per check with duration stats and **correlation to device outages**.
+- **Config changes** — every changed `DeviceConfig` with the **full unified
+  diff**, `lines_added`/`removed`, site/role/platform, backup timestamps.
+- **Collection health** — per-status breakdown (success/unchanged/timeout/…) +
+  success rate + failed devices.
+- **Agent health & alerts** — agents online, alerts by severity, critical list.
+- **spane access events** — spane's OWN audit (`AuditLog`): failed logins,
+  after-hours logins, new source IPs, admin/config actions (not routine logins).
 
-The PDF renders a config-change summary table followed by per-device
-colour-coded diffs (green adds, red removes, grey context, Courier). The HTML
-format mirrors this. The **Preview** button on the Reports page shows the same
-config diffs in-browser (expandable, syntax-highlighted) before you download.
+The redesigned PDF leads with a one-page **executive summary** (four colour-coded
+stat boxes + one-line section summaries + trend charts), then **conditional**
+detail pages (compliance always; the rest only when they have something to
+report), with a branded header/footer ("CONFIDENTIAL — Internal Use Only") on
+every page. HTML mirrors the sections; the **Preview** button shows config diffs
+in-browser before download.
 
-`POST /api/reports/daily-ops/` — body `{format, date, site_ids}`.
+- `POST /api/reports/ops/` — body `{period, end_date, format, site_ids}`
+  (`period` = `daily|weekly|monthly|quarterly`).
+- `POST /api/reports/daily-ops/` — body `{format, date, site_ids}` (still works).
 
 ## Scheduling
 
-Schedule recurring delivery (daily / weekly / monthly at a UTC hour) to a list
-of email recipients. The `run_scheduler` loop checks for due schedules each tick
+Schedule recurring delivery (daily / weekly / monthly / **quarterly** at a UTC
+hour) to a list of email recipients; the report period rides in the schedule's
+`parameters`. The `run_scheduler` loop checks for due schedules each tick
 (hour-gated + same-day-deduped) and emails the rendered artifact via the SMTP
-integration with a "Quick Summary" body.
+integration with a "Quick Summary" body. Quarterly fires on the 1st of
+Jan/Apr/Jul/Oct.
 
 - `GET|POST /api/reports/{compliance-summary,daily-ops}/schedule/`
 - `PATCH|DELETE /api/reports/schedules/{id}/`
 - `GET /api/reports/` — generation history · `GET /api/reports/{id}/download/`.
 
+## Managing report history
+
+- `DELETE /api/reports/{id}/` removes a report (and its stored file).
+- `POST /api/reports/bulk-delete/` `{ids:[…]}` removes many at once.
+- The Recent Reports table has per-row and select-all checkboxes with a bulk
+  "Delete N selected" action.
+
 ## Limitations
 
 - Compliance Summary role-consistency VLAN checks contact live devices over REST
   (existing behavior), so a full-fleet PDF can take ~1 minute.
-- Daily-ops downtime is derived from `Device.unreachable_since` (no discrete
-  outage-history table yet) — start-of-outage is accurate; intra-day recovery is
-  approximate.
+- Device security events depend on devices forwarding auth syslog to spane
+  (UDP/TCP 514); without it the section shows a setup note.
+- Trend/aggregate accuracy is bounded by retained history (syslog in OpenSearch,
+  `ComplianceTemplateResult`, outage AlertEvents).

@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 
-from apps.core.errors import safe_detail
+from apps.core.errors import internal_error_response, safe_detail
 from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
 
@@ -571,7 +571,12 @@ class DeviceViewSet(viewsets.ModelViewSet):
         from apps.compliance.serializers import ComplianceTemplateResultSerializer
         device = self.get_object()
 
-        data = calculate_device_compliance_score(device)
+        # Scoring can reach live devices over REST (role-consistency checks); a
+        # failure must not leak exception detail to the client (CodeQL).
+        try:
+            data = calculate_device_compliance_score(device)
+        except Exception as exc:  # noqa: BLE001
+            return internal_error_response(exc, logger, f"device compliance score {device.pk}")
         template_data = ComplianceTemplateResultSerializer(data["template_results"], many=True).data
         return Response({
             # Back-compat keys (template-only).

@@ -9,6 +9,8 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.errors import internal_error_response
+
 from .engine import evaluate_framework, framework_summary
 from .models import RegulatoryFramework
 
@@ -29,13 +31,19 @@ class RegulatoryFrameworkViewSet(viewsets.ViewSet):
 
     def list(self, request):
         frameworks = RegulatoryFramework.objects.filter(enabled=True).prefetch_related("controls")
-        return Response([framework_summary(fw) for fw in frameworks])
+        try:
+            return Response([framework_summary(fw) for fw in frameworks])
+        except Exception as exc:  # noqa: BLE001 — evaluators touch live data; never leak detail
+            return internal_error_response(exc, logger, "framework list")
 
     def retrieve(self, request, key=None):
         fw = RegulatoryFramework.objects.filter(key=key).prefetch_related("controls").first()
         if fw is None:
             return Response({"error": "Framework not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(evaluate_framework(fw))
+        try:
+            return Response(evaluate_framework(fw))
+        except Exception as exc:  # noqa: BLE001
+            return internal_error_response(exc, logger, f"framework assessment {key}")
 
     @action(detail=True, methods=["get"], url_path="report")
     def report(self, request, key=None):
@@ -49,9 +57,12 @@ class RegulatoryFrameworkViewSet(viewsets.ViewSet):
             return Response(
                 {"error": "PDF generation unavailable (reportlab not installed)."},
                 status=status.HTTP_501_NOT_IMPLEMENTED)
-        report_data = evaluate_framework(fw)
-        generated_at = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
-        pdf_bytes = build_evidence_pdf(report_data, generated_at=generated_at)
+        try:
+            report_data = evaluate_framework(fw)
+            generated_at = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
+            pdf_bytes = build_evidence_pdf(report_data, generated_at=generated_at)
+        except Exception as exc:  # noqa: BLE001 — scrub PDF/eval errors
+            return internal_error_response(exc, logger, f"framework PDF {key}")
         resp = HttpResponse(pdf_bytes, content_type="application/pdf")
         fname = f"spane-{fw.key}-evidence-{timezone.now():%Y%m%d}.pdf"
         resp["Content-Disposition"] = f'attachment; filename="{fname}"'

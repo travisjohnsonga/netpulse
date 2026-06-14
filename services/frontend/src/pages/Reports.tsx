@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  generateReport, fetchReports, downloadReport,
+  generateReport, fetchReports, downloadReport, deleteReport, bulkDeleteReports,
   fetchReportSchedules, createReportSchedule, deleteReportSchedule,
   type GeneratedReportRow, type ReportScheduleRow,
 } from '../api/client'
@@ -191,9 +191,39 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 function RecentReports({ rows, loading }: { rows: GeneratedReportRow[]; loading: boolean }) {
+  const qc = useQueryClient()
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [busy, setBusy] = useState(false)
+
+  const refresh = () => { setSelected(new Set()); qc.invalidateQueries({ queryKey: ['reports'] }) }
+  const allChecked = rows.length > 0 && selected.size === rows.length
+  const toggle = (id: number) =>
+    setSelected((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleAll = () =>
+    setSelected(allChecked ? new Set() : new Set(rows.map((r) => r.id)))
+
+  const removeOne = async (id: number) => {
+    if (!confirm('Delete this report?')) return
+    setBusy(true)
+    try { await deleteReport(id); refresh() } finally { setBusy(false) }
+  }
+  const removeSelected = async () => {
+    if (selected.size === 0 || !confirm(`Delete ${selected.size} report(s)?`)) return
+    setBusy(true)
+    try { await bulkDeleteReports([...selected]); refresh() } finally { setBusy(false) }
+  }
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-      <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-800 dark:text-gray-100">Recent Reports</div>
+      <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <span className="font-semibold text-gray-800 dark:text-gray-100">Recent Reports</span>
+        {selected.size > 0 && (
+          <button onClick={removeSelected} disabled={busy}
+            className="px-3 py-1.5 text-sm rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium">
+            Delete {selected.size} selected
+          </button>
+        )}
+      </div>
       {loading ? (
         <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
       ) : rows.length === 0 ? (
@@ -202,6 +232,9 @@ function RecentReports({ rows, loading }: { rows: GeneratedReportRow[]; loading:
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left">
+              <th className="px-5 py-2 w-8">
+                <input type="checkbox" checked={allChecked} onChange={toggleAll} aria-label="Select all" />
+              </th>
               <th className="px-5 py-2 font-medium">Report</th>
               <th className="px-5 py-2 font-medium">Generated</th>
               <th className="px-5 py-2 font-medium">By</th>
@@ -213,14 +246,20 @@ function RecentReports({ rows, loading }: { rows: GeneratedReportRow[]; loading:
           <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
             {rows.map((r) => (
               <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                <td className="px-5 py-2">
+                  <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)}
+                    aria-label={`Select ${r.title}`} />
+                </td>
                 <td className="px-5 py-2 text-gray-800 dark:text-gray-200">{r.title}</td>
                 <td className="px-5 py-2 text-gray-500 dark:text-gray-400">{new Date(r.generated_at).toLocaleString()}</td>
                 <td className="px-5 py-2 text-gray-500 dark:text-gray-400">{r.generated_by_username || r.source}</td>
                 <td className="px-5 py-2 uppercase text-xs text-gray-500 dark:text-gray-400">{r.format}</td>
                 <td className="px-5 py-2 text-gray-500 dark:text-gray-400">{fmtBytes(r.file_size)}</td>
-                <td className="px-5 py-2">
+                <td className="px-5 py-2 whitespace-nowrap">
                   <button onClick={() => downloadReport(r.id, `${r.title}.${r.format}`)}
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400">Download</button>
+                  <button onClick={() => removeOne(r.id)} disabled={busy}
+                    className="ml-3 text-red-600 hover:text-red-800 dark:text-red-400 disabled:opacity-50">Delete</button>
                 </td>
               </tr>
             ))}

@@ -1636,6 +1636,15 @@ export async function downloadReport(id: number, filename: string): Promise<void
   _downloadBlob(resp.data as Blob, filename)
 }
 
+export async function deleteReport(id: number): Promise<void> {
+  await api.delete(`/reports/${id}/`)
+}
+
+export async function bulkDeleteReports(ids: number[]): Promise<{ deleted: number }> {
+  const { data } = await api.post<{ deleted: number }>('/reports/bulk-delete/', { ids })
+  return data
+}
+
 export async function fetchReportSchedules(endpoint: 'compliance-summary' | 'daily-ops'): Promise<ReportScheduleRow[]> {
   const { data } = await api.get<ReportScheduleRow[]>(`/reports/${endpoint}/schedule/`)
   return data

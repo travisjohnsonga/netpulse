@@ -507,3 +507,120 @@ class TestScheduling:
         fired = run_due_schedules(now=now)
         assert fired == 1
         assert GeneratedReport.objects.filter(source="scheduled").count() == 1
+
+
+# ── Reporting periods (weekly/monthly/quarterly) ─────────────────────────────
+
+class TestPeriods:
+    def test_period_bounds(self):
+        import datetime as _dt
+        from apps.reports.daily_ops import _period_bounds
+        # 2026-06-13 is a Saturday.
+        s, e, sd, ed, label = _period_bounds("daily", "2026-06-13")
+        assert sd == _dt.date(2026, 6, 13) and ed == sd and label == "June 13, 2026"
+        s, e, sd, ed, label = _period_bounds("weekly", "2026-06-13")
+        assert sd == _dt.date(2026, 6, 7) and ed == _dt.date(2026, 6, 13)
+        assert "Week" in label
+        s, e, sd, ed, label = _period_bounds("monthly", "2026-06-13")
+        assert sd == _dt.date(2026, 6, 1) and ed == _dt.date(2026, 6, 13) and label == "June 2026"
+        s, e, sd, ed, label = _period_bounds("quarterly", "2026-06-13")
+        assert sd == _dt.date(2026, 4, 1) and label.startswith("Q2 2026")
+
+    def test_build_ops_report_weekly_has_period_meta_and_trends(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        from apps.reports.daily_ops import build_ops_report
+        data = build_ops_report(period="weekly", end_date="2026-06-13")
+        assert data["period_name"] == "weekly"
+        assert data["report_title"] == "Weekly Operations Report"
+        assert data["trends"] is not None and len(data["trends"]["days"]) == 7
+        assert data["comparison"] is not None
+        assert "security_failures_change_pct" in data["comparison"]
+
+    def test_daily_has_no_trends(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        from apps.reports.daily_ops import build_ops_report
+        data = build_ops_report(period="daily", end_date="2026-06-13")
+        assert data["period_name"] == "daily"
+        assert data["trends"] is None and data["comparison"] is None
+
+    def test_ops_endpoint_weekly_pdf(self, fleet, auth_client, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        resp = auth_client.post("/api/reports/ops/",
+                                {"period": "weekly", "format": "pdf", "end_date": "2026-06-13"},
+                                format="json")
+        assert resp.status_code == 200
+        assert resp["Content-Type"] == "application/pdf"
+        assert b"".join(resp.streaming_content)[:5] == b"%PDF-"
+
+    def test_ops_endpoint_monthly_json(self, fleet, auth_client, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        resp = auth_client.post("/api/reports/ops/",
+                                {"period": "monthly", "format": "json", "end_date": "2026-06-13"},
+                                format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["period_name"] == "monthly" and body["report_title"] == "Monthly Operations Report"
+
+    def test_quarterly_schedule_is_due(self):
+        import datetime as _dt
+        from apps.reports.tasks import _is_due
+        sched = ReportSchedule(report_type=ReportType.DAILY_OPS, frequency="quarterly",
+                               hour=7, day_of_month=1)
+        due = timezone.make_aware(_dt.datetime(2026, 7, 1, 7, 5))      # Jul 1
+        off = timezone.make_aware(_dt.datetime(2026, 6, 1, 7, 5))      # Jun 1 (not a quarter start)
+        assert _is_due(sched, due) is True
+        assert _is_due(sched, off) is False
+
+    def test_download_filename_period(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        from apps.reports.generate import generate
+        from apps.reports.storage import download_filename
+        rep, _content, _data = generate(ReportType.DAILY_OPS, "pdf",
+                                        {"period": "weekly", "end_date": "2026-06-13"}, source="test")
+        assert download_filename(rep).startswith("spane-weekly-ops-")
+
+
+# ── Delete (single + bulk) ───────────────────────────────────────────────────
+
+class TestDelete:
+    def _make(self, auth_client, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        auth_client.post("/api/reports/daily-ops/", {"format": "pdf"}, format="json")
+
+    def test_delete_single(self, fleet, auth_client, monkeypatch):
+        self._make(auth_client, monkeypatch)
+        rep = GeneratedReport.objects.first()
+        import os
+        from django.conf import settings
+        path = os.path.join(settings.MEDIA_ROOT, rep.file_path)
+        assert os.path.exists(path)
+        resp = auth_client.delete(f"/api/reports/{rep.id}/")
+        assert resp.status_code == 204
+        assert not GeneratedReport.objects.filter(pk=rep.id).exists()
+        assert not os.path.exists(path)  # file cleaned up
+
+    def test_bulk_delete(self, fleet, auth_client, monkeypatch):
+        self._make(auth_client, monkeypatch)
+        self._make(auth_client, monkeypatch)
+        ids = list(GeneratedReport.objects.values_list("id", flat=True))
+        assert len(ids) == 2
+        resp = auth_client.post("/api/reports/bulk-delete/", {"ids": ids}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 2
+        assert GeneratedReport.objects.count() == 0
+
+    def test_bulk_delete_requires_ids(self, fleet, auth_client):
+        resp = auth_client.post("/api/reports/bulk-delete/", {"ids": []}, format="json")
+        assert resp.status_code == 400
+
+
+class TestExceptionScrubbing:
+    def test_value_error_is_scrubbed(self, fleet, auth_client, monkeypatch):
+        # A ValueError from generate() must not echo its raw text to the client.
+        def _boom(*a, **k):
+            raise ValueError("sensitive internal detail /srv/secret")
+        monkeypatch.setattr("apps.reports.views.generate", _boom)
+        resp = auth_client.post("/api/reports/daily-ops/", {"format": "pdf"}, format="json")
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "Invalid report request."
+        assert "sensitive" not in str(resp.content)
