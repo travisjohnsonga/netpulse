@@ -302,8 +302,34 @@ def daily_ops_pdf(data: dict) -> bytes:
             flow.append(Paragraph(
                 f"↑ {d['hostname']} ({d['score_prev']}→{d['score_today']})", styles["small"]))
 
+    svc = data.get("service_checks", {})
+    flow.append(Paragraph("4 · Service Check Failures", styles["h2"]))
+    if not svc.get("configured"):
+        flow.append(Paragraph(svc.get("note") or "No service checks configured.", styles["small"]))
+    else:
+        flow.append(Paragraph(
+            f"{svc['total_executions']} check execution(s): {svc['total_passing']} passed"
+            f"{f' ({svc['pass_rate']}%)' if svc.get('pass_rate') is not None else ''}, "
+            f"{svc['total_failures']} failed across {svc['affected_checks']} check(s).",
+            styles["body"]))
+        if svc.get("summaries"):
+            rows = [["Check", "Device", "Type", "Fails", "Avg Dur", "Window"]]
+            for s in svc["summaries"][:25]:
+                dur = f"{s['avg_duration_s']}s" if s.get("avg_duration_s") is not None else "—"
+                win = f"{(s['first_failure'] or '')[11:16]}–{(s['last_failure'] or '')[11:16]}"
+                rows.append([s["check_name"][:24], (s["device"] or "")[:16], s["check_type"],
+                             s["failure_count"], dur, win])
+            flow.append(_table(rows, col_widths=[140, 110, 50, 45, 60, 95], header_bg=RED))
+            for s in svc["summaries"][:25]:
+                if s.get("correlated_outage"):
+                    co = s["correlated_outage"]
+                    flow.append(Paragraph(
+                        f"⟲ Correlated with device outage: {co['hostname']} was unreachable "
+                        f"{(co['down_at'] or '')[11:16]}–{(co.get('recovered_at') or 'now')[11:16]} "
+                        f"(matches {s['check_name']} failures).", styles["small"]))
+
     cc = data["config_changes"]
-    flow.append(Paragraph("4 · Configuration Changes", styles["h2"]))
+    flow.append(Paragraph("5 · Configuration Changes", styles["h2"]))
     if not cc:
         flow.append(Paragraph("No config changes detected.", styles["small"]))
     else:
@@ -325,7 +351,7 @@ def daily_ops_pdf(data: dict) -> bytes:
             flow.append(Spacer(1, 8))
 
     ch = data["collection_health"]
-    flow.append(Paragraph("5 · Collection Health", styles["h2"]))
+    flow.append(Paragraph("6 · Collection Health", styles["h2"]))
     flow.append(Paragraph(
         f"{ch['total_attempts']} attempt(s) across {ch.get('device_count', 0)} device(s) — "
         f"{ch.get('success_rate', 0)}% success.", styles["body"]))
@@ -341,7 +367,7 @@ def daily_ops_pdf(data: dict) -> bytes:
 
     ah = data["agent_health"]
     al = data["alerts_summary"]
-    flow.append(Paragraph("6 · Agent Health & Alerts", styles["h2"]))
+    flow.append(Paragraph("7 · Agent Health & Alerts", styles["h2"]))
     flow.append(Paragraph(
         f"Agents: {ah['online']}/{ah['total_agents']} online. "
         f"Alerts: {al['total']} ({al['critical']} crit, {al['high']} high, "
@@ -349,7 +375,7 @@ def daily_ops_pdf(data: dict) -> bytes:
     flow.append(Spacer(1, 4))
 
     sp = data.get("spane_access_events", {})
-    flow.append(Paragraph("7 · spane Access Events", styles["h2"]))
+    flow.append(Paragraph("8 · spane Access Events", styles["h2"]))
     flow.append(Paragraph(
         f"{sp.get('total_failures', 0)} failed login(s); "
         f"{len(sp.get('after_hours_logins', []))} after-hours login(s); "
@@ -395,6 +421,11 @@ def daily_ops_csv(data: dict) -> bytes:
     w.writerow(["compliance", "fleet_avg_today", ce.get("fleet_avg_today")])
     w.writerow(["compliance", "fleet_avg_prev", ce.get("fleet_avg_prev")])
     w.writerow(["compliance", "total_failing_devices", ce.get("total_failing_devices", 0)])
+    svc = data.get("service_checks", {})
+    w.writerow(["service_checks", "total_executions", svc.get("total_executions", 0)])
+    w.writerow(["service_checks", "total_failures", svc.get("total_failures", 0)])
+    w.writerow(["service_checks", "pass_rate", svc.get("pass_rate")])
+    w.writerow(["service_checks", "affected_checks", svc.get("affected_checks", 0)])
     av = data["device_availability"]
     w.writerow(["availability", "availability_pct", av["availability_pct"]])
     w.writerow(["availability", "total_outages", av["total_outages"]])
@@ -405,6 +436,11 @@ def daily_ops_csv(data: dict) -> bytes:
     w.writerow(["collection", "success_rate", ch.get("success_rate", 0)])
     for s in ch.get("by_status", []):
         w.writerow(["collection_status", s["status"], s["count"]])
+    w.writerow([])
+    w.writerow(["service_check", "device", "type", "failures", "avg_duration_ms", "correlated_outage"])
+    for s in svc.get("summaries", []):
+        w.writerow([s["check_name"], s["device"], s["check_type"], s["failure_count"],
+                    s.get("avg_duration_ms"), "yes" if s.get("correlated_outage") else ""])
     w.writerow([])
     w.writerow(["config_change_device", "detected_at", "lines_added", "lines_removed"])
     for c in data["config_changes"]:
@@ -477,6 +513,25 @@ def daily_ops_html(data: dict) -> bytes:
         failing_table = ("<table><tr><th>Device</th><th>Score</th><th>Grade</th><th>Site</th></tr>"
                          f"{frows}</table>")
 
+    # Service check failures.
+    svc = data.get("service_checks", {})
+    if not svc.get("configured"):
+        svc_block = f"<p>{_html.escape(svc.get('note') or 'No service checks configured.')}</p>"
+    else:
+        srows = "".join(
+            f"<tr><td>{_html.escape(s['check_name'])}</td><td>{_html.escape(s['device'] or '')}</td>"
+            f"<td>{s['check_type']}</td><td>{s['failure_count']}</td>"
+            f"<td>{(str(s['avg_duration_s']) + 's') if s.get('avg_duration_s') is not None else '—'}</td>"
+            f"<td>{(s['first_failure'] or '')[11:16]}–{(s['last_failure'] or '')[11:16]}</td>"
+            f"<td>{'⟲ outage' if s.get('correlated_outage') else ''}</td></tr>"
+            for s in svc.get("summaries", []))
+        svc_block = (
+            f"<p>{svc['total_executions']} executions: {svc['total_passing']} passed"
+            f"{f' ({svc['pass_rate']}%)' if svc.get('pass_rate') is not None else ''}, "
+            f"{svc['total_failures']} failed across {svc['affected_checks']} check(s).</p>"
+            + ("<table><tr><th>Check</th><th>Device</th><th>Type</th><th>Fails</th>"
+               f"<th>Avg Dur</th><th>Window</th><th>Note</th></tr>{srows}</table>" if srows else ""))
+
     # Collection status breakdown.
     coll_table = ""
     if ch.get("by_status"):
@@ -508,6 +563,7 @@ across {sec.get('device_count', 0)} devices.{(' ' + sec['note']) if sec.get('not
 <h2>Compliance Status</h2><p>{compliance_line}</p>{failing_table}
 <h2>Availability</h2><p>Fleet availability {av['availability_pct']}% · {av['total_outages']} outages
 ({av['total_downtime_minutes']} min downtime).</p>
+<h2>Service Check Failures</h2>{svc_block}
 <h2>Collection Health</h2><p>{ch['total_attempts']} attempts across {ch.get('device_count', 0)} devices — {ch.get('success_rate', 0)}% success.</p>{coll_table}
 <h2>Config Changes</h2><table><tr><th>Device</th><th>Time</th><th>+/-</th><th>Summary</th></tr>{rows or '<tr><td colspan=4>None</td></tr>'}</table>
 {diff_blocks}

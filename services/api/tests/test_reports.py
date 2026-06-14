@@ -62,8 +62,8 @@ class TestDailyOps:
     def test_sections_present(self, fleet):
         data = dops.build_daily_ops()
         for key in ("security_events", "spane_access_events", "device_availability",
-                    "compliance_events", "config_changes", "collection_health",
-                    "agent_health", "alerts_summary"):
+                    "compliance_events", "service_checks", "config_changes",
+                    "collection_health", "agent_health", "alerts_summary"):
             assert key in data
 
     def test_spane_access_login_failures_counted(self, fleet, monkeypatch):
@@ -204,6 +204,55 @@ class TestDailyOps:
         assert any(r["hostname"] == "sw-1" for r in ce["failing_devices"])
         assert any(r["hostname"] == "sw-1" and r["delta"] == -20.0 for r in ce["degraded"])
         assert any(r["hostname"] == "sw-2" and r["delta"] == 30.0 for r in ce["improved"])
+
+    def test_service_checks_not_configured(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        data = dops.build_daily_ops()
+        svc = data["service_checks"]
+        assert svc["configured"] is False
+        assert "Settings → Checks" in svc["note"]
+
+    def test_service_check_failures_and_correlation(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        import datetime as _dt
+        from apps.alerts.models import AlertEvent, AlertRule
+        from apps.checks.models import CheckResult, ServiceCheck
+        d1 = fleet["devices"][0]
+        day = (timezone.now() - _dt.timedelta(days=1)).date()
+        down_at = timezone.make_aware(_dt.datetime.combine(day, _dt.time(20, 3)))
+        up_at = timezone.make_aware(_dt.datetime.combine(day, _dt.time(20, 12)))
+
+        # An outage for sw-1 (so the check failures can correlate).
+        rule = AlertRule.objects.create(name="device-unreachable",
+                                        severity=AlertRule.Severity.HIGH, condition={})
+        e = AlertEvent.objects.create(
+            rule=rule, state=AlertEvent.State.RESOLVED, resolved_at=up_at,
+            labels={"source": "reachability_monitor", "device_id": d1.id, "hostname": d1.hostname},
+            annotations={"title": f"Device {d1.hostname} unreachable"})
+        AlertEvent.objects.filter(pk=e.pk).update(created_at=down_at)
+
+        chk = ServiceCheck.objects.create(name="Ping sw-1", check_type="icmp",
+                                          host="10.0.0.1", device=d1, site=fleet["site"])
+        # three failing results inside the outage window + one pass
+        for minute, st, rt in [(3, "down", 30000.0), (6, "down", 30000.0),
+                               (12, "down", 30000.0), (30, "up", 5.0)]:
+            CheckResult.objects.create(
+                service_check=chk, status=st, response_time_ms=rt, error="timeout" if st == "down" else "",
+                checked_at=timezone.make_aware(_dt.datetime.combine(day, _dt.time(20, minute))))
+
+        data = dops.build_daily_ops(date=day.isoformat())
+        svc = data["service_checks"]
+        assert svc["configured"] is True
+        assert svc["total_executions"] == 4
+        assert svc["total_failures"] == 3
+        assert svc["pass_rate"] == 25.0
+        assert svc["affected_checks"] == 1
+        s = svc["summaries"][0]
+        assert s["check_name"] == "Ping sw-1" and s["failure_count"] == 3
+        assert s["avg_duration_s"] == 30.0 and s["max_duration_s"] == 30.0
+        assert s["last_error"] == "timeout"
+        assert s["correlated_outage"] is not None
+        assert s["correlated_outage"]["hostname"] == "sw-1"
 
     def test_collection_health_status_breakdown(self, fleet, monkeypatch):
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})

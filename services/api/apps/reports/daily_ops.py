@@ -595,6 +595,109 @@ def _collection_health(start, end, site_ids) -> dict:
     }
 
 
+# A check failure and a device outage that start/end within this slop are
+# treated as the same event for correlation.
+_CORRELATE_SLOP = timedelta(minutes=5)
+
+
+def _service_checks(start, end, site_ids, outages) -> dict:
+    """
+    User-configured Service Check (Settings → Checks) failures for the period:
+    one summary per failing check with failure count, duration stats and the
+    outage window, plus correlation against device outages from section 2.
+
+    'Failure' = a CheckResult in the down/degraded state. Returns
+    ``configured=False`` with a note when no active checks exist.
+    """
+    from django.db.models import Q
+
+    from apps.checks.models import CheckResult, ServiceCheck
+
+    configured = ServiceCheck.objects.filter(is_active=True).exists()
+    fail_states = {ServiceCheck.Status.DOWN, ServiceCheck.Status.DEGRADED}
+
+    qs = (CheckResult.objects
+          .select_related("service_check", "service_check__device",
+                          "service_check__device__site", "service_check__site")
+          .filter(checked_at__gte=start, checked_at__lte=end))
+    if site_ids:
+        qs = qs.filter(Q(service_check__site_id__in=site_ids)
+                       | Q(service_check__device__site_id__in=site_ids))
+
+    total = qs.count()
+    groups: dict = {}
+    fail_count = 0
+    for r in qs:
+        if r.status not in fail_states:
+            continue
+        fail_count += 1
+        sc = r.service_check
+        g = groups.get(sc.id)
+        if g is None:
+            dev = sc.device
+            g = groups[sc.id] = {
+                "check_name": sc.name,
+                "device": dev.hostname if dev else (sc.host or ""),
+                "site": (sc.site.name if sc.site else
+                         (dev.site.name if dev and dev.site else None)),
+                "check_type": sc.check_type,
+                "failure_count": 0, "first": r.checked_at, "last": r.checked_at,
+                "durations": [], "errors": [],
+            }
+        g["failure_count"] += 1
+        g["first"] = min(g["first"], r.checked_at)
+        g["last"] = max(g["last"], r.checked_at)
+        if r.response_time_ms is not None:
+            g["durations"].append(r.response_time_ms)
+        if r.error:
+            g["errors"].append(r.error)
+
+    # Parse outage windows once for correlation.
+    parsed_outages = [(o["hostname"], _parse_ts(o.get("down_at")),
+                       _parse_ts(o.get("recovered_at"))) for o in (outages or [])]
+
+    summaries = []
+    for g in groups.values():
+        durs = g["durations"]
+        avg_ms = round(sum(durs) / len(durs), 1) if durs else None
+        max_ms = max(durs) if durs else None
+        s = {
+            "check_name": g["check_name"], "device": g["device"], "site": g["site"],
+            "check_type": g["check_type"], "failure_count": g["failure_count"],
+            "first_failure": g["first"].isoformat(), "last_failure": g["last"].isoformat(),
+            "downtime_minutes": round((g["last"] - g["first"]).total_seconds() / 60, 1),
+            "avg_duration_ms": avg_ms, "max_duration_ms": max_ms,
+            "avg_duration_s": round(avg_ms / 1000, 1) if avg_ms is not None else None,
+            "max_duration_s": round(max_ms / 1000, 1) if max_ms is not None else None,
+            "last_error": g["errors"][-1][:200] if g["errors"] else "",
+            "correlated_outage": None,
+        }
+        # Correlate with a device outage in the same window (±slop).
+        for host, down, rec in parsed_outages:
+            if host and host == g["device"] and down:
+                win_end = (rec or end) + _CORRELATE_SLOP
+                if g["first"] >= down - _CORRELATE_SLOP and g["last"] <= win_end:
+                    s["correlated_outage"] = {
+                        "hostname": host, "down_at": down.isoformat(),
+                        "recovered_at": rec.isoformat() if rec else None}
+                    break
+        summaries.append(s)
+
+    summaries.sort(key=lambda x: x["failure_count"], reverse=True)
+    passing = total - fail_count
+    return {
+        "configured": configured,
+        "total_executions": total, "total_failures": fail_count,
+        "total_passing": passing,
+        "pass_rate": round(passing / total * 100, 1) if total else None,
+        "affected_checks": len(summaries),
+        "summaries": summaries,
+        "note": "" if configured else (
+            "No service checks configured. Add checks in Settings → Checks to "
+            "monitor service availability."),
+    }
+
+
 def _agent_health() -> dict:
     from apps.agents.models import Agent
     now = timezone.now()
@@ -634,13 +737,14 @@ def build_daily_ops(*, date=None, site_ids=None) -> dict:
     security = _device_security_events(start, end, site_ids)
     spane_access = _spane_access_events(start, end)
     availability = _device_availability(start, end, site_ids)
+    service_checks = _service_checks(start, end, site_ids, availability["went_down"])
     config_changes = _config_changes(start, end, site_ids)
     collection = _collection_health(start, end, site_ids)
     logger.info(
-        "Daily ops %s: %d outages, %d config changes, %d device auth failures, "
-        "%d spane login failures, %d collection-log attempts",
-        day, availability["total_outages"], len(config_changes),
-        security["total_failures"], spane_access["total_failures"],
+        "Daily ops %s: %d outages, %d service-check failures, %d config changes, "
+        "%d device auth failures, %d spane login failures, %d collection-log attempts",
+        day, availability["total_outages"], service_checks["total_failures"],
+        len(config_changes), security["total_failures"], spane_access["total_failures"],
         collection["total_attempts"],
     )
     return {
@@ -651,6 +755,7 @@ def build_daily_ops(*, date=None, site_ids=None) -> dict:
         "security_events": security,
         "device_availability": availability,
         "compliance_events": _compliance_events(start, end, site_ids),
+        "service_checks": service_checks,
         "config_changes": config_changes,
         "collection_health": collection,
         "agent_health": _agent_health(),
