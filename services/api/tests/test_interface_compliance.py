@@ -91,6 +91,17 @@ class TestCapabilityTrigger:
         assert out["summary"] == {"matched": 1, "passing": 1, "failing": 0}
         assert out["results"][0]["neighbor"] == "ap-lobby"
 
+    def test_matches_raw_unnormalized_wlan(self):
+        # A neighbour record collected before the normaliser learned "wlan"
+        # (stored raw as ['bridge', 'wlan']) must still match a wlan-access-point
+        # rule — the engine normalises both sides.
+        sw = _switch()
+        _config(sw, AOS_CONFIG)
+        LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/7",
+                                    system_name="wco2-wh-ap-05", capabilities=["bridge", "wlan"])
+        out = ic.run_interface_compliance(self._rule())
+        assert out["summary"]["matched"] == 1 and out["results"][0]["passed"]
+
     def test_failing_interface_reported(self):
         sw = _switch()
         _config(sw, AOS_CONFIG)

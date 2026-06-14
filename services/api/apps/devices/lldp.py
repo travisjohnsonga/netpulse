@@ -111,12 +111,16 @@ _CAP_CODES = {
 # canonical token, so the same capability lands on one token regardless of how
 # the platform spells it (e.g. "wlan-access-point" and code "w" both → wlan-ap).
 _CAP_ALIASES = {
-    "mac-bridge": "bridge", "mac_bridge": "bridge",
+    "mac-bridge": "bridge", "mac_bridge": "bridge", "switch": "bridge",
+    # APs commonly advertise the bare word "wlan" (AOS-CX) or "ap" — fold every
+    # spelling to the canonical wlan-ap token so capability filters/rules match.
     "wlan-access-point": "wlan-ap", "wlan_access_point": "wlan-ap",
-    "wlan-ap": "wlan-ap", "access-point": "wlan-ap", "accesspoint": "wlan-ap",
-    "station-only": "station",
+    "wlan-ap": "wlan-ap", "wlan": "wlan-ap", "wifi": "wlan-ap",
+    "ap": "wlan-ap", "access-point": "wlan-ap", "accesspoint": "wlan-ap",
+    "station-only": "station", "pc": "station", "host": "station",
+    "workstation": "station",
     "docsis-cable-device": "docsis", "cable": "docsis",
-    "phone": "telephone",
+    "phone": "telephone", "tel": "telephone",
 }
 
 

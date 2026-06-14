@@ -62,6 +62,16 @@ class TestCapabilities:
             ["wlan-access-point", "mac-bridge", "docsis-cable-device"]
         ) == ["wlan-ap", "bridge", "docsis"]
 
+    def test_bare_word_variants_fold_to_canonical(self):
+        # Real fleets (AOS-CX) advertise the bare word "wlan" for APs and "tel"
+        # for phones — these must fold to the canonical tokens too.
+        assert lldp.normalize_capabilities(["bridge", "wlan"]) == ["bridge", "wlan-ap"]
+        assert lldp.normalize_capabilities(["bridge", "telephone"]) == ["bridge", "telephone"]
+        assert lldp.normalize_capabilities(["tel"]) == ["telephone"]
+        assert lldp.normalize_capabilities(["ap", "wifi"]) == ["wlan-ap"]
+        assert lldp.normalize_capabilities(["switch"]) == ["bridge"]
+        assert lldp.normalize_capabilities(["pc", "host"]) == ["station"]
+
 
 class TestChassisType:
     def test_mac(self):

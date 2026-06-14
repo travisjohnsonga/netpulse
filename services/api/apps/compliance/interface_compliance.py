@@ -129,7 +129,11 @@ def _matched_interfaces(rule) -> list[tuple]:
         if not caps:
             return out
         for nb in LLDPNeighbor.objects.select_related("seen_by"):
-            if caps & set(nb.capabilities or []):
+            # Normalise the stored capabilities too (defense-in-depth) so a record
+            # collected before the normaliser learned a spelling (e.g. raw "wlan")
+            # still matches the canonical token.
+            nbcaps = set(normalize_capabilities(nb.capabilities or []))
+            if caps & nbcaps:
                 out.append((nb.seen_by, nb.local_interface,
                             nb.system_name or nb.chassis_id, ",".join(sorted(caps))))
 
