@@ -26,10 +26,12 @@ def email_content(report_type: str, data: dict, when) -> tuple[str, str]:
         lines = [
             f"spane Daily Operations Report — {data.get('report_date', date_h)} — {site}",
             "", "Quick Summary:",
-            f"- Device Security: {sec.get('total_failures', 0)} device auth failures, "
-            f"{sec.get('after_hours_failures', 0)} after-hours",
-            f"- spane Access: {len(sp.get('successful_logins', []))} login(s), "
-            f"{sp.get('total_failures', 0)} failed",
+            f"- Device Security: {sec.get('total_failures', 0)} device auth failures "
+            f"across {sec.get('device_count', 0)} device(s), {len(sec.get('flags', []))} flag(s)"
+            + (", SUCCESS-AFTER-FAILURES detected" if sec.get("success_after_failures") else ""),
+            f"- spane Access: {sp.get('total_failures', 0)} failed login(s), "
+            f"{len(sp.get('after_hours_logins', []))} after-hours, "
+            f"{len(sp.get('admin_actions', []))} admin action(s)",
             f"- Availability: {av.get('total_outages', 0)} outage(s) "
             f"({av.get('total_downtime_minutes', 0)} min, {av.get('availability_pct', 100)}%)",
             f"- Config Changes: {len(cc)} device(s) changed",
@@ -37,13 +39,16 @@ def email_content(report_type: str, data: dict, when) -> tuple[str, str]:
         for c in cc[:8]:
             lines.append(f"  - {c['hostname']}: {c.get('diff_summary') or 'changed'} "
                          f"(+{c['lines_added']}/-{c['lines_removed']})")
-        rate = None
-        if ch.get("total_attempts"):
-            rate = round(ch["successful"] / ch["total_attempts"] * 100, 1)
+        avg = ce.get("fleet_avg_today")
+        compliance_line = (
+            f"- Compliance: fleet {avg}/100 ({ce.get('fleet_grade') or '—'}), "
+            f"{ce.get('total_failing_devices', 0)} device(s) failing"
+            if avg is not None
+            else f"- Compliance: {ce.get('total_failing_devices', 0)} device(s) failing")
         lines += [
-            f"- Compliance: {ce.get('total_failing_devices', 0)} device(s) below threshold",
+            compliance_line,
             f"- Collection: {ch.get('successful', 0)}/{ch.get('total_attempts', 0)} successful"
-            + (f" ({rate}%)" if rate is not None else ""),
+            + (f" ({ch.get('success_rate')}%)" if ch.get("total_attempts") else ""),
             "", "Full report attached.", "", "Powered by spane",
         ]
         return f"spane Daily Ops Report - {date_h}", "\n".join(lines)

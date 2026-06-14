@@ -135,7 +135,8 @@ function PreviewModal({ def, onClose }: { def: ReportDef; onClose: () => void })
   const data = q.data as Record<string, unknown> | undefined
   const changes = (data?.config_changes as ConfigChange[]) || []
   const sec = data?.security_events as { total_failures?: number } | undefined
-  const sp = data?.spane_access_events as { successful_logins?: unknown[]; total_failures?: number } | undefined
+  const sp = data?.spane_access_events as { admin_actions?: unknown[]; total_failures?: number } | undefined
+  const ce = data?.compliance_events as { fleet_avg_today?: number | null; fleet_grade?: string | null; total_failing_devices?: number } | undefined
   const av = data?.device_availability as { availability_pct?: number; total_outages?: number } | undefined
   const ch = data?.collection_health as { successful?: number; total_attempts?: number } | undefined
 
@@ -154,7 +155,7 @@ function PreviewModal({ def, onClose }: { def: ReportDef; onClose: () => void })
           <div className="space-y-4">
             <div className="grid grid-cols-4 gap-3 text-sm">
               <Stat label="Device auth failures" value={sec?.total_failures ?? 0} />
-              <Stat label="spane logins" value={sp?.successful_logins?.length ?? 0} />
+              <Stat label="Compliance" value={ce?.fleet_avg_today != null ? `${ce.fleet_avg_today} (${ce.fleet_grade ?? '—'})` : '—'} />
               <Stat label="Availability" value={`${av?.availability_pct ?? 100}%`} />
               <Stat label="Collection" value={`${ch?.successful ?? 0}/${ch?.total_attempts ?? 0}`} />
             </div>

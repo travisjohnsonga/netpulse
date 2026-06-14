@@ -235,16 +235,31 @@ def daily_ops_pdf(data: dict) -> bytes:
     sec = data["security_events"]
     flow.append(Paragraph("1 · Device Security Events", styles["h2"]))
     flow.append(Paragraph(
-        f"{sec['total_failures']} device authentication failure(s) from "
-        f"{sec['unique_sources']} source(s); {sec.get('after_hours_failures', 0)} after-hours.",
+        f"{sec['total_failures']} authentication failure(s) from "
+        f"{sec['unique_sources']} unique source(s) across {sec.get('device_count', 0)} device(s).",
         styles["body"]))
-    if sec["login_failures"]:
-        rows = [["Time", "Device", "Source IP", "Message"]]
-        rows += [[(e["time"] or "")[11:19], e.get("hostname") or "", e.get("source_ip") or "",
-                  (e.get("message") or "")[:60]] for e in sec["login_failures"][:20]]
-        flow.append(_table(rows, col_widths=[60, 110, 90, 200]))
+    if sec.get("groups"):
+        rows = [["Username", "Source IP / Devices", "Count", "Time"]]
+        for g in sec["groups"][:20]:
+            srcs = ", ".join(g.get("source_ips") or []) or "—"
+            if g.get("device_count", 0) > 1:
+                srcs = f"{srcs} · {g['device_count']} devices"
+            rows.append([g.get("username") or "(unknown)", srcs[:40], g["count"],
+                         g.get("time_range", "")])
+        flow.append(_table(rows, col_widths=[130, 200, 50, 80]))
     elif sec.get("note"):
         flow.append(Paragraph(sec["note"], styles["small"]))
+    for fl in sec.get("flags", [])[:10]:
+        flow.append(Paragraph(fl, styles["small"]))
+    saf = sec.get("success_after_failures") or []
+    if saf:
+        for s in saf[:10]:
+            flow.append(Paragraph(
+                f"⚠️ SUCCESS AFTER FAILURES: {s['username']} failed {s['fail_count']} time(s) "
+                f"then succeeded at {s.get('at', '')} on {s.get('device') or 'unknown'} — "
+                f"review immediately.", styles["small"]))
+    elif sec.get("total_failures"):
+        flow.append(Paragraph("No successes-after-failures detected.", styles["small"]))
 
     av = data["device_availability"]
     flow.append(Paragraph("2 · Device Availability", styles["h2"]))
@@ -258,10 +273,34 @@ def daily_ops_pdf(data: dict) -> bytes:
         flow.append(_table(rows))
 
     ce = data["compliance_events"]
-    flow.append(Paragraph("3 · Compliance Events", styles["h2"]))
-    flow.append(Paragraph(
-        f"{len(ce['new_failures'])} new failure(s), {len(ce['resolved'])} resolved; "
-        f"{ce['total_failing_devices']} device(s) currently failing.", styles["body"]))
+    flow.append(Paragraph("3 · Compliance Status", styles["h2"]))
+    if ce.get("fleet_avg_today") is not None:
+        trend = ""
+        if ce.get("fleet_avg_delta") is not None and ce.get("fleet_avg_prev") is not None:
+            arrow = "↑" if ce["fleet_avg_delta"] > 0 else ("↓" if ce["fleet_avg_delta"] < 0 else "→")
+            trend = f" {arrow} from {ce['fleet_avg_prev']} yesterday"
+        flow.append(Paragraph(
+            f"Fleet score: {ce['fleet_avg_today']}/100 ({ce.get('fleet_grade') or '—'}){trend}. "
+            f"{ce['total_failing_devices']} device(s) currently failing; "
+            f"{ce.get('unsaved_configs', 0)} with unsaved configs.", styles["body"]))
+    else:
+        flow.append(Paragraph(
+            f"No stored compliance scores for this period. "
+            f"{ce.get('unsaved_configs', 0)} device(s) with unsaved configs.", styles["body"]))
+    if ce.get("failing_devices"):
+        rows = [["Device", "Score", "Grade", "Site"]]
+        rows += [[d["hostname"], d["score"], d["grade"], d.get("site") or ""]
+                 for d in ce["failing_devices"]]
+        flow.append(_table(rows, col_widths=[200, 60, 50, 100], header_bg=RED))
+    if ce.get("degraded") or ce.get("improved"):
+        flow.append(Spacer(1, 4))
+        flow.append(Paragraph("Score changes from previous day:", styles["small"]))
+        for d in ce.get("degraded", [])[:10]:
+            flow.append(Paragraph(
+                f"↓ {d['hostname']} ({d['score_prev']}→{d['score_today']})", styles["small"]))
+        for d in ce.get("improved", [])[:10]:
+            flow.append(Paragraph(
+                f"↑ {d['hostname']} ({d['score_prev']}→{d['score_today']})", styles["small"]))
 
     cc = data["config_changes"]
     flow.append(Paragraph("4 · Configuration Changes", styles["h2"]))
@@ -288,8 +327,14 @@ def daily_ops_pdf(data: dict) -> bytes:
     ch = data["collection_health"]
     flow.append(Paragraph("5 · Collection Health", styles["h2"]))
     flow.append(Paragraph(
-        f"{ch['successful']}/{ch['total_attempts']} attempts succeeded; {ch['failed']} failed.", styles["body"]))
+        f"{ch['total_attempts']} attempt(s) across {ch.get('device_count', 0)} device(s) — "
+        f"{ch.get('success_rate', 0)}% success.", styles["body"]))
+    if ch.get("by_status"):
+        rows = [["Status", "Count", "Rate"]]
+        rows += [[s["status"], s["count"], f"{s['rate']}%"] for s in ch["by_status"]]
+        flow.append(_table(rows, col_widths=[150, 80, 80]))
     if ch["failed_devices"]:
+        flow.append(Spacer(1, 4))
         rows = [["Device", "Error", "Attempts"]]
         rows += [[f["hostname"], f["error"], f["attempts"]] for f in ch["failed_devices"]]
         flow.append(_table(rows, header_bg=RED))
@@ -306,15 +351,27 @@ def daily_ops_pdf(data: dict) -> bytes:
     sp = data.get("spane_access_events", {})
     flow.append(Paragraph("7 · spane Access Events", styles["h2"]))
     flow.append(Paragraph(
-        f"{len(sp.get('successful_logins', []))} login(s), "
-        f"{sp.get('total_failures', 0)} failed; "
-        f"{len(sp.get('after_hours_logins', []))} after-hours; "
-        f"{len(sp.get('new_source_ips', []))} new source IP(s).", styles["body"]))
+        f"{sp.get('total_failures', 0)} failed login(s); "
+        f"{len(sp.get('after_hours_logins', []))} after-hours login(s); "
+        f"{len(sp.get('new_source_ips', []))} new source IP(s); "
+        f"{len(sp.get('admin_actions', []))} admin action(s).", styles["body"]))
     if sp.get("login_failures"):
-        rows = [["Time", "User", "Source IP"]]
+        rows = [["Failed login", "User", "Source IP"]]
         rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
                  for e in sp["login_failures"][:20]]
-        flow.append(_table(rows, col_widths=[80, 120, 120]))
+        flow.append(_table(rows, col_widths=[100, 120, 120], header_bg=RED))
+    if sp.get("after_hours_logins"):
+        flow.append(Spacer(1, 4))
+        rows = [["After-hours login", "User", "Source IP"]]
+        rows += [[(e["time"] or "")[11:19], e["username"], e["source_ip"] or ""]
+                 for e in sp["after_hours_logins"][:20]]
+        flow.append(_table(rows, col_widths=[100, 120, 120]))
+    if sp.get("admin_actions"):
+        flow.append(Spacer(1, 4))
+        rows = [["Admin action", "User", "Action", "Target"]]
+        rows += [[(e["time"] or "")[11:19], e["username"], e["event_type"],
+                  (e.get("target") or "")[:30]] for e in sp["admin_actions"][:20]]
+        flow.append(_table(rows, col_widths=[80, 110, 130, 110]))
 
     doc.build(flow, onFirstPage=_page_footer, onLaterPages=_page_footer)
     return buf.getvalue()
@@ -327,11 +384,17 @@ def daily_ops_csv(data: dict) -> bytes:
     sec = data["security_events"]
     w.writerow(["device_security", "total_failures", sec["total_failures"]])
     w.writerow(["device_security", "unique_sources", sec["unique_sources"]])
-    w.writerow(["device_security", "after_hours_failures", sec.get("after_hours_failures", 0)])
+    w.writerow(["device_security", "device_count", sec.get("device_count", 0)])
+    w.writerow(["device_security", "flags", len(sec.get("flags", []))])
+    w.writerow(["device_security", "success_after_failures", len(sec.get("success_after_failures", []))])
     sp = data.get("spane_access_events", {})
     w.writerow(["spane_access", "total_failures", sp.get("total_failures", 0)])
-    w.writerow(["spane_access", "successful_logins", len(sp.get("successful_logins", []))])
     w.writerow(["spane_access", "after_hours_logins", len(sp.get("after_hours_logins", []))])
+    w.writerow(["spane_access", "admin_actions", len(sp.get("admin_actions", []))])
+    ce = data["compliance_events"]
+    w.writerow(["compliance", "fleet_avg_today", ce.get("fleet_avg_today")])
+    w.writerow(["compliance", "fleet_avg_prev", ce.get("fleet_avg_prev")])
+    w.writerow(["compliance", "total_failing_devices", ce.get("total_failing_devices", 0)])
     av = data["device_availability"]
     w.writerow(["availability", "availability_pct", av["availability_pct"]])
     w.writerow(["availability", "total_outages", av["total_outages"]])
@@ -339,6 +402,9 @@ def daily_ops_csv(data: dict) -> bytes:
     ch = data["collection_health"]
     w.writerow(["collection", "successful", ch["successful"]])
     w.writerow(["collection", "failed", ch["failed"]])
+    w.writerow(["collection", "success_rate", ch.get("success_rate", 0)])
+    for s in ch.get("by_status", []):
+        w.writerow(["collection_status", s["status"], s["count"]])
     w.writerow([])
     w.writerow(["config_change_device", "detected_at", "lines_added", "lines_removed"])
     for c in data["config_changes"]:
@@ -369,6 +435,55 @@ def daily_ops_html(data: dict) -> bytes:
                 out.append(f'<div style="color:#6b7280">{esc}</div>')
         return "".join(out)
 
+    # Device security: grouped failures + flags + success-after-failures.
+    sec_groups = ""
+    if sec.get("groups"):
+        grows = "".join(
+            f"<tr><td>{_html.escape(g.get('username') or '(unknown)')}</td>"
+            f"<td>{_html.escape(', '.join(g.get('source_ips') or []) or '—')}"
+            f"{(' · ' + str(g['device_count']) + ' devices') if g.get('device_count', 0) > 1 else ''}</td>"
+            f"<td>{g['count']}</td><td>{g.get('time_range', '')}</td></tr>"
+            for g in sec["groups"][:20])
+        sec_groups = ("<table><tr><th>Username</th><th>Source / Devices</th><th>Count</th>"
+                      f"<th>Time</th></tr>{grows}</table>")
+    sec_flags = "".join(
+        f"<p style='color:#b45309'>{_html.escape(f)}</p>" for f in sec.get("flags", [])[:10])
+    for s in (sec.get("success_after_failures") or [])[:10]:
+        sec_flags += (f"<p style='color:#991b1b'>⚠️ SUCCESS AFTER FAILURES: "
+                      f"{_html.escape(s['username'])} failed {s['fail_count']} time(s) then "
+                      f"succeeded at {s.get('at', '')} on {_html.escape(s.get('device') or 'unknown')} "
+                      f"— review immediately.</p>")
+
+    # Compliance status line + failing table.
+    ce = data["compliance_events"]
+    if ce.get("fleet_avg_today") is not None:
+        delta = ce.get("fleet_avg_delta")
+        trend = ""
+        if delta is not None and ce.get("fleet_avg_prev") is not None:
+            arrow = "↑" if delta > 0 else ("↓" if delta < 0 else "→")
+            trend = f" {arrow} from {ce['fleet_avg_prev']} yesterday"
+        compliance_line = (f"Fleet score: {ce['fleet_avg_today']}/100 ({ce.get('fleet_grade') or '—'})"
+                           f"{trend}. {ce['total_failing_devices']} device(s) currently failing; "
+                           f"{ce.get('unsaved_configs', 0)} with unsaved configs.")
+    else:
+        compliance_line = (f"No stored compliance scores for this period. "
+                           f"{ce.get('unsaved_configs', 0)} device(s) with unsaved configs.")
+    failing_table = ""
+    if ce.get("failing_devices"):
+        frows = "".join(
+            f"<tr><td>{_html.escape(d['hostname'])}</td><td>{d['score']}</td>"
+            f"<td>{d['grade']}</td><td>{_html.escape(d.get('site') or '')}</td></tr>"
+            for d in ce["failing_devices"])
+        failing_table = ("<table><tr><th>Device</th><th>Score</th><th>Grade</th><th>Site</th></tr>"
+                         f"{frows}</table>")
+
+    # Collection status breakdown.
+    coll_table = ""
+    if ch.get("by_status"):
+        crows = "".join(f"<tr><td>{s['status']}</td><td>{s['count']}</td><td>{s['rate']}%</td></tr>"
+                        for s in ch["by_status"])
+        coll_table = f"<table><tr><th>Status</th><th>Count</th><th>Rate</th></tr>{crows}</table>"
+
     rows = "".join(
         f"<tr><td>{c['hostname']}</td><td>{c['detected_at'][11:19]}</td>"
         f"<td>+{c['lines_added']}/-{c['lines_removed']}</td><td>{c['diff_summary']}</td></tr>"
@@ -387,17 +502,20 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d1d5db;padd
 tr:nth-child(even){{background:#f3f4f6}}</style></head><body>
 <p style="color:#6b7280">spane — unified infrastructure visibility</p>
 <h1>Daily Operations Report</h1><p>{data['report_date']} — All Sites</p>
-<h2>Device Security Events</h2><p>{sec['total_failures']} device auth failures from {sec['unique_sources']} sources;
-{sec.get('after_hours_failures', 0)} after-hours.{(' ' + sec['note']) if sec.get('note') else ''}</p>
+<h2>Device Security Events</h2><p>{sec['total_failures']} authentication failures from {sec['unique_sources']} sources
+across {sec.get('device_count', 0)} devices.{(' ' + sec['note']) if sec.get('note') else ''}</p>
+{sec_groups}{sec_flags}
+<h2>Compliance Status</h2><p>{compliance_line}</p>{failing_table}
 <h2>Availability</h2><p>Fleet availability {av['availability_pct']}% · {av['total_outages']} outages
 ({av['total_downtime_minutes']} min downtime).</p>
-<h2>Collection Health</h2><p>{ch['successful']}/{ch['total_attempts']} succeeded; {ch['failed']} failed.</p>
+<h2>Collection Health</h2><p>{ch['total_attempts']} attempts across {ch.get('device_count', 0)} devices — {ch.get('success_rate', 0)}% success.</p>{coll_table}
 <h2>Config Changes</h2><table><tr><th>Device</th><th>Time</th><th>+/-</th><th>Summary</th></tr>{rows or '<tr><td colspan=4>None</td></tr>'}</table>
 {diff_blocks}
 <h2>Agents &amp; Alerts</h2><p>Agents {ah['online']}/{ah['total_agents']} online ·
 Alerts {al['total']} ({al['critical']} crit, {al['high']} high).</p>
-<h2>spane Access Events</h2><p>{len(sp.get('successful_logins', []))} logins, {sp.get('total_failures', 0)} failed;
-{len(sp.get('after_hours_logins', []))} after-hours; {len(sp.get('new_source_ips', []))} new IPs.</p>
+<h2>spane Access Events</h2><p>{sp.get('total_failures', 0)} failed logins;
+{len(sp.get('after_hours_logins', []))} after-hours; {len(sp.get('new_source_ips', []))} new IPs;
+{len(sp.get('admin_actions', []))} admin actions.</p>
 <p style="color:#6b7280;font-size:12px">Generated by spane · {data['generated_at'][:19].replace('T',' ')} UTC</p>
 </body></html>"""
     return html.encode("utf-8")

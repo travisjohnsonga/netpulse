@@ -111,6 +111,118 @@ class TestDailyOps:
         assert sec["total_failures"] == 0
         assert "TACACS" in sec["note"]
 
+    def test_radius_success_not_counted_as_failure(self, fleet, monkeypatch):
+        # The bug: "succeeded with RADIUS" was counted as a failure (matched "radius").
+        when = timezone.now() - __import__("datetime").timedelta(days=1)
+        fake = {"hits": {"hits": [
+            {"_source": {"@timestamp": when.replace(hour=10).isoformat(), "hostname": "sw-1",
+                         "source_ip": "10.0.0.5",
+                         "message": "User authentication for svc_backup succeeded with RADIUS server"}},
+        ]}}
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: fake)
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        assert data["security_events"]["total_failures"] == 0
+
+    def test_device_security_grouping_and_multi_device_flag(self, fleet, monkeypatch):
+        when = timezone.now() - __import__("datetime").timedelta(days=1)
+        hits = [{"_source": {"@timestamp": when.replace(hour=10, minute=m).isoformat(),
+                             "hostname": f"sw-{i}", "source_ip": "10.150.0.18",
+                             "message": f"%SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: travis-admin] dev {i}"}}
+                for i, m in enumerate((21, 22, 23), start=1)]
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": hits}})
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        sec = data["security_events"]
+        assert sec["total_failures"] == 3
+        assert sec["device_count"] == 3
+        assert len(sec["groups"]) == 1
+        g = sec["groups"][0]
+        assert g["username"] == "travis-admin" and g["count"] == 3 and g["device_count"] == 3
+        assert any("3 devices" in f for f in sec["flags"])
+
+    def test_success_after_failures_flagged(self, fleet, monkeypatch):
+        when = timezone.now() - __import__("datetime").timedelta(days=1)
+        hits = [
+            {"_source": {"@timestamp": when.replace(hour=10, minute=21).isoformat(),
+                         "hostname": "sw-1", "source_ip": "10.0.0.7",
+                         "message": "Login failed [user: travis-admin]"}},
+            {"_source": {"@timestamp": when.replace(hour=10, minute=25).isoformat(),
+                         "hostname": "sw-1", "source_ip": "10.0.0.7",
+                         "message": "%SEC_LOGIN-5-LOGIN_SUCCESS: login successful [user: travis-admin]"}},
+        ]
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": hits}})
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        sec = data["security_events"]
+        assert sec["total_failures"] == 1  # the success is not a failure
+        saf = sec["success_after_failures"]
+        assert len(saf) == 1
+        assert saf[0]["username"] == "travis-admin" and saf[0]["fail_count"] == 1
+
+    def test_spane_admin_actions_and_after_hours(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        import datetime as _dt
+        when = timezone.now() - _dt.timedelta(days=1)
+        day = when.date()
+        # an admin action + an after-hours login
+        a = AuditLog.objects.create(event_type=AuditLog.EventType.USER_CREATED,
+                                    username="admin", target_name="bob")
+        ah_dt = timezone.make_aware(_dt.datetime.combine(day, _dt.time(22, 0)))
+        b = AuditLog.objects.create(event_type=AuditLog.EventType.LOGIN_SUCCESS,
+                                    username="ops", ip_address="10.0.0.3")
+        AuditLog.objects.filter(pk=a.pk).update(created_at=ah_dt)
+        AuditLog.objects.filter(pk=b.pk).update(created_at=ah_dt)
+        data = dops.build_daily_ops(date=day.isoformat())
+        sp = data["spane_access_events"]
+        assert "successful_logins" not in sp  # routine successes removed
+        assert len(sp["admin_actions"]) == 1 and sp["admin_actions"][0]["target"] == "bob"
+        assert len(sp["after_hours_logins"]) == 1
+
+    def test_compliance_state_and_trend(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        import datetime as _dt
+        from apps.compliance.models import ComplianceTemplate, ComplianceTemplateResult as CTR
+        d1, d2 = fleet["devices"]
+        tmpl = ComplianceTemplate.objects.create(name="base", template_content="x")
+        day = (timezone.now() - _dt.timedelta(days=1)).date()
+        prev_day = day - _dt.timedelta(days=1)
+        today_t = timezone.make_aware(_dt.datetime.combine(day, _dt.time(8, 0)))
+        prev_t = timezone.make_aware(_dt.datetime.combine(prev_day, _dt.time(8, 0)))
+
+        def _ctr(dev, score, at):
+            r = CTR.objects.create(device=dev, template=tmpl,
+                                   status=CTR.Status.NON_COMPLIANT, score=score)
+            CTR.objects.filter(pk=r.pk).update(checked_at=at)
+
+        # d1 degraded 80->60 (now failing); d2 improved 60->90
+        _ctr(d1, 80, prev_t); _ctr(d1, 60, today_t)
+        _ctr(d2, 60, prev_t); _ctr(d2, 90, today_t)
+
+        data = dops.build_daily_ops(date=day.isoformat())
+        ce = data["compliance_events"]
+        assert ce["fleet_avg_today"] == 75.0  # (60+90)/2
+        assert ce["fleet_avg_prev"] == 70.0   # (80+60)/2
+        assert ce["total_failing_devices"] == 1  # d1 at 60 (<70)
+        assert any(r["hostname"] == "sw-1" for r in ce["failing_devices"])
+        assert any(r["hostname"] == "sw-1" and r["delta"] == -20.0 for r in ce["degraded"])
+        assert any(r["hostname"] == "sw-2" and r["delta"] == 30.0 for r in ce["improved"])
+
+    def test_collection_health_status_breakdown(self, fleet, monkeypatch):
+        monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
+        from apps.configbackup.models import ConfigCollectionLog as CCL
+        d1, d2 = fleet["devices"]
+        when = timezone.now() - __import__("datetime").timedelta(days=1)
+        for dev, status in [(d1, CCL.Status.SUCCESS), (d1, CCL.Status.UNCHANGED),
+                            (d2, CCL.Status.TIMEOUT)]:
+            r = CCL.objects.create(device=dev, status=status, collected_by="scheduled")
+            CCL.objects.filter(pk=r.pk).update(collected_at=when)
+        data = dops.build_daily_ops(date=when.date().isoformat())
+        ch = data["collection_health"]
+        assert ch["total_attempts"] == 3
+        assert ch["device_count"] == 2
+        assert ch["successful"] == 2  # success + unchanged
+        by = {s["status"]: s["count"] for s in ch["by_status"]}
+        assert by == {"success": 1, "unchanged": 1, "timeout": 1}
+        assert any(f["hostname"] == "sw-2" and f["error"] == "timeout" for f in ch["failed_devices"])
+
     def test_outages_from_alert_events(self, fleet):
         # Reconstruct outages from device-unreachable AlertEvents: a recovered
         # outage (resolved) and a still-down one (firing).
