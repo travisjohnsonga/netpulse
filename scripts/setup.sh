@@ -372,6 +372,19 @@ if [ -z "$(env_get INTERNAL_DNS)" ]; then
     info "detected internal DNS server: $internal_dns"
   fi
 fi
+# Validate INTERNAL_DNS (auto-detected OR hand-edited): an invalid value makes
+# docker-compose reject the stack with "invalid DNS address" at container start.
+# Clear anything that isn't a plausible IPv4/IPv6 address so we fall back to the
+# public resolver (8.8.8.8) instead of failing to boot.
+_dns="$(env_get INTERNAL_DNS)"
+if [ -n "$_dns" ]; then
+  if echo "$_dns" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || echo "$_dns" | grep -q ':'; then
+    : # looks like an IPv4 or IPv6 address — keep it
+  else
+    warn "INTERNAL_DNS '$_dns' is not a valid IP address — clearing it (will use 8.8.8.8)"
+    env_set INTERNAL_DNS ""
+  fi
+fi
 if [ -z "$(env_get INTERNAL_DOMAIN)" ]; then
   # "DNS Domain: foo.local bar.local" — take the first as INTERNAL_DOMAIN and an
   # optional second as INTERNAL_DOMAIN2 (second dns_search entry).
