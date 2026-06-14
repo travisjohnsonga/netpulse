@@ -235,17 +235,89 @@ def collect_sonicwall_config(device, profile, creds: dict) -> str:
         return json.dumps(client.get_config(), indent=2)
 
 
+def _fetch_aos_cx_via_rest(device, profile, creds: dict) -> str:
+    """Collect an AOS-CX running config via the REST API (fastest path)."""
+    import json
+
+    from apps.devices.aos_cx_client import AOSCXClient
+
+    username = (profile.ssh_username if profile else "") or creds.get("ssh_username", "")
+    password = creds.get("ssh_password", "")
+    with AOSCXClient(device_host(device)) as client:
+        client.login(username, password)
+        data = client.get_running_config()
+    # The REST endpoint returns the config as a JSON document; pretty-print it so
+    # it stores and diffs as stable text.
+    return json.dumps(data, indent=2, sort_keys=True) if isinstance(data, (dict, list)) else str(data)
+
+
+def _fetch_aos_cx_via_ssh(device, profile, creds: dict) -> str:
+    """
+    Collect an AOS-CX running config over SSH using a non-interactive
+    ``exec_command`` channel (paramiko directly).
+
+    Netmiko's ``send_command`` drives the interactive shell, which on AOS-CX
+    paginates ``show running-config`` behind a ``--More--`` pager that Netmiko
+    doesn't handle for this platform — the call then blocks until the read
+    timeout. The exec channel returns the whole config at once with no pager, so
+    we bypass Netmiko entirely here.
+    """
+    import paramiko  # lazy
+
+    host = device_host(device)
+    username = (profile.ssh_username if profile else "") or creds.get("ssh_username", "")
+    password = creds.get("ssh_password", "")
+    port = (profile.ssh_port if profile else 22) or 22
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(
+            host, port=port, username=username, password=password,
+            timeout=15, look_for_keys=False, allow_agent=False,
+        )
+        _stdin, stdout, _stderr = ssh.exec_command("show running-config", timeout=30)
+        config = stdout.read().decode("utf-8", errors="replace")
+        if not config.strip():
+            raise ValueError("empty config returned")
+        return config
+    finally:
+        try:
+            ssh.close()
+        except Exception:  # noqa: BLE001 — close is best-effort
+            pass
+
+
+def collect_aos_cx_config(device, profile, creds: dict) -> str:
+    """
+    Collect an AOS-CX switch's running config. Prefers the REST API (fastest,
+    pager-immune); falls back to a paramiko ``exec_command`` SSH channel. Netmiko
+    is deliberately avoided — its interactive ``send_command`` hangs on the
+    AOS-CX ``--More--`` pager.
+    """
+    try:
+        return _fetch_aos_cx_via_rest(device, profile, creds)
+    except Exception as exc:  # noqa: BLE001 — REST unreachable → SSH fallback
+        logger.debug("AOS-CX REST config failed for %s, falling back to SSH: %s",
+                     device.hostname, exc)
+    return _fetch_aos_cx_via_ssh(device, profile, creds)
+
+
 def _fetch_running_config(device, creds: dict) -> str:
     """
     Dispatch to the right protocol and return the running config text.
 
-    SonicWall uses its REST API (SSH CLI is limited); SSH is primary for
-    everything else; NETCONF is used when it's the only enabled protocol. This is
-    the single network seam — tests monkeypatch it.
+    SonicWall uses its REST API (SSH CLI is limited); AOS-CX uses REST then a
+    non-interactive SSH exec channel (Netmiko hangs on its pager); SSH is primary
+    for everything else; NETCONF is used when it's the only enabled protocol.
+    This is the single network seam — tests monkeypatch it.
     """
     profile = device.credential_profile
-    if (device.platform or "").lower() == "sonicwall":
+    platform = (device.platform or "").lower()
+    if platform == "sonicwall":
         return collect_sonicwall_config(device, profile, creds)
+    if platform == "aos_cx":
+        return collect_aos_cx_config(device, profile, creds)
     if profile and profile.netconf_enabled and not profile.ssh_enabled:
         return _fetch_via_netconf(device, profile, creds)
     return _fetch_via_ssh(device, profile, creds)

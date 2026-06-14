@@ -105,6 +105,19 @@ class AOSCXClient:
             "raw": data,
         }
 
+    # ── running config (config backup) ───────────────────────────────────────
+    def get_running_config(self) -> dict:
+        """
+        Return the full running configuration from
+        ``GET /fullconfigs/running-config``.
+
+        AOS-CX serves the complete config as a single JSON document on this
+        endpoint — far faster than (and immune to the ``--More--`` pager that
+        hangs an interactive SSH session of) ``show running-config``. The caller
+        serialises it for storage / diffing.
+        """
+        return self._get("fullconfigs/running-config")
+
     # ── interfaces (wired into enrichment in Stage 2) ────────────────────────
     def get_interfaces(self) -> list[dict]:
         """

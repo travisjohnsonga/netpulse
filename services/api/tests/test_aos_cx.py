@@ -482,6 +482,147 @@ class TestAOSCXClient:
         assert nb["capabilities"] == "Bridge, Router"
 
 
+# ── running-config collection (config backup) ───────────────────────────────────
+
+class TestAOSCXConfigCollection:
+    """The AOS-CX path in apps.compliance.collector — REST first, paramiko
+    exec_command SSH fallback (Netmiko is deliberately avoided: its interactive
+    send_command hangs on the AOS-CX ``--More--`` pager)."""
+
+    def test_get_running_config_uses_fullconfigs_endpoint(self):
+        client = AOSCXClient("10.0.0.5")
+        client._session = _FakeSession(
+            get_json={"fullconfigs/running-config": {"System": {"hostname": "cx"}}})
+        cfg = client.get_running_config()
+        assert cfg == {"System": {"hostname": "cx"}}
+
+    @pytest.mark.django_db
+    def test_dispatch_routes_aos_cx_to_rest(self, monkeypatch):
+        """_fetch_running_config sends aos_cx through the REST collector and
+        serialises the JSON document to stable text."""
+        from apps.compliance import collector
+
+        profile = CredentialProfile.objects.create(
+            name="cx", ssh_enabled=True, ssh_username="admin")
+        device = Device.objects.create(
+            hostname="cx", ip_address="10.0.0.5", management_ip="10.0.0.5",
+            platform="aos_cx", credential_profile=profile)
+
+        captured = {}
+
+        class _Client:
+            def __init__(self, host, **kw):
+                captured["host"] = host
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def login(self, user, pw):
+                captured["creds"] = (user, pw)
+
+            def get_running_config(self):
+                return {"b": 2, "a": 1}
+
+        monkeypatch.setattr(
+            "apps.devices.aos_cx_client.AOSCXClient", _Client)
+
+        out = collector._fetch_running_config(device, {"ssh_password": "secret"})
+
+        assert captured["host"] == "10.0.0.5"
+        assert captured["creds"] == ("admin", "secret")
+        # JSON serialised with sorted keys → stable for hashing/diffing
+        assert out == '{\n  "a": 1,\n  "b": 2\n}'
+
+    @pytest.mark.django_db
+    def test_falls_back_to_ssh_exec_when_rest_fails(self, monkeypatch):
+        """REST failure → paramiko exec_command 'show running-config'."""
+        from apps.compliance import collector
+
+        profile = CredentialProfile.objects.create(
+            name="cx", ssh_enabled=True, ssh_username="admin")
+        device = Device.objects.create(
+            hostname="cx", ip_address="10.0.0.5", management_ip="10.0.0.5",
+            platform="aos_cx", credential_profile=profile)
+
+        def _boom(*a, **k):
+            raise RuntimeError("REST down")
+
+        monkeypatch.setattr(collector, "_fetch_aos_cx_via_rest", _boom)
+
+        connect_kwargs = {}
+        exec_calls = []
+
+        class _Stdout:
+            def read(self):
+                return b"hostname cx\ninterface 1/1/1\n"
+
+        class _SSH:
+            def set_missing_host_key_policy(self, policy):
+                pass
+
+            def connect(self, host, **kwargs):
+                connect_kwargs["host"] = host
+                connect_kwargs.update(kwargs)
+
+            def exec_command(self, cmd, timeout=None):
+                exec_calls.append((cmd, timeout))
+                return (None, _Stdout(), None)
+
+            def close(self):
+                connect_kwargs["closed"] = True
+
+        import paramiko
+        monkeypatch.setattr(paramiko, "SSHClient", lambda: _SSH())
+
+        out = collector._fetch_running_config(device, {"ssh_password": "secret"})
+
+        assert out == "hostname cx\ninterface 1/1/1\n"
+        assert connect_kwargs["host"] == "10.0.0.5"
+        assert connect_kwargs["username"] == "admin"
+        assert connect_kwargs["password"] == "secret"
+        assert connect_kwargs["timeout"] == 15           # bounded connect → no hang
+        assert connect_kwargs["look_for_keys"] is False
+        assert connect_kwargs["allow_agent"] is False
+        assert connect_kwargs["closed"] is True
+        assert exec_calls == [("show running-config", 30)]
+
+    @pytest.mark.django_db
+    def test_ssh_exec_empty_config_raises(self, monkeypatch):
+        from apps.compliance import collector
+
+        profile = CredentialProfile.objects.create(
+            name="cx", ssh_enabled=True, ssh_username="admin")
+        device = Device.objects.create(
+            hostname="cx", ip_address="10.0.0.5", management_ip="10.0.0.5",
+            platform="aos_cx", credential_profile=profile)
+
+        class _Stdout:
+            def read(self):
+                return b"   \n"
+
+        class _SSH:
+            def set_missing_host_key_policy(self, policy):
+                pass
+
+            def connect(self, host, **kwargs):
+                pass
+
+            def exec_command(self, cmd, timeout=None):
+                return (None, _Stdout(), None)
+
+            def close(self):
+                pass
+
+        import paramiko
+        monkeypatch.setattr(paramiko, "SSHClient", lambda: _SSH())
+
+        with pytest.raises(ValueError):
+            collector._fetch_aos_cx_via_ssh(device, profile, {"ssh_password": "x"})
+
+
 # ── SNMP sysDescr fallback parsing ──────────────────────────────────────────────
 
 class TestAOSCXSysDescr:
