@@ -2587,9 +2587,55 @@ export interface ComplianceTemplateResult {
   remediation: string
 }
 
+export interface ComplianceBreakdownItem {
+  name: string
+  score: number
+  weight: number
+  passing?: number
+  total?: number
+}
+
+export interface IfaceComplianceCheck {
+  type?: string
+  value?: string
+  description?: string
+  severity?: string
+  passed: boolean
+}
+
+export interface InterfaceRuleFinding {
+  rule_name: string
+  interface: string
+  neighbor: string
+  passed: boolean
+  passing: number
+  total: number
+  interface_config: string
+  findings: IfaceComplianceCheck[]
+  suggested_fix: string
+}
+
+export interface RoleConsistencyFinding {
+  rule_name: string
+  check_type: string
+  passed: boolean
+  missing: (string | number)[]
+  extra: (string | number)[]
+  expected: (string | number)[]
+  has: (string | number)[]
+  remediation: string
+}
+
 export interface DeviceComplianceResponse {
   overall_score: number | null
   results: ComplianceTemplateResult[]
+  // Weighted score (template 50% / interface 30% / role 20%, renormalised).
+  score: number | null
+  grade: string
+  breakdown: ComplianceBreakdownItem[]
+  template_findings: ComplianceTemplateResult[]
+  interface_rule_findings: InterfaceRuleFinding[]
+  role_consistency_findings: RoleConsistencyFinding[]
 }
 
 export async function fetchDeviceCompliance(deviceId: number): Promise<DeviceComplianceResponse> {

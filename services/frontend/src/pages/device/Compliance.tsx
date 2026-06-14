@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   fetchComplianceResults, fetchDeviceCompliance, runComplianceCheck,
@@ -6,10 +6,28 @@ import {
   type DeviceDetail, type ComplianceResult,
   type ComplianceTemplateResult, type ComplianceFinding,
   type ApprovedOSVersion, type OSInventoryStatus,
+  type DeviceComplianceResponse, type ComplianceBreakdownItem,
+  type InterfaceRuleFinding, type RoleConsistencyFinding,
 } from '../../api/client'
-import Gauge from '../../components/Gauge'
 import EmptyState from '../../components/EmptyState'
 import OSStatusBadge from '../../components/OSStatusBadge'
+
+const GRADE_COLOR: Record<string, string> = {
+  A: 'text-green-600 dark:text-green-400',
+  B: 'text-green-600 dark:text-green-400',
+  C: 'text-yellow-600 dark:text-yellow-400',
+  D: 'text-orange-600 dark:text-orange-400',
+  F: 'text-red-600 dark:text-red-400',
+  'N/A': 'text-gray-400',
+}
+
+function barColor(score: number): string {
+  if (score >= 90) return 'bg-green-500'
+  if (score >= 80) return 'bg-green-400'
+  if (score >= 70) return 'bg-yellow-500'
+  if (score >= 60) return 'bg-orange-500'
+  return 'bg-red-500'
+}
 
 const OUTCOME_BADGE: Record<string, string> = {
   pass: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
@@ -35,8 +53,7 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function Compliance({ device }: { device: DeviceDetail }) {
-  const [templateResults, setTemplateResults] = useState<ComplianceTemplateResult[]>([])
-  const [overall, setOverall] = useState<number | null>(null)
+  const [data, setData] = useState<DeviceComplianceResponse | null>(null)
   const [legacy, setLegacy] = useState<ComplianceResult[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -46,8 +63,7 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
     setLoading(true)
     Promise.all([fetchDeviceCompliance(device.id), fetchComplianceResults(device.id)])
       .then(([tpl, leg]) => {
-        setTemplateResults(tpl.results); setOverall(tpl.overall_score)
-        setLegacy(leg); setError(null)
+        setData(tpl); setLegacy(leg); setError(null)
       })
       .catch(() => setError('Failed to load compliance results.'))
       .finally(() => setLoading(false))
@@ -70,10 +86,17 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
   if (loading) return <Spinner />
   if (error) return <Banner text={error} />
 
+  const templateResults = data?.results ?? []
+  const interfaceFindings = data?.interface_rule_findings ?? []
+  const roleFindings = data?.role_consistency_findings ?? []
+  const breakdown = data?.breakdown ?? []
   const hasTemplates = templateResults.length > 0
+  const hasInterface = interfaceFindings.length > 0
+  const hasRole = roleFindings.length > 0
   const hasLegacy = legacy.length > 0
+  const hasAny = hasTemplates || hasInterface || hasRole || hasLegacy
 
-  if (!hasTemplates && !hasLegacy) {
+  if (!hasAny) {
     return (
       <div className="space-y-4">
         <div className="flex justify-end">
@@ -82,7 +105,7 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
         <OSVersionCard device={device} />
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
           <EmptyState title="No compliance checks"
-            description="This device hasn't been evaluated against any compliance template yet. Define templates under Settings → Compliance, then run a check."
+            description="This device hasn't been evaluated against any compliance template, interface rule, or role-consistency rule yet. Define rules under Settings → Compliance, then run a check."
             icon="📐" />
         </div>
       </div>
@@ -98,22 +121,32 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
 
       <OSVersionCard device={device} />
 
-      {hasTemplates && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Overall score */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Overall Score</h3>
-            <Gauge value={overall ?? 0} label="% compliant" />
-            <p className="text-xs text-gray-400 dark:text-gray-500 text-center">
-              {templateResults.filter((r) => r.status === 'compliant').length}/{templateResults.length} templates compliant
-            </p>
-          </div>
+      {breakdown.length > 0 && (
+        <ScoreHeader score={data?.score ?? null} grade={data?.grade ?? 'N/A'} breakdown={breakdown} />
+      )}
 
-          {/* Per-template results */}
-          <div className="lg:col-span-2 space-y-3">
+      {hasTemplates && (
+        <Section title="Template Findings">
+          <div className="space-y-3">
             {templateResults.map((r) => <TemplateResultCard key={r.id} result={r} />)}
           </div>
-        </div>
+        </Section>
+      )}
+
+      {hasInterface && (
+        <Section title="Interface Rule Findings">
+          <div className="space-y-3">
+            {interfaceFindings.map((f, i) => <InterfaceFindingCard key={i} finding={f} platform={device.platform} />)}
+          </div>
+        </Section>
+      )}
+
+      {hasRole && (
+        <Section title="Role Consistency">
+          <div className="space-y-3">
+            {roleFindings.map((f, i) => <RoleConsistencyCard key={i} finding={f} />)}
+          </div>
+        </Section>
       )}
 
       {hasLegacy && (
@@ -145,6 +178,148 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
           </div>
         </details>
       )}
+    </div>
+  )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">{title}</h3>
+      {children}
+    </div>
+  )
+}
+
+function ScoreHeader({ score, grade, breakdown }: {
+  score: number | null; grade: string; breakdown: ComplianceBreakdownItem[]
+}) {
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <div className="flex items-center gap-6 mb-4">
+        <div className="text-center shrink-0">
+          <div className="text-4xl font-bold text-gray-900 dark:text-gray-100">
+            {score == null ? '—' : Math.round(score)}<span className="text-xl text-gray-400">/100</span>
+          </div>
+          <div className={clsx('text-sm font-semibold', GRADE_COLOR[grade] ?? 'text-gray-400')}>Grade: {grade}</div>
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">Overall Compliance Score</div>
+          <div className="h-3 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+            <div className={clsx('h-full rounded-full transition-all', barColor(score ?? 0))} style={{ width: `${score ?? 0}%` }} />
+          </div>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {breakdown.map((b) => (
+          <div key={b.name} className="flex items-center gap-3 text-xs">
+            <span className="w-36 shrink-0 text-gray-600 dark:text-gray-300">{b.name}</span>
+            <span className="w-16 shrink-0 font-mono text-gray-700 dark:text-gray-200">{Math.round(b.score)}/100</span>
+            <div className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+              <div className={clsx('h-full rounded-full', barColor(b.score))} style={{ width: `${b.score}%` }} />
+            </div>
+            <span className="w-10 shrink-0 text-right text-gray-400">({b.weight}%)</span>
+            {b.total != null && <span className="w-16 shrink-0 text-right text-gray-400">{b.passing}/{b.total}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CopyBlock({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 1500)
+    }).catch(() => {})
+  }
+  return (
+    <div>
+      {label && <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</div>}
+      <div className="relative">
+        <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-700 rounded p-3 pr-16 overflow-x-auto text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{text}</pre>
+        <button onClick={copy}
+          className="absolute top-2 right-2 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function InterfaceFindingCard({ finding, platform }: { finding: InterfaceRuleFinding; platform: string }) {
+  const [open, setOpen] = useState(!finding.passed)
+  const failedChecks = finding.findings.filter((c) => !c.passed)
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+        <div className="flex items-center gap-2 min-w-0">
+          <span>{finding.passed ? '✅' : '❌'}</span>
+          <span className="font-mono text-sm text-gray-900 dark:text-gray-100">{finding.interface}</span>
+          {finding.neighbor && <span className="text-xs text-gray-400">→ {finding.neighbor}</span>}
+          <span className="text-xs text-gray-500 dark:text-gray-400">· {finding.rule_name}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={clsx('text-xs font-medium', finding.passed ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+            {finding.passing}/{finding.total} pass
+          </span>
+          <span className="text-gray-400">{open ? '▴' : '▾'}</span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 border-t border-gray-100 dark:border-gray-700 pt-3 space-y-3">
+          <ul className="space-y-1.5 text-sm">
+            {finding.findings.map((c, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span>{c.passed ? '✅' : '❌'}</span>
+                <span className={clsx(c.passed ? 'text-gray-600 dark:text-gray-300' : 'text-red-600 dark:text-red-400')}>
+                  {c.description || c.value}: {c.passed ? 'PASS' : 'MISSING'}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {!finding.passed && failedChecks[0]?.value && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Expected to find: <span className="font-mono text-gray-700 dark:text-gray-200">"{failedChecks[0].value}"</span>
+            </p>
+          )}
+
+          {finding.interface_config && (
+            <CopyBlock label="Interface config" text={finding.interface_config} />
+          )}
+
+          {finding.suggested_fix && (
+            <CopyBlock label={`Suggested fix${platform ? ` (${platform})` : ''}`} text={finding.suggested_fix} />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RoleConsistencyCard({ finding }: { finding: RoleConsistencyFinding }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 space-y-2">
+      <div className="flex items-center gap-2">
+        <span>{finding.passed ? '✅' : '❌'}</span>
+        <span className="font-medium text-gray-900 dark:text-gray-100">{finding.rule_name}</span>
+      </div>
+      <div className="text-sm space-y-1">
+        {finding.missing.length > 0
+          ? <div className="text-red-600 dark:text-red-400">❌ Missing: <span className="font-mono">{finding.missing.join(', ')}</span></div>
+          : <div className="text-green-600 dark:text-green-400">✅ Nothing missing</div>}
+        {finding.extra.length > 0
+          ? <div className="text-orange-600 dark:text-orange-400">⚠️ Extra: <span className="font-mono">{finding.extra.join(', ')}</span></div>
+          : <div className="text-green-600 dark:text-green-400">✅ No extra items</div>}
+      </div>
+      <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5 font-mono">
+        <div>Expected: {finding.expected.join(', ') || '—'}</div>
+        <div>This device: {finding.has.join(', ') || '—'}</div>
+      </div>
+      {finding.remediation && <CopyBlock label="Suggested fix" text={finding.remediation} />}
     </div>
   )
 }

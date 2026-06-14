@@ -555,32 +555,36 @@ class DeviceViewSet(viewsets.ModelViewSet):
         qs = DeviceCVE.objects.select_related("cve").filter(device=device)
         return Response(DeviceCVESerializer(qs, many=True).data)
 
-    @extend_schema(summary="Latest template-compliance results for the device", responses=None)
+    @extend_schema(summary="Weighted compliance score + findings for the device", responses=None)
     @action(detail=True, methods=["get"], url_path="compliance")
     def compliance(self, request, pk=None):
         """
-        The most recent ComplianceTemplateResult per applicable template, plus an
-        overall score (average of per-template scores). Drives the device
-        Compliance tab. Returns {overall_score, results: [...]}.
+        Weighted device compliance: template (50%) + interface rules (30%) +
+        role consistency (20%), renormalised over the components that apply.
+
+        Returns the overall ``score``/``grade``/``breakdown`` plus the detailed
+        ``template_findings`` / ``interface_rule_findings`` /
+        ``role_consistency_findings`` the Compliance tab renders. ``overall_score``
+        (template-only average) and ``results`` are retained for back-compat.
         """
-        from apps.compliance.models import ComplianceTemplateResult
+        from apps.compliance.device_score import calculate_device_compliance_score
         from apps.compliance.serializers import ComplianceTemplateResultSerializer
         device = self.get_object()
 
-        # Latest result per template (results are ordered -checked_at).
-        latest: dict[int, ComplianceTemplateResult] = {}
-        for r in (ComplianceTemplateResult.objects
-                  .select_related("template")
-                  .filter(device=device)):
-            if r.template_id not in latest:
-                latest[r.template_id] = r
-        results = sorted(latest.values(), key=lambda r: r.template.name if r.template else "")
-
-        scored = [r.score for r in results if r.score is not None]
-        overall = round(sum(scored) / len(scored), 1) if scored else None
+        data = calculate_device_compliance_score(device)
+        template_data = ComplianceTemplateResultSerializer(data["template_results"], many=True).data
         return Response({
-            "overall_score": overall,
-            "results": ComplianceTemplateResultSerializer(results, many=True).data,
+            # Back-compat keys (template-only).
+            "overall_score": data["template_score"],
+            "results": template_data,
+            # Weighted score + breakdown.
+            "score": data["score"],
+            "grade": data["grade"],
+            "breakdown": data["breakdown"],
+            # Detailed findings per component.
+            "template_findings": template_data,
+            "interface_rule_findings": data["interface_rule_findings"],
+            "role_consistency_findings": data["role_consistency_findings"],
         })
 
     @action(detail=True, methods=["get"], url_path="audit")
