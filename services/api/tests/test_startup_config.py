@@ -34,29 +34,23 @@ class TestCheckDispatch:
         assert res["match"] is None
 
     def test_aos_cx_match(self, device, monkeypatch):
-        class _Client:
-            def __init__(self, *a, **k): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def login(self, u, p): pass
-            def get_running_config(self): return {"a": 1}
-            def get_startup_config(self): return {"a": 1}
-        monkeypatch.setattr("apps.devices.aos_cx_client.AOSCXClient", _Client)
+        # Both configs fetched via SSH (CLI); identical → match.
+        monkeypatch.setattr(collector, "_aos_cx_ssh_exec",
+                            lambda d, p, c, cmd, **kw: "hostname sw\ninterface 1/1/1\n")
         from apps.credentials.models import CredentialProfile
         device.credential_profile = CredentialProfile.objects.create(name="p", ssh_username="admin")
         device.save()
         res = collector.check_running_startup_match(device)
         assert res["checked"] is True and res["match"] is True
+        assert res["method"] == "ssh"
 
     def test_aos_cx_mismatch_produces_diff(self, device, monkeypatch):
-        class _Client:
-            def __init__(self, *a, **k): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def login(self, u, p): pass
-            def get_running_config(self): return {"a": 1, "b": 2}
-            def get_startup_config(self): return {"a": 1}
-        monkeypatch.setattr("apps.devices.aos_cx_client.AOSCXClient", _Client)
+        outputs = {
+            "show running-config": "hostname sw\ninterface 1/1/1\n    no shutdown\n",
+            "show startup-config": "hostname sw\ninterface 1/1/1\n",
+        }
+        monkeypatch.setattr(collector, "_aos_cx_ssh_exec",
+                            lambda d, p, c, cmd, **kw: outputs[cmd])
         from apps.credentials.models import CredentialProfile
         device.credential_profile = CredentialProfile.objects.create(name="p", ssh_username="admin")
         device.save()
@@ -64,6 +58,7 @@ class TestCheckDispatch:
         assert res["checked"] is True and res["match"] is False
         assert res["added"] >= 1
         assert "running-config" in res["diff"]
+        assert res["method"] == "ssh"
 
 
 class TestUpdateAndAlert:

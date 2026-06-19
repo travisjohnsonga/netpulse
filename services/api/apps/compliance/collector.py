@@ -292,16 +292,16 @@ def _fetch_aos_cx_via_rest(device, profile, creds: dict) -> str:
     return json.dumps(data, indent=2, sort_keys=True) if isinstance(data, (dict, list)) else str(data)
 
 
-def _fetch_aos_cx_via_ssh(device, profile, creds: dict) -> str:
-    """
-    Collect an AOS-CX running config over SSH using a non-interactive
-    ``exec_command`` channel (paramiko directly).
+def _aos_cx_ssh_exec(device, profile, creds: dict, command: str,
+                     *, connect_timeout: int = 15, exec_timeout: int = 60) -> str:
+    """Run one AOS-CX ``show`` command over a non-interactive paramiko
+    ``exec_command`` channel and return the output with the preamble stripped.
 
     Netmiko's ``send_command`` drives the interactive shell, which on AOS-CX
-    paginates ``show running-config`` behind a ``--More--`` pager that Netmiko
-    doesn't handle for this platform — the call then blocks until the read
-    timeout. The exec channel returns the whole config at once with no pager, so
-    we bypass Netmiko entirely here.
+    paginates behind a ``--More--`` pager Netmiko doesn't handle for this
+    platform — the call then blocks until the read timeout. The exec channel
+    returns the whole output at once with no pager, so we bypass Netmiko here.
+    Raises ValueError on empty output.
     """
     import paramiko  # lazy
 
@@ -315,18 +315,23 @@ def _fetch_aos_cx_via_ssh(device, profile, creds: dict) -> str:
     try:
         ssh.connect(
             host, port=port, username=username, password=password,
-            timeout=15, look_for_keys=False, allow_agent=False,
+            timeout=connect_timeout, look_for_keys=False, allow_agent=False,
         )
-        _stdin, stdout, _stderr = ssh.exec_command("show running-config", timeout=60)
-        config = stdout.read().decode("utf-8", errors="replace")
-        if not config.strip():
+        _stdin, stdout, _stderr = ssh.exec_command(command, timeout=exec_timeout)
+        out = stdout.read().decode("utf-8", errors="replace")
+        if not out.strip():
             raise ValueError("empty config returned")
-        return _strip_aos_cx_preamble(config)
+        return _strip_aos_cx_preamble(out)
     finally:
         try:
             ssh.close()
         except Exception:  # noqa: BLE001 — close is best-effort
             pass
+
+
+def _fetch_aos_cx_via_ssh(device, profile, creds: dict) -> str:
+    """Collect the AOS-CX running config via SSH ``show running-config``."""
+    return _aos_cx_ssh_exec(device, profile, creds, "show running-config")
 
 
 def _strip_aos_cx_preamble(config: str) -> str:
@@ -370,39 +375,31 @@ def _diff_counts(diff: str) -> tuple[int, int]:
     return added, removed
 
 
-def _config_text(data) -> str:
-    """Normalise an AOS-CX config payload (JSON document or text) to comparable text."""
-    import json
-    if isinstance(data, (dict, list)):
-        return json.dumps(data, indent=2, sort_keys=True)
-    return str(data or "")
-
-
 def _check_aos_cx_startup(device) -> dict:
-    """Compare AOS-CX running vs startup config over REST."""
-    from apps.devices.aos_cx_client import AOSCXClient
+    """Compare AOS-CX running vs startup config over SSH.
 
+    Both configs are fetched via ``show running-config`` / ``show startup-config``
+    so they're in the SAME native CLI format — the running config is now stored as
+    CLI (see collect_aos_cx_config), so comparing a REST JSON startup against it
+    produced a noisy, useless diff. SSH gives a meaningful, CLI-level diff.
+    """
     profile = device.credential_profile
     if not profile:
         return {"checked": False, "match": None, "error": "no credentials"}
     creds = get_credentials(device)
-    username = (profile.ssh_username or "") or creds.get("ssh_username", "")
-    password = creds.get("ssh_password", "")
     try:
-        with AOSCXClient(device_host(device)) as client:
-            client.login(username, password)
-            running = _config_text(client.get_running_config())
-            startup = _config_text(client.get_startup_config())
+        running = _aos_cx_ssh_exec(device, profile, creds, "show running-config")
+        startup = _aos_cx_ssh_exec(device, profile, creds, "show startup-config")
     except Exception as exc:  # noqa: BLE001
         return {"checked": False, "match": None, "error": str(exc)[:300]}
 
     if running.strip() == startup.strip():
-        return {"checked": True, "match": True, "diff": "", "method": "rest", "added": 0, "removed": 0}
+        return {"checked": True, "match": True, "diff": "", "method": "ssh", "added": 0, "removed": 0}
     diff = "\n".join(difflib.unified_diff(
         startup.splitlines(), running.splitlines(),
         fromfile="startup-config", tofile="running-config", lineterm=""))
     added, removed = _diff_counts(diff)
-    return {"checked": True, "match": False, "diff": diff, "method": "rest",
+    return {"checked": True, "match": False, "diff": diff, "method": "ssh",
             "added": added, "removed": removed}
 
 
