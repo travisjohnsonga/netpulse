@@ -317,11 +317,11 @@ def _fetch_aos_cx_via_ssh(device, profile, creds: dict) -> str:
             host, port=port, username=username, password=password,
             timeout=15, look_for_keys=False, allow_agent=False,
         )
-        _stdin, stdout, _stderr = ssh.exec_command("show running-config", timeout=30)
+        _stdin, stdout, _stderr = ssh.exec_command("show running-config", timeout=60)
         config = stdout.read().decode("utf-8", errors="replace")
         if not config.strip():
             raise ValueError("empty config returned")
-        return config
+        return _strip_aos_cx_preamble(config)
     finally:
         try:
             ssh.close()
@@ -329,22 +329,37 @@ def _fetch_aos_cx_via_ssh(device, profile, creds: dict) -> str:
             pass
 
 
+def _strip_aos_cx_preamble(config: str) -> str:
+    """Drop the non-config preamble AOS-CX prints before the running config
+    (e.g. ``Current configuration:``); keep from the first real config line so
+    the stored text begins at ``!``/``hostname`` and diffs stay stable."""
+    lines = config.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(("hostname", "!", "vlan", "interface")):
+            return "\n".join(lines[i:])
+    return config
+
+
 def collect_aos_cx_config(device, profile, creds: dict) -> str:
     """
-    Collect an AOS-CX switch's running config. Prefers the REST API (fastest,
-    pager-immune); falls back to a paramiko ``exec_command`` SSH channel. Netmiko
-    is deliberately avoided — its interactive ``send_command`` hangs on the
-    AOS-CX ``--More--`` pager.
+    Collect an AOS-CX switch's running config.
+
+    Prefers SSH ``show running-config`` over a paramiko ``exec_command`` channel:
+    it returns the COMPLETE running config (ntp/radius/aaa/snmp/routes/logging/
+    banner/spanning-tree/vrf/…) in one call as native CLI text. Falls back to the
+    REST API, which only yields a partial config (vlans + interfaces, rendered to
+    CLI). Netmiko is deliberately avoided — its interactive ``send_command`` hangs
+    on the AOS-CX ``--More--`` pager; the exec channel is pager-immune.
     """
     try:
-        config = _fetch_aos_cx_via_rest(device, profile, creds)
-        _record_method("rest")
+        config = _fetch_aos_cx_via_ssh(device, profile, creds)
+        _record_method("ssh")
         return config
-    except Exception as exc:  # noqa: BLE001 — REST unreachable → SSH fallback
-        logger.debug("AOS-CX REST config failed for %s, falling back to SSH: %s",
+    except Exception as exc:  # noqa: BLE001 — SSH unreachable → REST fallback
+        logger.debug("AOS-CX SSH config failed for %s, falling back to REST: %s",
                      device.hostname, exc)
-    config = _fetch_aos_cx_via_ssh(device, profile, creds)
-    _record_method("ssh")
+    config = _fetch_aos_cx_via_rest(device, profile, creds)
+    _record_method("rest")
     return config
 
 

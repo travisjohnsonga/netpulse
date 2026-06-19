@@ -485,9 +485,10 @@ class TestAOSCXClient:
 # ── running-config collection (config backup) ───────────────────────────────────
 
 class TestAOSCXConfigCollection:
-    """The AOS-CX path in apps.compliance.collector — REST first, paramiko
-    exec_command SSH fallback (Netmiko is deliberately avoided: its interactive
-    send_command hangs on the AOS-CX ``--More--`` pager)."""
+    """The AOS-CX path in apps.compliance.collector — SSH ``show running-config``
+    first (complete CLI config), REST fallback (partial — vlans/interfaces).
+    Netmiko is deliberately avoided: its interactive send_command hangs on the
+    AOS-CX ``--More--`` pager; the exec channel is pager-immune."""
 
     def test_get_running_config_uses_fullconfigs_endpoint(self):
         client = AOSCXClient("10.0.0.5")
@@ -497,9 +498,9 @@ class TestAOSCXConfigCollection:
         assert cfg == {"System": {"hostname": "cx"}}
 
     @pytest.mark.django_db
-    def test_dispatch_routes_aos_cx_to_rest(self, monkeypatch):
-        """_fetch_running_config sends aos_cx through the REST collector and
-        serialises the JSON document to stable text."""
+    def test_rest_is_fallback_when_ssh_fails(self, monkeypatch):
+        """When SSH (primary) fails, _fetch_running_config falls back to the REST
+        collector and serialises the JSON document to stable text."""
         from apps.compliance import collector
 
         profile = CredentialProfile.objects.create(
@@ -507,6 +508,10 @@ class TestAOSCXConfigCollection:
         device = Device.objects.create(
             hostname="cx", ip_address="10.0.0.5", management_ip="10.0.0.5",
             platform="aos_cx", credential_profile=profile)
+
+        # SSH is primary now; force it to fail so the REST fallback is exercised.
+        monkeypatch.setattr(collector, "_fetch_aos_cx_via_ssh",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no ssh")))
 
         captured = {}
 
@@ -537,8 +542,9 @@ class TestAOSCXConfigCollection:
         assert out == '{\n  "a": 1,\n  "b": 2\n}'
 
     @pytest.mark.django_db
-    def test_falls_back_to_ssh_exec_when_rest_fails(self, monkeypatch):
-        """REST failure → paramiko exec_command 'show running-config'."""
+    def test_ssh_is_primary_show_running_config(self, monkeypatch):
+        """SSH 'show running-config' (paramiko exec_command) is the PRIMARY path;
+        REST is never reached when SSH succeeds (REST mocked to boom proves it)."""
         from apps.compliance import collector
 
         profile = CredentialProfile.objects.create(
@@ -548,7 +554,7 @@ class TestAOSCXConfigCollection:
             platform="aos_cx", credential_profile=profile)
 
         def _boom(*a, **k):
-            raise RuntimeError("REST down")
+            raise RuntimeError("REST should not be called when SSH succeeds")
 
         monkeypatch.setattr(collector, "_fetch_aos_cx_via_rest", _boom)
 
@@ -579,7 +585,9 @@ class TestAOSCXConfigCollection:
 
         out = collector._fetch_running_config(device, {"ssh_password": "secret"})
 
-        assert out == "hostname cx\ninterface 1/1/1\n"
+        # _strip_aos_cx_preamble re-joins lines (the trailing newline is dropped);
+        # the config begins at the first real config line.
+        assert out == "hostname cx\ninterface 1/1/1"
         assert connect_kwargs["host"] == "10.0.0.5"
         assert connect_kwargs["username"] == "admin"
         assert connect_kwargs["password"] == "secret"
@@ -587,7 +595,7 @@ class TestAOSCXConfigCollection:
         assert connect_kwargs["look_for_keys"] is False
         assert connect_kwargs["allow_agent"] is False
         assert connect_kwargs["closed"] is True
-        assert exec_calls == [("show running-config", 30)]
+        assert exec_calls == [("show running-config", 60)]
 
     @pytest.mark.django_db
     def test_ssh_exec_empty_config_raises(self, monkeypatch):
@@ -621,6 +629,22 @@ class TestAOSCXConfigCollection:
 
         with pytest.raises(ValueError):
             collector._fetch_aos_cx_via_ssh(device, profile, {"ssh_password": "x"})
+
+    def test_strip_preamble_drops_non_config_header(self):
+        from apps.compliance import collector
+
+        raw = ("Current configuration:\n"
+               "!\n!Version AOS-CX PL.10.16\nhostname cx\n"
+               "interface 1/1/1\n    no shutdown\n")
+        out = collector._strip_aos_cx_preamble(raw)
+        assert out.startswith("!\n!Version")            # 'Current configuration:' dropped
+        assert "Current configuration:" not in out
+        assert "hostname cx" in out and "interface 1/1/1" in out
+
+    def test_strip_preamble_noop_when_no_header(self):
+        from apps.compliance import collector
+        cfg = "hostname cx\ninterface 1/1/1\n"
+        assert collector._strip_aos_cx_preamble(cfg) == "hostname cx\ninterface 1/1/1"
 
 
 # ── SNMP sysDescr fallback parsing ──────────────────────────────────────────────
