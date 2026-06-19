@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import clsx from 'clsx'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   generateReport, fetchReports, downloadReport, deleteReport, bulkDeleteReports,
@@ -169,6 +170,8 @@ function PreviewModal({ def, onClose }: { def: ReportDef; onClose: () => void })
               )}
             </div>
           </div>
+        ) : def.endpoint === 'compliance-summary' ? (
+          <ComplianceSummaryPreview data={data} />
         ) : (
           <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-700 rounded p-3 overflow-auto max-h-[60vh]">{JSON.stringify(data, null, 2)}</pre>
         )}
@@ -186,6 +189,83 @@ function Stat({ label, value }: { label: string; value: string | number }) {
     <div className="bg-gray-50 dark:bg-gray-900/40 rounded-lg px-3 py-2 border border-gray-200 dark:border-gray-700">
       <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
       <div className="text-lg font-bold text-gray-900 dark:text-gray-100">{value}</div>
+    </div>
+  )
+}
+
+interface CompGroupRow {
+  site?: string; role?: string; platform?: string
+  device_count: number; avg_score: number | null; grade?: string | null
+  passing?: number; failing?: number
+}
+
+function gradeColor(grade?: string | null): string {
+  switch ((grade || '').toUpperCase()) {
+    case 'A': return 'text-green-600 dark:text-green-400'
+    case 'B': return 'text-green-600 dark:text-green-400'
+    case 'C': return 'text-amber-600 dark:text-amber-400'
+    case 'D': return 'text-orange-600 dark:text-orange-400'
+    case 'F': return 'text-red-600 dark:text-red-400'
+    default: return 'text-gray-500'
+  }
+}
+
+/** In-browser HTML preview of the Compliance Summary report (was raw JSON). */
+function ComplianceSummaryPreview({ data }: { data: Record<string, unknown> }) {
+  const summary = (data.summary as { total_devices?: number; avg_score?: number | null; passing?: number; warning?: number; failing?: number; not_checked?: number }) || {}
+  const findings = (data.findings_summary as { critical?: unknown[]; warning?: unknown[] }) || {}
+  const startup = (data.startup_mismatch as unknown[]) || []
+
+  const groups: { title: string; key: 'by_site' | 'by_role' | 'by_platform'; col: 'site' | 'role' | 'platform' }[] = [
+    { title: 'By Site', key: 'by_site', col: 'site' },
+    { title: 'By Role', key: 'by_role', col: 'role' },
+    { title: 'By Platform', key: 'by_platform', col: 'platform' },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 text-sm">
+        <Stat label="Devices" value={summary.total_devices ?? 0} />
+        <Stat label="Avg score" value={summary.avg_score ?? '—'} />
+        <Stat label="Passing" value={summary.passing ?? 0} />
+        <Stat label="Warning" value={summary.warning ?? 0} />
+        <Stat label="Failing" value={summary.failing ?? 0} />
+        <Stat label="Not checked" value={summary.not_checked ?? 0} />
+      </div>
+
+      {groups.map(({ title, key, col }) => {
+        const rows = (data[key] as CompGroupRow[]) || []
+        if (rows.length === 0) return null
+        return (
+          <div key={key}>
+            <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">{title}</h4>
+            <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 dark:bg-gray-900/40 text-gray-500 dark:text-gray-400">
+                  <tr><th className="text-left px-3 py-1.5">{col}</th><th className="px-3 py-1.5">Devices</th><th className="px-3 py-1.5">Score</th><th className="px-3 py-1.5">Grade</th><th className="px-3 py-1.5">Pass/Fail</th></tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} className="border-t border-gray-100 dark:border-gray-700/60">
+                      <td className="px-3 py-1.5 text-gray-800 dark:text-gray-200">{r[col] ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-center">{r.device_count}</td>
+                      <td className="px-3 py-1.5 text-center">{r.avg_score ?? '—'}</td>
+                      <td className={clsx('px-3 py-1.5 text-center font-semibold', gradeColor(r.grade))}>{r.grade ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-center text-gray-500">{r.passing ?? '—'}/{r.failing ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })}
+
+      <div className="flex gap-3 text-sm">
+        <Stat label="Critical findings" value={(findings.critical || []).length} />
+        <Stat label="Warning findings" value={(findings.warning || []).length} />
+        <Stat label="Unsaved configs" value={startup.length} />
+      </div>
     </div>
   )
 }
