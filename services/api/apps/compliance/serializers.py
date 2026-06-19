@@ -150,13 +150,14 @@ class InterfaceComplianceRuleSerializer(serializers.ModelSerializer):
 class InterfaceComplianceResultSerializer(serializers.ModelSerializer):
     device_hostname = serializers.CharField(source="device.hostname", read_only=True)
     rule_name = serializers.CharField(source="rule.name", read_only=True)
+    rule_enabled = serializers.BooleanField(source="rule.enabled", read_only=True)
 
     class Meta:
         model = InterfaceComplianceResult
         fields = (
-            "id", "rule", "rule_name", "device", "device_hostname", "interface",
-            "neighbor", "trigger_match", "passed", "findings", "checks_total",
-            "checked_at",
+            "id", "rule", "rule_name", "rule_enabled", "device", "device_hostname",
+            "interface", "neighbor", "trigger_match", "passed", "findings",
+            "checks_total", "checked_at",
         )
         read_only_fields = fields
 

@@ -412,3 +412,50 @@ class TestInterfaceNameTrigger:
         out = ic.run_interface_compliance(rule)
         # vlan10 has a description (pass); vlan20 doesn't (fail).
         assert out["summary"] == {"matched": 2, "passing": 1, "failing": 1}
+
+
+class TestDisabledRuleExclusion:
+    def _result(self, device, rule, interface, passed=True):
+        return InterfaceComplianceResult.objects.create(
+            rule=rule, device=device, interface=interface, passed=passed,
+            findings=[], checks_total=0)
+
+    def _mkrule(self, name, enabled):
+        return InterfaceComplianceRule.objects.create(
+            name=name, trigger="interface_name", trigger_value="x", enabled=enabled, checks=[])
+
+    def test_device_findings_exclude_disabled_rule(self):
+        from apps.compliance.device_score import get_interface_rule_findings
+        sw = _switch()
+        _config(sw, AOS_CONFIG)
+        self._result(sw, self._mkrule("on", True), "1/1/7", passed=True)
+        self._result(sw, self._mkrule("off", False), "1/1/8", passed=False)
+        findings = get_interface_rule_findings(sw)
+        assert {f["interface"] for f in findings} == {"1/1/7"}  # disabled rule's result excluded
+        assert all(f["rule_name"] == "on" for f in findings)
+
+    def test_score_none_when_only_disabled(self):
+        from apps.compliance.device_score import get_interface_rule_findings, get_interface_score
+        sw = _switch()
+        self._result(sw, self._mkrule("off", False), "1/1/1", passed=False)
+        # No enabled-rule results → interface score is None (don't penalize).
+        assert get_interface_score(get_interface_rule_findings(sw)) is None
+
+    def test_results_endpoint_device_scope_excludes_disabled(self, auth_client):
+        sw = _switch()
+        self._result(sw, self._mkrule("on", True), "1/1/7")
+        self._result(sw, self._mkrule("off", False), "1/1/8")
+        resp = auth_client.get(f"/api/compliance/interface-results/?device_id={sw.id}")
+        rows = resp.json()
+        rows = rows["results"] if isinstance(rows, dict) else rows
+        assert {r["interface"] for r in rows} == {"1/1/7"}
+        assert rows[0]["rule_enabled"] is True
+
+    def test_results_endpoint_rule_id_shows_disabled(self, auth_client):
+        sw = _switch()
+        off = self._mkrule("off", False)
+        self._result(sw, off, "1/1/8")
+        resp = auth_client.get(f"/api/compliance/interface-results/?rule_id={off.id}")
+        rows = resp.json()
+        rows = rows["results"] if isinstance(rows, dict) else rows
+        assert len(rows) == 1 and rows[0]["rule_enabled"] is False

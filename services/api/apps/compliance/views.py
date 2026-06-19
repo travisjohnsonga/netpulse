@@ -294,7 +294,13 @@ class InterfaceComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, Gener
         if did:
             qs = qs.filter(device_id=did)
         if rid:
+            # Explicit rule lookup (rule-management view): show that rule's own
+            # results, enabled or not.
             qs = qs.filter(rule_id=rid)
+        else:
+            # Device-scoped / unfiltered: hide results from disabled rules so
+            # they don't surface on the device compliance view.
+            qs = qs.filter(rule__enabled=True)
         return qs
 
 

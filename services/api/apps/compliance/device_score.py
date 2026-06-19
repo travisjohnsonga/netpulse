@@ -116,9 +116,11 @@ def get_interface_rule_findings(device) -> list[dict]:
     from .models import InterfaceComplianceResult
 
     out: list[dict] = []
+    # Only results from ENABLED rules — a disabled rule's stale results must not
+    # show on the device compliance tab or factor into the score.
     for r in (InterfaceComplianceResult.objects
               .select_related("rule")
-              .filter(device=device)):
+              .filter(device=device, rule__enabled=True)):
         checks = r.findings or []
         iface_cfg = get_interface_config(device, r.interface)
         fix = ""
