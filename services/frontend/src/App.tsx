@@ -41,6 +41,7 @@ import WirelessLocation from './pages/WirelessLocation'
 import TVLauncher from './pages/tv/TVLauncher'
 import TVNetwork from './pages/tv/TVNetwork'
 import TVWireless from './pages/tv/TVWireless'
+import TVWirelessMist from './pages/tv/TVWirelessMist'
 import TVSecurity from './pages/tv/TVSecurity'
 import TVOps from './pages/tv/TVOps'
 import TVSites from './pages/tv/TVSites'
@@ -127,6 +128,7 @@ function AppRoutes() {
               <Route path="/" element={<TVLauncher />} />
               <Route path="network" element={<TVNetwork />} />
               <Route path="wireless" element={<TVWireless />} />
+              <Route path="wireless-mist" element={<TVWirelessMist />} />
               <Route path="security" element={<TVSecurity />} />
               <Route path="ops" element={<TVOps />} />
               <Route path="sites" element={<TVSites />} />

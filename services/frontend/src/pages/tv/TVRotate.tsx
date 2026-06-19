@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ComponentType } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { TV_SCREENS } from './TVLauncher'
 import TVNetwork from './TVNetwork'
-import TVWireless from './TVWireless'
+import TVWirelessMist from './TVWirelessMist'
 import TVSecurity from './TVSecurity'
 import TVOps from './TVOps'
 import TVSites from './TVSites'
@@ -14,7 +14,7 @@ type RotationProp = { rotation?: { current: string; nextCountdown: number; progr
 
 const SCREENS: Record<string, ComponentType<RotationProp>> = {
   network: TVNetwork,
-  wireless: TVWireless,
+  wireless: TVWirelessMist,
   security: TVSecurity,
   ops: TVOps,
   sites: TVSites,

@@ -18,7 +18,7 @@ export interface TVScreen {
 
 export const TV_SCREENS: TVScreen[] = [
   { key: 'network', path: '/tv/network', icon: '📡', title: 'Network Overview', blurb: 'Devices, alerts, status', interval: 45 },
-  { key: 'wireless', path: '/tv/wireless', icon: '📶', title: 'Wireless Overview', blurb: 'APs, clients, signal, utilization', interval: 45 },
+  { key: 'wireless', path: '/tv/wireless-mist', icon: '📶', title: 'Wireless (Mist)', blurb: 'APs, SLE, floor map, clients', interval: 30 },
   { key: 'security', path: '/tv/security', icon: '🔒', title: 'Security Events', blurb: 'Auth failures, alerts, threats', interval: 30 },
   { key: 'ops', path: '/tv/ops', icon: '📊', title: 'Operations Status', blurb: 'Collection, agents, services', interval: 60 },
   { key: 'sites', path: '/tv/sites', icon: '📍', title: 'Site Status', blurb: 'Per-site device up/down', interval: 45 },
