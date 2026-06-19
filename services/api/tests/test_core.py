@@ -59,6 +59,11 @@ class TestSetupStatus:
 
 
 class TestChatOpsSlack:
+    @pytest.fixture(autouse=True)
+    def _enable_chatops(self, settings):
+        # ChatOps webhooks are disabled by default; enable for these tests.
+        settings.CHATOPS_ENABLED = True
+
     def _slack_headers(self, body: str, secret: str = "") -> dict:
         ts = str(int(time.time()))
         base = f"v0:{ts}:{body}"
@@ -154,6 +159,11 @@ class TestChatOpsSlack:
 
 
 class TestChatOpsTeams:
+    @pytest.fixture(autouse=True)
+    def _enable_chatops(self, settings):
+        # ChatOps webhooks are disabled by default; enable for these tests.
+        settings.CHATOPS_ENABLED = True
+
     def test_teams_help(self, api_client):
         payload = {"text": "help", "from": {"name": "TestUser"}}
         resp = api_client.post("/api/webhooks/teams/", data=payload, format="json")
@@ -174,6 +184,11 @@ class TestChatOpsTeams:
 
 
 class TestChatOpsGChat:
+    @pytest.fixture(autouse=True)
+    def _enable_chatops(self, settings):
+        # ChatOps webhooks are disabled by default; enable for these tests.
+        settings.CHATOPS_ENABLED = True
+
     def test_gchat_help(self, api_client):
         payload = {"message": {"text": "help", "sender": {"displayName": "TestUser"}}}
         resp = api_client.post("/api/webhooks/gchat/", data=payload, format="json")
@@ -186,6 +201,11 @@ class TestChatOpsGChat:
 
 
 class TestChatOpsDiscord:
+    @pytest.fixture(autouse=True)
+    def _enable_chatops(self, settings):
+        # ChatOps webhooks are disabled by default; enable for these tests.
+        settings.CHATOPS_ENABLED = True
+
     def test_discord_help_via_content(self, api_client):
         payload = {"content": "help"}
         resp = api_client.post("/api/webhooks/discord/", data=payload, format="json")

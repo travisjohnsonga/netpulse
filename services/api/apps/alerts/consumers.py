@@ -18,8 +18,13 @@ class AlertConsumer(AsyncWebsocketConsumer):
     GROUP = "alerts"
 
     async def connect(self):
+        from apps.core.ws_auth import ws_subprotocol
+        user = self.scope.get("user")
+        if user is None or not user.is_authenticated:
+            await self.close(code=4401)
+            return
         await self.channel_layer.group_add(self.GROUP, self.channel_name)
-        await self.accept()
+        await self.accept(ws_subprotocol(self.scope))
         logger.debug("WS alerts connect: %s", self.channel_name)
 
     async def disconnect(self, code):

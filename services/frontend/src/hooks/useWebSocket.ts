@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useAuthStore } from '../store/authStore'
 
 // Derive the WebSocket base from the current page origin so both Vite's dev
 // proxy (/ws → ws://localhost:8001) and the nginx proxy in production route
@@ -22,7 +23,13 @@ export function useWebSocket(path: string) {
     const connect = () => {
       if (cancelled) return
       try {
-        ws.current = new WebSocket(`${wsBase()}${path}`)
+        // The backend requires JWT auth on WS connections. Browsers can't set
+        // headers on a WS handshake, so the access token rides as the second
+        // subprotocol ("bearer", "<jwt>"); the server validates + echoes it.
+        const token = useAuthStore.getState().accessToken
+        ws.current = token
+          ? new WebSocket(`${wsBase()}${path}`, ['bearer', token])
+          : new WebSocket(`${wsBase()}${path}`)
       } catch {
         // Unsupported environment (SSR, etc.) — skip silently
         return

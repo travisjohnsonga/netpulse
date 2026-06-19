@@ -13,9 +13,21 @@ if DEBUG:  # noqa: F405
     ALLOWED_HOSTS = ["*"]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# Force HTTPS at the app layer too (nginx already redirects :80→:443, but this
+# also covers any path that reaches Django over plain HTTP directly). Safe behind
+# the proxy via SECURE_PROXY_SSL_HEADER above. Shipped ON in .env.example; kept
+# env-driven (default off) so the over-HTTP test/health harness isn't redirected.
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "false").lower() == "true"
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# Session/admin/SSO flows use CSRF; trust the configured external origins
+# (comma-separated, scheme-qualified, e.g. https://spane.example.com).
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()
+]
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True

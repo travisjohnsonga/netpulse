@@ -222,9 +222,22 @@ def compliance_summary_pdf(data: dict) -> bytes:
     return buf.getvalue()
 
 
+class _SafeCsvWriter:
+    """csv.writer that runs every cell through csv_safe (formula-injection guard)
+    — report CSVs carry device hostnames / finding text influenced by inventory."""
+
+    def __init__(self, fileobj):
+        from apps.core.audit import csv_safe
+        self._w = csv.writer(fileobj)
+        self._safe = csv_safe
+
+    def writerow(self, row):
+        self._w.writerow([self._safe(c) for c in row])
+
+
 def compliance_summary_csv(data: dict) -> bytes:
     out = io.StringIO()
-    w = csv.writer(out)
+    w = _SafeCsvWriter(out)
     w.writerow(["group_type", "group", "device_count", "avg_score", "grade", "passing", "failing"])
     for r in data.get("by_site", []):
         w.writerow(["site", r["site"], r["device_count"], r["avg_score"], r["grade"], r["passing"], r["failing"]])
@@ -766,7 +779,7 @@ def daily_ops_pdf(data: dict) -> bytes:
 
 def daily_ops_csv(data: dict) -> bytes:
     out = io.StringIO()
-    w = csv.writer(out)
+    w = _SafeCsvWriter(out)
     w.writerow(["section", "key", "value"])
     sec = data["security_events"]
     w.writerow(["device_security", "total_failures", sec["total_failures"]])

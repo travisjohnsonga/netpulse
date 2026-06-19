@@ -22,11 +22,25 @@ import os
 import re
 import time
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
+
+
+def _chatops_enabled() -> bool:
+    """ChatOps inbound webhooks are AllowAny (the platforms can't send a JWT) and
+    Teams/Google Chat/Discord have no signature step, so an enabled webhook is an
+    unauthenticated read into inventory/alert data. The feature is planned, not
+    hardened, so it's disabled by default (settings.CHATOPS_ENABLED); a disabled
+    webhook returns 404 — not revealing the route exists — before any parsing."""
+    return getattr(settings, "CHATOPS_ENABLED", False)
+
+
+def _chatops_disabled_response() -> JsonResponse:
+    return JsonResponse({"error": "not found"}, status=404)
 
 # Webhook payloads/responses are platform-specific free-form JSON.
 _webhook_schema = extend_schema(
@@ -149,6 +163,8 @@ def _verify_slack(request: HttpRequest) -> bool:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_slack(request: HttpRequest) -> JsonResponse:
+    if not _chatops_enabled():
+        return _chatops_disabled_response()
     if not _verify_slack(request):
         logger.warning("slack signature verification failed from %s", request.META.get("REMOTE_ADDR"))
         return JsonResponse({"error": "invalid signature"}, status=401)
@@ -178,6 +194,8 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_teams(request: HttpRequest) -> JsonResponse:
+    if not _chatops_enabled():
+        return _chatops_disabled_response()
     # Teams sends an HMAC in Authorization header if outgoing webhook HMAC is configured
     payload  = request.data
     text     = payload.get("text", "")
@@ -204,6 +222,8 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_gchat(request: HttpRequest) -> JsonResponse:
+    if not _chatops_enabled():
+        return _chatops_disabled_response()
     payload  = request.data
     message  = payload.get("message", {})
     text     = message.get("text", "").strip()
@@ -222,6 +242,8 @@ def webhook_gchat(request: HttpRequest) -> JsonResponse:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_discord(request: HttpRequest) -> JsonResponse:
+    if not _chatops_enabled():
+        return _chatops_disabled_response()
     payload = request.data
     # Discord interaction verification uses Ed25519 — skip for now (Phase 4 full impl)
     text    = payload.get("data", {}).get("options", [{}])[0].get("value", "")

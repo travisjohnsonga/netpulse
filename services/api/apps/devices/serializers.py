@@ -265,6 +265,35 @@ class DiscoveryJobSerializer(serializers.ModelSerializer):
             "progress_current", "progress_total", "progress_message", "ips_scanned",
         )
 
+    @staticmethod
+    def _validate_cidr_list(value, field):
+        """Each entry must parse as an IP network/address. Rejects anything else
+        — critically, values like "--script=..." or "-oN" that would otherwise be
+        passed straight to nmap as argv flags (run_discovery builds the nmap
+        command from these lists), i.e. authenticated nmap-option injection."""
+        import ipaddress
+        if value in (None, ""):
+            return value
+        if not isinstance(value, list):
+            raise serializers.ValidationError(f"{field} must be a list of CIDRs/IPs.")
+        for entry in value:
+            s = str(entry).strip()
+            try:
+                ipaddress.ip_network(s, strict=False)
+            except ValueError:
+                raise serializers.ValidationError(
+                    f"{field}: '{entry}' is not a valid IP address or CIDR.")
+        return value
+
+    def validate_subnets(self, value):
+        return self._validate_cidr_list(value, "subnets")
+
+    def validate_excluded_subnets(self, value):
+        return self._validate_cidr_list(value, "excluded_subnets")
+
+    def validate_allowed_subnets(self, value):
+        return self._validate_cidr_list(value, "allowed_subnets")
+
     def get_progress_pct(self, obj):
         if obj.progress_total > 0:
             return round(min(obj.progress_current / obj.progress_total * 100, 100))

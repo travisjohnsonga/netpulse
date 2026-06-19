@@ -26,6 +26,21 @@ def scrub_sensitive(data: dict | None) -> dict:
             for k, v in data.items()}
 
 
+def csv_safe(value) -> str:
+    """Neutralize CSV formula injection.
+
+    Spreadsheet apps execute a cell whose first character is ``= + - @`` (or a
+    leading tab/CR) as a formula, so an attacker-supplied value — e.g. a failed
+    login username stored in the audit log — can run code when an admin opens an
+    exported CSV. Prefix any such value with a single quote so it's treated as
+    text. Apply to every user-influenced cell in CSV exports.
+    """
+    s = "" if value is None else str(value)
+    if s[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
 # Human-friendly labels for the device fields surfaced in audit diffs. Keys are
 # Device snapshot keys (see ``snapshot_device``); anything not listed falls back
 # to a title-cased version of the field name.

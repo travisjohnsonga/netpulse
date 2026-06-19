@@ -1,3 +1,80 @@
+# spane — Security Audit Addendum (2026-06-19)
+
+Application-layer review (input-validation/injection, authn/authz, WebSocket,
+secrets, data-exposure, config hardening) across backend, frontend, agent, and
+deploy. Remediated the verified Critical/High/Medium issues; full test suite
+(1764) passes after the fixes. The 2026-06-01 automated-scan report follows
+below, unchanged.
+
+| Severity | Found | Fixed | Accepted / deferred |
+|---|---|---|---|
+| CRITICAL | 1 | 1 | 0 |
+| HIGH | 2 | 2 | 0 |
+| MEDIUM | 6 | 3 | 3 |
+| LOW | 7 | 0 | 7 |
+
+## Fixed
+
+### CRITICAL
+- **C1 — WebSocket endpoints accepted any connection unauthenticated.**
+  `apps/{telemetry,alerts,devices}/consumers.py`, `config/asgi.py`. `connect()`
+  called `accept()` unconditionally and the JWT was never validated on the WS
+  handshake, so any unauthenticated client could stream live alerts/telemetry/
+  device+topology data, bypassing DRF entirely. *Fix:* `apps/core/ws_auth.py`
+  `JWTAuthMiddleware` validates a token sent as the `["bearer", "<jwt>"]`
+  subprotocol; consumers reject anonymous users (close 4401); the SPA
+  `useWebSocket` hook sends the token. New test `test_consumer_rejects_anonymous`.
+
+### HIGH
+- **H1 — ChatOps webhooks public & mostly unsigned** (`apps/core/chatops.py`).
+  `/api/webhooks/{slack,teams,gchat,discord}/` were `AllowAny`; Teams/GChat/
+  Discord had no signature step — an unauthenticated POST disclosed device/site/
+  alert data. *Fix:* gated all four behind `settings.CHATOPS_ENABLED` (default
+  **off**; 404 when disabled, before any parsing).
+- **H2 — Unauthenticated OpenSearch bound on `0.0.0.0:9200`**
+  (`docker-compose.yml`) while `DISABLE_SECURITY_PLUGIN=true`. *Fix:* bound to
+  `127.0.0.1:9200`; the api reaches it over the bridge.
+
+### MEDIUM
+- **M1 — nmap option injection via discovery subnets**
+  (`apps/devices/serializers.py`). `subnets`/`excluded_subnets`/`allowed_subnets`
+  flowed into the nmap argv unvalidated (engineer-role nmap-flag/NSE abuse).
+  *Fix:* serializer validators reject anything that isn't an IP/CIDR (notably
+  leading-`-`).
+- **M2 — CSV formula injection** in the audit-log and report exports
+  (`apps/core/views.py`, `apps/reports/render.py`); the audit source includes an
+  unauthenticated failed-login username. *Fix:* `apps.core.audit.csv_safe` +
+  `_SafeCsvWriter` neutralize leading `= + - @`.
+- **M3 — production TLS/cookie hardening** (`production.py`, `nginx.conf`,
+  `.env.example`): `SECURE_SSL_REDIRECT` shipped on; `SESSION_COOKIE_HTTPONLY`/
+  `SAMESITE`, `CSRF_COOKIE_SAMESITE`, env-driven `CSRF_TRUSTED_ORIGINS`; nginx
+  TLS-1.3-only + security headers (`X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`, HSTS) on the static SPA.
+
+## Accepted / deferred
+- **A1 (MED) — SSRF via authenticated service checks** — NOT changed: reaching
+  internal hosts is the product's core purpose and tests probe `127.0.0.1`; a
+  blanket private-range block would break it. Recommend an opt-in
+  `169.254.169.254` (cloud-metadata) denylist + connect-time IP pin.
+- **A2 (MED) — no read-vs-execute RBAC** — Engineer/API roles can manage
+  credentials and probe arbitrary IPs; recommend Admin-gating credential mutation
+  + probe targets. Deferred (RBAC semantics).
+- **A3 (MED) — Slack dev-mode signature skip** — mitigated by H1 (ChatOps off by
+  default); fail-closed on the secret when ChatOps ships.
+- **LOW (7):** alerting webhook URLs returned plaintext (make write_only +
+  OpenBao); `infrastructure_health` public (intentional — onboarding needs it);
+  no per-WS-connection rate limit; `show_credentials.py` (pre-v1.0 checklist);
+  UniFi `verify_ssl=False` default; `api` holds `NET_ADMIN`; JWT refresh has no
+  rotation/blacklist.
+
+## Verified good
+DRF deny-by-default; auth throttle on login/refresh; no hardcoded secrets or
+credential-returning serializers; no secrets logged; deps pinned w/ CVE-floor
+notes; nginx `X-Agent-*` header stripping (anti-spoof) intact; MIB/download paths
+traversal-safe; no raw SQL / `eval` / `shell=True`.
+
+---
+
 # NetPulse — Pre-Production Security Audit
 
 Scope: `services/` (Django API + ingest/engine services + React frontend).

@@ -682,12 +682,15 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         w = csv.writer(resp)
         w.writerow(["Time", "Event", "User", "IP", "Target", "Target Name",
                     "Success", "Description", "Error"])
+        # csv_safe neutralizes formula injection — username/description/target
+        # carry attacker-influenced text (e.g. a failed-login username).
+        from apps.core.audit import csv_safe
         for r in qs:
-            w.writerow([
+            w.writerow([csv_safe(c) for c in (
                 r.created_at.isoformat(), r.event_type, r.username, r.ip_address or "",
                 f"{r.target_type} {r.target_id}".strip(), r.target_name,
                 "yes" if r.success else "no", r.description, r.error_message,
-            ])
+            )])
         return resp
 
     @extend_schema(responses=None, summary="Audit log stats")

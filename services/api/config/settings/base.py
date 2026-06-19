@@ -381,6 +381,13 @@ REST_FRAMEWORK = {
     "NUM_PROXIES": int(os.environ.get("NUM_PROXIES", "1")),
 }
 
+# ChatOps inbound webhooks (Slack/Teams/Google Chat/Discord) are AllowAny — the
+# platforms can't present a JWT — and most have no signature step, so an enabled
+# webhook is an unauthenticated read into inventory/alert data. The feature is
+# planned, not hardened, so it is DISABLED by default; enable explicitly once
+# per-platform signature verification is enforced.
+CHATOPS_ENABLED = os.environ.get("CHATOPS_ENABLED", "false").lower() == "true"
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "spane API",
     "DESCRIPTION": "spane — unified infrastructure visibility platform API",

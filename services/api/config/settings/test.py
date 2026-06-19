@@ -12,6 +12,9 @@ from .base import *  # noqa: F401, F403
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
+# Exercise the ChatOps webhook handlers in tests (disabled by default in prod).
+CHATOPS_ENABLED = True
+
 # SQLite — no external DB needed for unit tests.
 DATABASES = {
     "default": {

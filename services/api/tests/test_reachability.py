@@ -175,9 +175,15 @@ class TestDeviceStatusWebSocket:
         from channels.testing import WebsocketCommunicator
         from channels.layers import get_channel_layer
         from apps.devices.consumers import DeviceStatusConsumer
+        from tests.conftest import _make_user
+
+        user = _make_user("ws_user", role="viewer")
 
         async def run():
             comm = WebsocketCommunicator(DeviceStatusConsumer.as_asgi(), "/ws/devices/")
+            # The consumer now requires an authenticated user in the scope
+            # (JWTAuthMiddleware sets this in production); inject one here.
+            comm.scope["user"] = user
             connected, _ = await comm.connect()
             assert connected
             await get_channel_layer().group_send("devices", {
@@ -189,6 +195,20 @@ class TestDeviceStatusWebSocket:
             assert msg["device_id"] == 7 and msg["is_reachable"] is False
             assert msg["status"] == "unreachable"
             await comm.disconnect()
+
+        asyncio.run(run())
+
+    def test_consumer_rejects_anonymous(self):
+        import asyncio
+        from channels.testing import WebsocketCommunicator
+        from django.contrib.auth.models import AnonymousUser
+        from apps.devices.consumers import DeviceStatusConsumer
+
+        async def run():
+            comm = WebsocketCommunicator(DeviceStatusConsumer.as_asgi(), "/ws/devices/")
+            comm.scope["user"] = AnonymousUser()
+            connected, code = await comm.connect()
+            assert connected is False and code == 4401
 
         asyncio.run(run())
 
