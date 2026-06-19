@@ -230,6 +230,7 @@ class InterfaceComplianceRule(TimestampedModel):
         LLDP_CAPABILITY = "lldp_capability", "LLDP Neighbor Capability"
         LLDP_PLATFORM = "lldp_neighbor_platform", "LLDP Neighbor Platform"
         LLDP_ROLE = "lldp_neighbor_role", "LLDP Neighbor Role"
+        INTERFACE_NAME = "interface_name", "Interface Name Pattern"
         INTERFACE_DESCRIPTION = "interface_description", "Interface Description Pattern"
         MANUAL = "manual", "Manual Interface Tag"
 

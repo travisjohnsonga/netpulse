@@ -349,3 +349,66 @@ class TestCompoundCapabilityTrigger:
         matched = {m[1] for m in ic._matched_interfaces(
             self._rule(trigger_value="telephone", trigger_exclude_capabilities=["bridge"]))}
         assert matched == {"1/1/1"}  # phone with a built-in switch (bridge) excluded
+
+
+# AOS-CX-style config with named interfaces (SVIs, LAG, physical).
+NAME_CONFIG = """\
+interface vlan10
+    description User SVI
+    ip address 10.0.10.1/24
+interface vlan20
+    ip address 10.0.20.1/24
+interface lag1
+    lacp mode active
+interface 1/1/1
+    no shutdown
+"""
+
+
+class TestInterfaceNameTrigger:
+    def _rule(self, value, **kw):
+        defaults = dict(name="name-rule", trigger="interface_name", trigger_value=value,
+                        platform="", checks=[])
+        defaults.update(kw)
+        return InterfaceComplianceRule.objects.create(**defaults)
+
+    def test_matches_vlan_svis(self):
+        sw = _switch()
+        _config(sw, NAME_CONFIG)
+        matched = {m[1] for m in ic._matched_interfaces(self._rule(r"^vlan\d+$"))}
+        assert matched == {"vlan10", "vlan20"}
+
+    def test_matches_lag_only(self):
+        sw = _switch()
+        _config(sw, NAME_CONFIG)
+        matched = {m[1] for m in ic._matched_interfaces(self._rule(r"^lag\d+$"))}
+        assert matched == {"lag1"}
+
+    def test_case_insensitive(self):
+        sw = _switch()
+        _config(sw, "interface Vlan10\n    description x\n")
+        matched = {m[1] for m in ic._matched_interfaces(self._rule(r"^vlan\d+$"))}
+        assert matched == {"Vlan10"}
+
+    def test_bad_regex_returns_empty(self):
+        sw = _switch()
+        _config(sw, NAME_CONFIG)
+        assert ic._matched_interfaces(self._rule("[invalid(")) == []
+
+    def test_platform_filter(self):
+        cx = _switch(host="cx1", ip="10.0.0.1", platform="aos_cx")
+        _config(cx, NAME_CONFIG)
+        ios = _switch(host="ios1", ip="10.0.0.2", platform="ios_xe")
+        _config(ios, NAME_CONFIG)
+        matched = {m[0].hostname for m in ic._matched_interfaces(self._rule(r"^vlan\d+$", platform="aos_cx"))}
+        assert matched == {"cx1"}
+
+    def test_end_to_end_check(self):
+        sw = _switch()
+        _config(sw, NAME_CONFIG)
+        rule = self._rule(r"^vlan\d+$", checks=[
+            {"type": "config_contains", "value": "description",
+             "description": "SVI has description", "severity": "info"}])
+        out = ic.run_interface_compliance(rule)
+        # vlan10 has a description (pass); vlan20 doesn't (fail).
+        assert out["summary"] == {"matched": 2, "passing": 1, "failing": 1}

@@ -186,6 +186,25 @@ def _matched_interfaces(rule) -> list[tuple]:
             if md and md.role and md.role.slug in roles:
                 out.append((nb.seen_by, nb.local_interface, nb.system_name, md.role.slug))
 
+    elif trig == "interface_name":
+        # Match interfaces by NAME (not what's connected) — SVIs, LAGs,
+        # port-channels, loopbacks, management, naming-convention uplinks, etc.
+        try:
+            rx = re.compile(rule.trigger_value, re.IGNORECASE)
+        except re.error:
+            logger.warning("interface-rule %s: bad regex %r", rule.name, rule.trigger_value)
+            return out
+        devs = Device.objects.filter(status="active")
+        if plat:
+            devs = devs.filter(platform=plat)
+        for dev in devs:
+            content = _latest_config_content(dev)
+            if not content:
+                continue
+            for name, block in _iter_interface_blocks(content):
+                if rx.search(name):
+                    out.append((dev, name, name, "interface_name"))
+
     elif trig == "interface_description":
         try:
             rx = re.compile(rule.trigger_value)
@@ -214,9 +233,9 @@ def _matched_interfaces(rule) -> list[tuple]:
             if dev:
                 out.append((dev, ifname.strip(), "manual", "manual"))
 
-    # The platform filter applies to the SWITCH (LLDP triggers; interface_description
-    # already filtered above).
-    if plat and trig != "interface_description":
+    # The platform filter applies to the SWITCH (LLDP triggers; the
+    # interface_name / interface_description branches already filtered above).
+    if plat and trig not in ("interface_name", "interface_description"):
         out = [t for t in out if getattr(t[0], "platform", "") == plat]
     return out
 

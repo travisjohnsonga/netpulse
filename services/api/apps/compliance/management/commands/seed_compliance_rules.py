@@ -99,6 +99,22 @@ INTERFACE_RULES = [
              "description": "Not in trunk mode", "severity": "error"},
         ],
     }),
+    ("VLAN SVI Config (AOS-CX)", {
+        "description": "Check VLAN interfaces (SVIs) have a description configured.",
+        "trigger": "interface_name", "trigger_value": r"^vlan\d+$", "platform": "aos_cx",
+        "checks": [
+            {"type": "config_contains", "value": "description",
+             "description": "SVI has a description", "severity": "info"},
+        ],
+    }),
+    ("LAG Interface Config (AOS-CX)", {
+        "description": "Check LAG interfaces have LACP configured.",
+        "trigger": "interface_name", "trigger_value": r"^lag\d+$", "platform": "aos_cx",
+        "checks": [
+            {"type": "config_contains", "value": "lacp",
+             "description": "LACP configured on LAG", "severity": "warning"},
+        ],
+    }),
 ]
 
 # (name, defaults-builder) — role consistency rules, all disabled. role looked up

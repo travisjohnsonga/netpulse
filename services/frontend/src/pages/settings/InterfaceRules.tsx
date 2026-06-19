@@ -17,8 +17,19 @@ const TRIGGERS = [
   { value: 'lldp_capability', label: 'LLDP Capability' },
   { value: 'lldp_neighbor_platform', label: 'LLDP Neighbor Platform' },
   { value: 'lldp_neighbor_role', label: 'LLDP Neighbor Role' },
+  { value: 'interface_name', label: 'Interface Name Pattern' },
   { value: 'interface_description', label: 'Interface Description' },
   { value: 'manual', label: 'Manual Tag' },
+]
+
+// Click-to-fill regexes for the interface_name trigger.
+const NAME_PATTERNS: { label: string; value: string }[] = [
+  { label: 'VLAN SVIs', value: '^vlan\\d+$' },
+  { label: 'LAG (AOS-CX)', value: '^lag\\d+$' },
+  { label: 'Port-Channel', value: '^port-channel\\d+$' },
+  { label: 'Loopback', value: '^loopback\\d+$' },
+  { label: 'Management', value: '^(management|mgmt)' },
+  { label: 'Physical (AOS-CX)', value: '^\\d+/\\d+/\\d+$' },
 ]
 // LLDP capability values + friendly names (wlan-access-point catches all AP vendors).
 const CAPABILITIES = [
@@ -163,7 +174,7 @@ export default function InterfaceRules() {
                 </select>
               ) : (
                 <input className={inputCls} value={d.trigger_value || ''} onChange={(e) => set({ trigger_value: e.target.value })}
-                  placeholder={d.trigger === 'lldp_neighbor_platform' ? 'unifi_ap,mist_ap' : d.trigger === 'interface_description' ? '(?i)(cam|camera)' : 'value'} />
+                  placeholder={d.trigger === 'lldp_neighbor_platform' ? 'unifi_ap,mist_ap' : d.trigger === 'interface_name' ? '^vlan\\d+$' : d.trigger === 'interface_description' ? '(?i)(cam|camera)' : 'value'} />
               )}
             </div>
           </div>
@@ -191,6 +202,23 @@ export default function InterfaceRules() {
                 </p>
               </div>
             </>
+          )}
+          {d.trigger === 'interface_name' && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-gray-400">Common patterns:</span>
+                {NAME_PATTERNS.map((p) => (
+                  <button key={p.label} type="button"
+                    onClick={() => set({ trigger_value: p.value })}
+                    className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50">{p.label}</button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400">
+                Regex matched (case-insensitive) against the interface <strong>name</strong> —
+                e.g. <code>^vlan</code> = all SVIs, <code>^lag</code> = all LAGs,
+                <code> 1/1/48$</code> = a specific port.
+              </p>
+            </div>
           )}
           <div><label className={label}>Switch Platform filter (optional)</label><input className={inputCls} value={d.platform || ''} onChange={(e) => set({ platform: e.target.value })} placeholder="aos_cx (blank = any)" /></div>
 
