@@ -37,6 +37,7 @@ import Servers from './pages/Servers'
 import ServerDetail from './pages/ServerDetail'
 import Topology from './pages/Topology'
 import Wireless from './pages/Wireless'
+import WirelessLocation from './pages/WirelessLocation'
 import LldpNeighbors from './pages/LldpNeighbors'
 import NetworkLookup from './pages/NetworkLookup'
 import ApiDocs from './pages/ApiDocs'
@@ -125,6 +126,7 @@ function AppRoutes() {
                 <Route path="/configs/compare" element={<ConfigCompare />} />
                 <Route path="/topology" element={<Topology />} />
                 <Route path="/wireless" element={<Wireless />} />
+                <Route path="/wireless/location" element={<WirelessLocation />} />
                 <Route path="/lldp-neighbors" element={<LldpNeighbors />} />
                 <Route path="/api-docs" element={<ApiDocs />} />
                 <Route path="/alerts" element={<Alerts />} />

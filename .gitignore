@@ -46,6 +46,10 @@ npm-debug.log*
 dist/
 build/
 .cache/
+# tsc -b incremental/build emit (never committed)
+*.tsbuildinfo
+services/frontend/vite.config.js
+services/frontend/vite.config.d.ts
 
 # NetPulse Agent binaries — built by CI / locally, mounted into the api
 # container; never committed. (Also covered by the generic dist/ rule above

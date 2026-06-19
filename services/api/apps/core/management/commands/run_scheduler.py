@@ -38,6 +38,7 @@ LLDP_COLLECT_INTERVAL_S = int(os.environ.get("LLDP_COLLECT_INTERVAL_S", str(30 *
 UNIFI_SYNC_INTERVAL_S = int(os.environ.get("UNIFI_SYNC_INTERVAL_S", str(6 * 3600)))
 UNIFI_TELEMETRY_INTERVAL_S = int(os.environ.get("UNIFI_TELEMETRY_INTERVAL_S", str(5 * 60)))
 MIST_SYNC_INTERVAL_S = int(os.environ.get("MIST_SYNC_INTERVAL_S", str(6 * 3600)))
+MIST_LOCATION_INTERVAL_S = int(os.environ.get("MIST_LOCATION_INTERVAL_S", "60"))
 OS_PLATFORM_REFRESH_INTERVAL_S = int(os.environ.get("OS_PLATFORM_REFRESH_INTERVAL_S", str(6 * 3600)))
 OS_VERSION_SEED_INTERVAL_S = int(os.environ.get("OS_VERSION_SEED_INTERVAL_S", str(24 * 3600)))
 AUDIT_PURGE_INTERVAL_S = int(os.environ.get("AUDIT_PURGE_INTERVAL_S", str(24 * 3600)))
@@ -86,6 +87,7 @@ class Command(BaseCommand):
             ["unifi_sync", UNIFI_SYNC_INTERVAL_S, self._sync_unifi, False, None],
             ["unifi_telemetry", UNIFI_TELEMETRY_INTERVAL_S, self._collect_unifi_telemetry, True, None],
             ["mist_sync", MIST_SYNC_INTERVAL_S, self._sync_mist, False, None],
+            ["mist_location", MIST_LOCATION_INTERVAL_S, self._collect_mist_location, False, None],
             ["os_platform_refresh", OS_PLATFORM_REFRESH_INTERVAL_S, self._refresh_os_platforms, False, None],
             ["os_version_seed", OS_VERSION_SEED_INTERVAL_S, self._seed_os_versions, False, None],
             ["audit_purge", AUDIT_PURGE_INTERVAL_S, self._purge_audit_log, False, None],
@@ -194,6 +196,20 @@ class Command(BaseCommand):
             sync_mist()
         except MistError as exc:
             logger.warning("scheduler: Mist sync failed: %s", exc)
+
+    def _collect_mist_location(self):
+        # Keep the warehouse-dashboard cache warm. Skip cheaply when Mist isn't
+        # configured or no sites have synced yet.
+        from apps.integrations.models import MistIntegration, MistSite
+        if not MistIntegration.objects.filter(enabled=True).exists():
+            return
+        if not MistSite.objects.exists():
+            return
+        from apps.integrations.mist_location import refresh_all
+        res = refresh_all()
+        if res.get("sites_refreshed"):
+            logger.info("scheduler: Mist location cache refreshed (%d site(s))",
+                        res["sites_refreshed"])
 
     def _refresh_os_platforms(self):
         logger.info("scheduler: refreshing OS-version fleet inventory")

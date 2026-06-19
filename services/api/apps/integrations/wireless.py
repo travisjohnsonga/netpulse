@@ -160,3 +160,36 @@ def wireless_summary(request):
 def wireless_aps(request):
     """Flat list of every wireless AP (UniFi snapshots + Mist inventory rows)."""
     return Response(_all_ap_entries())
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def wireless_location(request):
+    """Serve the cached Mist warehouse-dashboard payload (see mist_location.py).
+    The scheduler keeps the cache warm; this view just returns it, with an
+    on-demand refresh fallback so the first hit after a restart still works.
+    Auth-only, like the rest of /api/wireless/ — the browser never sees the
+    Mist token.
+
+    Query params:
+        site   Mist site id   (required)
+        map    Mist map id    (optional; defaults to the site's first map)
+    """
+    from . import mist_location
+
+    site_id = request.query_params.get("site")
+    map_id = request.query_params.get("map")
+    if not site_id:
+        return Response({"error": "site query param is required"}, status=400)
+
+    payload = mist_location.get_cached(site_id, map_id) if map_id else None
+    if payload is None:
+        try:
+            payload = mist_location.refresh(site_id, map_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=404)
+        except Exception:  # noqa: BLE001
+            return Response({"error": "Mist location refresh failed"}, status=502)
+    if payload is None:
+        return Response({"error": "Mist integration not configured"}, status=409)
+    return Response(payload)
