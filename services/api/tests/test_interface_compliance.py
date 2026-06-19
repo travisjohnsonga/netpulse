@@ -257,6 +257,31 @@ class TestEndpoints:
                                 format="json")
         assert resp.status_code == 400
 
+    def test_compound_capability_fields_persist(self, auth_client):
+        # The serializer must expose + persist require/exclude (was dropping them).
+        payload = {
+            "name": "Uplinks", "trigger": "lldp_capability", "trigger_value": "bridge",
+            "trigger_require_capabilities": ["router"],
+            "trigger_exclude_capabilities": ["wlan-ap"],
+            "platform": "", "enabled": True, "checks": [],
+        }
+        resp = auth_client.post("/api/compliance/interface-rules/", payload, format="json")
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["trigger_require_capabilities"] == ["router"]
+        assert body["trigger_exclude_capabilities"] == ["wlan-ap"]
+        rule = InterfaceComplianceRule.objects.get(id=body["id"])
+        assert rule.trigger_require_capabilities == ["router"]
+        assert rule.trigger_exclude_capabilities == ["wlan-ap"]
+
+    def test_require_capabilities_rejects_non_list(self, auth_client):
+        resp = auth_client.post(
+            "/api/compliance/interface-rules/",
+            {"name": "x", "trigger_value": "bridge",
+             "trigger_require_capabilities": "router", "checks": []},
+            format="json")
+        assert resp.status_code == 400
+
 
 class TestSeeder:
     def test_seeds_disabled_rules_idempotently(self):

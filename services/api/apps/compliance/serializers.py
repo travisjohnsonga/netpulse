@@ -110,8 +110,9 @@ class InterfaceComplianceRuleSerializer(serializers.ModelSerializer):
         model = InterfaceComplianceRule
         fields = (
             "id", "name", "description", "trigger", "trigger_display",
-            "trigger_value", "platform", "checks", "enabled", "result_summary",
-            "created_at", "updated_at",
+            "trigger_value", "trigger_require_capabilities",
+            "trigger_exclude_capabilities", "platform", "checks", "enabled",
+            "result_summary", "created_at", "updated_at",
         )
         read_only_fields = ("id", "trigger_display", "result_summary", "created_at", "updated_at")
 
@@ -130,6 +131,20 @@ class InterfaceComplianceRuleSerializer(serializers.ModelSerializer):
             if not isinstance(c, dict) or not c.get("type"):
                 raise serializers.ValidationError("each check needs a 'type'.")
         return value
+
+    @staticmethod
+    def _validate_capability_list(value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be a list of capability tokens.")
+        return [str(v) for v in value]
+
+    def validate_trigger_require_capabilities(self, value):
+        return self._validate_capability_list(value)
+
+    def validate_trigger_exclude_capabilities(self, value):
+        return self._validate_capability_list(value)
 
 
 class InterfaceComplianceResultSerializer(serializers.ModelSerializer):
