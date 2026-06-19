@@ -281,3 +281,33 @@ class TestClientThroughput:
     def test_build_payload_clients_carry_throughput(self):
         p = mist_location.build_payload(FakeMist(), "site-1")
         assert all("throughput_kbps" in c for c in p["clients"])
+
+
+# ── Coordinate space (floor-plan marker placement) ──────────────────────────
+class TestCoordinateSpace:
+    """AP/client x/y are PIXELS in the map's native (width×height) image space
+    (verified live: x ∈ [0,width] and x == x_m × ppm). The frontend positions a
+    marker at x/width of the contained image rect; a known AP must land at the
+    expected percentage within tolerance."""
+
+    def test_ap_xy_are_pixels_in_map_space(self):
+        markers = mist_location._ap_markers(mist_location._ap_stats(FakeMist(), "s"), "map-1")
+        for m in markers:
+            assert 0 <= m["x"] <= MAPS[0]["width"]
+            assert 0 <= m["y"] <= MAPS[0]["height"]
+
+    def test_known_ap_maps_to_expected_pct(self):
+        markers = mist_location._ap_markers(mist_location._ap_stats(FakeMist(), "s"), "map-1")
+        ap = next(m for m in markers if m["name"] == "wco2-wh-ap-08")  # x=915.5, y=718.3
+        x_pct = ap["x"] / MAPS[0]["width"] * 100
+        y_pct = ap["y"] / MAPS[0]["height"] * 100
+        assert abs(x_pct - 32.6) < 1.0    # 915.5 / 2805
+        assert abs(y_pct - 45.9) < 1.0    # 718.3 / 1566
+
+    def test_pixel_equals_metres_times_ppm(self):
+        # The pixel x equals the metre coordinate × ppm (so multiplying the
+        # pixel value by ppm again — the reported bug — would be wrong).
+        ap = next(d for d in DEVICE_STATS if d["name"] == "wco2-wh-ap-08")
+        x_m = ap["x"] / MAPS[0]["ppm"]
+        assert abs(x_m * MAPS[0]["ppm"] - ap["x"]) < 0.01
+        assert ap["x"] > MAPS[0]["width"] / MAPS[0]["ppm"]  # x*ppm would exceed width

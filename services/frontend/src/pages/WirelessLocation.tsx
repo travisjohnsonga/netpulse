@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api } from '../api/client'
+import { useElementSize, containedRect } from '../lib/floormap'
 
 /**
  * Warehouse WiFi-client location dashboard (Mist). Built for an always-on TV:
@@ -83,44 +84,61 @@ function Tile({ label, value, sub, color = 'text-white' }: { label: string; valu
   )
 }
 
-/** The floor plan with AP + client markers, positioned by pixel x/y as a % of
- *  the floor-plan image's pixel dimensions. */
+/** The floor plan with AP + client markers. Mist AP/client x/y are PIXELS in the
+ *  map's native (map.width × map.height) image space (verified: x ∈ [0,width],
+ *  and x = x_m × ppm). The image is rendered with object-contain, which
+ *  letterboxes it inside the container — so we compute that contained rectangle
+ *  and position BOTH the image and every marker within it, 1:1, instead of
+ *  against the full (letterboxed) container. */
 function FloorMap({ data }: { data: LocationPayload }) {
   const { map, aps, clients } = data
-  const toPct = (v: number, span: number) => (span > 0 ? (v / span) * 100 : 0)
+  const [boxRef, box] = useElementSize<HTMLDivElement>()
+  const r = containedRect(map.width, map.height, box.width, box.height)
+  // Marker px = image-rect origin + (native coord / native dimension) × rendered size.
+  const pos = (x: number, y: number) => ({
+    left: r.x + (map.width > 0 ? x / map.width : 0) * r.w,
+    top: r.y + (map.height > 0 ? y / map.height : 0) * r.h,
+  })
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-xl bg-gray-950">
+    <div ref={boxRef} className="relative h-full w-full overflow-hidden rounded-xl bg-gray-950">
       {map.image_url ? (
-        <img src={map.image_url} alt={map.name} className="absolute inset-0 h-full w-full object-contain opacity-70" />
+        <img src={map.image_url} alt={map.name} className="absolute opacity-70"
+          style={{ left: r.x, top: r.y, width: r.w, height: r.h }} />
       ) : (
         <div className="absolute inset-0 grid place-items-center text-gray-600">no floor-plan image</div>
       )}
       {/* AP placements (dimmed when disconnected) */}
-      {aps.map((ap) => (
-        <div
-          key={ap.mac}
-          className="absolute -translate-x-1/2 -translate-y-1/2"
-          style={{ left: `${toPct(ap.x, map.width)}%`, top: `${toPct(ap.y, map.height)}%` }}
-          title={`${ap.name}${ap.status ? ` · ${ap.status}` : ''}`}
-        >
-          <div className={clsx('h-3 w-3 rotate-45 border', ap.status === 'connected'
-            ? 'border-cyan-300 bg-cyan-500/30' : 'border-gray-500 bg-gray-600/30')} />
-        </div>
-      ))}
+      {aps.map((ap) => {
+        const p = pos(ap.x, ap.y)
+        return (
+          <div
+            key={ap.mac}
+            className="absolute -translate-x-1/2 -translate-y-1/2"
+            style={{ left: p.left, top: p.top }}
+            title={`${ap.name}${ap.status ? ` · ${ap.status}` : ''}`}
+          >
+            <div className={clsx('h-3 w-3 rotate-45 border', ap.status === 'connected'
+              ? 'border-cyan-300 bg-cyan-500/30' : 'border-gray-500 bg-gray-600/30')} />
+          </div>
+        )
+      })}
       {/* Located WiFi clients */}
-      {clients.map((c) => (
-        <div
-          key={c.mac}
-          className="absolute -translate-x-1/2 -translate-y-1/2 transition-all duration-700 ease-out"
-          style={{ left: `${toPct(c.x, map.width)}%`, top: `${toPct(c.y, map.height)}%` }}
-          title={`${c.name} · ${c.rssi ?? '?'} dBm`}
-        >
-          <span
-            className="block h-3.5 w-3.5 rounded-full ring-2 ring-white/80 shadow-lg"
-            style={{ backgroundColor: bandColor(c.band) }}
-          />
-        </div>
-      ))}
+      {clients.map((c) => {
+        const p = pos(c.x, c.y)
+        return (
+          <div
+            key={c.mac}
+            className="absolute -translate-x-1/2 -translate-y-1/2 transition-all duration-700 ease-out"
+            style={{ left: p.left, top: p.top }}
+            title={`${c.name} · ${c.rssi ?? '?'} dBm`}
+          >
+            <span
+              className="block h-3.5 w-3.5 rounded-full ring-2 ring-white/80 shadow-lg"
+              style={{ backgroundColor: bandColor(c.band) }}
+            />
+          </div>
+        )
+      })}
     </div>
   )
 }

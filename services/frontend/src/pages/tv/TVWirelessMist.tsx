@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { useElementSize, containedRect } from '../../lib/floormap'
 
 /**
  * /tv/wireless-mist — warehouse Wireless TV dashboard (Juniper Mist). 16:9,
@@ -67,26 +68,37 @@ function Tile({ icon, label, value, sub, color }: { icon: string; label: string;
 
 function FloorMap({ data }: { data: LocationPayload }) {
   const { map, aps, clients } = data
-  const toPct = (v: number, span: number) => (span > 0 ? (v / span) * 100 : 0)
+  const [boxRef, box] = useElementSize<HTMLDivElement>()
+  // AP/client x/y are PIXELS in native map space; render the object-contain image
+  // rect and place markers within it 1:1 (not against the letterboxed container).
+  const r = containedRect(map.width, map.height, box.width, box.height)
+  const pos = (x: number, y: number) => ({
+    left: r.x + (map.width > 0 ? x / map.width : 0) * r.w,
+    top: r.y + (map.height > 0 ? y / map.height : 0) * r.h,
+  })
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-xl" style={{ background: '#04060c', border: `1px solid ${C.border}` }}>
+    <div ref={boxRef} className="relative h-full w-full overflow-hidden rounded-xl" style={{ background: '#04060c', border: `1px solid ${C.border}` }}>
       {map.image_url ? (
-        <img src={map.image_url} alt={map.name} className="absolute inset-0 h-full w-full object-contain opacity-60" />
+        <img src={map.image_url} alt={map.name} className="absolute opacity-60" style={{ left: r.x, top: r.y, width: r.w, height: r.h }} />
       ) : (
         <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${C.border} 1px, transparent 1px), linear-gradient(90deg, ${C.border} 1px, transparent 1px)`, backgroundSize: '48px 48px', opacity: 0.4 }} />
       )}
-      {clients.map((c) => (
-        <span key={c.mac} className="absolute block h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-700"
-          style={{ left: `${toPct(c.x, map.width)}%`, top: `${toPct(c.y, map.height)}%`, background: C.blue, boxShadow: '0 0 6px rgba(59,130,246,0.8)' }} />
-      ))}
+      {clients.map((c) => {
+        const p = pos(c.x, c.y)
+        return (
+          <span key={c.mac} className="absolute block h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-700"
+            style={{ left: p.left, top: p.top, background: C.blue, boxShadow: '0 0 6px rgba(59,130,246,0.8)' }} />
+        )
+      })}
       {aps.map((ap) => {
         const online = ap.status === 'connected'
-        const r = apRadius(ap.clients ?? 0)
+        const rad = apRadius(ap.clients ?? 0)
         const color = online ? C.green : '#555a66'
+        const p = pos(ap.x, ap.y)
         return (
-          <div key={ap.mac} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${toPct(ap.x, map.width)}%`, top: `${toPct(ap.y, map.height)}%` }}
+          <div key={ap.mac} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: p.left, top: p.top }}
             title={`${ap.name} · ${online ? 'online' : 'offline'} · ${ap.clients ?? 0} clients`}>
-            <div className="relative rounded-full" style={{ width: r * 2, height: r * 2, background: `${color}40`, border: `2px solid ${color}` }}>
+            <div className="relative rounded-full" style={{ width: rad * 2, height: rad * 2, background: `${color}40`, border: `2px solid ${color}` }}>
               {(ap.clients ?? 0) > 0 && (
                 <span className="absolute -right-2 -top-2 rounded-full px-1.5 text-xs font-bold" style={{ background: C.blue, color: '#fff' }}>{ap.clients}</span>
               )}
