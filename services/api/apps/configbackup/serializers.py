@@ -74,14 +74,24 @@ class SimpleResultSerializer(serializers.Serializer):
 
 
 class DeviceConfigSerializer(serializers.ModelSerializer):
+    # Human-readable CLI for display. For AOS-CX backups stored as REST JSON this
+    # renders the JSON to CLI on the fly; for everything else (already CLI, incl.
+    # new AOS-CX backups stored as CLI) it equals `content`.
+    rendered_content = serializers.SerializerMethodField()
+
     class Meta:
         model = DeviceConfig
         fields = [
             "id", "device", "config_type", "collected_at", "collected_by",
-            "content", "content_hash", "changed_from_previous", "diff_summary",
-            "git_commit_sha", "compliance_status",
+            "content", "rendered_content", "content_hash", "changed_from_previous",
+            "diff_summary", "git_commit_sha", "compliance_status",
             "startup_match", "startup_checked_at",
         ]
+
+    def get_rendered_content(self, obj):
+        from apps.devices.aos_cx_render import render_config_content
+        platform = obj.device.platform if obj.device_id else ""
+        return render_config_content(obj.content or "", platform)
 
 
 class ConfigCollectionLogSerializer(serializers.ModelSerializer):

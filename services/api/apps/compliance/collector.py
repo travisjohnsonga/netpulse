@@ -274,13 +274,21 @@ def _fetch_aos_cx_via_rest(device, profile, creds: dict) -> str:
 
     from apps.devices.aos_cx_client import AOSCXClient
 
+    from apps.devices.aos_cx_render import aos_cx_json_to_cli
+
     username = (profile.ssh_username if profile else "") or creds.get("ssh_username", "")
     password = creds.get("ssh_password", "")
     with AOSCXClient(device_host(device)) as client:
         client.login(username, password)
         data = client.get_running_config()
-    # The REST endpoint returns the config as a JSON document; pretty-print it so
-    # it stores and diffs as stable text.
+    # The REST endpoint returns the config as a JSON document. Convert it to CLI
+    # text BEFORE storing so backups display and diff like every other platform
+    # (raw JSON is unreadable and diffs noisily on key ordering). Fall back to a
+    # stable pretty-printed JSON only if the CLI render comes back empty.
+    if isinstance(data, dict):
+        cli = aos_cx_json_to_cli(data)
+        if cli:
+            return cli
     return json.dumps(data, indent=2, sort_keys=True) if isinstance(data, (dict, list)) else str(data)
 
 

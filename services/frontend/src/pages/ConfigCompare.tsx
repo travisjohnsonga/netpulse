@@ -11,6 +11,7 @@ interface ConfigRow {
   collected_at: string
   collected_by: string
   content: string
+  rendered_content?: string  // CLI for display (AOS-CX JSON → CLI); else === content
   content_hash: string
 }
 
@@ -149,7 +150,7 @@ export default function ConfigCompare() {
               <DiffViewer diff={diff} leftLabel={leftLabel} rightLabel={rightLabel} />
             )
           )}
-          {mode === 'side' && <SideBySide left={leftCfg!.content} right={rightCfg!.content} />}
+          {mode === 'side' && <SideBySide left={leftCfg!.rendered_content ?? leftCfg!.content} right={rightCfg!.rendered_content ?? rightCfg!.content} />}
         </div>
       )}
     </div>

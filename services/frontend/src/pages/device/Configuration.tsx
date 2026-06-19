@@ -10,6 +10,9 @@ interface DeviceConfigRow {
   collected_at: string
   collected_by: string
   content: string
+  // Human-readable CLI for display — equals `content` except for AOS-CX backups
+  // stored as REST JSON, which the backend renders to CLI.
+  rendered_content?: string
   content_hash: string
   changed_from_previous: boolean
   diff_summary: string | null
@@ -174,7 +177,7 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
 
   const download = () => {
     if (!selected) return
-    const blob = new Blob([selected.content], { type: 'text/plain' })
+    const blob = new Blob([selected.rendered_content ?? selected.content], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -266,13 +269,20 @@ export default function Configuration({ device }: { device: DeviceDetail }) {
           </div>
         </div>
         <pre className="bg-gray-900 text-gray-100 text-xs font-mono p-4 overflow-x-auto leading-relaxed max-h-[28rem]">
-          {(selected?.content ?? '').split('\n').map((line, i) => (
-            <div key={i} className={clsx(
-              line.startsWith('!') && 'text-gray-500',
-              /^(hostname|interface|line|snmp-server|logging|service|ip|no)\b/.test(line) && 'text-sky-300',
-              line.trim().startsWith('ip address') && 'text-emerald-300',
-            )}>{line || ' '}</div>
-          ))}
+          {((selected?.rendered_content ?? selected?.content) ?? '').split('\n').map((line, i) => {
+            const t = line.trim()
+            return (
+              <div key={i} className={clsx(
+                line.startsWith('!') && 'text-gray-500',
+                /^\s*interface\b/.test(line) && 'text-sky-300',
+                /^(hostname|line|snmp-server|logging|service|ip|no)\b/.test(line) && 'text-sky-300',
+                /^\s*(vlan|spanning-tree|loop-protect)\b/.test(line) && 'text-cyan-300',
+                t === 'shutdown' && 'text-red-400',
+                t === 'no shutdown' && 'text-emerald-300',
+                t.startsWith('ip address') && 'text-emerald-300',
+              )}>{line || ' '}</div>
+            )
+          })}
         </pre>
       </div>
       </div>

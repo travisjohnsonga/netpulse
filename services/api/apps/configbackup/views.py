@@ -68,10 +68,15 @@ class DeviceConfigViewSet(viewsets.ReadOnlyModelViewSet):
         data = req.validated_data
 
         def _content(config_id):
-            cfg = DeviceConfig.objects.filter(pk=config_id).first()
+            # Render AOS-CX JSON backups to CLI before diffing so the diff is
+            # meaningful (not noisy JSON key-ordering). New backups are already
+            # CLI, so this is a no-op for them.
+            from apps.devices.aos_cx_render import render_config_content
+            cfg = DeviceConfig.objects.select_related("device").filter(pk=config_id).first()
             if cfg is None:
                 return None
-            return cfg.content or ""
+            platform = cfg.device.platform if cfg.device_id else ""
+            return render_config_content(cfg.content or "", platform)
 
         if data.get("left") is not None or data.get("right") is not None:
             old = _content(data.get("left"))
