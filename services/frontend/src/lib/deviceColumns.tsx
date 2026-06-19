@@ -19,6 +19,24 @@ const REACH_DOT: Record<string, string> = {
   unreachable: 'bg-red-500',
 }
 
+const GRADE_COLORS: Record<string, string> = {
+  A: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
+  B: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+  C: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300',
+  D: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
+  F: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+}
+
+function ComplianceBadge({ score, grade }: { score?: number | null; grade?: string | null }) {
+  if (score == null || !grade) return <span className="text-gray-300">—</span>
+  return (
+    <span className={clsx('px-2 py-0.5 rounded text-xs font-medium', GRADE_COLORS[grade] || 'bg-gray-100 text-gray-700')}
+      title={`Compliance score ${Math.round(score)} (grade ${grade})`}>
+      {grade} {Math.round(score)}
+    </span>
+  )
+}
+
 export interface ColCtx {
   credNames: Record<number, string>
   // Per-device ping summary, fetched in the background after the list renders.
@@ -121,6 +139,8 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
   },
   { key: 'platform', label: 'Platform', default: true, sortKey: 'platform', render: (d) => <span className="text-gray-600">{dash(d.platform)}</span> },
   { key: 'site', label: 'Site', default: true, sortKey: 'site__name', render: (d) => <span className="text-gray-600">{dash(d.site_name)}</span> },
+  { key: 'compliance', label: 'Compliance', default: true, sortKey: 'compliance_score',
+    render: (d) => <ComplianceBadge score={d.compliance_score} grade={d.compliance_grade} /> },
   { key: 'management_ip', label: 'Mgmt IP', default: false, render: (d) => <span className="font-mono text-xs text-gray-600">{dash(d.management_ip)}</span> },
   { key: 'os_version', label: 'OS Version', default: false, sortKey: 'os_version', render: (d) => <span className="text-gray-600">{dash(d.os_version)}</span> },
   { key: 'model', label: 'Model', default: false, sortKey: 'model', render: (d) => <span className="text-gray-600">{dash(d.model)}</span> },

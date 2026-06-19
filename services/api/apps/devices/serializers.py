@@ -135,10 +135,28 @@ class DeviceSerializer(serializers.ModelSerializer):
         return c.status if c else None
 
 
+def _score_grade(score):
+    if score is None:
+        return None
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
+
+
 class DeviceListSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source="site.name", read_only=True, default=None)
     display_hostname = serializers.SerializerMethodField()
     role = DeviceRoleSerializer(read_only=True)
+    # Latest stored template-compliance score (annotated on the list queryset —
+    # see DeviceViewSet.get_queryset; cheap, no live calls) + derived letter grade.
+    compliance_score = serializers.SerializerMethodField()
+    compliance_grade = serializers.SerializerMethodField()
 
     class Meta:
         model = Device
@@ -150,11 +168,19 @@ class DeviceListSerializer(serializers.ModelSerializer):
             "platform", "vendor", "model", "os_version", "serial_number", "status",
             "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",
+            "compliance_score", "compliance_grade",
             "notes", "created_at",
         )
 
     def get_display_hostname(self, obj):
         return obj.display_hostname
+
+    def get_compliance_score(self, obj):
+        score = getattr(obj, "compliance_score", None)
+        return round(score) if score is not None else None
+
+    def get_compliance_grade(self, obj):
+        return _score_grade(getattr(obj, "compliance_score", None))
 
 
 class TestConnectionRequestSerializer(serializers.Serializer):

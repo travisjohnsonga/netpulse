@@ -114,6 +114,9 @@ export interface Device {
   consecutive_failures?: number
   last_reachability_check?: string | null
   unreachable_since?: string | null
+  // Latest stored template-compliance score (list endpoint only) + letter grade.
+  compliance_score?: number | null
+  compliance_grade?: string | null
   notes: string
   created_at: string
 }

@@ -111,6 +111,7 @@ class TestDeviceEndpoints:
             "platform", "vendor", "model", "os_version", "serial_number", "status",
             "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",
+            "compliance_score", "compliance_grade",
             "notes", "created_at",
         }
 
@@ -853,3 +854,61 @@ class TestHostnameRuleEndpoints:
         assert HostnameRule.objects.filter(enabled=True).count() == 0
         call_command("seed_hostname_rules")
         assert HostnameRule.objects.count() == first
+
+
+class TestDeviceComplianceColumn:
+    def _result(self, device, score, when=None):
+        import uuid
+        from django.utils import timezone
+        from apps.compliance.models import ComplianceTemplate, ComplianceTemplateResult
+        tmpl = ComplianceTemplate.objects.create(
+            name=f"t-{uuid.uuid4().hex[:8]}", template_content="x")
+        return ComplianceTemplateResult.objects.create(
+            device=device, template=tmpl, status="satisfied", score=score,
+            checked_at=when or timezone.now())
+
+    @staticmethod
+    def _rows(resp):
+        body = resp.json()
+        return body["results"] if isinstance(body, dict) else body
+
+    def test_list_includes_score_and_grade(self, auth_client):
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="cx1", ip_address="10.7.0.1")
+        self._result(d, 82.0)
+        Device.objects.create(hostname="cx2", ip_address="10.7.0.2")  # no score
+        by = {r["hostname"]: r for r in self._rows(auth_client.get("/api/devices/"))}
+        assert by["cx1"]["compliance_score"] == 82 and by["cx1"]["compliance_grade"] == "B"
+        assert by["cx2"]["compliance_score"] is None and by["cx2"]["compliance_grade"] is None
+
+    def test_latest_result_wins(self, auth_client):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.devices.models import Device
+        d = Device.objects.create(hostname="cx1", ip_address="10.7.0.1")
+        self._result(d, 40.0, timezone.now() - timedelta(days=2))
+        self._result(d, 95.0, timezone.now())
+        by = {r["hostname"]: r for r in self._rows(auth_client.get("/api/devices/"))}
+        assert by["cx1"]["compliance_score"] == 95 and by["cx1"]["compliance_grade"] == "A"
+
+    def test_filter_by_grade(self, auth_client):
+        from apps.devices.models import Device
+        a = Device.objects.create(hostname="dev-a", ip_address="10.7.0.1"); self._result(a, 95.0)
+        f = Device.objects.create(hostname="dev-f", ip_address="10.7.0.2"); self._result(f, 50.0)
+        rows = self._rows(auth_client.get("/api/devices/?compliance_grade=F"))
+        assert {r["hostname"] for r in rows} == {"dev-f"}
+
+    def test_filter_not_checked(self, auth_client):
+        from apps.devices.models import Device
+        a = Device.objects.create(hostname="dev-a", ip_address="10.7.0.1"); self._result(a, 95.0)
+        Device.objects.create(hostname="dev-n", ip_address="10.7.0.2")  # unchecked
+        rows = self._rows(auth_client.get("/api/devices/?compliance_checked=false"))
+        assert {r["hostname"] for r in rows} == {"dev-n"}
+
+    def test_ordering_by_score_desc(self, auth_client):
+        from apps.devices.models import Device
+        a = Device.objects.create(hostname="dev-a", ip_address="10.7.0.1"); self._result(a, 60.0)
+        b = Device.objects.create(hostname="dev-b", ip_address="10.7.0.2"); self._result(b, 90.0)
+        rows = self._rows(auth_client.get("/api/devices/?ordering=-compliance_score"))
+        scored = [r["hostname"] for r in rows if r["compliance_score"] is not None]
+        assert scored[:2] == ["dev-b", "dev-a"]

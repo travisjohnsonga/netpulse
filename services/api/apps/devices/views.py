@@ -232,8 +232,50 @@ class DeviceViewSet(viewsets.ModelViewSet):
     ordering_fields = [
         "hostname", "status", "ip_address", "vendor", "platform", "model",
         "os_version", "serial_number", "last_seen", "created_at", "site__name",
+        "compliance_score",
     ]
     ordering = ["hostname"]
+
+    # Letter grade → [low, high) score band for the ?compliance_grade= filter.
+    _GRADE_BANDS = {"A": (90, None), "B": (80, 90), "C": (70, 80), "D": (60, 70), "F": (0, 60)}
+
+    def get_queryset(self):
+        from django.db.models import FloatField, OuterRef, Subquery
+
+        from apps.compliance.models import ComplianceTemplateResult
+
+        # Annotate the latest stored template-compliance score per device in a
+        # single subquery — avoids an N+1 over the device list (no live scoring).
+        latest_score = (ComplianceTemplateResult.objects
+                        .filter(device=OuterRef("pk"))
+                        .order_by("-checked_at")
+                        .values("score")[:1])
+        qs = super().get_queryset().annotate(
+            compliance_score=Subquery(latest_score, output_field=FloatField()))
+
+        p = self.request.query_params
+        checked = p.get("compliance_checked")
+        if checked == "false":
+            qs = qs.filter(compliance_score__isnull=True)
+        elif checked == "true":
+            qs = qs.filter(compliance_score__isnull=False)
+
+        grade = p.get("compliance_grade")
+        if grade == "none":
+            qs = qs.filter(compliance_score__isnull=True)
+        elif grade in self._GRADE_BANDS:
+            lo, hi = self._GRADE_BANDS[grade]
+            qs = qs.filter(compliance_score__gte=lo)
+            if hi is not None:
+                qs = qs.filter(compliance_score__lt=hi)
+
+        lt = p.get("compliance_score__lt")
+        if lt:
+            try:
+                qs = qs.filter(compliance_score__lt=float(lt))
+            except (TypeError, ValueError):
+                pass
+        return qs
 
     def get_serializer_class(self):
         if self.action == "list":

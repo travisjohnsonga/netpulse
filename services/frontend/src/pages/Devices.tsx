@@ -36,6 +36,7 @@ export default function Devices() {
   const [statusFilter, setStatusFilter] = useState('All')
   const [platformFilter, setPlatformFilter] = useState('All')
   const [roleFilter, setRoleFilter] = useState('All')
+  const [complianceFilter, setComplianceFilter] = useState('All')
   const [roles, setRoles] = useState<DeviceRole[]>([])
   // Site scoping comes from the global header selector (persists across pages).
   const { selectedSite } = useSite()
@@ -119,6 +120,7 @@ export default function Devices() {
     if (platformFilter !== 'All') params.platform = platformFilter
     if (selectedSite) params.site = selectedSite
     if (roleFilter !== 'All') params.role = roleFilter
+    if (complianceFilter !== 'All') params.compliance_grade = complianceFilter
     if (ordering) params.ordering = ordering
 
     fetchDevices(params)
@@ -132,7 +134,7 @@ export default function Devices() {
         setError('Failed to load devices. Check that the API is running.')
         setLoading(false)
       })
-  }, [page, search, statusFilter, platformFilter, selectedSite, roleFilter, ordering])
+  }, [page, search, statusFilter, platformFilter, selectedSite, roleFilter, complianceFilter, ordering])
 
   useEffect(() => { load() }, [load])
 
@@ -214,6 +216,19 @@ export default function Devices() {
           {roles.map((r) => (
             <option key={r.id} value={String(r.id)}>{r.name}</option>
           ))}
+        </select>
+        <select
+          value={complianceFilter}
+          onChange={(e) => { setComplianceFilter(e.target.value); setPage(1) }}
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="All">Any Compliance</option>
+          <option value="A">A (90–100)</option>
+          <option value="B">B (80–89)</option>
+          <option value="C">C (70–79)</option>
+          <option value="D">D (60–69)</option>
+          <option value="F">F (below 60)</option>
+          <option value="none">Not checked</option>
         </select>
         <ColumnPicker activeKeys={columnKeys} onChange={setColumns} onReset={resetColumns} />
       </div>
