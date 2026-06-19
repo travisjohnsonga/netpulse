@@ -113,6 +113,11 @@ class Agent(TimestampedModel):
     arch = models.CharField(max_length=32, blank=True)
     version = models.CharField(max_length=32, blank=True)
     cert_serial = models.CharField(max_length=128, blank=True, db_index=True)
+    # Canonicalized form of cert_serial (separators stripped, uppercased) so the
+    # nginx-forwarded mTLS serial can be matched with a single indexed lookup
+    # instead of scanning + normalizing every agent in Python on each request.
+    # Kept in sync by save(); see AgentCertAuthentication.
+    cert_serial_normalized = models.CharField(max_length=128, blank=True, db_index=True)
     cert_expires_at = models.DateTimeField(null=True, blank=True)
     enrollment_token = models.ForeignKey(
         AgentEnrollmentToken, null=True, blank=True,
@@ -129,6 +134,16 @@ class Agent(TimestampedModel):
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     collection_interval = models.IntegerField(default=30, help_text="seconds")
+
+    def save(self, *args, **kwargs):
+        # Keep the normalized serial in lockstep with cert_serial so the
+        # authenticator can resolve an agent with one indexed query.
+        from .authentication import normalize_serial
+        self.cert_serial_normalized = normalize_serial(self.cert_serial)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "cert_serial" in update_fields:
+            kwargs["update_fields"] = list(update_fields) + ["cert_serial_normalized"]
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.hostname} ({self.id})"

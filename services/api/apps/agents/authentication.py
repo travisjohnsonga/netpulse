@@ -42,13 +42,17 @@ class AgentCertAuthentication(BaseAuthentication):
         want = normalize_serial(request.META.get(SERIAL_HEADER, ""))
         if not want:
             return None
-        # Match a non-revoked agent by normalized serial. Server fleets are
-        # small (tens–hundreds), so the normalized scan is cheap; if it ever
-        # needs to scale, store the normalized serial and query it directly.
-        for agent in Agent.objects.exclude(status=Agent.Status.REVOKED):
-            if agent.cert_serial and normalize_serial(agent.cert_serial) == want:
-                return (agent, None)
-        return None
+        # Resolve the agent with a single indexed lookup on the stored normalized
+        # serial (O(1)), rather than fetching and re-normalizing every agent on
+        # each request — the latter opened a DB connection + scanned the whole
+        # table per request and exhausted file descriptors under load.
+        agent = (Agent.objects
+                 .exclude(status=Agent.Status.REVOKED)
+                 .filter(cert_serial_normalized=want)
+                 .first())
+        if agent is None:
+            return None
+        return (agent, None)
 
     # No authenticate_header → DRF renders a failed auth as 401 (not a 403
     # challenge with WWW-Authenticate, which makes no sense for mTLS).

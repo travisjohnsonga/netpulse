@@ -191,6 +191,12 @@ services:
         BUILT_AT: ${BUILT_AT:-}
     restart: unless-stopped
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    # Raise the file-descriptor ceiling regardless of host config — the api
+    # fans out many concurrent DB/cache/OpenBao connections under load.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
@@ -448,6 +454,11 @@ services:
     build: ./services/api
     restart: unless-stopped
     command: python manage.py run_reachability_monitor --interval 30
+    # Reachability probes open many concurrent sockets — lift the fd ceiling.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
@@ -569,6 +580,12 @@ services:
     # NOTE: Celery is present in requirements but unused — no tasks/beat schedule
     # are defined; run_scheduler is the single scheduling system.
     command: python manage.py run_scheduler
+    # Periodic collection tasks fan out many concurrent connections — lift the
+    # fd ceiling so a busy tick can't exhaust descriptors.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
