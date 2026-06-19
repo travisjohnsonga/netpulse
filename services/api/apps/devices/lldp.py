@@ -117,10 +117,13 @@ _CAP_ALIASES = {
     "wlan-access-point": "wlan-ap", "wlan_access_point": "wlan-ap",
     "wlan-ap": "wlan-ap", "wlan": "wlan-ap", "wifi": "wlan-ap",
     "ap": "wlan-ap", "access-point": "wlan-ap", "accesspoint": "wlan-ap",
+    "wireless-ap": "wlan-ap", "wireless": "wlan-ap",
     "station-only": "station", "pc": "station", "host": "station",
     "workstation": "station",
     "docsis-cable-device": "docsis", "cable": "docsis",
-    "phone": "telephone", "tel": "telephone",
+    "phone": "telephone", "tel": "telephone", "voip": "telephone",
+    # Some platforms advertise the routing role as "routing" rather than "router".
+    "routing": "router",
 }
 
 

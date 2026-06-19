@@ -72,6 +72,52 @@ class TestCapabilities:
         assert lldp.normalize_capabilities(["switch"]) == ["bridge"]
         assert lldp.normalize_capabilities(["pc", "host"]) == ["station"]
 
+    def test_additional_alias_variants(self):
+        # Variants added for the "permanent normalization" fix.
+        assert lldp.normalize_capabilities(["wireless-ap"]) == ["wlan-ap"]
+        assert lldp.normalize_capabilities(["wireless"]) == ["wlan-ap"]
+        assert lldp.normalize_capabilities(["voip"]) == ["telephone"]
+        assert lldp.normalize_capabilities(["routing"]) == ["router"]
+
+
+class TestNormalizeCommand:
+    def test_command_renormalizes_stored_records(self):
+        from django.core.management import call_command
+
+        dev = Device.objects.create(hostname="sw-1", ip_address="10.9.0.1", status="active")
+        # create() does NOT normalize (only collection does), so this persists
+        # raw — simulating an older path or a newly-added alias.
+        nb = LLDPNeighbor.objects.create(
+            seen_by=dev, local_interface="1/1/1", capabilities=["Bridge", "wireless-ap"])
+        already = LLDPNeighbor.objects.create(
+            seen_by=dev, local_interface="1/1/2", capabilities=["bridge"])
+
+        call_command("normalize_lldp_capabilities")
+
+        nb.refresh_from_db()
+        already.refresh_from_db()
+        assert nb.capabilities == ["bridge", "wlan-ap"]
+        assert already.capabilities == ["bridge"]  # idempotent / unchanged
+
+
+class TestCapabilityComplianceMatch:
+    def test_wlan_access_point_rule_matches_stored_wlan_ap(self):
+        # A capability rule written with the full name must match a neighbour
+        # stored under the canonical token — the engine normalizes BOTH sides.
+        from apps.compliance.interface_compliance import _matched_interfaces
+
+        dev = Device.objects.create(hostname="acc-sw", ip_address="10.9.0.2", status="active")
+        LLDPNeighbor.objects.create(seen_by=dev, local_interface="1/1/5",
+                                    system_name="wco2-wh-ap-05", capabilities=["wlan-ap"])
+
+        class Rule:
+            trigger = "lldp_capability"
+            trigger_value = "wlan-access-point"
+            platform = ""
+
+        matches = _matched_interfaces(Rule())
+        assert any(m[1] == "1/1/5" for m in matches)
+
 
 class TestChassisType:
     def test_mac(self):
