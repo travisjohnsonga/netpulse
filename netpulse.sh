@@ -153,8 +153,54 @@ print("Password reset successfully")
       exit 1
     fi
     ;;
+  install-watchdog)
+    # Install the health watchdog as a cron job (every 5 min) + logrotate.
+    WATCHDOG="$(pwd)/scripts/watchdog.sh"
+    if [ ! -f "$WATCHDOG" ]; then
+      echo "ERROR: $WATCHDOG not found" >&2; exit 1
+    fi
+    chmod +x "$WATCHDOG"
+    echo "Installing spane watchdog..."
+    # Log file with the invoking user as owner so cron writes without sudo.
+    sudo touch /var/log/spane-watchdog.log
+    sudo chown "$USER:$USER" /var/log/spane-watchdog.log
+    sudo tee /etc/logrotate.d/spane-watchdog > /dev/null << 'LOGROTATE'
+/var/log/spane-watchdog.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    dateext
+}
+LOGROTATE
+    CRON_LINE="*/5 * * * * $WATCHDOG >> /var/log/spane-watchdog.log 2>&1"
+    # Replace any existing watchdog cron entry, then add the current one.
+    ( crontab -l 2>/dev/null | grep -v "watchdog.sh"; echo "$CRON_LINE" ) | crontab -
+    echo "Watchdog installed (cron: */5 * * * *)."
+    echo "  Log:    /var/log/spane-watchdog.log"
+    echo "  Manual: $WATCHDOG"
+    echo "  Status: ./netpulse.sh watchdog-status"
+    echo "  Remove: ./netpulse.sh remove-watchdog"
+    ;;
+  remove-watchdog)
+    crontab -l 2>/dev/null | grep -v "watchdog.sh" | crontab - 2>/dev/null || true
+    sudo rm -f /etc/logrotate.d/spane-watchdog
+    echo "Watchdog removed from cron."
+    ;;
+  watchdog-status)
+    echo "=== Watchdog Status ==="
+    if crontab -l 2>/dev/null | grep -q "watchdog.sh"; then
+      echo "Cron: installed (every 5 min)"
+    else
+      echo "Cron: not installed — run: ./netpulse.sh install-watchdog"
+    fi
+    echo ""
+    echo "=== Last 20 log entries ==="
+    tail -20 /var/log/spane-watchdog.log 2>/dev/null || echo "No log file yet."
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|install-watchdog|remove-watchdog|watchdog-status|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
@@ -173,6 +219,9 @@ print("Password reset successfully")
     echo "  credentials        Show credential profile status (add --show-secrets to reveal values)"
     echo "  credentials-hint   Show the initial admin login saved by setup.sh"
     echo "  reset-admin-password  Set a new random admin password and print it"
+    echo "  install-watchdog   Install the health watchdog cron job (every 5 min)"
+    echo "  remove-watchdog    Remove the watchdog cron job + logrotate config"
+    echo "  watchdog-status    Show watchdog cron state + recent log entries"
     echo "  logs [service]     Follow logs (default: api)"
     exit 1
     ;;

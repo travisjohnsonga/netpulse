@@ -556,6 +556,15 @@ if yesno "Pull and start spane now?" Y; then
   else
     info "skipped — install later with: ./netpulse.sh install-service"
   fi
+  echo
+  # Health watchdog: cron job that every 5 min restarts unhealthy containers,
+  # recovers the api (incl. unsealing OpenBao), and guards against fd leaks.
+  if yesno "Install the health watchdog? (recommended — auto-recovers failed services)" Y; then
+    (cd "$ROOT_DIR" && ./netpulse.sh install-watchdog) \
+      || warn "watchdog install failed — run later with: ./netpulse.sh install-watchdog"
+  else
+    info "skipped — install later with: ./netpulse.sh install-watchdog"
+  fi
 else
   info "skipped startup. When ready:  $COMPOSE up -d"
   echo "   Web UI will be at https://${url_host}:$(env_get FRONTEND_HTTPS_PORT || echo 443)"

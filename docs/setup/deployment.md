@@ -104,6 +104,39 @@ sudo systemctl {start,stop,restart,status,enable,disable} netpulse
 After reboot, services start automatically via `docker compose up -d`. Run
 `./scripts/setup.sh` again only if OpenBao was wiped (factory reset / volume delete).
 
+## Production watchdog
+
+Install the watchdog to automatically recover from service failures:
+
+```bash
+./netpulse.sh install-watchdog
+```
+
+The watchdog (`scripts/watchdog.sh`) runs every 5 minutes via cron and:
+
+- starts/restarts any stopped or `unhealthy` critical container
+  (api, postgres, openbao, valkey, nats, influxdb, opensearch);
+- restarts the api if `GET /api/health/` isn't `ok`, and if it still fails,
+  checks OpenBao's seal status (via the container — OpenBao has no host port)
+  and unseals it with `init_openbao`;
+- preemptively restarts the api if its open file-descriptor count runs away
+  (a backstop to gunicorn's `--max-requests` worker recycling).
+
+It logs to `/var/log/spane-watchdog.log` (rotated daily, 14 days). `setup.sh`
+offers to install it on first run.
+
+```bash
+./netpulse.sh watchdog-status        # cron state + recent log
+tail -f /var/log/spane-watchdog.log  # live log
+./netpulse.sh remove-watchdog        # uninstall
+```
+
+**Resilience defaults baked into the stack:** every app service sets
+`ulimits.nofile=65536` (via the `x-app-ulimits` compose anchor) so a low host
+limit can't starve it of file descriptors, and the api's gunicorn workers
+recycle after ~1000 requests (`--max-requests`/`--max-requests-jitter`) to cap
+slow leaks.
+
 ## Data persistence
 
 - **Development**: named Docker volumes (current).

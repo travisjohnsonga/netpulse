@@ -52,8 +52,16 @@ USER netpulse
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
+# Worker recycling caps slow fd/memory leaks (workers replaced after ~1000
+# requests, jittered); heartbeat file in /dev/shm avoids disk fd churn. The
+# compose `command:` for the api service mirrors these flags. --timeout stays
+# at 120s — some on-demand report PDFs legitimately run ~1 min.
 CMD ["gunicorn", "config.wsgi:application", \
      "--bind", "0.0.0.0:8000", \
      "--workers", "4", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "100", \
      "--timeout", "120", \
+     "--keep-alive", "2", \
+     "--worker-tmp-dir", "/dev/shm", \
      "--access-logfile", "-"]
