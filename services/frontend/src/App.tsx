@@ -38,6 +38,15 @@ import ServerDetail from './pages/ServerDetail'
 import Topology from './pages/Topology'
 import Wireless from './pages/Wireless'
 import WirelessLocation from './pages/WirelessLocation'
+import TVLauncher from './pages/tv/TVLauncher'
+import TVNetwork from './pages/tv/TVNetwork'
+import TVWireless from './pages/tv/TVWireless'
+import TVSecurity from './pages/tv/TVSecurity'
+import TVOps from './pages/tv/TVOps'
+import TVSites from './pages/tv/TVSites'
+import TVServers from './pages/tv/TVServers'
+import TVCompliance from './pages/tv/TVCompliance'
+import TVRotate from './pages/tv/TVRotate'
 import LldpNeighbors from './pages/LldpNeighbors'
 import NetworkLookup from './pages/NetworkLookup'
 import ApiDocs from './pages/ApiDocs'
@@ -108,6 +117,26 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />} />
+      {/* TV dashboards: auth-required but NO app chrome (no sidebar/topnav) so a
+          NOC monitor can be pointed at a bookmarked /tv/* URL fullscreen. */}
+      <Route
+        path="/tv/*"
+        element={
+          <RequireAuth>
+            <Routes>
+              <Route path="/" element={<TVLauncher />} />
+              <Route path="network" element={<TVNetwork />} />
+              <Route path="wireless" element={<TVWireless />} />
+              <Route path="security" element={<TVSecurity />} />
+              <Route path="ops" element={<TVOps />} />
+              <Route path="sites" element={<TVSites />} />
+              <Route path="servers" element={<TVServers />} />
+              <Route path="compliance" element={<TVCompliance />} />
+              <Route path="rotate" element={<TVRotate />} />
+            </Routes>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/*"
         element={

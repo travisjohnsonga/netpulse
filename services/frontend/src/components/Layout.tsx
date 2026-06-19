@@ -66,6 +66,7 @@ const navEntries: NavEntry[] = [
   { label: 'Reports', href: '/reports', icon: '📈' },
   { label: 'API Docs', href: '/api-docs', icon: '📖', divider: true },
   { label: 'Settings', href: '/settings', icon: '⚙' },
+  { label: 'TV Dashboards', href: '/tv', icon: '📺', divider: true },
 ]
 
 // A single leaf nav link (top level or nested inside a group).
