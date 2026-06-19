@@ -40,6 +40,10 @@ export default function CollectionHealthPanel() {
       <div>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Collection Health (last 24h)</h3>
         <p className="text-xs text-gray-400 dark:text-gray-500">Every scheduled/manual collection attempt across the fleet.</p>
+        <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+          Note: Wireless APs (UniFi, Mist) and cloud-managed devices are excluded from config
+          collection — their configuration is managed by the vendor controller.
+        </p>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Attempts" value={w.total} />

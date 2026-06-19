@@ -39,11 +39,21 @@ def collect_all_configs() -> dict:
     Publishes a "Config Changed" alert per device whose config changed.
     """
     from apps.compliance import collector
+    from apps.compliance.collector import SKIP_CONFIG_PLATFORMS
     from apps.devices.models import Device
 
+    # Exclude cloud/controller-managed platforms (UniFi/Mist) and wireless roles
+    # up front — they have no collectable config, so iterating them just wastes
+    # connections and records false failures. collect_one also guards each call
+    # (manual/enrichment paths) and returns skipped=True for anything that slips
+    # through (e.g. a wireless device with an unexpected platform string).
     devices = list(
-        Device.objects.filter(status=Device.Status.ACTIVE).select_related("credential_profile"))
-    results = {"total": len(devices), "success": 0, "failed": 0, "unchanged": 0, "changed": 0}
+        Device.objects.filter(status=Device.Status.ACTIVE)
+        .exclude(platform__in=SKIP_CONFIG_PLATFORMS)
+        .exclude(role__slug__in=["wireless-ap", "wireless-controller"])
+        .select_related("credential_profile", "role"))
+    results = {"total": len(devices), "success": 0, "failed": 0,
+               "unchanged": 0, "changed": 0, "skipped": 0}
 
     for device in devices:
         try:
@@ -51,6 +61,9 @@ def collect_all_configs() -> dict:
         except Exception as exc:  # collect_one shouldn't raise, but never stop the loop
             logger.error("Config collection failed for %s: %s", device.hostname, exc)
             results["failed"] += 1
+            continue
+        if res.get("skipped"):
+            results["skipped"] += 1
             continue
         if not res.get("ok"):
             results["failed"] += 1

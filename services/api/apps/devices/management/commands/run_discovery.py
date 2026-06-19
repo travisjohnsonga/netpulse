@@ -21,6 +21,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import re
 import socket
 import time
 from datetime import datetime, timezone
@@ -32,6 +33,25 @@ from django.utils import timezone as dj_tz
 from apps.devices.models import DiscoveredDevice, DiscoveryJob
 
 logger = logging.getLogger(__name__)
+
+# Reverse-DNS names that belong to this Docker stack (or any docker-compose
+# project) rather than a real network device — discovery must never enrol them.
+_INFRA_HOSTNAME_RE = re.compile(
+    r"(netpulse|spane)[-_].*|.*\.(netpulse|spane)[-_].*|"
+    r".*-(frontend|api|scheduler|websocket|postgres|valkey|nats|influxdb|"
+    r"opensearch|openbao|config-manager|alert-engine|check-engine|cve-engine|"
+    r"lifecycle-engine|security-engine|stream-processor|reachability-monitor|"
+    r"ingest-[a-z]+)-\d+.*",
+    re.IGNORECASE,
+)
+
+
+def is_infra_hostname(hostname: str) -> bool:
+    """True for this stack's own Docker container names (e.g.
+    ``netpulse-frontend-1.netpulse_netpulse-net``) — never a real device."""
+    h = (hostname or "").strip()
+    return bool(h) and bool(_INFRA_HOSTNAME_RE.fullmatch(h))
+
 
 # ── SNMP OIDs for fingerprinting ──────────────────────────────────────────────
 _OID_SYS_DESCR = "1.3.6.1.2.1.1.1.0"
@@ -1149,6 +1169,14 @@ class DiscoveryRunner:
     # ── persistence ───────────────────────────────────────────────────────────
 
     async def _save_discovered(self, ip: str, data: dict) -> None:
+        # Don't record this stack's own Docker containers as discoverable devices
+        # — scanning the netpulse-net bridge can reverse-resolve container names
+        # like "netpulse-frontend-1.netpulse_netpulse-net".
+        if is_infra_hostname(data.get("discovered_hostname", "")):
+            logger.debug("discovery: skipping infrastructure host %s (%s)",
+                         data.get("discovered_hostname"), ip)
+            return
+
         def _db():
             DiscoveredDevice.objects.update_or_create(
                 job=self._job, source_ip=ip,

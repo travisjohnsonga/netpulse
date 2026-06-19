@@ -30,6 +30,23 @@ from apps.credentials import vault
 
 logger = logging.getLogger(__name__)
 
+# Platforms whose configuration is owned by a vendor controller/cloud (UniFi,
+# Mist) or is unknown/unset — there is no SSH/REST running-config to collect, so
+# attempting collection only produces noise and false failures. Skipped on every
+# path (scheduled, manual, enrichment). Wireless APs/controllers also match by
+# role (see collect_all_configs).
+SKIP_CONFIG_PLATFORMS = frozenset({
+    "unifi_ap", "unifi_udm", "unifi_sw", "unifi_uckp", "unifi_ucg",
+    "mist_ap", "mist_sw", "mist_gw",
+    "unknown", "",
+})
+
+
+def config_collection_supported(device) -> bool:
+    """True when ``device``'s platform can have a running config collected."""
+    return (getattr(device, "platform", "") or "").lower() not in SKIP_CONFIG_PLATFORMS
+
+
 # The transport actually used to fetch the last config is recorded here by the
 # fetch path and consumed once by collect_one when it writes the attempt log.
 # Thread-local so concurrent collections don't clobber each other's value.
@@ -620,7 +637,17 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     Updates ``device.last_seen`` whenever the device is reached, regardless of
     whether the config changed. Never raises — a single device must not stop the
     loop.
+
+    Cloud/controller-managed platforms (UniFi/Mist APs, controllers, switches)
+    and devices with no platform have no collectable config — they return
+    ``{"ok": False, "error": "not_supported", "skipped": True}`` immediately and
+    write NO ConfigCollectionLog row (so they don't pollute collection health).
     """
+    if not config_collection_supported(device):
+        logger.debug("config collection unsupported for %s (platform=%s) — skipping",
+                     device.hostname, device.platform)
+        return {"ok": False, "error": "not_supported", "skipped": True}
+
     start = time.monotonic()
 
     def _log(status, *, changed=None, content=None, error=""):
