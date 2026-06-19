@@ -147,14 +147,26 @@ def _matched_interfaces(rule) -> list[tuple]:
         caps = set(normalize_capabilities([rule.trigger_value]))
         if not caps:
             return out
+        # Compound matching: the neighbour must advertise the trigger capability,
+        # AND all of `require`, and NONE of `exclude`. This disambiguates shared
+        # capabilities — e.g. APs and switches both advertise "bridge", so an
+        # uplink rule requires "router" (switches only) to skip AP ports.
+        required = set(normalize_capabilities(rule.trigger_require_capabilities or []))
+        excluded = set(normalize_capabilities(rule.trigger_exclude_capabilities or []))
         for nb in LLDPNeighbor.objects.select_related("seen_by"):
             # Normalise the stored capabilities too (defense-in-depth) so a record
             # collected before the normaliser learned a spelling (e.g. raw "wlan")
             # still matches the canonical token.
             nbcaps = set(normalize_capabilities(nb.capabilities or []))
-            if caps & nbcaps:
-                out.append((nb.seen_by, nb.local_interface,
-                            nb.system_name or nb.chassis_id, ",".join(sorted(caps))))
+            if not (caps & nbcaps):
+                continue
+            if required and not required.issubset(nbcaps):
+                continue
+            if excluded & nbcaps:
+                continue
+            label_caps = caps | required
+            out.append((nb.seen_by, nb.local_interface,
+                        nb.system_name or nb.chassis_id, ",".join(sorted(label_caps))))
 
     elif trig == "lldp_neighbor_platform":
         platforms = [p.strip() for p in rule.trigger_value.split(",") if p.strip()]

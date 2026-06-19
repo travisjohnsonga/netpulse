@@ -48,7 +48,49 @@ function triggerLabel(r: InterfaceComplianceRule): string {
 
 const BLANK: Partial<InterfaceComplianceRule> = {
   name: '', description: '', trigger: 'lldp_capability', trigger_value: 'wlan-access-point',
+  trigger_require_capabilities: [], trigger_exclude_capabilities: [],
   platform: '', enabled: true, checks: [],
+}
+
+// Quick presets for compound capability matching.
+const CAP_PRESETS: { label: string; require: string[]; exclude: string[] }[] = [
+  { label: 'Switches only', require: ['router'], exclude: ['wlan-ap', 'telephone'] },
+  { label: 'APs only', require: ['wlan-ap'], exclude: [] },
+  { label: 'Phones only', require: ['telephone'], exclude: ['bridge'] },
+]
+
+// Canonical capability tokens for the require/exclude chips (the backend
+// normalizes, so these fold to the same tokens as the trigger-value dropdown).
+const COMPOUND_CAPS = [
+  { value: 'wlan-ap', label: '📶 AP' },
+  { value: 'telephone', label: '📞 Phone' },
+  { value: 'bridge', label: '🔀 Bridge' },
+  { value: 'router', label: '🌐 Router' },
+  { value: 'station', label: '💻 Station' },
+]
+
+function CapChips({ heading, help, selected, onChange }: {
+  heading: string; help: string; selected: string[]; onChange: (v: string[]) => void
+}) {
+  const toggle = (v: string) =>
+    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v])
+  return (
+    <div>
+      <label className={label}>{heading}</label>
+      <div className="flex flex-wrap gap-1.5">
+        {COMPOUND_CAPS.map((c) => (
+          <button key={c.value} type="button" onClick={() => toggle(c.value)}
+            className={clsx('px-2 py-1 text-xs rounded border',
+              selected.includes(c.value)
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50')}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-400 mt-1">{help}</p>
+    </div>
+  )
 }
 
 export default function InterfaceRules() {
@@ -126,7 +168,29 @@ export default function InterfaceRules() {
             </div>
           </div>
           {d.trigger === 'lldp_capability' && (
-            <p className="text-xs text-gray-400">Matches any switch port whose LLDP neighbor advertises this capability. <strong>Wireless AP</strong> catches all APs regardless of vendor (UniFi, Mist, Cisco, Aruba…).</p>
+            <>
+              <p className="text-xs text-gray-400">Matches any switch port whose LLDP neighbor advertises this capability. <strong>Wireless AP</strong> catches all APs regardless of vendor (UniFi, Mist, Cisco, Aruba…).</p>
+              <div className="grid grid-cols-2 gap-3 border-t border-gray-100 dark:border-gray-700 pt-3">
+                <CapChips heading="Also require (AND)" help="ALL of these must also be present"
+                  selected={d.trigger_require_capabilities || []}
+                  onChange={(v) => set({ trigger_require_capabilities: v })} />
+                <CapChips heading="Exclude if neighbor has (NOT)" help="Skip if neighbor advertises any of these"
+                  selected={d.trigger_exclude_capabilities || []}
+                  onChange={(v) => set({ trigger_exclude_capabilities: v })} />
+                <div className="col-span-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-gray-400">Presets:</span>
+                  {CAP_PRESETS.map((p) => (
+                    <button key={p.label} type="button"
+                      onClick={() => set({ trigger_require_capabilities: p.require, trigger_exclude_capabilities: p.exclude })}
+                      className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50">{p.label}</button>
+                  ))}
+                </div>
+                <p className="col-span-2 text-[11px] text-gray-400">
+                  e.g. APs and switches both advertise <strong>bridge</strong>; an uplink rule
+                  requires <strong>router</strong> to match switch-to-switch links only.
+                </p>
+              </div>
+            </>
           )}
           <div><label className={label}>Switch Platform filter (optional)</label><input className={inputCls} value={d.platform || ''} onChange={(e) => set({ platform: e.target.value })} placeholder="aos_cx (blank = any)" /></div>
 

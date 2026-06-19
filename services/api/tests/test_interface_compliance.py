@@ -270,3 +270,57 @@ class TestSeeder:
         assert ap.trigger == "lldp_capability" and ap.trigger_value == "wlan-access-point"
         call_command("seed_compliance_rules")  # idempotent
         assert InterfaceComplianceRule.objects.count() == n
+
+
+class TestCompoundCapabilityTrigger:
+    """require/exclude disambiguate shared capabilities (APs and switches both
+    advertise 'bridge')."""
+
+    def _rule(self, **kw):
+        defaults = dict(name="r", trigger="lldp_capability", trigger_value="bridge",
+                        platform="", checks=[])
+        defaults.update(kw)
+        return InterfaceComplianceRule.objects.create(**defaults)
+
+    def _setup(self):
+        sw = _switch()
+        # AP advertises bridge + wlan-ap; uplink switch advertises bridge + router.
+        LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/7",
+                                    system_name="ap-1", capabilities=["bridge", "wlan-ap"])
+        LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/8",
+                                    system_name="up-sw", capabilities=["bridge", "router"])
+        return sw
+
+    def test_bridge_alone_overmatches_both(self):
+        self._setup()
+        matched = {m[1] for m in ic._matched_interfaces(self._rule())}
+        assert matched == {"1/1/7", "1/1/8"}  # the original over-match
+
+    def test_require_router_matches_switch_only(self):
+        self._setup()
+        matched = {m[1] for m in ic._matched_interfaces(
+            self._rule(trigger_require_capabilities=["router"]))}
+        assert matched == {"1/1/8"}  # AP (no router) excluded
+
+    def test_exclude_wlan_ap_matches_switch_only(self):
+        self._setup()
+        matched = {m[1] for m in ic._matched_interfaces(
+            self._rule(trigger_exclude_capabilities=["wlan-ap"]))}
+        assert matched == {"1/1/8"}
+
+    def test_require_exclude_normalize_full_names(self):
+        # require/exclude given as full names still fold to canonical tokens.
+        self._setup()
+        matched = {m[1] for m in ic._matched_interfaces(
+            self._rule(trigger_exclude_capabilities=["wlan-access-point"]))}
+        assert matched == {"1/1/8"}
+
+    def test_phone_exclude_bridge(self):
+        sw = _switch()
+        LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/1",
+                                    system_name="phone", capabilities=["telephone"])
+        LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/2",
+                                    system_name="phone-sw", capabilities=["telephone", "bridge"])
+        matched = {m[1] for m in ic._matched_interfaces(
+            self._rule(trigger_value="telephone", trigger_exclude_capabilities=["bridge"]))}
+        assert matched == {"1/1/1"}  # phone with a built-in switch (bridge) excluded

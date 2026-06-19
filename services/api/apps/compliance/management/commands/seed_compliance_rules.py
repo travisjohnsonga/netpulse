@@ -49,7 +49,11 @@ INTERFACE_RULES = [
     ("Switch Uplink Port Config", {
         "description": ("Ports connected to other switches should be trunk ports "
                         "with spanning-tree configured and no portfast."),
+        # Real switches advertise BOTH bridge AND router; APs advertise bridge (+
+        # wlan-ap). Requiring "router" matches switch-to-switch uplinks only and
+        # excludes AP ports that also advertise bridge.
         "trigger": "lldp_capability", "trigger_value": "bridge", "platform": "",
+        "trigger_require_capabilities": ["router"],
         "checks": [
             {"type": "config_contains", "value": "trunk",
              "description": "Port in trunk mode", "severity": "error"},

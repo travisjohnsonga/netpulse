@@ -114,6 +114,8 @@ class TestCapabilityComplianceMatch:
             trigger = "lldp_capability"
             trigger_value = "wlan-access-point"
             platform = ""
+            trigger_require_capabilities: list = []
+            trigger_exclude_capabilities: list = []
 
         matches = _matched_interfaces(Rule())
         assert any(m[1] == "1/1/5" for m in matches)

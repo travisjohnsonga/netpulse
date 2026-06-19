@@ -245,6 +245,16 @@ class InterfaceComplianceRule(TimestampedModel):
             "platforms. interface_description: regex. manual: comma-separated "
             "hostname:interface."),
     )
+    # Compound lldp_capability matching (AND / NOT) — disambiguates neighbours
+    # that share a capability. e.g. APs and switches both advertise "bridge", so
+    # an uplink rule (trigger_value="bridge") also requires "router" to exclude
+    # APs; a phone rule may exclude "bridge" to skip phones with a built-in switch.
+    trigger_require_capabilities = models.JSONField(
+        default=list, blank=True,
+        help_text="Neighbour must ALSO advertise ALL of these capabilities (AND).")
+    trigger_exclude_capabilities = models.JSONField(
+        default=list, blank=True,
+        help_text="Skip the interface if the neighbour advertises ANY of these (NOT).")
     # The SWITCH platform to limit the rule to (NOT the neighbour's). Blank = any.
     platform = models.CharField(
         max_length=64, blank=True, help_text="Switch platform filter, e.g. aos_cx")

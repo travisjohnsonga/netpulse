@@ -2887,6 +2887,10 @@ export interface InterfaceComplianceRule {
   trigger: string
   trigger_display?: string
   trigger_value: string
+  // Compound lldp_capability matching: neighbour must ALSO advertise all of
+  // require, and NONE of exclude (disambiguates shared capabilities like bridge).
+  trigger_require_capabilities?: string[]
+  trigger_exclude_capabilities?: string[]
   platform: string
   checks: InterfaceCheck[]
   enabled: boolean
