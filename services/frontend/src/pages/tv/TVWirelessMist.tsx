@@ -204,7 +204,7 @@ export default function TVWirelessMist() {
               <SleRing label="Throughput" value={sle?.throughput ?? null} />
               <SleRing label="Connect" value={sle?.time_to_connect ?? null} />
             </div>
-            <div className="grid grid-cols-2 gap-3 overflow-hidden">
+            <div className="flex flex-col gap-4 overflow-auto">
               <BusyPanel
                 title="Busiest APs"
                 empty="No access points on this map."
