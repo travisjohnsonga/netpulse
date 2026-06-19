@@ -1608,8 +1608,14 @@ function _downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement('a')
   a.href = url
   a.download = filename
+  // The anchor MUST be in the document for the synthetic click to trigger a
+  // download in some browsers (notably Firefox); a detached anchor silently
+  // no-ops. Append, click, then clean up.
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  // Revoke on the next tick so the download has started reading the blob.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 // Generate a report; downloads the file (pdf/csv/html) or returns the JSON body.

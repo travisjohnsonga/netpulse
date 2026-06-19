@@ -274,6 +274,19 @@ function RecentReports({ rows, loading }: { rows: GeneratedReportRow[]; loading:
   const qc = useQueryClient()
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState(false)
+  const [downloading, setDownloading] = useState<number | null>(null)
+
+  const handleDownload = async (id: number, filename: string) => {
+    setDownloading(id)
+    try {
+      await downloadReport(id, filename)
+    } catch (err) {
+      console.error('Download failed:', err)
+      alert('Download failed. The file may no longer exist on the server.')
+    } finally {
+      setDownloading(null)
+    }
+  }
 
   const refresh = () => { setSelected(new Set()); qc.invalidateQueries({ queryKey: ['reports'] }) }
   const allChecked = rows.length > 0 && selected.size === rows.length
@@ -336,8 +349,10 @@ function RecentReports({ rows, loading }: { rows: GeneratedReportRow[]; loading:
                 <td className="px-5 py-2 uppercase text-xs text-gray-500 dark:text-gray-400">{r.format}</td>
                 <td className="px-5 py-2 text-gray-500 dark:text-gray-400">{fmtBytes(r.file_size)}</td>
                 <td className="px-5 py-2 whitespace-nowrap">
-                  <button onClick={() => downloadReport(r.id, `${r.title}.${r.format}`)}
-                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400">Download</button>
+                  <button onClick={() => handleDownload(r.id, `${r.title}.${r.format}`)}
+                    disabled={downloading === r.id}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 disabled:opacity-50">
+                    {downloading === r.id ? 'Downloading…' : 'Download'}</button>
                   <button onClick={() => removeOne(r.id)} disabled={busy}
                     className="ml-3 text-red-600 hover:text-red-800 dark:text-red-400 disabled:opacity-50">Delete</button>
                 </td>
