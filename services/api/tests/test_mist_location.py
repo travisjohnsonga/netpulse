@@ -246,3 +246,38 @@ class TestLocationEndpoint:
         monkeypatch.setattr(mist_location, "_mist_client", lambda: (FakeMist(maps=[]), object()))
         r = auth_client.get("/api/wireless/location/?site=site-1")
         assert r.status_code == 404
+
+
+# ── Per-client throughput (Busiest Clients panel) ────────────────────────────
+class TestClientThroughput:
+    def test_marker_throughput_kbps_from_bps(self):
+        markers, _ = mist_location._client_markers(CLIENTS, "map-1")
+        by_mac = {m["mac"]: m for m in markers}
+        # (tx_bps + rx_bps) / 1000
+        assert by_mac["4c115478afc8"]["throughput_kbps"] == 3000   # (2M + 1M)/1000
+        assert by_mac["deadbeef0001"]["throughput_kbps"] == 1000   # (0.5M + 0.5M)/1000
+
+    def test_busiest_clients_sorts_descending(self):
+        markers, _ = mist_location._client_markers(CLIENTS, "map-1")
+        ordered = sorted(markers, key=lambda m: m["throughput_kbps"], reverse=True)
+        assert [m["mac"] for m in ordered] == ["4c115478afc8", "deadbeef0001"]
+        assert ordered[0]["throughput_kbps"] >= ordered[-1]["throughput_kbps"]
+
+    def test_helper_prefers_bps_over_rate(self):
+        # tx_rate/rx_rate (PHY rates) must be ignored when bps is present.
+        kbps = mist_location._client_throughput_kbps(
+            {"tx_bps": 800_000, "rx_bps": 200_000, "tx_rate": 866.0, "rx_rate": 866.0})
+        assert kbps == 1000
+
+    def test_helper_byte_delta_first_observation_is_zero(self):
+        # No bps fields, no prior cache entry → 0 (needs two polls to derive a rate).
+        kbps = mist_location._client_throughput_kbps(
+            {"mac": "ff:ff:ff:00:00:01", "tx_bytes": 1000, "rx_bytes": 2000})
+        assert kbps == 0
+
+    def test_helper_null_safe(self):
+        assert mist_location._client_throughput_kbps({}) == 0
+
+    def test_build_payload_clients_carry_throughput(self):
+        p = mist_location.build_payload(FakeMist(), "site-1")
+        assert all("throughput_kbps" in c for c in p["clients"])

@@ -124,10 +124,42 @@ def _ap_markers(devices: list, map_id: str) -> list:
     return out
 
 
+def _client_throughput_kbps(c: dict) -> int:
+    """Instantaneous per-client throughput in kbps.
+
+    Mist exposes ACTUAL throughput as ``tx_bps``/``rx_bps`` (bits/sec) — distinct
+    from ``tx_rate``/``rx_rate``, which are PHY link rates, NOT throughput. When
+    both bps fields are absent (older/legacy stats object), fall back to a
+    byte-delta: cache the cumulative ``tx_bytes+rx_bytes`` per client MAC between
+    polls and divide the delta by the elapsed time. Null-safe; defaults to 0.
+    """
+    tx, rx = c.get("tx_bps"), c.get("rx_bps")
+    if tx is not None or rx is not None:
+        return round((float(tx or 0) + float(rx or 0)) / 1000)
+
+    mac = c.get("mac")
+    tx_b, rx_b = c.get("tx_bytes"), c.get("rx_bytes")
+    if not mac or (tx_b is None and rx_b is None):
+        return 0
+    cur_bytes = float(tx_b or 0) + float(rx_b or 0)
+    now = time.time()
+    key = f"mist:client_bytes:{mac}"
+    prev = cache.get(key)
+    cache.set(key, (cur_bytes, now), 600)
+    if not prev:
+        return 0
+    prev_bytes, prev_t = prev
+    dt = now - prev_t
+    if dt <= 0 or cur_bytes < prev_bytes:  # counter reset / no elapsed time
+        return 0
+    return round((cur_bytes - prev_bytes) * 8 / dt / 1000)  # bytes→bits, /s, →kbps
+
+
 def _client_markers(clients: list, map_id: str) -> tuple[list, float]:
-    """Located WiFi clients on this map (pixel x/y), plus a best-effort aggregate
-    throughput across the whole site. Throughput uses ``tx_bps``/``rx_bps`` (real
-    bits/s) — NOT ``tx_rate``/``rx_rate``, which are per-client PHY link rates."""
+    """Located WiFi clients on this map (pixel x/y) with per-client throughput,
+    plus a best-effort aggregate throughput across the whole site. Throughput
+    uses ``tx_bps``/``rx_bps`` (real bits/s) — NOT ``tx_rate``/``rx_rate``, which
+    are per-client PHY link rates."""
     out, tput_bps = [], 0.0
     for c in clients:
         # Site-wide throughput estimate (bits/s when present).
@@ -146,6 +178,7 @@ def _client_markers(clients: list, map_id: str) -> tuple[list, float]:
             "ap_mac": c.get("ap_mac") or "",
             "num_locating_aps": c.get("num_locating_aps"),
             "last_seen": c.get("last_seen"),
+            "throughput_kbps": _client_throughput_kbps(c),
         })
     return out, round(tput_bps / 1_000_000, 1)  # → Mbps
 

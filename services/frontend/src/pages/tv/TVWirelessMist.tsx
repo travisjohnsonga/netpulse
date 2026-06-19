@@ -21,7 +21,7 @@ const REFRESH_MS = 30_000
 
 interface MapMeta { id: string; name: string; image_url: string; width: number; height: number; ppm: number }
 interface ApMarker { name: string; mac: string; x: number; y: number; status: string; clients: number | null }
-interface ClientMarker { mac: string; name: string; x: number; y: number; band: string; rssi: number | null }
+interface ClientMarker { mac: string; name: string; x: number; y: number; band: string; rssi: number | null; throughput_kbps: number }
 interface Summary { clients_online: number; clients_total: number; aps_online: number; aps_total: number; throughput_mbps: number }
 interface Sle { roaming: number | null; coverage: number | null; time_to_connect: number | null; throughput: number | null }
 interface LocationPayload { map: MapMeta; aps: ApMarker[]; clients: ClientMarker[]; summary: Summary; sle: Sle }
@@ -99,6 +99,36 @@ function FloorMap({ data }: { data: LocationPayload }) {
   )
 }
 
+// Adaptive throughput label: kbps under 1 Mbps, else Mbps with one decimal.
+const fmtKbps = (kbps: number) => (kbps < 1000 ? `${Math.round(kbps)} kbps` : `${(kbps / 1000).toFixed(1)} Mbps`)
+
+/** Ranked rank + label + proportional bar + value list — shared by the Busiest
+ *  APs and Busiest Clients panels so they stay visually consistent. */
+function BusyPanel({ title, rows, empty }: {
+  title: string
+  rows: { key: string; label: string; ratio: number; valueText: string; barColor: string }[]
+  empty: string
+}) {
+  return (
+    <div className="overflow-auto rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+      <div className="mb-3 text-sm uppercase tracking-widest" style={{ color: C.muted }}>{title}</div>
+      <div className="space-y-3">
+        {rows.map((r, i) => (
+          <div key={r.key} className="flex items-center gap-2">
+            <span className="w-5 text-right text-lg" style={{ color: C.muted }}>{i + 1}.</span>
+            <span className="w-32 truncate text-lg">{r.label}</span>
+            <div className="h-4 flex-1 rounded" style={{ background: C.bg }}>
+              <div className="h-4 rounded" style={{ width: `${Math.min(100, r.ratio * 100)}%`, background: r.barColor }} />
+            </div>
+            <span className="w-24 text-right tabular-nums text-base">{r.valueText}</span>
+          </div>
+        ))}
+        {rows.length === 0 && <div style={{ color: C.muted }}>{empty}</div>}
+      </div>
+    </div>
+  )
+}
+
 export default function TVWirelessMist() {
   const params = new URLSearchParams(window.location.search)
   const [siteId, setSiteId] = useState<string | undefined>(params.get('site') || undefined)
@@ -121,8 +151,13 @@ export default function TVWirelessMist() {
     return () => clearInterval(t)
   }, [])
 
-  const topAps = useMemo(() => [...(data?.aps ?? [])].sort((a, b) => (b.clients ?? 0) - (a.clients ?? 0)).slice(0, 3), [data])
+  const topAps = useMemo(() => [...(data?.aps ?? [])].sort((a, b) => (b.clients ?? 0) - (a.clients ?? 0)).slice(0, 5), [data])
   const maxClients = Math.max(1, ...(topAps.map((a) => a.clients ?? 0)))
+  const topClients = useMemo(
+    () => [...(data?.clients ?? [])].sort((a, b) => (b.throughput_kbps ?? 0) - (a.throughput_kbps ?? 0)).slice(0, 5),
+    [data],
+  )
+  const maxKbps = Math.max(1, ...(topClients.map((c) => c.throughput_kbps ?? 0)))
   const siteName = sites?.find((s) => s.mist_id === siteId)?.name || data?.map.name || 'Wireless'
 
   if (sites && sites.length === 0)
@@ -157,21 +192,29 @@ export default function TVWirelessMist() {
               <SleRing label="Throughput" value={sle?.throughput ?? null} />
               <SleRing label="Connect" value={sle?.time_to_connect ?? null} />
             </div>
-            <div className="overflow-auto rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-              <div className="mb-3 text-sm uppercase tracking-widest" style={{ color: C.muted }}>Busiest APs</div>
-              <div className="space-y-3">
-                {topAps.map((ap, i) => (
-                  <div key={ap.mac} className="flex items-center gap-3">
-                    <span className="w-5 text-right text-lg" style={{ color: C.muted }}>{i + 1}.</span>
-                    <span className="w-44 truncate text-lg">{ap.name}</span>
-                    <div className="h-4 flex-1 rounded" style={{ background: C.bg }}>
-                      <div className="h-4 rounded" style={{ width: `${((ap.clients ?? 0) / maxClients) * 100}%`, background: ap.status === 'connected' ? C.green : C.muted }} />
-                    </div>
-                    <span className="w-24 text-right tabular-nums text-lg">{ap.clients ?? 0} cl.</span>
-                  </div>
-                ))}
-                {topAps.length === 0 && <div style={{ color: C.muted }}>No access points on this map.</div>}
-              </div>
+            <div className="grid grid-cols-2 gap-3 overflow-hidden">
+              <BusyPanel
+                title="Busiest APs"
+                empty="No access points on this map."
+                rows={topAps.map((ap) => ({
+                  key: ap.mac,
+                  label: ap.name,
+                  ratio: (ap.clients ?? 0) / maxClients,
+                  valueText: `${ap.clients ?? 0} cl.`,
+                  barColor: ap.status === 'connected' ? C.green : C.muted,
+                }))}
+              />
+              <BusyPanel
+                title="Busiest Clients"
+                empty="No located clients."
+                rows={topClients.map((c) => ({
+                  key: c.mac,
+                  label: c.name,
+                  ratio: (c.throughput_kbps ?? 0) / maxKbps,
+                  valueText: fmtKbps(c.throughput_kbps ?? 0),
+                  barColor: C.blue,
+                }))}
+              />
             </div>
           </div>
         </div>
