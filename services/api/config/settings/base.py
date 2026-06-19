@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "apps.sso",
     "apps.frameworks",
     "apps.reports",
+    "apps.backup",
 ]
 
 MIDDLEWARE = [

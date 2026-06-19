@@ -34,6 +34,48 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~1574 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7.
 
+**Recently completed (overnight platform/security session — 2026-06-19):**
+- **TV/NOC dashboard mode** — `/tv` launcher (large tiles + auto-rotation builder) and chrome-free
+  fullscreen screens `/tv/{network,wireless,security,ops,sites,servers,compliance}` rendered OUTSIDE
+  the app shell (auth-required, no sidebar/topnav, dark high-contrast, large fonts, per-screen
+  auto-refresh). `/tv/rotate?screens=…&interval=…` cycles selected dashboards with a next-screen
+  countdown + progress bar. Reuses existing endpoints (devices/alerts, wireless summary, audit-log,
+  collection-health/agents/checks, servers, framework coverage). `TVLayout` shared chrome; sidebar
+  "TV Dashboards" entry. Frontend-only. `docs/tv-dashboards.md`.
+- **Platform backup & restore** (`apps.backup`, migration 0001) — `BackupConfig` singleton +
+  `BackupRecord`; destinations local/SCP/Git/S3 (secrets in OpenBao `spane/backup/{scp,git,s3,
+  encryption}`, never DB/responses). **Mandatory AES-256-CBC + PBKDF2 600k-iter encryption** for any
+  backup containing secrets (Database/OpenBao/Certs): password required (≥12 chars), passed to
+  `scripts/backup.sh` via env (never argv/ps), never stored (only an optional hint). Plaintext
+  `…manifest.json` written beside each `…enc.tar.gz`. `scripts/{backup,restore}.sh`; `./netpulse.sh
+  {backup,restore,list-backups}`; scheduler `backup` task (hour-gated + same-day-deduped; skips when
+  encryption required but no stored password). API `/api/backup/{config,run,records,records/{id},
+  test-connection,download/{id}}`. `docs/admin/backup.md`. `tests/test_backup.py`.
+- **Production resilience/hardening** — health **watchdog** (`scripts/watchdog.sh`, cron 5-min via
+  `./netpulse.sh install-watchdog`; restarts unhealthy containers, unseals OpenBao via `init_openbao`,
+  fd-leak preemptive restart; logrotate; `watchdog-status`/`remove-watchdog`); `x-app-ulimits` anchor
+  sets `nofile=65536` on all 17 app services; gunicorn **worker recycling** (`--max-requests 1000`
+  `--max-requests-jitter 100` `--keep-alive 2` `--worker-tmp-dir /dev/shm`, `--timeout` kept at 120s
+  for ~1-min report PDFs).
+- **AgentCertAuthentication O(1) fix** — was an O(n) scan + per-request Python normalize over all
+  agents (file-descriptor exhaustion under load). New indexed `Agent.cert_serial_normalized` (migration
+  0005) kept in sync by `save()`; single indexed lookup.
+- **Security audit remediation** (see `SECURITY-REPORT.md` 2026-06-19 addendum) — **WebSocket JWT auth**
+  (`apps/core/ws_auth.py` `JWTAuthMiddleware`; token via `["bearer","<jwt>"]` subprotocol; consumers
+  reject anon 4401; SPA `useWebSocket` sends it) — fixes unauthenticated realtime data leak; ChatOps
+  webhooks gated behind `settings.CHATOPS_ENABLED` (default off); OpenSearch port bound to `127.0.0.1`;
+  nmap subnet-injection validators on `DiscoveryJobSerializer`; CSV formula-injection guard
+  (`csv_safe`/`_SafeCsvWriter`) on audit-log + report CSVs; production TLS/cookie hardening
+  (`SECURE_SSL_REDIRECT` shipped on, SameSite/HttpOnly, `CSRF_TRUSTED_ORIGINS`); nginx TLS-1.3-only +
+  SPA security headers.
+- **Config-collection fixes** — `collect_one` early-returns `not_supported`/`skipped` (no log row) for
+  cloud/controller-managed platforms (UniFi/Mist AP/UDM/SW/GW + unknown/blank); `collect_all_configs`
+  excludes `SKIP_CONFIG_PLATFORMS` + wireless-ap/wireless-controller roles; discovery `is_infra_hostname`
+  rejects this stack's Docker container names; `prune_unsupported_collection` management command;
+  Collection Health UI note.
+- **Reports** — Compliance Summary preview now renders HTML (fleet stats + by-site/role/platform score
+  tables) instead of raw JSON.
+
 **Recently completed (agent + servers session):** spane Agent end-to-end —
 OpenBao PKI auto-setup (`setup_agent_pki`: `pki` mount + "spane agent ca" EC
 P-384 root + `agent` role + policy; CA at `GET /api/agents/ca-certificate/`) ·

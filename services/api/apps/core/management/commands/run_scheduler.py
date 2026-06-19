@@ -52,6 +52,10 @@ COLLECTOR_OFFLINE_CHECK_INTERVAL_S = int(os.environ.get("COLLECTOR_OFFLINE_CHECK
 # itself is hour-gated + same-day deduped, so a short interval just means it
 # fires promptly within the target hour).
 REPORT_SCHEDULE_INTERVAL_S = int(os.environ.get("REPORT_SCHEDULE_INTERVAL_S", str(15 * 60)))
+# Scheduled platform backups: check for a due backup frequently (the task itself
+# is hour-gated + same-day deduped, so a short interval just fires it promptly
+# within the configured hour).
+BACKUP_SCHEDULE_INTERVAL_S = int(os.environ.get("BACKUP_SCHEDULE_INTERVAL_S", str(15 * 60)))
 DEFAULT_TICK_S = 300
 
 
@@ -94,6 +98,7 @@ class Command(BaseCommand):
             ["collector_heartbeat", COLLECTOR_HEARTBEAT_INTERVAL_S, self._collector_heartbeat, True, None],
             ["collector_offline_sweep", COLLECTOR_OFFLINE_CHECK_INTERVAL_S, self._collector_offline_sweep, True, None],
             ["scheduled_reports", REPORT_SCHEDULE_INTERVAL_S, self._run_scheduled_reports, False, None],
+            ["backup", BACKUP_SCHEDULE_INTERVAL_S, self._run_scheduled_backup, False, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -275,3 +280,10 @@ class Command(BaseCommand):
         fired = run_due_schedules()
         if fired:
             logger.info("scheduler: generated %d scheduled report(s)", fired)
+
+    def _run_scheduled_backup(self):
+        # Run a platform backup if the configured schedule is due (hour-gated,
+        # same-day deduped; skips an unencrypted sensitive backup).
+        from apps.backup.scheduler import run_due_backup
+        if run_due_backup():
+            logger.info("scheduler: ran scheduled platform backup")

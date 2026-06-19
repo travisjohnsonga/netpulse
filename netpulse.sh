@@ -199,8 +199,29 @@ LOGROTATE
     echo "=== Last 20 log entries ==="
     tail -20 /var/log/spane-watchdog.log 2>/dev/null || echo "No log file yet."
     ;;
+  backup)
+    echo "Running spane backup..."
+    shift
+    exec ./scripts/backup.sh "$@"
+    ;;
+  restore)
+    shift
+    if [ -z "${1:-}" ]; then
+      echo "Usage: $0 restore <backup-file.[enc.]tar.gz>" >&2; exit 1
+    fi
+    exec ./scripts/restore.sh "$@"
+    ;;
+  list-backups)
+    BACKUP_DIR="${BACKUP_LOCAL_PATH:-/opt/spane/backups}"
+    echo "Backups in ${BACKUP_DIR}:"
+    if [ -d "$BACKUP_DIR" ]; then
+      ls -lh "$BACKUP_DIR"/spane-backup-*.tar.gz 2>/dev/null || echo "  (none)"
+    else
+      echo "  (directory does not exist)"
+    fi
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|install-watchdog|remove-watchdog|watchdog-status|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|install-watchdog|remove-watchdog|watchdog-status|backup|restore <file>|list-backups|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
@@ -222,6 +243,9 @@ LOGROTATE
     echo "  install-watchdog   Install the health watchdog cron job (every 5 min)"
     echo "  remove-watchdog    Remove the watchdog cron job + logrotate config"
     echo "  watchdog-status    Show watchdog cron state + recent log entries"
+    echo "  backup             Run a platform backup now (scripts/backup.sh)"
+    echo "  restore <file>     Restore from a backup archive (scripts/restore.sh)"
+    echo "  list-backups       List local backup archives"
     echo "  logs [service]     Follow logs (default: api)"
     exit 1
     ;;

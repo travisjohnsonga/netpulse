@@ -233,7 +233,7 @@ class TestConfigTasks:
         alerts = []
         monkeypatch.setattr(tasks, "publish_config_change_alert", lambda dev, res: alerts.append(dev.id))
         out = tasks.collect_all_configs()
-        assert out == {"total": 1, "success": 1, "failed": 0, "unchanged": 0, "changed": 1}
+        assert out == {"total": 1, "success": 1, "failed": 0, "unchanged": 0, "changed": 1, "skipped": 0}
         assert alerts == [device.id]
 
     def test_collect_all_unchanged_no_alert(self, device, monkeypatch):

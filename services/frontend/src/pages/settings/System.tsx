@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { checkInfraHealth, type InfraHealth } from '../../api/client'
 import { SectionHeader } from '../Settings'
 import TrustedCACerts from './TrustedCACerts'
+import BackupPanel from './BackupPanel'
 
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
@@ -101,6 +102,13 @@ export default function System() {
       </section>
 
       {/* About */}
+      <section>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Backup &amp; Restore</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <BackupPanel />
+        </div>
+      </section>
+
       <section>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">About & licenses</h3>
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
