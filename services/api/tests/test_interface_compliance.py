@@ -1,5 +1,6 @@
 """Tests for the LLDP-aware interface compliance engine + API."""
 import hashlib
+import json
 
 import pytest
 from django.utils import timezone
@@ -51,6 +52,74 @@ class TestExtractBlock:
 
     def test_missing_block_returns_empty(self):
         assert ic.extract_interface_block(AOS_CONFIG, "9/9/9") == ""
+
+
+# AOS-CX REST running-config JSON (real shape: split Interface/Port sections,
+# URL-encoded keys, string-boolean stp_config). 1/1/14 = native-untagged trunk
+# AP port; 1/1/20 = access; 1/1/30 = admin-down access (no Interface entry).
+AOS_JSON = json.dumps({
+    "Interface": {
+        "1%2F1%2F14": {"description": "Standard Access Port for PC & Phone", "name": "1/1/14"},
+        "1%2F1%2F20": {"description": "Uplink", "name": "1/1/20"},
+    },
+    "Port": {
+        "1%2F1%2F14": {
+            "name": "1/1/14", "vlan_mode": "native-untagged", "vlan_tag": "600",
+            "vlan_trunks": ["600", "602", "10"],
+            "stp_config": {"admin_edge_port_enable": "true", "bpdu_guard_enable": "true"},
+            "loop_protect_enable": True,
+        },
+        "1%2F1%2F20": {"name": "1/1/20", "vlan_mode": "access", "vlan_tag": "10", "stp_config": {}},
+        "1%2F1%2F30": {"name": "1/1/30", "vlan_mode": "access", "vlan_tag": "5", "admin": "down"},
+    },
+})
+
+
+class TestAosCxJsonConfig:
+    def test_json_interface_rendered_as_pseudo_cli(self):
+        sw = _switch()
+        _config(sw, AOS_JSON)
+        block = ic.get_interface_config(sw, "1/1/14")
+        assert block.startswith("interface 1/1/14")
+        assert "description Standard Access Port for PC & Phone" in block
+        assert "no shutdown" in block
+        assert "vlan trunk native 600" in block
+        assert "vlan trunk allowed 600,602,10" in block
+        assert "spanning-tree bpdu-guard" in block
+        assert "spanning-tree port-type admin-edge" in block
+        assert "loop-protect" in block
+
+    def test_json_access_port_has_access_not_trunk(self):
+        sw = _switch()
+        _config(sw, AOS_JSON)
+        block = ic.get_interface_config(sw, "1/1/20")
+        assert "vlan access 10" in block
+        assert "trunk" not in block  # vlan_check 'access' requires no 'trunk'
+        assert "description Uplink" in block
+
+    def test_json_admin_down_renders_shutdown(self):
+        sw = _switch()
+        _config(sw, AOS_JSON)
+        block = ic.get_interface_config(sw, "1/1/30")
+        assert "shutdown" in block and "no shutdown" not in block
+
+    def test_json_missing_interface_returns_empty(self):
+        sw = _switch()
+        _config(sw, AOS_JSON)
+        assert ic.get_interface_config(sw, "9/9/9") == ""
+
+    def test_cli_config_still_extracted(self):
+        sw = _switch()
+        _config(sw, AOS_CONFIG)
+        block = ic.get_interface_config(sw, "1/1/7")
+        assert "vlan access 10" in block and "spanning-tree bpdu-guard" in block
+
+    def test_vlan_check_end_to_end_against_json(self):
+        sw = _switch()
+        _config(sw, AOS_JSON)
+        block = ic.get_interface_config(sw, "1/1/20")
+        assert ic.run_check({"type": "vlan_check", "vlan_type": "access"}, block)["passed"] is True
+        assert ic.run_check({"type": "vlan_check", "vlan_type": "trunk"}, block)["passed"] is False
 
 
 class TestChecks:
