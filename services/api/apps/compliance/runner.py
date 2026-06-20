@@ -119,3 +119,17 @@ def start_run_all(device_ids: list[int] | None = None) -> tuple[bool, dict]:
     threading.Thread(target=_run_worker, args=(device_ids,),
                      name="compliance-run-all", daemon=True).start()
     return True, status
+
+
+def run_all_blocking(device_ids: list[int] | None = None) -> bool:
+    """Run a fleet compliance pass **synchronously** (for the scheduler process).
+
+    Returns False without running if a run is already in progress (the HTTP
+    background run or another scheduler tick holds the lock). The worker releases
+    the lock and finalises the status on exit.
+    """
+    if not cache.add(_LOCK_KEY, True, timeout=_TTL):
+        logger.info("compliance run-all skipped — a run is already in progress")
+        return False
+    _run_worker(device_ids)   # sets status, processes inline, frees the lock
+    return True
