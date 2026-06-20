@@ -53,6 +53,12 @@ def _unit_status_text(status_ok, ok_text: str, bad_text: str) -> str:
 _BATCH_SIZE = int(os.environ.get("STREAM_PROCESSOR_BATCH_SIZE", "100"))
 _BATCH_TIMEOUT = float(os.environ.get("STREAM_PROCESSOR_BATCH_TIMEOUT_SECONDS", "5"))
 _FLOW_THRESHOLD_MBPS = float(os.environ.get("ANOMALY_FLOW_THRESHOLD_MBPS", "1000"))
+# A single flow record's bytes/duration is only a meaningful throughput over a
+# real time window. NetFlow/IPFIX records with equal first/last-switched
+# timestamps report a 0/near-0 duration; dividing by that fabricated a sub-ms
+# window and produced absurd rates (e.g. 323,374 Mbps from a 40-byte record).
+# Floor the denominator at 1s so a short record can't masquerade as 100s of Gbps.
+_FLOW_MIN_DURATION_MS = float(os.environ.get("ANOMALY_FLOW_MIN_DURATION_MS", "1000"))
 _LATENCY_THRESHOLD_MS = float(os.environ.get("ANOMALY_LATENCY_THRESHOLD_MS", "500"))
 _TEMP_WARNING_C = float(os.environ.get("TEMP_WARNING_C", "75"))
 _TEMP_CRITICAL_C = float(os.environ.get("TEMP_CRITICAL_C", "85"))
@@ -74,6 +80,26 @@ def _can_fire_alert(entity: str, condition: str) -> bool:
         _alert_last_fired[key] = now
         return True
     return False
+
+
+def _lookup_device_for_ip(ip: str) -> dict | None:
+    """Resolve a flow exporter IP to its device (id + hostname), or None.
+
+    Matches either the management override or the identity IP, mirroring the
+    ``management_ip or ip_address`` precedence the rest of the stack uses.
+    Synchronous — wrapped as ``_device_for_ip`` for the async handler.
+    """
+    if not ip or ip == "unknown":
+        return None
+    from django.db.models import Q
+    from apps.devices.models import Device
+    dev = (Device.objects
+           .filter(Q(management_ip=ip) | Q(ip_address=ip))
+           .values("id", "hostname").first())
+    return dev or None
+
+
+_device_for_ip = sync_to_async(_lookup_device_for_ip)
 
 
 # ---------------------------------------------------------------------------
@@ -521,10 +547,19 @@ class Command(BaseCommand):
         """Handle netpulse.flows.<exporter>.<type> messages."""
         try:
             parts = msg.subject.split(".")
-            exporter_ip = parts[2] if len(parts) > 2 else "unknown"
-            flow_type = parts[3] if len(parts) > 3 else "netflow5"
-
             payload = json.loads(msg.data)
+
+            # The subject is netpulse.flows.<exporter_ip>.<type>, but an IPv4
+            # exporter_ip contains dots, so positional split(".") parsing
+            # truncated the IP to its first octet ("10") and read the type from
+            # the wrong token. The flow type is always the LAST token, and the
+            # full exporter IP is carried verbatim in the payload — use those.
+            flow_type = parts[-1] if parts else "netflow5"
+            exporter_ip = (
+                payload.get("exporter_ip")
+                or payload.get("src_device")
+                or (".".join(parts[2:-1]) if len(parts) > 3 else "unknown")
+            )
             logger.debug(
                 "stream-processor: flow msg subject=%s bytes=%d",
                 msg.subject,
@@ -555,8 +590,10 @@ class Command(BaseCommand):
                 }
                 await self._buffer_opensearch(_index("netpulse-flows"), doc)
 
-                # Anomaly check: bytes per second
-                duration_ms = float(payload.get("duration_ms", 1)) or 1.0
+                # Anomaly check: throughput = bytes / duration. Floor the
+                # duration so a 0/near-0-duration record can't fabricate a
+                # hundreds-of-Gbps phantom rate (see _FLOW_MIN_DURATION_MS).
+                duration_ms = max(float(payload.get("duration_ms") or 0), _FLOW_MIN_DURATION_MS)
                 bytes_count = int(payload.get("bytes", payload.get("bytes_count", 0)))
                 bps = (bytes_count / (duration_ms / 1000)) * 8  # bits per second
                 mbps = bps / 1_000_000
@@ -924,11 +961,41 @@ class Command(BaseCommand):
         if record_type == "flow_threshold":
             mbps = float(data.get("mbps", 0))
             if mbps > _FLOW_THRESHOLD_MBPS and _can_fire_alert(entity, "flow_threshold"):
+                device = await _device_for_ip(entity)
+                hostname = (device or {}).get("hostname") or entity
+                src = data.get("src_ip") or ""
+                dst = data.get("dst_ip") or ""
+                labels = {
+                    "exporter_ip": str(entity),
+                    "hostname": hostname,
+                    "device": hostname,  # serializer's device column reads labels.device
+                    "mbps": str(round(mbps, 1)),
+                    "source": "flow_monitor",
+                }
+                if device:
+                    labels["device_id"] = str(device["id"])
+                if src:
+                    labels["top_source"] = str(src)
+                if dst:
+                    labels["top_destination"] = str(dst)
+                annotations = {
+                    "title": f"High flow volume from {hostname}",
+                    "summary": f"High flow volume: {mbps:.1f} Mbps from {hostname}",
+                    "message": (
+                        f"{hostname} ({entity}) is exporting {mbps:.1f} Mbps of "
+                        f"flow data (threshold {_FLOW_THRESHOLD_MBPS:.0f} Mbps)."
+                    ),
+                }
+                if src and dst:
+                    annotations["top_talker"] = f"{src} → {dst}"
                 alert_payload = {
                     "rule_name": "flow-threshold-exceeded",
-                    "description": f"Flow threshold exceeded: {mbps:.1f} Mbps > {_FLOW_THRESHOLD_MBPS} Mbps",
-                    "labels": {"exporter_ip": entity, "mbps": str(round(mbps, 1))},
-                    "annotations": {"summary": f"High flow volume from {entity}"},
+                    "description": (
+                        f"High flow volume from {hostname} ({entity}): "
+                        f"{mbps:.1f} Mbps > {_FLOW_THRESHOLD_MBPS:.0f} Mbps"
+                    ),
+                    "labels": labels,
+                    "annotations": annotations,
                 }
                 await self._publish_alert("high", alert_payload)
 
