@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "apps.frameworks",
     "apps.reports",
     "apps.backup",
+    "apps.chatops",
 ]
 
 MIDDLEWARE = [

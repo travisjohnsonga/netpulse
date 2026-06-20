@@ -16,27 +16,27 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import logging
-import os
 import re
 import time
 
-from django.conf import settings
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, JsonResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 
+from apps.chatops.enforcement import enforce_policy, platform_live
 
-def _chatops_enabled() -> bool:
+
+def _chatops_enabled(platform: str) -> bool:
     """ChatOps inbound webhooks are AllowAny (the platforms can't send a JWT) and
     Teams/Google Chat/Discord have no signature step, so an enabled webhook is an
-    unauthenticated read into inventory/alert data. The feature is planned, not
-    hardened, so it's disabled by default (settings.CHATOPS_ENABLED); a disabled
-    webhook returns 404 — not revealing the route exists — before any parsing."""
-    return getattr(settings, "CHATOPS_ENABLED", False)
+    unauthenticated read into inventory/alert data. A webhook is live only when
+    the ``CHATOPS_ENABLED`` master kill-switch is on AND that platform's
+    ``ChatOpsPlatform`` row is enabled (see apps.chatops.enforcement). A disabled
+    platform returns 404 — not revealing the route exists — before any parsing."""
+    return platform_live(platform)
 
 
 def _chatops_disabled_response() -> JsonResponse:
@@ -147,7 +147,8 @@ def _resolve_intent(intent: str, params: dict) -> str:
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def _verify_slack(request: HttpRequest) -> bool:
-    secret = os.environ.get("SLACK_SIGNING_SECRET", "")
+    from apps.chatops.models import get_chatops_secret
+    secret = get_chatops_secret("slack", "signing_secret")
     if not secret:
         return True   # Skip verification if not configured (dev mode)
     ts   = request.headers.get("X-Slack-Request-Timestamp", "")
@@ -163,7 +164,7 @@ def _verify_slack(request: HttpRequest) -> bool:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_slack(request: HttpRequest) -> JsonResponse:
-    if not _chatops_enabled():
+    if not _chatops_enabled("slack"):
         return _chatops_disabled_response()
     if not _verify_slack(request):
         logger.warning("slack signature verification failed from %s", request.META.get("REMOTE_ADDR"))
@@ -183,6 +184,10 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
 
     logger.info("slack query from %s in %s: %s", user, channel, text[:200])
     intent, params = _parse_intent(text)
+    decision = enforce_policy("slack", channel_id=channel, user_id=user,
+                              user_name=user, intent=intent, request=request)
+    if not decision.allowed:
+        return JsonResponse({"text": decision.message})
     response_text  = _resolve_intent(intent, params)
 
     return JsonResponse({"text": response_text})
@@ -194,7 +199,7 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_teams(request: HttpRequest) -> JsonResponse:
-    if not _chatops_enabled():
+    if not _chatops_enabled("teams"):
         return _chatops_disabled_response()
     # Teams sends an HMAC in Authorization header if outgoing webhook HMAC is configured
     payload  = request.data
@@ -204,9 +209,15 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
     text     = re.sub(r"<[^>]++>", "", text).strip()
     from_obj = payload.get("from", {})
     user     = from_obj.get("name", "unknown")
+    user_id  = from_obj.get("id", "") or user
+    channel  = payload.get("conversation", {}).get("id", "") or "unknown"
 
     logger.info("teams query from %s: %s", user, text[:200])
     intent, params = _parse_intent(text)
+    decision = enforce_policy("teams", channel_id=channel, user_id=user_id,
+                              user_name=user, intent=intent, request=request)
+    if not decision.allowed:
+        return JsonResponse({"type": "message", "text": decision.message})
     response_text  = _resolve_intent(intent, params)
 
     # Teams expects Adaptive Card or simple text in `text` field
@@ -222,15 +233,22 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_gchat(request: HttpRequest) -> JsonResponse:
-    if not _chatops_enabled():
+    if not _chatops_enabled("gchat"):
         return _chatops_disabled_response()
-    payload  = request.data
-    message  = payload.get("message", {})
-    text     = message.get("text", "").strip()
-    sender   = message.get("sender", {}).get("displayName", "unknown")
+    payload   = request.data
+    message   = payload.get("message", {})
+    text      = message.get("text", "").strip()
+    sender_o  = message.get("sender", {})
+    sender    = sender_o.get("displayName", "unknown")
+    user_id   = sender_o.get("name", "") or sender
+    channel   = payload.get("space", {}).get("name", "") or "unknown"
 
     logger.info("gchat query from %s: %s", sender, text[:200])
     intent, params = _parse_intent(text)
+    decision = enforce_policy("gchat", channel_id=channel, user_id=user_id,
+                              user_name=sender, intent=intent, request=request)
+    if not decision.allowed:
+        return JsonResponse({"text": decision.message})
     response_text  = _resolve_intent(intent, params)
 
     return JsonResponse({"text": response_text})
@@ -242,16 +260,25 @@ def webhook_gchat(request: HttpRequest) -> JsonResponse:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def webhook_discord(request: HttpRequest) -> JsonResponse:
-    if not _chatops_enabled():
+    if not _chatops_enabled("discord"):
         return _chatops_disabled_response()
     payload = request.data
     # Discord interaction verification uses Ed25519 — skip for now (Phase 4 full impl)
     text    = payload.get("data", {}).get("options", [{}])[0].get("value", "")
     if not text:
         text = payload.get("content", "")
+    # User is under member.user (guild) or user (DM); channel at top level.
+    user_obj = payload.get("member", {}).get("user", {}) or payload.get("user", {})
+    user_id  = user_obj.get("id", "") or "unknown"
+    user_nm  = user_obj.get("username", "") or "unknown"
+    channel  = payload.get("channel_id", "") or "unknown"
 
     logger.info("discord query: %s", text[:200])
     intent, params = _parse_intent(text)
+    decision = enforce_policy("discord", channel_id=channel, user_id=user_id,
+                              user_name=user_nm, intent=intent, request=request)
+    if not decision.allowed:
+        return JsonResponse({"content": decision.message})
     response_text  = _resolve_intent(intent, params)
 
     return JsonResponse({"content": response_text})

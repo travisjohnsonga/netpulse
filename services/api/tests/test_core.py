@@ -60,9 +60,13 @@ class TestSetupStatus:
 
 class TestChatOpsSlack:
     @pytest.fixture(autouse=True)
-    def _enable_chatops(self, settings):
-        # ChatOps webhooks are disabled by default; enable for these tests.
+    def _enable_chatops(self, settings, db):
+        # A webhook is live only when the master switch is on AND the platform's
+        # ChatOpsPlatform row is enabled.
+        from apps.chatops.models import ChatOpsPlatform
         settings.CHATOPS_ENABLED = True
+        ChatOpsPlatform.objects.update_or_create(
+            platform="slack", defaults={"enabled": True})
 
     def _slack_headers(self, body: str, secret: str = "") -> dict:
         ts = str(int(time.time()))
@@ -120,8 +124,10 @@ class TestChatOpsSlack:
         assert "active alert" in resp.json()["text"]
 
     def test_invalid_signature_rejected(self, api_client, monkeypatch):
-        import os
-        monkeypatch.setenv("SLACK_SIGNING_SECRET", "real-secret")
+        # The Slack signing secret now comes from OpenBao, not the environment.
+        monkeypatch.setattr(
+            "apps.chatops.models.read_chatops_secrets",
+            lambda platform: {"signing_secret": "real-secret"})
         payload = {"event": {"text": "help", "user": "U1", "channel": "C1"}}
         resp = api_client.post(
             "/api/webhooks/slack/",
@@ -160,9 +166,11 @@ class TestChatOpsSlack:
 
 class TestChatOpsTeams:
     @pytest.fixture(autouse=True)
-    def _enable_chatops(self, settings):
-        # ChatOps webhooks are disabled by default; enable for these tests.
+    def _enable_chatops(self, settings, db):
+        from apps.chatops.models import ChatOpsPlatform
         settings.CHATOPS_ENABLED = True
+        ChatOpsPlatform.objects.update_or_create(
+            platform="teams", defaults={"enabled": True})
 
     def test_teams_help(self, api_client):
         payload = {"text": "help", "from": {"name": "TestUser"}}
@@ -185,9 +193,11 @@ class TestChatOpsTeams:
 
 class TestChatOpsGChat:
     @pytest.fixture(autouse=True)
-    def _enable_chatops(self, settings):
-        # ChatOps webhooks are disabled by default; enable for these tests.
+    def _enable_chatops(self, settings, db):
+        from apps.chatops.models import ChatOpsPlatform
         settings.CHATOPS_ENABLED = True
+        ChatOpsPlatform.objects.update_or_create(
+            platform="gchat", defaults={"enabled": True})
 
     def test_gchat_help(self, api_client):
         payload = {"message": {"text": "help", "sender": {"displayName": "TestUser"}}}
@@ -202,9 +212,11 @@ class TestChatOpsGChat:
 
 class TestChatOpsDiscord:
     @pytest.fixture(autouse=True)
-    def _enable_chatops(self, settings):
-        # ChatOps webhooks are disabled by default; enable for these tests.
+    def _enable_chatops(self, settings, db):
+        from apps.chatops.models import ChatOpsPlatform
         settings.CHATOPS_ENABLED = True
+        ChatOpsPlatform.objects.update_or_create(
+            platform="discord", defaults={"enabled": True})
 
     def test_discord_help_via_content(self, api_client):
         payload = {"content": "help"}

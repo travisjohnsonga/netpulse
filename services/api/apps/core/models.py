@@ -217,6 +217,9 @@ class AuditLog(models.Model):
         # Agents
         AGENT_ENROLLED = "agent_enrolled", "Agent Enrolled"
         AGENT_REVOKED = "agent_revoked", "Agent Revoked"
+        # ChatOps
+        CHATOPS_QUERY = "chatops_query", "ChatOps Query"
+        CHATOPS_DENIED = "chatops_denied", "ChatOps Query Denied"
 
     event_type = models.CharField(max_length=64, choices=EventType.choices, db_index=True)
 
