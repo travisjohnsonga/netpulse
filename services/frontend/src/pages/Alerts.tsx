@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import EmptyState from '../components/EmptyState'
 import AlertDetails from '../components/AlertDetails'
 import { Fragment } from 'react'
-import { fetchAlerts, acknowledgeAlert, resolveAlertEvent, fetchAlertNotifications, fetchDevices, type Alert, type AlertNotificationRecord } from '../api/client'
+import { fetchAlertsByState, fetchAlertSummary, acknowledgeAlert, resolveAlertEvent, bulkAcknowledgeAlerts, bulkResolveAlerts, fetchAlertNotifications, fetchDevices, type Alert, type AlertStateCounts, type AlertNotificationRecord } from '../api/client'
 import { useSite } from '../store/siteStore'
 
-type View = 'false' | 'true' | 'all'
+type View = 'all' | 'firing' | 'acknowledged' | 'resolved'
 const VIEW_TABS: { key: View; label: string }[] = [
-  { key: 'false', label: 'Active' },
-  { key: 'true', label: 'Resolved' },
   { key: 'all', label: 'All' },
+  { key: 'firing', label: 'Firing' },
+  { key: 'acknowledged', label: 'Acknowledged' },
+  { key: 'resolved', label: 'Resolved' },
 ]
 
 type Severity = 'all' | 'critical' | 'high' | 'medium' | 'low'
@@ -53,9 +54,14 @@ export default function Alerts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<Severity>('all')
-  const [view, setView] = useState<View>('false')
+  const [view, setView] = useState<View>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [timeline, setTimeline] = useState<Record<number, AlertNotificationRecord[]>>({})
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [stateCounts, setStateCounts] = useState<AlertStateCounts | null>(null)
+  const [showResolveConfirm, setShowResolveConfirm] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
   // Device ids belonging to the active site (null = no site filter). Alerts carry
   // a device_id, so we scope client-side to devices at the selected site.
   const { selectedSite } = useSite()
@@ -70,14 +76,23 @@ export default function Alerts() {
     return () => { cancelled = true }
   }, [selectedSite])
 
-  const reload = (v: View) => {
-    setView(v)
+  const flash = (msg: string) => { setToast(msg); window.setTimeout(() => setToast(null), 3000) }
+
+  const refreshSummary = () => { fetchAlertSummary().then(setStateCounts).catch(() => {}) }
+
+  const load = (v: View) => {
     setLoading(true)
-    fetchAlerts(v).then(setAlerts).catch(() => setError('Could not load alerts.')).finally(() => setLoading(false))
+    fetchAlertsByState(v)
+      .then((data) => { setAlerts(data); setSelected(new Set()) })
+      .catch(() => setError('Could not load alerts.'))
+      .finally(() => setLoading(false))
+    refreshSummary()
   }
+  const reload = (v: View) => { setView(v); load(v) }
+
   const handleResolve = (id: number) => {
     setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, state: 'resolved' as const } : a)))
-    resolveAlertEvent(id).then(() => { if (view === 'false') reload('false') })
+    resolveAlertEvent(id).then(() => { refreshSummary(); if (view !== 'all' && view !== 'resolved') load(view) })
       .catch(() => setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, state: 'firing' as const } : a))))
   }
 
@@ -93,19 +108,10 @@ export default function Alerts() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    fetchAlerts()
-      .then((data) => {
-        if (!cancelled) {
-          setAlerts(data)
-          setLoading(false)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError('Could not load alerts. Check that the API is running.')
-          setLoading(false)
-        }
-      })
+    fetchAlertsByState('all')
+      .then((data) => { if (!cancelled) { setAlerts(data); setLoading(false) } })
+      .catch(() => { if (!cancelled) { setError('Could not load alerts. Check that the API is running.'); setLoading(false) } })
+    fetchAlertSummary().then((c) => { if (!cancelled) setStateCounts(c) }).catch(() => {})
     return () => { cancelled = true }
   }, [])
 
@@ -131,15 +137,75 @@ export default function Alerts() {
     low: siteAlerts.filter((a) => sevOf(a) === 'low').length,
   }
 
+  // Derived display state: the model only stores firing/resolved; an "acked"
+  // firing event carries is_acknowledged. Acknowledged events show the
+  // Acknowledged badge and hide the Acknowledge action (Resolve stays).
+  const displayState = (a: Alert): 'firing' | 'acknowledged' | 'resolved' =>
+    a.state === 'resolved' ? 'resolved' : a.is_acknowledged ? 'acknowledged' : 'firing'
+
   const handleAcknowledge = (id: number) => {
-    setAlerts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, state: 'acknowledged' as const } : a)),
-    )
-    acknowledgeAlert(id).catch(() => {
-      // Roll back on failure.
-      setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, state: 'firing' as const } : a)))
+    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, is_acknowledged: true } : a)))
+    acknowledgeAlert(id).then(refreshSummary).catch(() => {
+      setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, is_acknowledged: false } : a)))
     })
   }
+
+  // ── Selection ──────────────────────────────────────────────────────────────
+  const toggleSelect = (id: number) => setSelected((prev) => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const visibleIds = filtered.map((a) => a.id)
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))
+  const someSelected = selected.size > 0 && !allSelected
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(visibleIds))
+  const clearSelection = () => setSelected(new Set())
+
+  // ── Bulk actions ─────────────────────────────────────────────────────────────
+  const selectedIds = () => Array.from(selected)
+  const doBulkAcknowledge = async () => {
+    const ids = selectedIds()
+    if (!ids.length) return
+    setBulkBusy(true)
+    try {
+      const r = await bulkAcknowledgeAlerts(ids)
+      flash(`${r.updated} alert${r.updated !== 1 ? 's' : ''} acknowledged`)
+      clearSelection(); load(view)
+    } catch { flash('Bulk acknowledge failed') } finally { setBulkBusy(false) }
+  }
+  const doBulkResolve = async () => {
+    const ids = selectedIds()
+    if (!ids.length) return
+    setBulkBusy(true)
+    try {
+      const r = await bulkResolveAlerts(ids)
+      flash(`${r.updated} alert${r.updated !== 1 ? 's' : ''} resolved`)
+      clearSelection(); setShowResolveConfirm(false); load(view)
+    } catch { flash('Bulk resolve failed') } finally { setBulkBusy(false) }
+  }
+  const requestBulkResolve = () => {
+    if (selected.size >= 5) setShowResolveConfirm(true)
+    else doBulkResolve()
+  }
+
+  // ── Keyboard shortcuts: a=ack, r=resolve, Esc=clear, Ctrl/Cmd+A=select all ──
+  const kbd = useRef({ doBulkAcknowledge, requestBulkResolve, clearSelection, toggleAll, hasSel: selected.size > 0 })
+  kbd.current = { doBulkAcknowledge, requestBulkResolve, clearSelection, toggleAll, hasSel: selected.size > 0 }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); kbd.current.toggleAll(); return }
+      if (e.key === 'Escape') { kbd.current.clearSelection(); return }
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (!kbd.current.hasSel) return
+      if (e.key.toLowerCase() === 'a') { e.preventDefault(); kbd.current.doBulkAcknowledge() }
+      else if (e.key.toLowerCase() === 'r') { e.preventDefault(); kbd.current.requestBulkResolve() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="space-y-4">
@@ -160,19 +226,66 @@ export default function Alerts() {
         </div>
       )}
 
-      {/* Active / Resolved / All toggle */}
+      {/* State filter tabs: All / Firing / Acknowledged / Resolved (+counts) */}
       <div className="flex gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-1 w-fit">
-        {VIEW_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => reload(tab.key)}
-            className={clsx('px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-              view === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50')}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {VIEW_TABS.map((tab) => {
+          const count = stateCounts ? stateCounts[tab.key] : undefined
+          return (
+            <button
+              key={tab.key}
+              onClick={() => reload(tab.key)}
+              className={clsx('flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                view === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50')}
+            >
+              {tab.label}
+              {count !== undefined && (
+                <span className={clsx('text-xs px-1.5 py-0.5 rounded-full',
+                  view === tab.key ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300')}>
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
+
+      {/* Bulk action toolbar — appears when 1+ alerts are selected */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-2.5 text-sm">
+          <span className="font-medium text-blue-800 dark:text-blue-300">
+            ✓ {selected.size} alert{selected.size !== 1 ? 's' : ''} selected
+          </span>
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={doBulkAcknowledge}
+              disabled={bulkBusy}
+              className="px-3 py-1.5 rounded-md bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 font-medium"
+            >
+              Acknowledge <kbd className="ml-1 text-xs text-gray-400">a</kbd>
+            </button>
+            <button
+              onClick={requestBulkResolve}
+              disabled={bulkBusy}
+              className="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 font-medium"
+            >
+              Resolve <kbd className="ml-1 text-xs text-green-200">r</kbd>
+            </button>
+            <button
+              onClick={clearSelection}
+              className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium"
+            >
+              Clear <kbd className="ml-1 text-xs text-gray-400">esc</kbd>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-gray-900 dark:bg-gray-700 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg">
+          {toast}
+        </div>
+      )}
 
       {/* Severity filter tabs */}
       <div className="flex gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-1 w-fit">
@@ -230,6 +343,16 @@ export default function Alerts() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+                  <th className="pl-5 pr-2 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all alerts"
+                      className="rounded border-gray-300 dark:border-gray-600 cursor-pointer"
+                      checked={allSelected}
+                      ref={(el) => { if (el) el.indeterminate = someSelected }}
+                      onChange={toggleAll}
+                    />
+                  </th>
                   <th className="px-5 py-3 font-medium">Severity</th>
                   <th className="px-5 py-3 font-medium">Alert</th>
                   <th className="px-5 py-3 font-medium">Device</th>
@@ -250,9 +373,19 @@ export default function Alerts() {
                   <tr onClick={() => toggleTimeline(alert.id)} className={clsx(
                     'hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer',
                     alert.state === 'resolved' && 'opacity-60',
+                    selected.has(alert.id) && 'bg-blue-50/60 dark:bg-blue-900/20',
                     isDown && 'border-l-2 border-l-red-500',
                     isRecovery && 'border-l-2 border-l-green-500',
                   )}>
+                    <td className="pl-5 pr-2 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select alert ${alert.id}`}
+                        className="rounded border-gray-300 dark:border-gray-600 cursor-pointer"
+                        checked={selected.has(alert.id)}
+                        onChange={() => toggleSelect(alert.id)}
+                      />
+                    </td>
                     <td className="px-5 py-3">
                       <span className="text-gray-400 text-xs mr-1.5">{open ? '▼' : '▶'}</span>
                       <span
@@ -306,20 +439,23 @@ export default function Alerts() {
                         </span>
                       ) : (
                         <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize',
-                          STATE_BADGE[alert.state] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300')}>
-                          {alert.state}
+                          STATE_BADGE[displayState(alert)] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300')}
+                          title={alert.is_acknowledged && alert.acknowledged_by ? `Acknowledged by ${alert.acknowledged_by}${alert.acknowledged_at ? ` ${new Date(alert.acknowledged_at).toLocaleString()}` : ''}` : undefined}>
+                          {displayState(alert)}
                         </span>
                       )}
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap">
-                      {alert.state === 'firing' && (
+                      {alert.state !== 'resolved' && (
                         <>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleAcknowledge(alert.id) }}
-                            className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 font-medium mr-3"
-                          >
-                            Acknowledge
-                          </button>
+                          {!alert.is_acknowledged && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleAcknowledge(alert.id) }}
+                              className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 font-medium mr-3"
+                            >
+                              Acknowledge
+                            </button>
+                          )}
                           <button
                             onClick={(e) => { e.stopPropagation(); handleResolve(alert.id) }}
                             className="text-xs text-green-600 dark:text-green-400 hover:text-green-800 font-medium"
@@ -332,13 +468,17 @@ export default function Alerts() {
                   </tr>
                   {open && (
                     <tr className="bg-gray-50/60 dark:bg-gray-900/40">
-                      <td colSpan={7} className="px-5 py-3 space-y-3">
+                      <td colSpan={8} className="px-5 py-3 space-y-3">
                         {/* Header: device / severity / fired / state */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                           <div><span className="text-gray-400">Device:</span> <span className="text-gray-700 dark:text-gray-200">{alert.device || '—'}</span></div>
                           <div><span className="text-gray-400">Severity:</span> <span className="text-gray-700 dark:text-gray-200 capitalize">{sev}</span></div>
                           <div><span className="text-gray-400">Fired:</span> <span className="text-gray-700 dark:text-gray-200">{new Date(alert.fired_at).toLocaleString()}</span></div>
-                          <div><span className="text-gray-400">State:</span> <span className="text-gray-700 dark:text-gray-200 capitalize">{alert.state}</span></div>
+                          <div><span className="text-gray-400">State:</span> <span className="text-gray-700 dark:text-gray-200 capitalize">{displayState(alert)}</span>
+                            {alert.is_acknowledged && alert.acknowledged_by && (
+                              <span className="text-gray-400"> · by {alert.acknowledged_by}{alert.acknowledged_at ? ` ${new Date(alert.acknowledged_at).toLocaleString()}` : ''}</span>
+                            )}
+                          </div>
                         </div>
                         {/* Type-aware details (diff viewer / summary / text) */}
                         {(alert.details || alert.message) && (
@@ -377,6 +517,33 @@ export default function Alerts() {
           </div>
         )}
       </div>
+
+      {/* Bulk-resolve confirmation (5+ alerts) */}
+      {showResolveConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowResolveConfirm(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Resolve {selected.size} alerts?</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+              This will mark {selected.size} alert{selected.size !== 1 ? 's' : ''} as resolved.
+            </p>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => setShowResolveConfirm(false)}
+                className="px-4 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doBulkResolve}
+                disabled={bulkBusy}
+                className="px-4 py-2 rounded-md text-sm font-medium bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+              >
+                Resolve {selected.size} Alert{selected.size !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

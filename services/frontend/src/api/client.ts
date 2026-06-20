@@ -187,6 +187,9 @@ export interface Alert {
   details?: string
   alert_type?: string
   is_resolved?: boolean
+  is_acknowledged?: boolean
+  acknowledged_by?: string | null
+  acknowledged_at?: string | null
   resolved_by?: string
   resolved_at?: string | null
 }
@@ -811,6 +814,18 @@ export async function fetchAlerts(resolved: 'false' | 'true' | 'all' = 'false'):
   return Array.isArray(data) ? data : (data.results ?? [])
 }
 
+// State-based fetch for the Alerts filter tabs.
+//  all → every non-cleared event · firing → firing & un-acked ·
+//  acknowledged → firing & acked · resolved → resolved.
+export async function fetchAlertsByState(
+  state: 'all' | 'firing' | 'acknowledged' | 'resolved',
+): Promise<Alert[]> {
+  const params = state === 'all' ? { resolved: 'all', page_size: '500' }
+    : { state, page_size: '500' }
+  const { data } = await api.get<MaybePaginated<Alert>>('/alerts/events/', { params })
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
 export async function resolveAlertEvent(id: number, note?: string): Promise<void> {
   await api.post(`/alerts/events/${id}/resolve/`, { note })
 }
@@ -831,7 +846,26 @@ export async function discoverDeviceLinks(deviceId: number): Promise<{ count: nu
 }
 
 export async function acknowledgeAlert(id: number): Promise<void> {
-  await api.patch(`/alerts/events/${id}/`, { state: 'acknowledged' })
+  await api.post(`/alerts/events/${id}/acknowledge/`, {})
+}
+
+export interface AlertStateCounts { all: number; firing: number; acknowledged: number; resolved: number }
+
+export async function fetchAlertSummary(): Promise<AlertStateCounts> {
+  const { data } = await api.get<AlertStateCounts>('/alerts/events/summary/')
+  return data
+}
+
+export interface BulkAlertResult { updated: number; failed: number; errors: { id: number; error: string }[] }
+
+export async function bulkAcknowledgeAlerts(ids: number[], note = ''): Promise<BulkAlertResult> {
+  const { data } = await api.post<BulkAlertResult>('/alerts/events/bulk-acknowledge/', { ids, note })
+  return data
+}
+
+export async function bulkResolveAlerts(ids: number[], resolution_note = ''): Promise<BulkAlertResult> {
+  const { data } = await api.post<BulkAlertResult>('/alerts/events/bulk-resolve/', { ids, resolution_note })
+  return data
 }
 
 // ── Credential profile API ───────────────────────────────────────────────────

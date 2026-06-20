@@ -347,3 +347,67 @@ class TestAutoResolution:
         # up alerts muted, but the firing down alert must still be resolved.
         interface_monitor.process_interface_status(iface, "up", timezone.now())
         assert AlertEvent.objects.get(labels__source="interface_monitor").state == "resolved"
+
+
+# ── Bulk actions + state summary ─────────────────────────────────────────────
+
+class TestBulkActions:
+    def _events(self, rule, n, state="firing"):
+        return [AlertEvent.objects.create(rule=rule, state=state, labels={"i": str(i)})
+                for i in range(n)]
+
+    def test_bulk_resolve(self, auth_client, rule):
+        evs = self._events(rule, 3)
+        ids = [e.id for e in evs]
+        resp = auth_client.post("/api/alerts/events/bulk-resolve/",
+                                {"ids": ids, "resolution_note": "maintenance"}, format="json")
+        assert resp.status_code == 200
+        assert resp.json() == {"updated": 3, "failed": 0, "errors": []}
+        for e in evs:
+            e.refresh_from_db()
+            assert e.state == "resolved"
+            assert e.resolved_by == "user"
+            assert e.resolution_note == "maintenance"
+
+    def test_bulk_resolve_skips_already_resolved(self, auth_client, rule):
+        a = AlertEvent.objects.create(rule=rule, state="firing")
+        b = AlertEvent.objects.create(rule=rule, state="resolved")
+        resp = auth_client.post("/api/alerts/events/bulk-resolve/",
+                                {"ids": [a.id, b.id]}, format="json")
+        # b was already resolved → only a counts as updated.
+        assert resp.json()["updated"] == 1
+        assert resp.json()["failed"] == 1
+
+    def test_bulk_resolve_no_ids(self, auth_client):
+        resp = auth_client.post("/api/alerts/events/bulk-resolve/", {"ids": []}, format="json")
+        assert resp.status_code == 400
+
+    def test_bulk_acknowledge(self, auth_client, rule):
+        evs = self._events(rule, 2)
+        ids = [e.id for e in evs]
+        resp = auth_client.post("/api/alerts/events/bulk-acknowledge/",
+                                {"ids": ids, "note": "looking"}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["updated"] == 2
+        from apps.alerting.models import AlertAcknowledgement
+        assert AlertAcknowledgement.objects.filter(alert_event__in=ids).count() == 2
+
+    def test_acknowledged_state_filter_and_summary(self, auth_client, rule):
+        firing = AlertEvent.objects.create(rule=rule, state="firing")
+        acked = AlertEvent.objects.create(rule=rule, state="firing")
+        AlertEvent.objects.create(rule=rule, state="resolved")
+        # Acknowledge one firing event.
+        auth_client.post("/api/alerts/events/bulk-acknowledge/", {"ids": [acked.id]}, format="json")
+
+        summary = auth_client.get("/api/alerts/events/summary/").json()
+        assert summary == {"all": 3, "firing": 1, "acknowledged": 1, "resolved": 1}
+
+        # ?state=acknowledged returns only the acked firing event.
+        ack_list = auth_client.get("/api/alerts/events/?state=acknowledged").json()
+        ids = [r["id"] for r in ack_list["results"]]
+        assert ids == [acked.id]
+        assert ack_list["results"][0]["is_acknowledged"] is True
+
+        # ?state=firing excludes the acknowledged one.
+        firing_list = auth_client.get("/api/alerts/events/?state=firing").json()
+        assert [r["id"] for r in firing_list["results"]] == [firing.id]

@@ -1,11 +1,18 @@
+import logging
+
+from django.db.models import Prefetch
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, UpdateModelMixin
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
+from apps.alerting.models import AlertAcknowledgement
+
 from .models import AlertChannel, AlertEvent, AlertRule
 from .serializers import AlertChannelSerializer, AlertEventSerializer, AlertRuleSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class AlertChannelViewSet(viewsets.ModelViewSet):
@@ -98,15 +105,22 @@ class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, Ge
     `rule__severity`; order by created/resolved time.
     """
 
-    queryset = AlertEvent.objects.select_related("rule").all()
+    queryset = AlertEvent.objects.select_related("rule").prefetch_related(
+        Prefetch("acknowledgements",
+                 queryset=AlertAcknowledgement.objects.select_related("acknowledged_by")
+                 .order_by("-acknowledged_at"))).all()
     serializer_class = AlertEventSerializer
-    filterset_fields = ["rule", "state", "rule__severity"]
+    # `state` is handled in get_queryset (it has a derived "acknowledged" value
+    # the model enum doesn't), so it's intentionally NOT a filterset field —
+    # DjangoFilterBackend would 400 on state=acknowledged.
+    filterset_fields = ["rule", "rule__severity"]
     ordering_fields = ["created_at", "resolved_at"]
 
     def get_queryset(self):
         """
         Default to active (firing) alerts only. ?resolved=true → resolved only;
-        ?resolved=all → no filter. An explicit ?state= filter takes precedence.
+        ?resolved=all → no filter. ?state=acknowledged → firing events that have
+        an acknowledgement. An explicit ?state= filter takes precedence.
         """
         qs = super().get_queryset()
         # Only the list view defaults to active-only; retrieve/actions must still
@@ -114,14 +128,70 @@ class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, Ge
         if self.action != "list":
             return qs
         params = self.request.query_params
-        if params.get("state"):
-            return qs  # explicit state filter handled by django-filter
+        state = params.get("state")
+        if state == "acknowledged":
+            # Derived state: firing + has an ack (the model has no ACK state).
+            return qs.filter(state=AlertEvent.State.FIRING, acknowledgements__isnull=False).distinct()
+        if state == "firing":
+            # Firing AND not yet acknowledged (the Firing tab = needs attention).
+            return qs.filter(state=AlertEvent.State.FIRING, acknowledgements__isnull=True)
+        if state:
+            return qs.filter(state=state)  # e.g. ?state=resolved
         resolved = params.get("resolved")
         if resolved == "all":
             return qs
         if resolved == "true":
             return qs.filter(state=AlertEvent.State.RESOLVED)
         return qs.exclude(state=AlertEvent.State.RESOLVED)
+
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        """State counts for the Alerts filter tabs: all/firing/acknowledged/resolved."""
+        base = AlertEvent.objects.all()
+        firing = base.filter(state=AlertEvent.State.FIRING)
+        acked = firing.filter(acknowledgements__isnull=False).distinct().count()
+        firing_open = firing.filter(acknowledgements__isnull=True).count()
+        resolved = base.filter(state=AlertEvent.State.RESOLVED).count()
+        return Response({
+            "all": firing_open + acked + resolved,
+            "firing": firing_open,
+            "acknowledged": acked,
+            "resolved": resolved,
+        })
+
+    @action(detail=False, methods=["post"], url_path="bulk-acknowledge")
+    def bulk_acknowledge(self, request):
+        """Acknowledge many alerts at once (stops escalation on each)."""
+        ids = request.data.get("ids") or []
+        note = request.data.get("note", "") or ""
+        if not ids:
+            return Response({"error": "No IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        # Only firing (unresolved) events can be acknowledged.
+        events = AlertEvent.objects.filter(id__in=ids, state=AlertEvent.State.FIRING)
+        updated, errors = 0, []
+        for event in events:
+            try:
+                self._record_ack(event, request.user, note, None)
+                updated += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("bulk ack failed for event %s: %s", event.id, exc)
+                errors.append({"id": event.id, "error": "acknowledge failed"})
+        return Response({"updated": updated, "failed": len(ids) - updated, "errors": errors})
+
+    @action(detail=False, methods=["post"], url_path="bulk-resolve")
+    def bulk_resolve(self, request):
+        """Resolve many alerts at once (only those not already resolved)."""
+        from django.utils import timezone
+        ids = request.data.get("ids") or []
+        note = request.data.get("resolution_note", "") or request.data.get("note", "") or ""
+        if not ids:
+            return Response({"error": "No IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        updated = (AlertEvent.objects
+                   .filter(id__in=ids).exclude(state=AlertEvent.State.RESOLVED)
+                   .update(state=AlertEvent.State.RESOLVED,
+                           resolved_at=timezone.now(), resolved_by="user",
+                           resolution_note=note, updated_at=timezone.now()))
+        return Response({"updated": updated, "failed": len(ids) - updated, "errors": []})
 
     @action(detail=True, methods=["post"])
     def resolve(self, request, pk=None):

@@ -35,6 +35,9 @@ class AlertEventSerializer(serializers.ModelSerializer):
     downtime_seconds = serializers.SerializerMethodField()
     is_interface_alert = serializers.SerializerMethodField()
     is_resolved = serializers.SerializerMethodField()
+    is_acknowledged = serializers.SerializerMethodField()
+    acknowledged_by = serializers.SerializerMethodField()
+    acknowledged_at = serializers.SerializerMethodField()
     # Long-form detail (e.g. a config-change unified diff) + a machine type so the
     # UI can render the expanded panel appropriately.
     details = serializers.SerializerMethodField()
@@ -47,6 +50,22 @@ class AlertEventSerializer(serializers.ModelSerializer):
 
     def get_is_resolved(self, obj):
         return obj.state == AlertEvent.State.RESOLVED
+
+    def _latest_ack(self, obj):
+        # acknowledgements prefetched + ordered -acknowledged_at by the viewset.
+        acks = list(obj.acknowledgements.all())
+        return acks[0] if acks else None
+
+    def get_is_acknowledged(self, obj):
+        return obj.state != AlertEvent.State.RESOLVED and bool(self._latest_ack(obj))
+
+    def get_acknowledged_by(self, obj):
+        ack = self._latest_ack(obj)
+        return (ack.acknowledged_by.username if ack and ack.acknowledged_by else None)
+
+    def get_acknowledged_at(self, obj):
+        ack = self._latest_ack(obj)
+        return ack.acknowledged_at.isoformat() if ack else None
 
     def get_effective_severity(self, obj):
         return (obj.annotations or {}).get("severity") \
