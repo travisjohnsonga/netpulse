@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import Modal from '../../components/Modal'
 import { SectionHeader } from '../Settings'
+import { useComplianceRunAll } from '../../hooks/useComplianceRun'
 import {
   fetchComplianceTemplates, createComplianceTemplate, updateComplianceTemplate,
-  deleteComplianceTemplate, previewComplianceTemplate, runComplianceCheck,
+  deleteComplianceTemplate, previewComplianceTemplate,
   fetchDevicePlatforms, fetchDeviceRoles, fetchSites, fetchDevices,
   type ComplianceTemplate, type ComplianceTemplatePayload,
   type PlatformOption, type DeviceRole, type Site, type Device,
@@ -23,8 +24,8 @@ export default function ComplianceTemplates() {
   const [editing, setEditing] = useState<ComplianceTemplate | null>(null)
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<ComplianceTemplate | null>(null)
-  const [running, setRunning] = useState(false)
-  const [runMsg, setRunMsg] = useState<string | null>(null)
+  const [runErr, setRunErr] = useState<string | null>(null)
+  const { status: runStatus, start: startRun, starting, isRunning } = useComplianceRunAll()
 
   const load = () => {
     setLoading(true)
@@ -51,14 +52,11 @@ export default function ComplianceTemplates() {
   }
 
   const runAll = async () => {
-    setRunning(true); setRunMsg(null)
+    setRunErr(null)
     try {
-      const r = await runComplianceCheck({})
-      setRunMsg(`Checked ${r.checked} · ${r.compliant} compliant · ${r.non_compliant} non-compliant · ${r.error} error`)
+      await startRun()
     } catch {
-      setRunMsg('Failed to run compliance checks.')
-    } finally {
-      setRunning(false)
+      setRunErr('Failed to start the compliance run.')
     }
   }
 
@@ -77,9 +75,9 @@ export default function ComplianceTemplates() {
         description="Jinja2 templates of expected configuration, scoped by role / platform / site. spane diffs each device's running config against the rendered template and flags MISSING / DRIFT / EXTRA lines."
         action={
           <div className="flex gap-2">
-            <button onClick={runAll} disabled={running}
+            <button onClick={runAll} disabled={starting || isRunning}
               className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">
-              {running ? 'Running…' : 'Run All Checks'}
+              {starting || isRunning ? 'Running…' : '▶ Run Compliance Check — All Devices'}
             </button>
             <button onClick={() => setCreating(true)}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
@@ -90,7 +88,19 @@ export default function ComplianceTemplates() {
       />
 
       {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4">{error}</div>}
-      {runMsg && <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm text-blue-700 dark:text-blue-300 mb-4">{runMsg}</div>}
+      {runErr && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-4">{runErr}</div>}
+      {runStatus && (runStatus.running || runStatus.done > 0) && (
+        <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm text-blue-700 dark:text-blue-300 mb-4 flex items-center gap-2">
+          {runStatus.running ? (
+            <>
+              <span className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Running compliance… {runStatus.done}/{runStatus.total} devices
+            </>
+          ) : (
+            <>✅ Complete: {runStatus.success} passed, {runStatus.failed} failed</>
+          )}
+        </div>
+      )}
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {loading ? (

@@ -7,6 +7,9 @@ from .views import (
     CompliancePolicyRuleViewSet,
     CompliancePolicyViewSet,
     ComplianceResultViewSet,
+    ComplianceRunAllStatusView,
+    ComplianceRunAllView,
+    ComplianceRunDeviceView,
     ComplianceTemplateResultViewSet,
     ComplianceTemplateViewSet,
     DiscoveredPlatformModelViewSet,
@@ -31,5 +34,8 @@ router.register("role-rules", RoleConsistencyRuleViewSet, basename="role-rule")
 urlpatterns = [
     path("check/", ComplianceCheckView.as_view(), name="compliance-check"),
     path("os-summary/", OSComplianceSummaryView.as_view(), name="compliance-os-summary"),
+    path("run-all/", ComplianceRunAllView.as_view(), name="compliance-run-all"),
+    path("run-all/status/", ComplianceRunAllStatusView.as_view(), name="compliance-run-all-status"),
+    path("run/<int:device_id>/", ComplianceRunDeviceView.as_view(), name="compliance-run-device"),
     *router.urls,
 ]

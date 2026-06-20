@@ -730,7 +730,9 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     if cfg is not None:
         try:
             from .engine import run_compliance_for_device
-            run_compliance_for_device(device, config_snapshot=cfg)
+            # Score is stored below (run_and_store_compliance) AFTER startup
+            # reconciliation, so skip the in-engine store to avoid a stale one.
+            run_compliance_for_device(device, config_snapshot=cfg, store_score=False)
         except Exception as exc:  # noqa: BLE001 — compliance must not break collection
             logger.warning("compliance run after collection failed for %s: %s", device.hostname, exc)
 

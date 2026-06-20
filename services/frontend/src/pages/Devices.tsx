@@ -5,6 +5,7 @@ import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
 import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary, type Device, type DeviceRole, type PingSummary } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useComplianceRunAll } from '../hooks/useComplianceRun'
 import { useSite } from '../store/siteStore'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
@@ -49,6 +50,17 @@ export default function Devices() {
   const [columnKeys, setColumnKeys] = useState<string[]>(loadColumnKeys)
   const [credNames, setCredNames] = useState<Record<number, string>>({})
   const [pingMap, setPingMap] = useState<Record<number, PingSummary>>({})
+  // Bulk selection for "Run Compliance" on the chosen devices.
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const { status: runStatus, start: startRun, starting, isRunning } = useComplianceRunAll()
+  const toggleSelect = (id: number) => setSelected((prev) => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
+  const pageIds = devices.map((d) => d.id)
+  const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+  const someSelected = selected.size > 0 && !allSelected
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(pageIds))
+  const runComplianceSelected = () => { if (selected.size) startRun(Array.from(selected)) }
 
   useEffect(() => {
     fetchCredentials()
@@ -256,10 +268,48 @@ export default function Devices() {
           />
         ) : (
           <>
+            {/* Bulk action toolbar — visible when devices are selected */}
+            {selected.size > 0 && (
+              <div className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 px-5 py-2.5 text-sm">
+                <span className="font-medium text-blue-800 dark:text-blue-300">✓ {selected.size} selected</span>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    onClick={runComplianceSelected}
+                    disabled={starting || isRunning}
+                    className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 font-medium"
+                  >
+                    {starting || isRunning ? 'Running…' : '▶ Run Compliance'}
+                  </button>
+                  <button onClick={() => setSelected(new Set())} className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium">Clear</button>
+                </div>
+              </div>
+            )}
+            {runStatus && (runStatus.running || runStatus.done > 0) && (
+              <div className="bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-800 px-5 py-2 text-sm text-blue-700 dark:text-blue-300 flex items-center gap-2">
+                {runStatus.running ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    Running compliance… {runStatus.done}/{runStatus.total} devices
+                  </>
+                ) : (
+                  <>✅ Complete: {runStatus.success} passed, {runStatus.failed} failed</>
+                )}
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+                    <th className="pl-5 pr-2 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all devices on this page"
+                        className="rounded border-gray-300 dark:border-gray-600 cursor-pointer"
+                        checked={allSelected}
+                        ref={(el) => { if (el) el.indeterminate = someSelected }}
+                        onChange={toggleAll}
+                      />
+                    </th>
                     {activeColumns.map((col) => {
                       const sortable = !!col.sortKey
                       const active = col.sortKey === ordering || `-${col.sortKey}` === ordering
@@ -281,8 +331,17 @@ export default function Devices() {
                     <tr
                       key={device.id}
                       onClick={() => navigate(`/devices/${device.id}`)}
-                      className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                      className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer ${selected.has(device.id) ? 'bg-blue-50/60 dark:bg-blue-900/20' : ''}`}
                     >
+                      <td className="pl-5 pr-2 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${device.hostname}`}
+                          className="rounded border-gray-300 dark:border-gray-600 cursor-pointer"
+                          checked={selected.has(device.id)}
+                          onChange={() => toggleSelect(device.id)}
+                        />
+                      </td>
                       {activeColumns.map((col) => (
                         <td key={col.key} className="px-5 py-3">{col.render(device, colCtx)}</td>
                       ))}

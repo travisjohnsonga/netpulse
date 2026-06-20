@@ -207,11 +207,18 @@ def get_templates_for_device(device) -> list[ComplianceTemplate]:
     return sorted(applicable, key=specificity)
 
 
-def run_compliance_for_device(device, config_snapshot=None) -> list[ComplianceTemplateResult]:
+def run_compliance_for_device(device, config_snapshot=None, *, store_score=True,
+                              role_cache=None) -> list[ComplianceTemplateResult]:
     """
     Run every applicable template against a device, saving a result per template.
     Best-effort: each template is independent; a failure becomes an error result.
     Returns the saved results.
+
+    By default the device's combined weighted score is also persisted to
+    DeviceComplianceScore afterwards, so the device list always reflects a fresh
+    run regardless of entry point. Callers that do further reconciliation before
+    scoring (e.g. config collection updates startup-match, then stores) pass
+    ``store_score=False`` and call ``run_and_store_compliance`` themselves.
     """
     engine = ComplianceEngine()
     config_text = config_snapshot.content if config_snapshot is not None else None
@@ -225,4 +232,14 @@ def run_compliance_for_device(device, config_snapshot=None) -> list[ComplianceTe
         result.config_snapshot = config_snapshot
         result.save()
         results.append(result)
+
+    if store_score:
+        # Always persist the combined weighted score so the device list and the
+        # Compliance tab agree. Best-effort — never let scoring break the run.
+        try:
+            from .device_score import run_and_store_compliance
+            run_and_store_compliance(device, role_cache=role_cache)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("compliance score store failed for %s: %s", device.hostname, exc)
+
     return results

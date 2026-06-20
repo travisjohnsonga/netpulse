@@ -346,3 +346,64 @@ class RoleConsistencyRuleViewSet(viewsets.ModelViewSet):
         result = run_role_consistency(self.get_object())
         _refresh_stored_scores(result)
         return Response(result)
+
+
+class ComplianceRunAllView(APIView):
+    """Start a fleet-wide compliance run (background) or report its progress.
+
+    POST {device_ids?: [...]} → start a run over all active devices (or just the
+    given subset); returns the initial status. 409 if a run is already going.
+    GET → current/last run status for polling.
+    """
+
+    @extend_schema(request=None, responses=None, summary="Run compliance for all (or selected) devices")
+    def post(self, request):
+        from .runner import start_run_all
+        ids = request.data.get("device_ids") or None
+        if ids is not None:
+            if not isinstance(ids, list):
+                return Response({"error": "device_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+            ids = [int(i) for i in ids]
+        started, run_status = start_run_all(ids)
+        if not started:
+            return Response({"error": "A compliance run is already in progress.", **run_status},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(run_status, status=status.HTTP_202_ACCEPTED)
+
+    def get(self, request):
+        from .runner import get_status
+        return Response(get_status())
+
+
+class ComplianceRunAllStatusView(APIView):
+    """GET → current/last fleet compliance run status (polled by the UI)."""
+
+    @extend_schema(responses=None, summary="Fleet compliance run status")
+    def get(self, request):
+        from .runner import get_status
+        return Response(get_status())
+
+
+class ComplianceRunDeviceView(APIView):
+    """POST → re-run compliance for one device and return its weighted score."""
+
+    @extend_schema(request=None, responses=None, summary="Run compliance for one device")
+    def post(self, request, device_id=None):
+        from apps.devices.models import Device
+
+        from .runner import run_one
+        device = Device.objects.filter(pk=device_id).first()
+        if device is None:
+            return Response({"error": "device not found"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            data = run_one(device)
+        except Exception as exc:  # noqa: BLE001 — scrub; scoring can reach live devices
+            return Response({"error": safe_detail(exc, logger, f"compliance run {device.pk}")},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            "device_id": device.pk,
+            "hostname": device.hostname,
+            "score": data["score"],
+            "grade": data["grade"],
+            "breakdown": data["breakdown"],
+        })

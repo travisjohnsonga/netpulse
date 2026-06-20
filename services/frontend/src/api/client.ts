@@ -2758,6 +2758,35 @@ export async function fetchComplianceResults(deviceId: number): Promise<Complian
   return unwrap(data)
 }
 
+// ── On-demand compliance runs ───────────────────────────────────────────────────
+
+export interface ComplianceRunStatus {
+  running: boolean
+  total: number; done: number; success: number; failed: number
+  errors: { device: string; error: string }[]
+  started_at: string | null; finished_at: string | null
+}
+
+// Start a fleet run (all active, or a selected subset). May 409 if one is
+// already running — callers can treat that as "already in progress" and poll.
+export async function runComplianceAll(deviceIds?: number[]): Promise<ComplianceRunStatus> {
+  const { data } = await api.post<ComplianceRunStatus>(
+    '/compliance/run-all/', deviceIds && deviceIds.length ? { device_ids: deviceIds } : {})
+  return data
+}
+
+export async function fetchComplianceRunStatus(): Promise<ComplianceRunStatus> {
+  const { data } = await api.get<ComplianceRunStatus>('/compliance/run-all/status/')
+  return data
+}
+
+export async function runComplianceDevice(
+  deviceId: number,
+): Promise<{ device_id: number; hostname: string; score: number | null; grade: string }> {
+  const { data } = await api.post(`/compliance/run/${deviceId}/`, {})
+  return data
+}
+
 // ── Template-based compliance ───────────────────────────────────────────────────
 
 export interface ComplianceFinding {

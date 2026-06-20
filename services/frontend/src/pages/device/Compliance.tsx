@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  fetchComplianceResults, fetchDeviceCompliance, runComplianceCheck,
+  fetchComplianceResults, fetchDeviceCompliance, runComplianceDevice,
   fetchApprovedOSVersions,
   type DeviceDetail, type ComplianceResult,
   type ComplianceTemplateResult, type ComplianceFinding,
@@ -74,7 +74,7 @@ export default function Compliance({ device }: { device: DeviceDetail }) {
   const runCheck = async () => {
     setRunning(true)
     try {
-      await runComplianceCheck({ device_id: device.id })
+      await runComplianceDevice(device.id)   // re-runs + persists the weighted score
       load()
     } catch {
       setError('Failed to run compliance check.')
@@ -434,7 +434,7 @@ function RunButton({ running, onClick }: { running: boolean; onClick: () => void
   return (
     <button onClick={onClick} disabled={running}
       className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
-      {running ? 'Running…' : 'Run Check'}
+      {running ? 'Running…' : '▶ Run Now'}
     </button>
   )
 }
