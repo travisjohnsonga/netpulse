@@ -61,6 +61,10 @@ BACKUP_SCHEDULE_INTERVAL_S = int(os.environ.get("BACKUP_SCHEDULE_INTERVAL_S", st
 # COMPLIANCE_RUN_HOUR, default 03:00, + same-day deduped, so a short interval
 # just fires it promptly within the target hour).
 COMPLIANCE_RUN_INTERVAL_S = int(os.environ.get("COMPLIANCE_RUN_INTERVAL_S", str(15 * 60)))
+# AOS-CX environment + PoE collection → InfluxDB (for alerting/trending).
+ENVIRONMENT_POLL_INTERVAL_S = int(os.environ.get("ENVIRONMENT_POLL_INTERVAL_S", str(5 * 60)))
+# WAN circuit utilization + contract-expiry checks.
+CIRCUIT_CHECK_INTERVAL_S = int(os.environ.get("CIRCUIT_CHECK_INTERVAL_S", str(15 * 60)))
 DEFAULT_TICK_S = 300
 
 
@@ -105,6 +109,8 @@ class Command(BaseCommand):
             ["scheduled_reports", REPORT_SCHEDULE_INTERVAL_S, self._run_scheduled_reports, False, None],
             ["backup", BACKUP_SCHEDULE_INTERVAL_S, self._run_scheduled_backup, False, None],
             ["compliance_run", COMPLIANCE_RUN_INTERVAL_S, self._run_due_compliance, False, None],
+            ["environment_poll", ENVIRONMENT_POLL_INTERVAL_S, self._poll_environment, False, None],
+            ["circuit_checks", CIRCUIT_CHECK_INTERVAL_S, self._check_circuits, False, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -303,3 +309,21 @@ class Command(BaseCommand):
         from apps.compliance.scheduler import run_due_compliance
         if run_due_compliance():
             logger.info("scheduler: ran daily compliance pass")
+
+    def _poll_environment(self):
+        # Collect AOS-CX environment (temp/fan/PSU) + PoE over REST and store it
+        # in InfluxDB so it's available for the High-PoE-Usage alert and history
+        # trending even when nobody is viewing the Environment tab.
+        from apps.telemetry.environment_poll import poll_environments
+        res = poll_environments()
+        if res.get("collected"):
+            logger.info("scheduler: environment poll — %d device(s), %d point(s)",
+                        res["collected"], res["points"])
+
+    def _check_circuits(self):
+        # WAN circuit utilization (standing alert) + contract-expiry alerts.
+        from apps.circuits.scheduler import run_circuit_checks
+        res = run_circuit_checks()
+        if res.get("contract_alerts") or res.get("util_alerts"):
+            logger.info("scheduler: WAN circuits — %d contract, %d utilization alert(s)",
+                        res["contract_alerts"], res["util_alerts"])

@@ -182,6 +182,10 @@ class AuditLog(models.Model):
         DEVICE_DELETED = "device_deleted", "Device Deleted"
         DEVICE_APPROVED = "device_approved", "Device Approved"
         DEVICE_REJECTED = "device_rejected", "Device Rejected"
+        # Topology
+        TOPOLOGY_LINK_CREATED = "topology_link_created", "Manual Topology Link Created"
+        TOPOLOGY_LINK_UPDATED = "topology_link_updated", "Manual Topology Link Updated"
+        TOPOLOGY_LINK_DELETED = "topology_link_deleted", "Manual Topology Link Deleted"
         # Configuration
         CONFIG_PUSHED = "config_pushed", "Config Pushed to Device"
         CONFIG_BACKUP = "config_backup", "Config Backup Taken"

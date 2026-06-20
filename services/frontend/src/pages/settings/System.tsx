@@ -57,7 +57,7 @@ export default function System() {
       <section>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Platform</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <InfoCard label="Version" value="0.1.0-dev" />
+          <InfoCard label="Version" value={infra?.version || '…'} />
           <InfoCard label="Last backup" value="—" />
           <InfoCard label="Services" value={infra ? `${Object.values(infra.services).filter((s) => s.ok).length}/${Object.keys(infra.services).length} up` : '…'} />
           <InfoCard label="Environment" value="Development" />

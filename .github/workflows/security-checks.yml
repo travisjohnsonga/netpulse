@@ -1,0 +1,31 @@
+name: Security checks
+
+# Lightweight, dependency-free security guards that run without the full stack.
+# The exception-exposure guard also runs in the in-container pytest suite
+# (tests/test_security.py::TestNoExceptionExposure) and via the pre-commit hook.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/api/apps/**/views.py'
+      - 'scripts/check_exception_exposure.py'
+      - '.github/workflows/security-checks.yml'
+  pull_request:
+    paths:
+      - 'services/api/apps/**/views.py'
+      - 'scripts/check_exception_exposure.py'
+
+permissions:
+  contents: read
+
+jobs:
+  exception-exposure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: No exception detail in API responses (CWE-209)
+        run: python3 scripts/check_exception_exposure.py

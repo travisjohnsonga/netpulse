@@ -1,3 +1,6 @@
+import ast
+from pathlib import Path
+
 import pytest
 from apps.devices.models import Device
 from apps.security.models import DeviceRiskScore
@@ -106,3 +109,86 @@ class TestDeviceRiskScoreModel:
         risk_score.save()
         risk_score.refresh_from_db()
         assert risk_score.last_computed_at >= original
+
+
+# ── Exception-exposure regression (CWE-209 / CodeQL py/stack-trace-exposure) ──
+#
+# No view may return raw exception detail in an API response. Every except
+# handler must funnel the exception through a sanitizer (safe_detail /
+# internal_error_response) that logs server-side and returns a static message.
+# Complements the broader apps/-wide guard in test_codeql_fixes.py.
+
+_APPS_DIR = Path(__file__).resolve().parent.parent / "apps"
+_SANITIZERS = {"safe_detail", "internal_error_response", "log_internal_error"}
+_RESPONSE_SINKS = {"Response", "JsonResponse", "HttpResponse"}
+
+
+def _view_files():
+    return [p for p in _APPS_DIR.rglob("views.py")
+            if not {"migrations", "__pycache__", "tests"} & set(p.parts)]
+
+
+def _called_name(call):
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    return None
+
+
+def _exc_escapes(arg_nodes, var):
+    """True if ``var`` is referenced in arg_nodes outside a sanitizer call."""
+    found = False
+
+    class V(ast.NodeVisitor):
+        def visit_Call(self, node):
+            if _called_name(node) in _SANITIZERS:
+                return  # sanitized subtree — don't descend
+            self.generic_visit(node)
+
+        def visit_Name(self, node):
+            nonlocal found
+            if node.id == var:
+                found = True
+
+    v = V()
+    for n in arg_nodes:
+        v.visit(n)
+    return found
+
+
+def _response_violations(tree):
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler) or not node.name:
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Return) and isinstance(sub.value, ast.Call) \
+                    and _called_name(sub.value) in _RESPONSE_SINKS:
+                args = list(sub.value.args) + [kw.value for kw in sub.value.keywords]
+                if _exc_escapes(args, node.name):
+                    out.append(sub.lineno)
+    return out
+
+
+class TestNoExceptionExposure:
+    def test_no_str_exception_in_response_ast(self):
+        violations = []
+        for fp in _view_files():
+            for lineno in _response_violations(ast.parse(fp.read_text(), filename=str(fp))):
+                violations.append(f"{fp.relative_to(_APPS_DIR.parent)}:{lineno}")
+        assert not violations, (
+            "Exception details exposed in API responses (CWE-209):\n  "
+            + "\n  ".join(violations)
+            + "\n\nFix: log the exception (exc_info=True) and return a generic "
+            "message via safe_detail()/internal_error_response()."
+        )
+
+    def test_guard_detects_planted_leak(self):
+        bad = ast.parse("def v():\n try:\n  f()\n except Exception as e:\n"
+                        "  return Response({'error': str(e)})\n")
+        good = ast.parse("def v():\n try:\n  f()\n except Exception as e:\n"
+                         "  return Response({'error': safe_detail(e, logger, 'v')})\n")
+        assert _response_violations(bad)
+        assert not _response_violations(good)

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import cytoscape, { type Core, type NodeSingular, type EdgeSingular } from 'cytoscape'
 import {
-  fetchTopology, fetchDevices, discoverDeviceLinks,
-  type TopologyNode, type TopologyEdge, type Device,
+  fetchTopology, fetchDevices, discoverDeviceLinks, MANUAL_LINK_COLORS,
+  type TopologyNode, type TopologyEdge, type Device, type ManualLinkType,
 } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useSite } from '../store/siteStore'
+import ManualLinkModal from '../components/ManualLinkModal'
 
 type Popup =
   | { kind: 'node'; data: TopologyNode; x: number; y: number }
@@ -253,6 +254,7 @@ export default function Topology() {
   const [devices, setDevices] = useState<Device[]>([])
   // Site scoping comes from the global header selector.
   const { selectedSite: site } = useSite()
+  const [showManualModal, setShowManualModal] = useState(false)
   const [center, setCenter] = useState('')
   const [depth, setDepth] = useState('all')
   const [role, setRole] = useState('')
@@ -328,10 +330,15 @@ export default function Topology() {
           data: {
             id: `e${i}`, source: e.source, target: e.target,
             width: edgeWidth(e.link_count ?? 1),
-            color: edgeColor(offlineById[e.source], offlineById[e.target]),
+            // Manual links: dashed (via the .manual-edge class) + coloured by link
+            // type; discovered links: solid + coloured by reachability.
+            color: e.manual
+              ? (MANUAL_LINK_COLORS[(e.link_type ?? 'other') as ManualLinkType] || MANUAL_LINK_COLORS.other)
+              : edgeColor(offlineById[e.source], offlineById[e.target]),
             countLabel: (e.link_count ?? 1) > 1 ? (e.label || `×${e.link_count}`) : '',
             raw: e,
           },
+          classes: e.manual ? 'manual-edge' : undefined,
         })),
       ],
       layout: layoutMode === 'hier'
@@ -367,6 +374,8 @@ export default function Topology() {
           label: 'data(countLabel)', 'font-size': 11, 'font-weight': 700, color: '#374151',
           'text-background-color': '#ffffff', 'text-background-opacity': 0.9, 'text-background-padding': '2px',
         } },
+        // Operator-defined manual links are drawn dashed to distinguish them.
+        { selector: 'edge.manual-edge', style: { 'line-style': 'dashed' } },
         { selector: 'node:selected', style: { 'border-color': '#3b82f6', 'border-width': 3 } },
         { selector: 'edge:selected', style: { 'line-color': '#3b82f6' } },
         { selector: 'edge.hover', style: { 'line-color': '#3b82f6' } },
@@ -466,12 +475,20 @@ export default function Topology() {
           {!loading && !error && <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{nodeCount} devices · {edgeCount} links</p>}
         </div>
         <div className="flex gap-2">
+          <button onClick={() => setShowManualModal(true)} className={btnCls} title="Add a manual link (for devices without LLDP/CDP)">🔗 Add Manual Link</button>
           <button onClick={reload} className={btnCls} title="Refresh">↺ Refresh</button>
           <button onClick={fitView} className={btnCls} title="Fit to view">⊞ Fit</button>
           <button onClick={() => zoomBy(1.25)} className={btnCls} title="Zoom in">＋</button>
           <button onClick={() => zoomBy(0.8)} className={btnCls} title="Zoom out">－</button>
         </div>
       </div>
+
+      {showManualModal && (
+        <ManualLinkModal
+          onClose={() => setShowManualModal(false)}
+          onSaved={() => { setShowManualModal(false); reload() }}
+        />
+      )}
 
       {/* Filter / view bar */}
       <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 flex-shrink-0">

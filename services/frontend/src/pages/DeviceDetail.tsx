@@ -18,6 +18,7 @@ import Lifecycle from './device/Lifecycle'
 import Modal from '../components/Modal'
 import DeviceEditModal from '../components/DeviceEditModal'
 import DeviceCredentialsPanel from '../components/DeviceCredentialsPanel'
+import ManualLinkModal from '../components/ManualLinkModal'
 import RoleBubble from '../components/RoleBubble'
 import VendorLogo from '../components/VendorLogo'
 import { CollectionMethodBadges } from '../components/CollectionMethodBadges'
@@ -65,6 +66,7 @@ export default function DeviceDetail() {
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null)
   const [sshCred, setSshCred] = useState<{ username: string | null; port: number | null }>({ username: null, port: null })
   const [telemetryConfig, setTelemetryConfig] = useState(false)
+  const [addingManualLink, setAddingManualLink] = useState(false)
   // Bumped when the Telemetry Configuration slide-over closes so the Telemetry
   // tab refetches interfaces/metrics/collection-status (shows the new selection).
   const [telemetryRefresh, setTelemetryRefresh] = useState(0)
@@ -177,6 +179,7 @@ export default function DeviceDetail() {
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setManagingCreds(true) }}>Manage Credentials</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setChangingCollector(true) }}>Change Collector</button>
                     <button className={menuItem} onClick={() => { setMenuOpen(false); setTelemetryConfig(true) }}>Telemetry Configuration</button>
+                    <button className={menuItem} onClick={() => { setMenuOpen(false); setAddingManualLink(true) }}>Add Manual Link</button>
                     <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
                     <button className={menuItem} onClick={collectNow} disabled={busy === 'collect'}>Collect Config Now</button>
                     <button className={menuItem} onClick={runDiscovery} disabled={busy === 'discover'}>Run Discovery</button>
@@ -226,6 +229,7 @@ export default function DeviceDetail() {
       {managingCreds && <DeviceCredentialsPanel device={device} onClose={() => setManagingCreds(false)} onSaved={() => { setManagingCreds(false); load() }} />}
       {telemetryConfig && <TelemetryConfigPanel device={device} onClose={() => { setTelemetryConfig(false); setTelemetryRefresh((n) => n + 1) }} />}
       {changingCollector && <ChangeCollectorModal device={device} onClose={() => setChangingCollector(false)} onSaved={() => { setChangingCollector(false); load() }} />}
+      {addingManualLink && <ManualLinkModal prefillDeviceA={device.id} onClose={() => setAddingManualLink(false)} onSaved={() => setAddingManualLink(false)} />}
       {deleting && (
         <Modal title="Delete device?" onClose={() => setDeleting(false)}
           footer={

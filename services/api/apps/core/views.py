@@ -118,23 +118,40 @@ def _openbao_healthy() -> bool:
         return False
 
 
-def _netpulse_version() -> str:
-    """Best-effort version string (git describe), else env, else 'unknown'."""
-    env_ver = os.environ.get("NETPULSE_VERSION", "")
-    if env_ver:
-        return env_ver
-    try:
-        import subprocess
+# Bind-mounted from the repo root (docker-compose api volumes); module-level so
+# tests can point it elsewhere.
+_VERSION_FILE = "/app/VERSION"
 
-        out = subprocess.run(
-            ["git", "describe", "--tags", "--always"],
-            capture_output=True, text=True, timeout=2.0,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout.strip()
+
+def _netpulse_version() -> str:
+    """Best-effort version string, in priority order:
+
+    1. ``SPANE_VERSION`` / ``NETPULSE_VERSION`` env (set by the update script /
+       release; ``dev``/empty is ignored).
+    2. the bind-mounted ``/app/VERSION`` file (updates without a rebuild).
+    3. ``settings.VERSION`` — ``1.0.<commit-count>`` computed from the git info
+       baked into the image (also what ``/api/version/`` returns), or a live
+       count in dev checkouts.
+    """
+    for var in ("SPANE_VERSION", "NETPULSE_VERSION"):
+        v = os.environ.get(var, "").strip()
+        if v and v.lower() != "dev":
+            return v
+
+    try:
+        from pathlib import Path
+
+        vf = Path(_VERSION_FILE)
+        if vf.is_file():
+            v = vf.read_text().strip()
+            if v:
+                return v
     except Exception:
         pass
-    return "unknown"
+
+    from django.conf import settings
+
+    return getattr(settings, "VERSION", "") or "unknown"
 
 
 @extend_schema(

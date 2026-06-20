@@ -36,6 +36,8 @@ import {
 import Servers from './pages/Servers'
 import ServerDetail from './pages/ServerDetail'
 import Topology from './pages/Topology'
+import NetworkManualLinks from './pages/NetworkManualLinks'
+import Circuits from './pages/Circuits'
 import Wireless from './pages/Wireless'
 import WirelessLocation from './pages/WirelessLocation'
 import TVLauncher from './pages/tv/TVLauncher'
@@ -156,6 +158,8 @@ function AppRoutes() {
                 <Route path="/sites/:id" element={<SiteDetail />} />
                 <Route path="/configs/compare" element={<ConfigCompare />} />
                 <Route path="/topology" element={<Topology />} />
+                <Route path="/network/manual-links" element={<NetworkManualLinks />} />
+                <Route path="/circuits" element={<Circuits />} />
                 <Route path="/wireless" element={<Wireless />} />
                 <Route path="/wireless/location" element={<WirelessLocation />} />
                 <Route path="/lldp-neighbors" element={<LldpNeighbors />} />

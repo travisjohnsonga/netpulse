@@ -15,7 +15,7 @@ from apps.credentials.models import CredentialProfile
 from . import detect, fingerprint
 from .models import (
     Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob,
-    HostnameRule, LLDPNeighbor, Site,
+    HostnameRule, LLDPNeighbor, ManualTopologyLink, Site,
 )
 from .serializers import (
     DetectPlatformRequestSerializer,
@@ -29,6 +29,7 @@ from .serializers import (
     HostnameRuleSerializer,
     HostnameRuleTestSerializer,
     LLDPNeighborSerializer,
+    ManualTopologyLinkSerializer,
     SiteSerializer,
     TestConnectionRequestSerializer,
     TestConnectionResponseSerializer,
@@ -813,6 +814,12 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
         edges = topo.build_edges(links, neighbors, dev_ids)
 
+        # Operator-defined manual links (devices without LLDP/CDP) — separate,
+        # flagged edges the UI styles distinctly.
+        manual = ManualTopologyLink.objects.filter(
+            device_a__in=dev_ids, device_b__in=dev_ids)
+        edges += topo.build_manual_edges(manual, dev_ids)
+
         # Degree (distinct neighbour count) per node, for the hover tooltip.
         degree: dict = defaultdict(int)
         for e in edges:
@@ -1307,3 +1314,51 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         log_event(AuditLog.EventType.DEVICE_REJECTED, request=request, target=dd,
                   description=f"Discovered device {dd.source_ip} rejected")
         return Response(DiscoveredDeviceSerializer(dd).data)
+
+
+class ManualTopologyLinkViewSet(viewsets.ModelViewSet):
+    """CRUD for operator-defined topology links (devices without LLDP/CDP).
+
+    Filter by ``?device_id=`` (links touching a device) or ``?site_id=`` (links
+    where either endpoint is at the site). Create/update/delete are audit-logged.
+    """
+
+    queryset = ManualTopologyLink.objects.select_related(
+        "device_a", "device_b", "created_by").all()
+    serializer_class = ManualTopologyLinkSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        p = self.request.query_params
+        did = p.get("device_id")
+        if did:
+            qs = qs.filter(Q(device_a_id=did) | Q(device_b_id=did))
+        sid = p.get("site_id")
+        if sid:
+            qs = qs.filter(Q(device_a__site_id=sid) | Q(device_b__site_id=sid))
+        return qs
+
+    def perform_create(self, serializer):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        link = serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+        log_event(AuditLog.EventType.TOPOLOGY_LINK_CREATED, request=self.request,
+                  description=f"Manual link {link}",
+                  metadata={"link_id": link.id, "device_a": link.device_a_id,
+                            "device_b": link.device_b_id, "link_type": link.link_type})
+
+    def perform_update(self, serializer):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        link = serializer.save()
+        log_event(AuditLog.EventType.TOPOLOGY_LINK_UPDATED, request=self.request,
+                  description=f"Manual link {link}", metadata={"link_id": link.id})
+
+    def perform_destroy(self, instance):
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        desc = str(instance)
+        link_id = instance.id
+        instance.delete()
+        log_event(AuditLog.EventType.TOPOLOGY_LINK_DELETED, request=self.request,
+                  description=f"Manual link {desc}", metadata={"link_id": link_id})
