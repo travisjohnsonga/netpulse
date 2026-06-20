@@ -8,6 +8,9 @@ import {
 import SiteFormModal from '../components/SiteFormModal'
 import DeviceLink from '../components/DeviceLink'
 import SiteCredentialsSection from '../components/SiteCredentialsSection'
+import CircuitCard from '../components/CircuitCard'
+import CircuitModal from '../components/CircuitModal'
+import { fetchCircuits, deleteCircuit, type WanCircuit } from '../api/client'
 
 const TYPE_ICON: Record<string, string> = {
   datacenter: '🏢', campus: '🏫', branch: '🏬', remote: '📡', cloud: '☁️',
@@ -91,7 +94,7 @@ export default function SiteDetail() {
       {tab === 'Overview' && <Overview site={site} />}
       {tab === 'Devices' && <Devices siteId={site.id} onOpen={(d) => navigate(`/devices/${d}`)} onChanged={load} />}
       {tab === 'Availability' && <Placeholder text="Site-level uptime summary appears once availability records are computed." icon="📈" />}
-      {tab === 'WAN Circuits' && <Placeholder text="WAN circuits connecting this site will appear here (circuit overrides backend pending)." icon="🔌" />}
+      {tab === 'WAN Circuits' && <SiteCircuits siteId={site.id} />}
     </div>
   )
 }
@@ -285,6 +288,43 @@ function Placeholder({ text, icon }: { text: string; icon: string }) {
 
 function Info({ label, value }: { label: string; value: string }) {
   return <div><dt className="text-xs text-gray-400 dark:text-gray-500">{label}</dt><dd className="text-gray-800 dark:text-gray-100">{value}</dd></div>
+}
+
+function SiteCircuits({ siteId }: { siteId: number }) {
+  const [circuits, setCircuits] = useState<WanCircuit[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<WanCircuit | null>(null)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchCircuits({ site: String(siteId) }).then(setCircuits).catch(() => {}).finally(() => setLoading(false))
+  }, [siteId])
+  useEffect(load, [load])
+
+  const remove = async (c: WanCircuit) => {
+    if (!window.confirm(`Delete circuit "${c.name}"?`)) return
+    try { await deleteCircuit(c.id); load() } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <button onClick={() => setAdding(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Add Circuit</button>
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+      ) : circuits.length === 0 ? (
+        <Placeholder text="No WAN circuits at this site yet. Add one to track provider, bandwidth, IPs and utilization." icon="🔌" />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {circuits.map((c) => <CircuitCard key={c.id} circuit={c} onEdit={setEditing} onDelete={remove} />)}
+        </div>
+      )}
+      {adding && <CircuitModal prefillSite={siteId} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load() }} />}
+      {editing && <CircuitModal edit={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load() }} />}
+    </div>
+  )
 }
 
 function DefaultCollectorCard({ site }: { site: Site }) {

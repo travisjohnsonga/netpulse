@@ -301,6 +301,97 @@ export const MANUAL_LINK_COLORS: Record<ManualLinkType, string> = {
   lacp: '#8b5cf6', mgmt: '#6b7280', virtual: '#ec4899', other: '#94a3b8',
 }
 
+// ── WAN circuits ────────────────────────────────────────────────────────────
+
+export type CircuitType =
+  | 'mpls' | 'internet' | 'dia' | 'broadband' | 'fiber' | 'coax' | 'lte'
+  | 'sdwan' | 'dark_fiber' | 'p2p' | 'other'
+export type CircuitStatus = 'active' | 'inactive' | 'pending' | 'cancelled'
+
+export interface WanCircuit {
+  id: number
+  name: string
+  circuit_id: string
+  circuit_type: CircuitType
+  circuit_type_display: string
+  status: CircuitStatus
+  status_display: string
+  provider: string
+  provider_account: string
+  contract_end_date: string | null
+  monthly_cost: string | null
+  bandwidth_mbps_download: number | null
+  bandwidth_mbps_upload: number | null
+  committed_mbps: number | null
+  bandwidth_mbps: number | null
+  upload_mbps: number | null
+  isp_ipv4_block: string
+  isp_ipv6_block: string
+  gateway_ip: string | null
+  usable_ips: string
+  bgp_asn: string
+  our_bgp_asn: string
+  device: number | null
+  device_hostname: string | null
+  interface: string
+  ip_address: string | null
+  site: number | null
+  site_name: string | null
+  alert_threshold_pct: number
+  notes: string
+}
+
+export type WanCircuitPayload = Partial<Omit<WanCircuit,
+  'id' | 'circuit_type_display' | 'status_display' | 'bandwidth_mbps' | 'upload_mbps'
+  | 'device_hostname' | 'site_name'>>
+
+export interface CircuitUtilPoint {
+  time: string
+  rx_mbps: number | null; tx_mbps: number | null
+  rx_pct: number | null; tx_pct: number | null
+}
+export interface CircuitUtilization {
+  circuit_id: number
+  name: string
+  bound: boolean
+  detail?: string
+  bandwidth_mbps_download?: number | null
+  bandwidth_mbps_upload?: number | null
+  current?: CircuitUtilPoint | null
+  history?: CircuitUtilPoint[]
+  peak?: { rx_mbps: number | null; rx_pct: number | null; tx_mbps: number | null; tx_pct: number | null }
+  p95?: { rx_mbps: number | null; rx_pct: number | null; tx_mbps: number | null; tx_pct: number | null }
+}
+
+export async function fetchCircuits(params?: Record<string, string>): Promise<WanCircuit[]> {
+  const { data } = await api.get<MaybePaginated<WanCircuit>>('/circuits/', { params })
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+export async function fetchCircuit(id: number): Promise<WanCircuit> {
+  const { data } = await api.get<WanCircuit>(`/circuits/${id}/`)
+  return data
+}
+
+export async function createCircuit(payload: WanCircuitPayload): Promise<WanCircuit> {
+  const { data } = await api.post<WanCircuit>('/circuits/', payload)
+  return data
+}
+
+export async function updateCircuit(id: number, payload: WanCircuitPayload): Promise<WanCircuit> {
+  const { data } = await api.put<WanCircuit>(`/circuits/${id}/`, payload)
+  return data
+}
+
+export async function deleteCircuit(id: number): Promise<void> {
+  await api.delete(`/circuits/${id}/`)
+}
+
+export async function fetchCircuitUtilization(id: number, period = '24h'): Promise<CircuitUtilization> {
+  const { data } = await api.get<CircuitUtilization>(`/circuits/${id}/utilization/`, { params: { period } })
+  return data
+}
+
 // ── Credentials ────────────────────────────────────────────────────────────
 
 export type CredentialProtocol = 'ssh' | 'snmpv2c' | 'snmpv3' | 'https' | 'netconf' | 'gnmi'
