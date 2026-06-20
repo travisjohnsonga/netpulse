@@ -93,6 +93,12 @@ DEFAULT_RULES = [
         "A device temperature sensor reported a non-operational status.",
         {"source": "stream-processor", "metric": "sensor_status"}, 60,
     ),
+    (
+        "High PoE Usage", "medium",
+        "A switch's PoE power usage exceeds the configured percentage of its "
+        "budget (default ≥80%).",
+        {"source": "environment_poll", "metric": "poe_used_pct"}, 0,
+    ),
 ]
 
 
