@@ -8,6 +8,9 @@ interface Props {
   loading?: boolean
   // Clicking a src/dst IP — used to drill into "flows for this IP".
   onIpClick?: (ip: string) => void
+  // Optional IP→display-name mapper (DNS/inventory enrichment). The raw IP is
+  // always shown on hover via the title attribute.
+  displayIp?: (ip: string) => string
   maxHeight?: string
 }
 
@@ -25,7 +28,7 @@ function protoBadge(proto: string): string {
   }
 }
 
-export default function FlowsTable({ rows, loading, onIpClick, maxHeight = 'max-h-[34rem]' }: Props) {
+export default function FlowsTable({ rows, loading, onIpClick, displayIp, maxHeight = 'max-h-[34rem]' }: Props) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -39,16 +42,18 @@ export default function FlowsTable({ rows, loading, onIpClick, maxHeight = 'max-
 
   // With an onIpClick handler the IP drills into "flows for this IP" in-place;
   // otherwise it links to the IP/MAC lookup page.
+  const label = (ip: string) => (displayIp ? displayIp(ip) : ip)
   const IpCell = ({ ip }: { ip: string }) =>
     onIpClick ? (
       <button
         onClick={() => onIpClick(ip)}
+        title={ip}
         className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline"
       >
-        {ip}
+        {label(ip)}
       </button>
     ) : (
-      <IPLink ip={ip} className="text-xs" />
+      <span title={ip}><IPLink ip={ip} label={label(ip)} className="text-xs" /></span>
     )
 
   return (

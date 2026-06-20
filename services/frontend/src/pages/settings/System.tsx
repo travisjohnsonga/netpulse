@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { checkInfraHealth, type InfraHealth } from '../../api/client'
+import { checkInfraHealth, clearFlowDnsCache, type InfraHealth } from '../../api/client'
 import { SectionHeader } from '../Settings'
 import TrustedCACerts from './TrustedCACerts'
 import BackupPanel from './BackupPanel'
@@ -33,6 +33,19 @@ export default function System() {
   const [retention, setRetention] = useState<Record<string, string>>(
     Object.fromEntries(RETENTION_TYPES.map((r) => [r.id, r.def])),
   )
+  const [dnsCacheMsg, setDnsCacheMsg] = useState<string | null>(null)
+  const [clearingDns, setClearingDns] = useState(false)
+
+  const handleClearDnsCache = () => {
+    setClearingDns(true)
+    setDnsCacheMsg(null)
+    clearFlowDnsCache()
+      .then(() => setDnsCacheMsg('DNS resolution cache cleared.'))
+      .catch((e) => setDnsCacheMsg(e?.response?.status === 403
+        ? 'Admin role required to clear the DNS cache.'
+        : 'Could not clear the DNS cache.'))
+      .finally(() => setClearingDns(false))
+  }
 
   useEffect(() => { checkInfraHealth().then(setInfra).catch(() => setInfra(null)) }, [])
 
@@ -85,6 +98,27 @@ export default function System() {
 
       {/* Trusted CA certificates */}
       <TrustedCACerts />
+
+      {/* Maintenance */}
+      <section>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Maintenance</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">DNS resolution cache</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Flow Analytics caches reverse-DNS lookups for 5 minutes. Clear it to force fresh resolution.
+            </p>
+            {dnsCacheMsg && <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">{dnsCacheMsg}</p>}
+          </div>
+          <button
+            onClick={handleClearDnsCache}
+            disabled={clearingDns}
+            className="px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 font-medium"
+          >
+            {clearingDns ? 'Clearing…' : 'Clear DNS Cache'}
+          </button>
+        </div>
+      </section>
 
       {/* Audit log */}
       <section>

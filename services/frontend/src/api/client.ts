@@ -3631,6 +3631,23 @@ export async function searchFlows(ip: string, window = '24h', limit = 100): Prom
   return data
 }
 
+export interface FlowResolveResult {
+  resolved: Record<string, string>
+  total: number; cached: number; resolved_now: number; from_inventory: number; failed: number
+}
+
+// Reverse-DNS enrichment (inventory-first, server-cached). Returns {ip: hostname};
+// unresolved IPs map back to themselves. Cap 100 IPs/request — caller batches.
+export async function resolveFlowIps(ips: string[]): Promise<Record<string, string>> {
+  const { data } = await api.post<FlowResolveResult>('/flows/resolve/', { ips })
+  return data.resolved
+}
+
+export async function clearFlowDnsCache(): Promise<{ cleared: number }> {
+  const { data } = await api.post<{ cleared: number }>('/flows/resolve/clear-cache/', {})
+  return data
+}
+
 export interface TopTalker {
   src_ip: string
   flows: number

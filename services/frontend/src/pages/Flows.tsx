@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
@@ -12,6 +13,7 @@ import {
   fetchFlowSankey,
   fetchTopTalkers,
   searchFlows,
+  resolveFlowIps,
   type FlowProtocol,
 } from '../api/client'
 import { fmtBytes } from '../lib/bytes'
@@ -75,6 +77,51 @@ export default function Flows() {
   const protocols = summary?.top_protocols ?? []
   const topProto = protocols[0]?.protocol ?? '—'
 
+  // ── DNS / hostname enrichment ────────────────────────────────────────────────
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [resolveHostnames, setResolveHostnames] = useState<boolean>(() =>
+    searchParams.get('resolve') === '1' || localStorage.getItem('flow_resolve_hostnames') === 'true')
+  const [hostnameMap, setHostnameMap] = useState<Record<string, string>>({})
+  const [resolving, setResolving] = useState(false)
+
+  const toggleResolve = (enabled: boolean) => {
+    setResolveHostnames(enabled)
+    localStorage.setItem('flow_resolve_hostnames', String(enabled))
+    const next = new URLSearchParams(searchParams)
+    if (enabled) next.set('resolve', '1'); else next.delete('resolve')
+    setSearchParams(next, { replace: true })
+    if (!enabled) setHostnameMap({})
+  }
+
+  const flowRows = flowsQ.data?.results ?? []
+  useEffect(() => {
+    if (!resolveHostnames) return
+    const ips = new Set<string>()
+    flowRows.forEach((f) => { if (f.src_ip) ips.add(f.src_ip); if (f.dst_ip) ips.add(f.dst_ip) })
+    talkers.forEach((t) => { if (t.src_ip) ips.add(t.src_ip) })
+    const todo = Array.from(ips).filter((ip) => hostnameMap[ip] === undefined)
+    if (todo.length === 0) return
+    let cancelled = false
+    setResolving(true)
+    const batches: string[][] = []
+    for (let i = 0; i < todo.length; i += 50) batches.push(todo.slice(i, i + 50))
+    Promise.all(batches.map((b) => resolveFlowIps(b).catch(() => ({}))))
+      .then((results) => {
+        if (cancelled) return
+        setHostnameMap((prev) => Object.assign({}, prev, ...results))
+      })
+      .finally(() => { if (!cancelled) setResolving(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolveHostnames, flowsQ.data, talkersQ.data])
+
+  // IP → display label: resolved hostname when enabled & known, else the IP.
+  const displayIp = (ip: string): string => {
+    if (!resolveHostnames) return ip
+    const h = hostnameMap[ip]
+    return h && h !== ip ? h : ip
+  }
+
   return (
     <div className="space-y-6">
       {/* Header + window selector */}
@@ -85,21 +132,44 @@ export default function Flows() {
             NetFlow / sFlow traffic — top talkers, protocols, and recent conversations
           </p>
         </div>
-        <div className="flex gap-1">
-          {WINDOWS.map((w) => (
-            <button
-              key={w}
-              onClick={() => setWindow(w)}
-              className={clsx(
-                'px-3 py-1 text-sm rounded-md border',
-                window === w
-                  ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
-                  : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800',
-              )}
-            >
-              {w}
-            </button>
-          ))}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Resolve hostnames toggle */}
+          <button
+            type="button"
+            onClick={() => toggleResolve(!resolveHostnames)}
+            className={clsx(
+              'flex items-center gap-2 px-3 py-1 text-sm rounded-md border transition-colors',
+              resolveHostnames
+                ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
+                : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800',
+            )}
+            title="Resolve source/destination IPs to hostnames (inventory + reverse DNS)"
+            aria-pressed={resolveHostnames}
+          >
+            <span>🔍 Resolve hostnames</span>
+            <span className={clsx('relative inline-block w-8 h-4 rounded-full transition-colors',
+              resolveHostnames ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600')}>
+              <span className={clsx('absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all',
+                resolveHostnames ? 'left-4' : 'left-0.5')} />
+            </span>
+            {resolving && <span className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />}
+          </button>
+          <div className="flex gap-1">
+            {WINDOWS.map((w) => (
+              <button
+                key={w}
+                onClick={() => setWindow(w)}
+                className={clsx(
+                  'px-3 py-1 text-sm rounded-md border',
+                  window === w
+                    ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
+                    : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800',
+                )}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -139,8 +209,8 @@ export default function Flows() {
                   {talkers.map((t) => (
                     <tr key={t.src_ip} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                       <td className="px-5 py-2">
-                        <button onClick={() => setIpFilter(t.src_ip)} className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                          {t.src_ip}
+                        <button onClick={() => setIpFilter(t.src_ip)} title={t.src_ip} className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline">
+                          {displayIp(t.src_ip)}
                         </button>
                       </td>
                       <td className="px-5 py-2 text-right font-mono text-xs text-gray-700 dark:text-gray-300">{fmtBytes(t.bytes)}</td>
@@ -175,7 +245,7 @@ export default function Flows() {
             </span>
           )}
         </div>
-        <FlowsTable rows={flowsQ.data?.results ?? []} loading={flowsQ.isLoading} onIpClick={setIpFilter} />
+        <FlowsTable rows={flowRows} loading={flowsQ.isLoading} onIpClick={setIpFilter} displayIp={displayIp} />
         <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
           {(flowsQ.data?.results.length ?? 0).toLocaleString()} of {(flowsQ.data?.count ?? 0).toLocaleString()} flows
         </div>

@@ -28,6 +28,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import AdminOnly
+
 from .protocols import PROTOCOL_NUMBERS, protocol_name, service_name
 
 logger = logging.getLogger(__name__)
@@ -657,3 +659,34 @@ class FlowSankeyView(APIView):
             "nodes": [{"name": n} for n in names],
             "links": links,
         }
+
+
+class FlowResolveView(APIView):
+    """POST {ips:[...]} → {resolved:{ip:hostname}, ...}.
+
+    Reverse-DNS enrichment for the Flow Analytics table (inventory-first, then
+    cached rDNS). Unresolved IPs map back to themselves. Capped at 100 IPs.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .dns import resolve_ips
+        ips = request.data.get("ips") or []
+        if not isinstance(ips, list):
+            return Response({"resolved": {}, "total": 0, "error": "ips must be a list"}, status=400)
+        if not ips:
+            return Response({"resolved": {}, "total": 0, "cached": 0,
+                             "resolved_now": 0, "from_inventory": 0, "failed": 0})
+        return Response(resolve_ips([str(ip) for ip in ips]))
+
+
+class FlowResolveClearCacheView(APIView):
+    """POST → clear all dns_resolve_* cache entries (admin only)."""
+
+    permission_classes = [AdminOnly]
+
+    def post(self, request):
+        from .dns import clear_cache
+        cleared = clear_cache()
+        return Response({"cleared": cleared})
