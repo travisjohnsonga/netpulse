@@ -858,14 +858,14 @@ class TestHostnameRuleEndpoints:
 
 class TestDeviceComplianceColumn:
     def _result(self, device, score, when=None):
-        import uuid
+        # The device list now reads the WEIGHTED DeviceComplianceScore (one per
+        # device); calling this twice updates the same row (latest wins).
         from django.utils import timezone
-        from apps.compliance.models import ComplianceTemplate, ComplianceTemplateResult
-        tmpl = ComplianceTemplate.objects.create(
-            name=f"t-{uuid.uuid4().hex[:8]}", template_content="x")
-        return ComplianceTemplateResult.objects.create(
-            device=device, template=tmpl, status="satisfied", score=score,
-            checked_at=when or timezone.now())
+        from apps.compliance.models import DeviceComplianceScore
+        obj, _ = DeviceComplianceScore.objects.update_or_create(
+            device=device,
+            defaults={"score": score, "grade": "", "checked_at": when or timezone.now()})
+        return obj
 
     @staticmethod
     def _rows(resp):

@@ -37,6 +37,27 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+def _refresh_stored_scores(run_result: dict) -> None:
+    """Re-persist the weighted DeviceComplianceScore for every device a rule run
+    touched, so the device list reflects the updated interface/role result.
+
+    Best-effort: a shared role_cache evaluates each role rule once across the
+    set; any per-device failure is logged, never raised.
+    """
+    ids = {r.get("device_id") for r in (run_result.get("results") or []) if r.get("device_id")}
+    if not ids:
+        return
+    from apps.devices.models import Device
+
+    from .device_score import run_and_store_compliance
+    role_cache: dict = {}
+    for device in Device.objects.filter(id__in=ids):
+        try:
+            run_and_store_compliance(device, role_cache=role_cache)
+        except Exception as exc:  # noqa: BLE001 — scoring must not break the run
+            logger.warning("score refresh failed for %s: %s", device.hostname, exc)
+
+
 class CompliancePolicyViewSet(viewsets.ModelViewSet):
     queryset = CompliancePolicy.objects.prefetch_related("rules").all()
     serializer_class = CompliancePolicySerializer
@@ -278,7 +299,9 @@ class InterfaceComplianceRuleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def run(self, request, pk=None):
         from .interface_compliance import run_interface_compliance
-        return Response(run_interface_compliance(self.get_object()))
+        result = run_interface_compliance(self.get_object())
+        _refresh_stored_scores(result)
+        return Response(result)
 
 
 class InterfaceComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
@@ -320,4 +343,6 @@ class RoleConsistencyRuleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def run(self, request, pk=None):
         from .role_consistency import run_role_consistency
-        return Response(run_role_consistency(self.get_object()))
+        result = run_role_consistency(self.get_object())
+        _refresh_stored_scores(result)
+        return Response(result)

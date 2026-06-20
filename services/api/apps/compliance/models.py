@@ -345,3 +345,26 @@ class RoleConsistencyRule(TimestampedModel):
 
     def __str__(self):
         return self.name
+
+
+class DeviceComplianceScore(TimestampedModel):
+    """Persisted weighted compliance score per device.
+
+    Mirrors what ``calculate_device_compliance_score`` returns for the
+    Compliance tab, so the device list (and any roll-up) shows the SAME
+    combined score (template 50% + interface 30% + role 20%, renormalised),
+    not the template-only ``ComplianceTemplateResult.score``. Written by
+    ``run_and_store_compliance`` after each compliance/config-collection run.
+    """
+    device = models.OneToOneField(
+        Device, on_delete=models.CASCADE, related_name="compliance_summary")
+    score = models.FloatField(null=True, blank=True, help_text="0.0-100.0 weighted %")
+    grade = models.CharField(max_length=2, blank=True)
+    template_score = models.FloatField(null=True, blank=True)
+    interface_score = models.FloatField(null=True, blank=True)
+    role_score = models.FloatField(null=True, blank=True)
+    startup_match = models.BooleanField(null=True)
+    checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    def __str__(self):
+        return f"{self.device} = {self.score} ({self.grade})"

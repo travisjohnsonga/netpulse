@@ -129,3 +129,43 @@ class TestComplianceEndpoint:
         # back-compat keys still present
         assert body["overall_score"] == 90
         assert isinstance(body["results"], list)
+
+
+# ── persisted weighted score (DeviceComplianceScore) ─────────────────────────
+
+class TestStoredWeightedScore:
+    def test_run_and_store_upserts_weighted_score(self, device):
+        from apps.compliance.models import DeviceComplianceScore
+        _template_result(device, 40.0)   # template-only would show 40
+        result = device_score.run_and_store_compliance(device)
+
+        row = DeviceComplianceScore.objects.get(device=device)
+        assert row.score == result["score"]
+        assert row.grade == result["grade"]
+        assert row.template_score == 40.0
+        assert row.checked_at is not None
+
+        # Idempotent: re-running updates the same row, not a second one.
+        _template_result(device, 90.0)
+        updated = device_score.run_and_store_compliance(device)
+        assert DeviceComplianceScore.objects.filter(device=device).count() == 1
+        row.refresh_from_db()
+        assert row.template_score == updated["template_score"]   # avg(40,90)=65
+        assert row.score == updated["score"]
+
+    def test_device_list_annotates_weighted_not_template_score(self, db):
+        """The device list subquery reads DeviceComplianceScore.score (weighted),
+        which can differ from the template-only ComplianceTemplateResult.score."""
+        from django.db.models import FloatField, OuterRef, Subquery
+
+        from apps.compliance.models import DeviceComplianceScore
+        dev = Device.objects.create(hostname="sw9", ip_address="10.9.9.9", platform="aos_cx")
+        _template_result(dev, 33.0)                       # template-only number
+        DeviceComplianceScore.objects.create(device=dev, score=72.0, grade="C")
+
+        latest = (DeviceComplianceScore.objects
+                  .filter(device=OuterRef("pk")).values("score")[:1])
+        annotated = (Device.objects.filter(pk=dev.pk)
+                     .annotate(compliance_score=Subquery(latest, output_field=FloatField()))
+                     .first())
+        assert annotated.compliance_score == 72.0         # weighted, not 33

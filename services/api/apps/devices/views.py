@@ -242,13 +242,14 @@ class DeviceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         from django.db.models import FloatField, OuterRef, Subquery
 
-        from apps.compliance.models import ComplianceTemplateResult
+        from apps.compliance.models import DeviceComplianceScore
 
-        # Annotate the latest stored template-compliance score per device in a
-        # single subquery — avoids an N+1 over the device list (no live scoring).
-        latest_score = (ComplianceTemplateResult.objects
+        # Annotate the stored WEIGHTED compliance score per device (template +
+        # interface + role + startup, renormalised) in a single subquery — the
+        # same number the Compliance tab shows, not the template-only score.
+        # Avoids an N+1 over the device list (no live scoring).
+        latest_score = (DeviceComplianceScore.objects
                         .filter(device=OuterRef("pk"))
-                        .order_by("-checked_at")
                         .values("score")[:1])
         qs = super().get_queryset().annotate(
             compliance_score=Subquery(latest_score, output_field=FloatField()))
@@ -609,14 +610,15 @@ class DeviceViewSet(viewsets.ModelViewSet):
         ``role_consistency_findings`` the Compliance tab renders. ``overall_score``
         (template-only average) and ``results`` are retained for back-compat.
         """
-        from apps.compliance.device_score import calculate_device_compliance_score
+        from apps.compliance.device_score import run_and_store_compliance
         from apps.compliance.serializers import ComplianceTemplateResultSerializer
         device = self.get_object()
 
         # Scoring can reach live devices over REST (role-consistency checks); a
-        # failure must not leak exception detail to the client (CodeQL).
+        # failure must not leak exception detail to the client (CodeQL). Storing
+        # the weighted score here keeps the device list in sync with this tab.
         try:
-            data = calculate_device_compliance_score(device)
+            data = run_and_store_compliance(device)
         except Exception as exc:  # noqa: BLE001
             return internal_error_response(exc, logger, f"device compliance score {device.pk}")
         template_data = ComplianceTemplateResultSerializer(data["template_results"], many=True).data

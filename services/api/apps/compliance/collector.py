@@ -744,6 +744,15 @@ def collect_one(device, collected_by: str = "scheduled") -> dict:
     )
     update_startup_match(device, target_cfg)
 
+    # Persist the combined weighted score so the device list shows the SAME
+    # number as the Compliance tab (template + interface + role + startup),
+    # not the template-only ComplianceTemplateResult.score. Best-effort.
+    try:
+        from .device_score import run_and_store_compliance
+        run_and_store_compliance(device)
+    except Exception as exc:  # noqa: BLE001 — scoring must not break collection
+        logger.warning("compliance score store failed for %s: %s", device.hostname, exc)
+
     elapsed = time.monotonic() - start
     if cfg is None:
         logger.info("config unchanged for %s (%s) — %.2fs", device.hostname, device.platform or "?", elapsed)

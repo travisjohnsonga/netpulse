@@ -284,8 +284,39 @@ def calculate_device_compliance_score(device, role_cache=None) -> dict:
         "grade": score_to_grade(overall),
         "breakdown": breakdown,
         "template_score": template_score,
+        "interface_score": iface_score,
+        "role_score": role_score,
+        "startup_match": startup["match"] if startup is not None else None,
         "template_results": template_results,
         "interface_rule_findings": iface_findings,
         "role_consistency_findings": role_findings,
         "startup_status": startup,
     }
+
+
+def run_and_store_compliance(device, role_cache=None) -> dict:
+    """Compute the weighted device score and persist it to DeviceComplianceScore.
+
+    Called after any input to the score changes (config collection → template +
+    startup reconciliation, interface-rule runs, role-consistency runs, or an
+    on-demand view of the Compliance tab) so the device list reads the SAME
+    weighted number the tab shows. Returns the full score dict.
+    """
+    from django.utils import timezone
+
+    from apps.compliance.models import DeviceComplianceScore
+
+    result = calculate_device_compliance_score(device, role_cache=role_cache)
+    DeviceComplianceScore.objects.update_or_create(
+        device=device,
+        defaults={
+            "score": result["score"],
+            "grade": result["grade"] or "",
+            "template_score": result.get("template_score"),
+            "interface_score": result.get("interface_score"),
+            "role_score": result.get("role_score"),
+            "startup_match": result.get("startup_match"),
+            "checked_at": timezone.now(),
+        },
+    )
+    return result
