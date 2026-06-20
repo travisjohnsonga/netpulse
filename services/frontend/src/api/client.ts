@@ -2024,6 +2024,7 @@ export interface UserPreferences {
   devices_page_size: number
   timezone: string
   date_format: 'iso' | 'us' | 'eu'
+  temperature_unit: 'C' | 'F'
   email_alerts: boolean
   slack_user_id: string
   discord_user_id: string

@@ -105,6 +105,10 @@ class UserPreferences(TimestampedModel):
         US    = "us",    "05/30/2026"
         EU    = "eu",    "30/05/2026"
 
+    class TemperatureUnit(models.TextChoices):
+        CELSIUS    = "C", "Celsius (°C)"
+        FAHRENHEIT = "F", "Fahrenheit (°F)"
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="preferences",
     )
@@ -124,6 +128,9 @@ class UserPreferences(TimestampedModel):
     # Display
     timezone = models.CharField(max_length=64, default="UTC")
     date_format = models.CharField(max_length=4, choices=DateFormat.choices, default=DateFormat.ISO)
+    # Temperatures are stored/returned in Celsius; this only controls display.
+    temperature_unit = models.CharField(
+        max_length=1, choices=TemperatureUnit.choices, default=TemperatureUnit.CELSIUS)
 
     # Notifications
     email_alerts = models.BooleanField(default=True)

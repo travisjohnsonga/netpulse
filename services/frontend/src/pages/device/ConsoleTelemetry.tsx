@@ -6,6 +6,7 @@ import {
   fetchDeviceUnifiConsole,
   type DeviceDetail, type UnifiConsoleDetail, type MetricPoint,
 } from '../../api/client'
+import { useTemperature } from '../../lib/temperature'
 
 const PERIODS = ['1h', '6h', '24h', '7d'] as const
 type Period = (typeof PERIODS)[number]
@@ -49,6 +50,7 @@ function LineChart({ title, unit, series }: {
 export default function ConsoleTelemetry({ device }: { device: DeviceDetail }) {
   const [data, setData] = useState<UnifiConsoleDetail | null>(null)
   const [period, setPeriod] = useState<Period>('1h')
+  const temp = useTemperature()
 
   useEffect(() => {
     let cancelled = false
@@ -93,7 +95,7 @@ export default function ConsoleTelemetry({ device }: { device: DeviceDetail }) {
             <Info label="CPU" value={s.cpu_pct != null ? `${Math.round(s.cpu_pct)}%` : '—'} />
             <Info label="Memory" value={s.memory_pct != null ? `${Math.round(s.memory_pct)}%` : '—'} />
             <Info label="Load (1m)" value={s.loadavg_1 != null ? s.loadavg_1.toFixed(2) : '—'} />
-            <Info label="Temp" value={s.temperature_c != null ? `${Math.round(s.temperature_c)}°C` : '—'} />
+            <Info label="Temp" value={temp.format(s.temperature_c, 0)} />
           </dl>
         </div>
 

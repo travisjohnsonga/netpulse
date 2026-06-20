@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { fetchPreferences, type UserPreferences } from '../api/client'
 import { useThemeStore } from './themeStore'
+import { useUnitsStore } from './unitsStore'
 
 interface PrefsState {
   prefs: UserPreferences | null
@@ -18,6 +19,7 @@ export const usePreferencesStore = create<PrefsState>((set) => ({
     try {
       const prefs = await fetchPreferences()
       useThemeStore.getState().syncFromServer(prefs.theme)
+      if (prefs.temperature_unit) useUnitsStore.getState().syncFromServer(prefs.temperature_unit)
       set({ prefs, loaded: true })
     } catch {
       set({ loaded: true })
@@ -25,6 +27,7 @@ export const usePreferencesStore = create<PrefsState>((set) => ({
   },
   set: (prefs) => {
     useThemeStore.getState().syncFromServer(prefs.theme)
+    if (prefs.temperature_unit) useUnitsStore.getState().syncFromServer(prefs.temperature_unit)
     set({ prefs })
   },
 }))

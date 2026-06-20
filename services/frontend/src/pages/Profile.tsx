@@ -7,6 +7,7 @@ import {
 import { parseApiErrors } from '../api/errors'
 import { useThemeStore, type Theme } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
+import { useUnitsStore, type TempUnit } from '../store/unitsStore'
 
 const card = 'bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5'
 const input = 'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -25,8 +26,16 @@ export default function Profile() {
   const [error, setError] = useState<string | null>(null)
   const { theme, setTheme } = useThemeStore()
   const setStorePrefs = usePreferencesStore((s) => s.set)
+  const tempUnit = useUnitsStore((s) => s.unit)
+  const setUnitStore = useUnitsStore((s) => s.setUnit)
 
   useEffect(() => { fetchMe().then(setMe).catch(() => setError('Failed to load profile.')) }, [])
+
+  // Apply instantly (localStorage + UI), then persist to the API in the background.
+  const changeTempUnit = (u: TempUnit) => {
+    setUnitStore(u)
+    patchPrefs({ temperature_unit: u }).catch(() => setError('Save failed.'))
+  }
 
   const patchPrefs = async (patch: Partial<UserPreferences>) => {
     const updated = await savePreferences(patch)
@@ -120,6 +129,21 @@ export default function Profile() {
                   onClick={() => patchPrefs({ date_format: v }).catch(() => setError('Save failed.'))}
                   className={clsx('px-3 py-2 text-xs rounded-lg border transition-colors',
                     p.date_format === v
+                      ? 'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                      : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800')}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className={label}>Temperature</label>
+            <div className="flex gap-2 pt-1">
+              {([['C', 'Celsius (°C)'], ['F', 'Fahrenheit (°F)']] as const).map(([v, l]) => (
+                <button key={v}
+                  onClick={() => changeTempUnit(v)}
+                  className={clsx('px-3 py-2 text-xs rounded-lg border transition-colors',
+                    tempUnit === v
                       ? 'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
                       : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800')}>
                   {l}

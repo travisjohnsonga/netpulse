@@ -6,6 +6,7 @@ import {
   fetchDeviceUnifiAp,
   type DeviceDetail, type UnifiApDetail, type MetricPoint,
 } from '../../api/client'
+import { useTemperature } from '../../lib/temperature'
 
 const PERIODS = ['1h', '6h', '24h', '7d'] as const
 type Period = (typeof PERIODS)[number]
@@ -77,6 +78,7 @@ export default function Wireless({ device }: { device: DeviceDetail }) {
   const [data, setData] = useState<UnifiApDetail | null>(null)
   const [period, setPeriod] = useState<Period>('1h')
   const [loading, setLoading] = useState(true)
+  const temp = useTemperature()
 
   useEffect(() => {
     let cancelled = false
@@ -125,7 +127,7 @@ export default function Wireless({ device }: { device: DeviceDetail }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
           <HealthStat label="CPU" value={status.cpu_pct != null ? `${Math.round(status.cpu_pct)}%` : '—'} />
           <HealthStat label="Memory" value={status.memory_pct != null ? `${Math.round(status.memory_pct)}%` : '—'} />
-          <HealthStat label="Temp" value={status.temperature_c != null ? `${Math.round(status.temperature_c)}°C` : '—'} />
+          <HealthStat label="Temp" value={temp.format(status.temperature_c, 0)} />
           <HealthStat label="Uptime" value={fmtUptime(status.uptime_seconds)} />
           <HealthStat label="Clients" value={String(status.client_count)} />
           <HealthStat

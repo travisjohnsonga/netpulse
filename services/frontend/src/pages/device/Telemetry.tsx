@@ -12,6 +12,7 @@ import {
 } from '../../api/client'
 import Modal from '../../components/Modal'
 import DeviceLink from '../../components/DeviceLink'
+import { useTemperature } from '../../lib/temperature'
 import DeviceAddModal, { type DeviceAddPrefill } from '../../components/DeviceAddModal'
 import { CollectionMethodBar } from '../../components/CollectionMethodBadges'
 import ReactECharts from 'echarts-for-react'
@@ -972,6 +973,7 @@ export function Environment({ device }: { device: DeviceDetail }) {
   const [loading, setLoading] = useState(true)
   const [polling, setPolling] = useState(false)
   const [pollToast, setPollToast] = useState<string | null>(null)
+  const temp = useTemperature()
 
   useEffect(() => {
     let cancelled = false
@@ -1042,7 +1044,7 @@ export function Environment({ device }: { device: DeviceDetail }) {
         </div>
         {pollToast && <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{pollToast}</p>}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <HealthCard label="Temperature" value={env?.temperature_c != null ? `${env.temperature_c}°C` : null}
+          <HealthCard label="Temperature" value={env?.temperature_c != null ? temp.format(env.temperature_c) : null}
             subtitle={`${tempSensors} sensor${tempSensors === 1 ? '' : 's'}`} />
           <HealthCard label="Fans" value={fanCount ? `${fanCount}` : null}
             subtitle={`${fanCount === 1 ? 'fan' : 'fans'} present`} />
@@ -1060,7 +1062,7 @@ export function Environment({ device }: { device: DeviceDetail }) {
             <EnvSection title="Temperature">
               {env!.sensors!.map((s) => (
                 <EnvRow key={s.sensor_name} icon="🌡" name={s.sensor_name}
-                  value={s.temperature_c != null ? `${s.temperature_c}°C` : '—'}
+                  value={s.temperature_c != null ? temp.format(s.temperature_c) : '—'}
                   statusOk={s.status_ok} statusText={s.status_ok ? 'OK' : 'Fault'} />
               ))}
             </EnvSection>
@@ -1266,6 +1268,13 @@ function PingLatencyChart({ reach }: { reach?: DeviceReachability }) {
 function TemperatureHistoryChart({ series }: { series?: MetricPoint[] }) {
   const data = series ?? []
   const hasData = data.length > 1
+  const temp = useTemperature()
+  // Values + thresholds are Celsius; convert both to the active unit so the
+  // zone colours and warn/crit lines stay meaningful in °F.
+  const cv = (c: number) => Math.round(temp.convert(c) * 10) / 10
+  const warn = cv(75)
+  const crit = cv(85)
+  const suffix = temp.suffix
 
   const option: EChartsOption = {
     grid: { left: 40, right: 14, top: 14, bottom: 26 },
@@ -1275,33 +1284,33 @@ function TemperatureHistoryChart({ series }: { series?: MetricPoint[] }) {
         const p = Array.isArray(params) ? params[0] : params
         const v = Array.isArray(p.value) ? p.value[1] : p.value
         const t = new Date(Array.isArray(p.value) ? p.value[0] : p.axisValue).toLocaleString()
-        return v == null ? `${t}<br/>no data` : `${t}<br/>${Number(v).toFixed(1)}°C`
+        return v == null ? `${t}<br/>no data` : `${t}<br/>${Number(v).toFixed(1)}${suffix}`
       },
     },
     xAxis: { type: 'time', axisLabel: { fontSize: 10 } },
-    yAxis: { type: 'value', name: '°C', nameTextStyle: { fontSize: 10 }, scale: true, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: suffix, nameTextStyle: { fontSize: 10 }, scale: true, axisLabel: { fontSize: 10 } },
     visualMap: {
       show: false, dimension: 1, seriesIndex: 0,
       pieces: [
-        { lte: 60, color: '#22c55e' },
-        { gt: 60, lte: 75, color: '#eab308' },
-        { gt: 75, lte: 85, color: '#f97316' },
-        { gt: 85, color: '#ef4444' },
+        { lte: cv(60), color: '#22c55e' },
+        { gt: cv(60), lte: warn, color: '#eab308' },
+        { gt: warn, lte: crit, color: '#f97316' },
+        { gt: crit, color: '#ef4444' },
       ],
       outOfRange: { color: '#ef4444' },
     },
     series: [{
       type: 'line', showSymbol: false, smooth: true, connectNulls: false,
-      data: data.map((p) => [p.time, p.value]),
+      data: data.map((p) => [p.time, p.value == null ? null : cv(p.value)]),
       lineStyle: { width: 1.5 },
       areaStyle: { opacity: 0.08 },
       markLine: {
         silent: true, symbol: 'none',
         data: [
-          { yAxis: 75, lineStyle: { color: '#eab308', type: 'dashed', width: 1 },
-            label: { formatter: 'warn 75°C', fontSize: 9, color: '#eab308', position: 'insideEndTop' } },
-          { yAxis: 85, lineStyle: { color: '#ef4444', type: 'dashed', width: 1 },
-            label: { formatter: 'crit 85°C', fontSize: 9, color: '#ef4444', position: 'insideEndTop' } },
+          { yAxis: warn, lineStyle: { color: '#eab308', type: 'dashed', width: 1 },
+            label: { formatter: `warn ${warn}${suffix}`, fontSize: 9, color: '#eab308', position: 'insideEndTop' } },
+          { yAxis: crit, lineStyle: { color: '#ef4444', type: 'dashed', width: 1 },
+            label: { formatter: `crit ${crit}${suffix}`, fontSize: 9, color: '#ef4444', position: 'insideEndTop' } },
         ],
       },
     }],
