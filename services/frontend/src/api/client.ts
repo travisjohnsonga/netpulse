@@ -231,6 +231,11 @@ export interface TopologyEdge {
   link_count?: number
   label?: string
   links?: TopologyLinkMember[]
+  // Operator-defined manual links (devices without LLDP/CDP).
+  manual?: boolean
+  manual_id?: number
+  link_type?: ManualLinkType
+  description?: string
   // legacy/optional util fields (no longer emitted by the backend)
   utilization_pct?: number
   utilization_color?: string
@@ -239,6 +244,61 @@ export interface TopologyEdge {
 export interface TopologyData {
   nodes: TopologyNode[]
   edges: TopologyEdge[]
+}
+
+export type ManualLinkType =
+  | 'ethernet' | 'fiber' | 'wan' | 'lacp' | 'mgmt' | 'virtual' | 'other'
+
+export interface ManualTopologyLink {
+  id: number
+  device_a: number
+  device_a_hostname: string
+  interface_a: string
+  device_b: number
+  device_b_hostname: string
+  interface_b: string
+  link_type: ManualLinkType
+  link_type_display: string
+  speed_mbps: number | null
+  description: string
+  created_by_username: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ManualLinkPayload {
+  device_a: number
+  interface_a?: string
+  device_b: number
+  interface_b?: string
+  link_type: ManualLinkType
+  speed_mbps?: number | null
+  description?: string
+}
+
+export async function fetchManualLinks(params?: Record<string, string>): Promise<ManualTopologyLink[]> {
+  const { data } = await api.get<MaybePaginated<ManualTopologyLink>>('/topology/manual-links/', { params })
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+export async function createManualLink(payload: ManualLinkPayload): Promise<ManualTopologyLink> {
+  const { data } = await api.post<ManualTopologyLink>('/topology/manual-links/', payload)
+  return data
+}
+
+export async function updateManualLink(id: number, payload: ManualLinkPayload): Promise<ManualTopologyLink> {
+  const { data } = await api.put<ManualTopologyLink>(`/topology/manual-links/${id}/`, payload)
+  return data
+}
+
+export async function deleteManualLink(id: number): Promise<void> {
+  await api.delete(`/topology/manual-links/${id}/`)
+}
+
+// Color per manual link type — shared by the topology map + management UI.
+export const MANUAL_LINK_COLORS: Record<ManualLinkType, string> = {
+  ethernet: '#4f86c6', fiber: '#10b981', wan: '#f59e0b',
+  lacp: '#8b5cf6', mgmt: '#6b7280', virtual: '#ec4899', other: '#94a3b8',
 }
 
 // ── Credentials ────────────────────────────────────────────────────────────

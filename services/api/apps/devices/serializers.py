@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from .models import (
     Device, DeviceGroup, DeviceRole, DiscoveredDevice, DiscoveryJob,
-    HostnameRule, LLDPNeighbor, Site,
+    HostnameRule, LLDPNeighbor, ManualTopologyLink, Site,
 )
 
 
@@ -367,3 +367,34 @@ class LLDPNeighborSerializer(serializers.ModelSerializer):
     def get_guessed_platform(self, obj) -> str:
         from .lldp import guess_platform
         return guess_platform(obj.system_description)
+
+
+class ManualTopologyLinkSerializer(serializers.ModelSerializer):
+    """Operator-defined topology link (for devices without LLDP/CDP)."""
+
+    device_a_hostname = serializers.CharField(source="device_a.hostname", read_only=True)
+    device_b_hostname = serializers.CharField(source="device_b.hostname", read_only=True)
+    link_type_display = serializers.CharField(source="get_link_type_display", read_only=True)
+    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+    site_a = serializers.IntegerField(source="device_a.site_id", read_only=True)
+    site_b = serializers.IntegerField(source="device_b.site_id", read_only=True)
+    # Defaults so the auto UniqueTogetherValidator doesn't force these as required.
+    interface_a = serializers.CharField(required=False, allow_blank=True, default="", max_length=64)
+    interface_b = serializers.CharField(required=False, allow_blank=True, default="", max_length=64)
+
+    class Meta:
+        model = ManualTopologyLink
+        fields = (
+            "id", "device_a", "device_a_hostname", "interface_a",
+            "device_b", "device_b_hostname", "interface_b",
+            "link_type", "link_type_display", "speed_mbps", "description",
+            "created_by_username", "site_a", "site_b", "created_at", "updated_at",
+        )
+        read_only_fields = ("created_by_username", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        a = attrs.get("device_a", getattr(self.instance, "device_a", None))
+        b = attrs.get("device_b", getattr(self.instance, "device_b", None))
+        if a and b and a == b:
+            raise serializers.ValidationError("A link must connect two different devices.")
+        return attrs

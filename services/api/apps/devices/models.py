@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import models
 
@@ -395,6 +396,50 @@ class TopologyLink(TimestampedModel):
 
     def __str__(self):
         return f"{self.device_a.hostname}:{self.port_a} ↔ {self.device_b.hostname}:{self.port_b}"
+
+
+class ManualTopologyLink(TimestampedModel):
+    """An operator-defined link between two devices for topology visualization.
+
+    Used when LLDP/CDP isn't available (firewalls, older gear, virtual/WAN
+    links). Rendered alongside discovered links but flagged ``manual`` so the UI
+    can style them distinctly.
+    """
+
+    class LinkType(models.TextChoices):
+        ETHERNET = "ethernet", "Ethernet"
+        FIBER = "fiber", "Fiber"
+        WAN = "wan", "WAN Circuit"
+        LACP = "lacp", "LACP/LAG"
+        MGMT = "mgmt", "Management"
+        VIRTUAL = "virtual", "Virtual/Tunnel"
+        OTHER = "other", "Other"
+
+    device_a = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="manual_links_a")
+    interface_a = models.CharField(max_length=64, blank=True)
+    device_b = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="manual_links_b")
+    interface_b = models.CharField(max_length=64, blank=True)
+
+    link_type = models.CharField(max_length=20, choices=LinkType.choices, default=LinkType.ETHERNET)
+    speed_mbps = models.IntegerField(null=True, blank=True)
+    description = models.CharField(max_length=256, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="manual_links_created")
+
+    class Meta(TimestampedModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device_a", "interface_a", "device_b", "interface_b"],
+                name="unique_manual_topology_link",
+            ),
+        ]
+        indexes = [models.Index(fields=["device_a"]), models.Index(fields=["device_b"])]
+
+    def __str__(self):
+        return (f"{self.device_a.hostname}[{self.interface_a}] ↔ "
+                f"{self.device_b.hostname}[{self.interface_b}]")
 
 
 class LLDPNeighbor(TimestampedModel):

@@ -45,6 +45,7 @@ const navEntries: NavEntry[] = [
       { label: 'Wireless', href: '/wireless', icon: '📶' },
       { label: 'Wireless Location', href: '/wireless/location', icon: '📍' },
       { label: 'Topology', href: '/topology', icon: '🗺️' },
+      { label: 'Manual Links', href: '/network/manual-links', icon: '🔗' },
       { label: 'LLDP Neighbors', href: '/lldp-neighbors', icon: '📡', badge: 'lldp' },
       { label: 'Flow Analytics', href: '/flows', icon: '〰️' },
       { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍' },

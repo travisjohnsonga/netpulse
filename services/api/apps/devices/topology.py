@@ -115,6 +115,37 @@ def build_edges(topology_links, lldp_neighbors, dev_ids) -> list[dict]:
             "speed_mbps": max(speeds) if speeds else None,
             # First link's ports kept at top level for back-compat / simple labels.
             "port_a": link_list[0]["port_a"], "port_b": link_list[0]["port_b"],
+            "manual": False,
+        })
+    return edges
+
+
+def build_manual_edges(manual_links, dev_ids) -> list[dict]:
+    """Edges for operator-defined ManualTopologyLink rows, flagged ``manual``.
+
+    Kept as separate edges (not merged into discovered ones) so the UI can style
+    them distinctly and carry the link type / description / speed.
+    """
+    edges = []
+    for ln in manual_links:
+        a, b = ln.device_a_id, ln.device_b_id
+        if a == b or a not in dev_ids or b not in dev_ids:
+            continue
+        if a <= b:
+            low, high, pa, pb = a, b, ln.interface_a, ln.interface_b
+        else:
+            low, high, pa, pb = b, a, ln.interface_b, ln.interface_a
+        edges.append({
+            "source": str(low), "target": str(high),
+            "manual": True,
+            "manual_id": ln.id,
+            "link_type": ln.link_type,
+            "description": ln.description,
+            "speed_mbps": ln.speed_mbps,
+            "link_count": 1,
+            "label": "",
+            "links": [{"port_a": pa, "port_b": pb, "speed_mbps": ln.speed_mbps}],
+            "port_a": pa, "port_b": pb,
         })
     return edges
 

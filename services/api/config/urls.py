@@ -37,6 +37,7 @@ urlpatterns = [
     # to the explicit views rather than the DeviceViewSet detail routes.
     path("api/", include("apps.arp_mac.urls")),
     path("api/devices/",     include("apps.devices.urls")),
+    path("api/topology/",    include("apps.devices.topology_urls")),
     path("api/sites/",       include((_sites_router.urls, "sites"))),
     path("api/credentials/", include("apps.credentials.urls")),
     path("api/telemetry/",   include("apps.telemetry.urls")),
