@@ -119,10 +119,20 @@ def _openbao_healthy() -> bool:
 
 
 def _netpulse_version() -> str:
-    """Best-effort version string (git describe), else env, else 'unknown'."""
+    """Best-effort version string.
+
+    Order: explicit ``NETPULSE_VERSION`` → the git commit/count baked into the
+    image at build time (``1.0.<count> (<commit>)``; the image has no .git) →
+    a live ``git describe`` (dev checkouts) → ``unknown``.
+    """
     env_ver = os.environ.get("NETPULSE_VERSION", "")
     if env_ver:
         return env_ver
+    # Baked by the Dockerfile from build args (see netpulse.sh / scripts/update.sh).
+    commit = os.environ.get("NETPULSE_GIT_COMMIT", "")
+    count = os.environ.get("NETPULSE_GIT_COUNT", "")
+    if commit:
+        return f"1.0.{count} ({commit})" if count else commit
     try:
         import subprocess
 

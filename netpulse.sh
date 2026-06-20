@@ -220,8 +220,46 @@ LOGROTATE
       echo "  (directory does not exist)"
     fi
     ;;
+  update)
+    # Safe self-update: snapshot, .env back-fill, DB backup, migrate, rebuild,
+    # health verify. Pass --yes to skip the confirmation prompt.
+    bash "$(dirname "$0")/scripts/update.sh" "${2:-}"
+    ;;
+  show-version)
+    if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+      VER_FILE="$(cat VERSION 2>/dev/null || echo '')"
+      echo "spane version: ${VER_FILE:+$VER_FILE — }1.0.$(git rev-list --count HEAD) ($(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD))"
+    else
+      echo "spane version: $(cat VERSION 2>/dev/null || echo unknown)"
+    fi
+    echo ""
+    echo "Update history (last 10):"
+    tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
+    ;;
+  rollback)
+    # Roll the working tree back to a pre-update snapshot tag, then rebuild.
+    echo "Recent pre-update snapshots:"
+    git tag 2>/dev/null | grep '^pre-update-' | sort -r | head -5 || true
+    echo ""
+    SNAP="${2:-}"
+    if [ -z "$SNAP" ]; then
+      read -r -p "Snapshot tag to restore (blank to abort): " SNAP
+    fi
+    [ -z "$SNAP" ] && { echo "Aborted."; exit 1; }
+    if ! git rev-parse "$SNAP" >/dev/null 2>&1; then
+      echo "❌ Unknown snapshot: $SNAP"; exit 1
+    fi
+    echo "⚠️  Rolling back to $SNAP and rebuilding. The DB is NOT downgraded —"
+    echo "    restore a .update-db-backup-*.sql.gz manually if a migration must be reverted."
+    read -r -p "Continue? [y/N]: " c; case "${c:-}" in y|Y) ;; *) echo "Aborted."; exit 1 ;; esac
+    git checkout "$SNAP"
+    GIT_COMMIT="$(git rev-parse --short HEAD)" GIT_COUNT="$(git rev-list --count HEAD)" \
+      BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$0" rebuild-api
+    "$0" rebuild-frontend
+    echo "✅ Rolled back to $SNAP. You are in 'detached HEAD' — git checkout main when ready."
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|install-watchdog|remove-watchdog|watchdog-status|backup|restore <file>|list-backups|logs [service]}"
+    echo "Usage: $0 {start|stop|restart|rebuild [service]|rebuild-api|rebuild-frontend|update|show-version|rollback|fix-nat|install-service|uninstall-service|service-status|status|health|credentials|credentials-hint|reset-admin-password|install-watchdog|remove-watchdog|watchdog-status|backup|restore <file>|list-backups|logs [service]}"
     echo ""
     echo "  start              Start all services"
     echo "  stop               Stop all services"
@@ -230,6 +268,10 @@ LOGROTATE
     echo "  rebuild-api        Rebuild the api image and recreate all api-based"
     echo "                     services (--no-deps; infra left running)"
     echo "  rebuild-frontend   Rebuild and recreate the frontend (--no-deps)"
+    echo "  update [--yes]     Safe self-update (snapshot, .env back-fill, DB backup,"
+    echo "                     migrate, rebuild, health verify; --yes skips the prompt)"
+    echo "  show-version       Show the running version + recent update history"
+    echo "  rollback [tag]     Roll back to a pre-update snapshot tag and rebuild"
     echo "  fix-nat            Re-apply the Docker NAT rule (run after a reboot if"
     echo "                     SNMP/SSH from containers stops working)"
     echo "  install-service    Install + enable the systemd service (start on boot)"

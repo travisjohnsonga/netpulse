@@ -329,20 +329,37 @@ sudo systemctl enable netpulse.service
 
 ## Updating spane
 
-```bash
-./scripts/update.sh
-```
-The update script shows the current vs latest version, lists what changed, asks
-to confirm, then pulls `origin/main`, rebuilds only the services that changed
-(migrations run on api startup), and reports the new version. The running
-version is shown in the sidebar (a `v1.0.NNN` badge that turns amber with `↑`
-when an update is available — `GET /api/version/check/` compares against GitHub).
+Always use the update command rather than running `docker compose` by hand — it
+applies migrations and back-fills new config that a plain `up -d` would miss:
 
-Manual equivalent:
 ```bash
-git pull origin main
-./netpulse.sh rebuild-api      # and rebuild-frontend if the UI changed
+./netpulse.sh update          # add --yes to skip the confirmation prompt
 ```
+
+The update flow:
+1. Tags a **rollback point** (`pre-update-<timestamp>` git tag).
+2. Shows current vs latest version and what changed, then asks to confirm.
+3. Pulls `origin/main` (fast-forward only; refuses a dirty tree).
+4. **Back-fills new `.env` variables** from `.env.example` (warns which it added).
+5. **Backs up the database** (`pg_dump`) to `.update-db-backup-*.sql.gz`.
+6. Rebuilds the changed services (version stamped into the image).
+7. **Applies migrations explicitly**, then re-applies the Docker NAT rule.
+8. **Verifies `/api/health/`** — on failure it prints the DB-backup path and the
+   rollback command, and exits non-zero.
+
+Each run appends a line to `.update-history.log`.
+
+```bash
+./netpulse.sh show-version     # running version + recent update history
+./netpulse.sh rollback         # pick a pre-update snapshot tag and rebuild
+```
+
+> Rollback reverts **code** (and rebuilds), not the database. If a migration
+> must be undone, restore the matching `.update-db-backup-*.sql.gz` first.
+
+The running version is also shown in the sidebar (a `v1.0.NNN` badge that turns
+amber with `↑` when an update is available — `GET /api/version/check/` compares
+against GitHub) and returned by `GET /api/health/`.
 
 Update checks hit the public GitHub repo (no token needed). For a private repo
 set `GITHUB_TOKEN` in `.env`, or disable with `VERSION_CHECK_ENABLED=false`.
