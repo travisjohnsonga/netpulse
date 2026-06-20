@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { checkInfraHealth } from '../../api/client'
 
 /**
  * Shared layout for the /tv/* fullscreen dashboards — built for an always-on
@@ -61,7 +62,14 @@ export default function TVLayout({
 }) {
   const [countdown, setCountdown] = useState(refreshInterval)
   const [now, setNow] = useState(() => new Date().toLocaleString())
+  const [version, setVersion] = useState<string | null>(null)
   const startedRef = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    checkInfraHealth().then((h) => { if (!cancelled) setVersion(h.version || null) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     setCountdown(refreshInterval)
@@ -89,14 +97,16 @@ export default function TVLayout({
 
       <main className="flex-1 overflow-hidden p-8">{children}</main>
 
-      <footer className="px-8 py-2 text-base" style={{ color: TV.muted, borderTop: `1px solid ${TV.card}` }}>
+      <footer className="px-8 py-2 text-base flex items-center justify-between gap-4"
+              style={{ color: TV.muted, borderTop: `1px solid ${TV.card}` }}>
         {rotation ? (
-          <div className="h-2 w-full rounded-full" style={{ background: TV.card }}>
+          <div className="h-2 flex-1 rounded-full" style={{ background: TV.card }}>
             <div className="h-2 rounded-full" style={{ width: `${rotation.progressPct}%`, background: TV.accent, transition: 'width 1s linear' }} />
           </div>
         ) : (
-          now
+          <span>{now}</span>
         )}
+        {version && <span className="shrink-0">spane v{version}</span>}
       </footer>
     </div>
   )

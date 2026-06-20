@@ -61,3 +61,44 @@ class TestVersion:
         assert r.status_code == 200
         assert r.json()["update_available"] is False  # no badge, no error
         cache.delete(v._CACHE_KEY)
+
+
+class TestHealthVersionResolution:
+    """_netpulse_version() (the source for /api/health/[infrastructure/])."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch):
+        for var in ("SPANE_VERSION", "NETPULSE_VERSION"):
+            monkeypatch.delenv(var, raising=False)
+        from apps.core import views
+        # Point the VERSION-file lookup at a path that doesn't exist by default.
+        monkeypatch.setattr(views, "_VERSION_FILE", "/nonexistent/VERSION")
+        yield
+
+    def test_spane_version_env_wins(self, monkeypatch):
+        from apps.core import views
+        monkeypatch.setenv("SPANE_VERSION", "v0.2.0")
+        assert views._netpulse_version() == "v0.2.0"
+
+    def test_dev_sentinel_ignored_falls_to_settings(self, monkeypatch):
+        from apps.core import views
+        monkeypatch.setenv("SPANE_VERSION", "dev")
+        # 'dev' skipped → settings.VERSION (1.0.<count>).
+        assert views._netpulse_version().startswith("1.0.")
+
+    def test_version_file_used(self, monkeypatch, tmp_path):
+        from apps.core import views
+        vf = tmp_path / "VERSION"
+        vf.write_text("0.1.0\n")
+        monkeypatch.setattr(views, "_VERSION_FILE", str(vf))
+        assert views._netpulse_version() == "0.1.0"
+
+    def test_falls_back_to_settings_version(self):
+        from apps.core import views
+        assert views._netpulse_version().startswith("1.0.")
+
+    @pytest.mark.django_db
+    def test_infrastructure_health_reports_version(self, auth_client, monkeypatch):
+        monkeypatch.setenv("SPANE_VERSION", "v9.9.9")
+        resp = auth_client.get("/api/health/infrastructure/")
+        assert resp.json()["version"] == "v9.9.9"

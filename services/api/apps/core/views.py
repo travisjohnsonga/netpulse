@@ -118,33 +118,40 @@ def _openbao_healthy() -> bool:
         return False
 
 
+# Bind-mounted from the repo root (docker-compose api volumes); module-level so
+# tests can point it elsewhere.
+_VERSION_FILE = "/app/VERSION"
+
+
 def _netpulse_version() -> str:
-    """Best-effort version string.
+    """Best-effort version string, in priority order:
 
-    Order: explicit ``NETPULSE_VERSION`` → the git commit/count baked into the
-    image at build time (``1.0.<count> (<commit>)``; the image has no .git) →
-    a live ``git describe`` (dev checkouts) → ``unknown``.
+    1. ``SPANE_VERSION`` / ``NETPULSE_VERSION`` env (set by the update script /
+       release; ``dev``/empty is ignored).
+    2. the bind-mounted ``/app/VERSION`` file (updates without a rebuild).
+    3. ``settings.VERSION`` — ``1.0.<commit-count>`` computed from the git info
+       baked into the image (also what ``/api/version/`` returns), or a live
+       count in dev checkouts.
     """
-    env_ver = os.environ.get("NETPULSE_VERSION", "")
-    if env_ver:
-        return env_ver
-    # Baked by the Dockerfile from build args (see netpulse.sh / scripts/update.sh).
-    commit = os.environ.get("NETPULSE_GIT_COMMIT", "")
-    count = os.environ.get("NETPULSE_GIT_COUNT", "")
-    if commit:
-        return f"1.0.{count} ({commit})" if count else commit
-    try:
-        import subprocess
+    for var in ("SPANE_VERSION", "NETPULSE_VERSION"):
+        v = os.environ.get(var, "").strip()
+        if v and v.lower() != "dev":
+            return v
 
-        out = subprocess.run(
-            ["git", "describe", "--tags", "--always"],
-            capture_output=True, text=True, timeout=2.0,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout.strip()
+    try:
+        from pathlib import Path
+
+        vf = Path(_VERSION_FILE)
+        if vf.is_file():
+            v = vf.read_text().strip()
+            if v:
+                return v
     except Exception:
         pass
-    return "unknown"
+
+    from django.conf import settings
+
+    return getattr(settings, "VERSION", "") or "unknown"
 
 
 @extend_schema(

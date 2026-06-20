@@ -68,6 +68,18 @@ git pull --ff-only origin main
 CHANGED="$(git diff --name-only "$SNAPSHOT_TAG..HEAD" 2>/dev/null || echo '')"
 log "New version: $(version_str)"
 
+# Stamp the precise version into .env so /api/health/ reports it (the api also
+# reads the bind-mounted VERSION file as a fallback).
+NEW_VER="$(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+if [ -f .env ]; then
+  if grep -q '^SPANE_VERSION=' .env; then
+    sed -i "s|^SPANE_VERSION=.*|SPANE_VERSION=${NEW_VER}|" .env
+  else
+    echo "SPANE_VERSION=${NEW_VER}" >> .env
+  fi
+  log "Stamped SPANE_VERSION=${NEW_VER}"
+fi
+
 # ── 3. Back-fill new .env variables from .env.example ─────────────────────────
 if [ -f .env ] && [ -f .env.example ]; then
   log "Checking for new environment variables..."

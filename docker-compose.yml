@@ -217,6 +217,9 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
       SSL_DIR: /app/ssl
+      # Platform version surfaced by /api/health/ (also reads the bind-mounted
+      # /app/VERSION below). Set by scripts/update.sh; empty/dev is ignored.
+      SPANE_VERSION: ${SPANE_VERSION:-}
       # Only the api service seeds the initial superuser (idempotent) and
       # initialises/unseals OpenBao. Other api-image services share the
       # entrypoint but must not.
@@ -228,6 +231,9 @@ services:
       # NetPulse's own HTTPS cert/key — the API generates them here; nginx
       # (frontend) reads them from the same volume to serve TLS.
       - ssl-certs:/app/ssl
+      # Platform version marker — read by /api/health/ so the version updates
+      # without an image rebuild (scripts/update.sh refreshes it).
+      - ./VERSION:/app/VERSION:ro
       # OpenBao keys file (.init_keys) — api initialises/unseals and reads the
       # root token from here when OPENBAO_TOKEN is unset.
       - openbao-data:/openbao/data
