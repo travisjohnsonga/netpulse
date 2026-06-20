@@ -3,7 +3,7 @@
 > **unified infrastructure visibility**
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
-![Tests](https://img.shields.io/badge/tests-1135%20passing-green)
+![Tests](https://img.shields.io/badge/tests-1933%20passing-green)
 ![Docker](https://img.shields.io/badge/docker-24%20services-blue)
 
 > Unified infrastructure visibility platform. Monitor networks, servers, and
@@ -20,6 +20,45 @@ environment telemetry (CPU/memory/temp/fans/PSU), ARP/MAC table collection with
 OUI lookup, agentless service checks (HTTP/HTTPS/TCP/ICMP/DNS/TLS/SMTP/SSH),
 reachability/ping-latency monitoring, alerting with team routing + escalation
 (email/Slack/Discord) and maintenance windows, and SSO (Google OAuth2, Stage 1).
+
+---
+
+## Features
+
+### Network monitoring
+- Device inventory with weighted **compliance scores** (A–F)
+- SNMP polling + AOS-CX REST API enrichment
+- Interface utilization & statistics
+- Environment monitoring (temp, fans, PSU) + **PoE budget tracking with alerts**
+- Reachability/ping-latency monitoring
+
+### WAN & topology
+- **WAN circuit tracking** — provider/contract/cost, ISP IP assignment, bandwidth
+- Interface utilization vs bandwidth %, **95th-percentile** trending, contract-expiry alerts
+- **Manual topology links** for LLDP-less devices + automatic LLDP/CDP discovery
+
+### Compliance
+- Jinja2 template engine, LLDP-aware interface rules, role-consistency checks
+- Running-vs-startup config check, weighted scoring (A–F), **daily automated runs**
+
+### Configuration management
+- Full config backup (AOS-CX SSH + REST), change detection & diffs
+- Running/startup mismatch alerts, collection-health tracking
+
+### Flow analytics
+- NetFlow v5/v9/IPFIX (UDP 2055) + sFlow (UDP 6343)
+- **DNS hostname enrichment** toggle, flow-threshold alerts
+
+### Wireless
+- Juniper **Mist** + **UniFi** integrations with AP/console telemetry; TV dashboards
+
+### Operations & platform
+- Daily/weekly/monthly/quarterly + compliance reports
+- **TV/NOC dashboards** (`/tv`) with auto-rotation
+- Bulk alert actions, audit logging, RBAC, OpenBao-backed secrets
+- Docker-Compose deploy, AES-256 backups (local/SCP/Git/S3), watchdog auto-recovery
+- **Safe update** (`./netpulse.sh update`) with DB backup + rollback
+- spane Agent (Linux/Windows/ARM64) over OpenBao-PKI mTLS
 
 ---
 

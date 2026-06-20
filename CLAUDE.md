@@ -31,8 +31,79 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 
 ## Current State (June 2026)
 
-- Tests: ~1574 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
+- Tests: ~1933 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7.
+
+**Recently completed (feature sweep — 2026-06-20):** a large batch of features + fixes (all
+committed to `main`, ~1933 api tests passing). Endpoint paths below are the real ones.
+
+- **WAN circuit tracking** — new `apps.circuits` (migration 0001). `WanCircuit`: identity
+  (name/circuit_id/type/status), provider (provider/account/contract_end_date/monthly_cost),
+  bandwidth (download/upload/CIR `committed_mbps`), **ISP IP assignment** (`isp_ipv4_block`/
+  `isp_ipv6_block` with CIDR validation, `gateway_ip`, `usable_ips`, `bgp_asn`, `our_bgp_asn`),
+  device+interface binding, site, `alert_threshold_pct`, notes. CRUD `GET/POST/PUT/DELETE
+  /api/circuits/` (filter `site`/`device`/`circuit_type`/`status`). **`GET /api/circuits/{id}/
+  utilization/`** maps the bound interface name → InfluxDB `if_index`, reads `in_bps`/`out_bps`
+  vs configured bandwidth → current + 24h history + peak + **95th-percentile** (nearest-rank).
+  Scheduler `circuit_checks` (15m, `CIRCUIT_CHECK_INTERVAL_S`): standing **"High WAN Utilization"**
+  alert (>threshold, auto-resolves) + **"WAN Contract Expiring"** at 90/60/30/14/7 days (deduped).
+  Frontend: `/circuits` page (cards w/ live ↓/↑ util bars + P95 + IP/contract/cost) under
+  Network in the sidebar; add/edit modal; the Site-detail **WAN Circuits tab is populated**
+  (was a placeholder). `tests/test_circuits.py` (23).
+- **Manual topology links** — `ManualTopologyLink` (devices migration 0030): device_a/interface_a
+  ↔ device_b/interface_b, `link_type` (ethernet/fiber/wan/lacp/mgmt/virtual/other), `speed_mbps`,
+  `description`, `created_by`; unique per (a,iface_a,b,iface_b). CRUD `/api/topology/manual-links/`
+  (filter `device_id`/`site_id`), create/update/delete **audit-logged** (core migration 0011 adds
+  the event types). `topology.build_manual_edges()` emits separate edges flagged `manual:true`;
+  the topology endpoint appends them. Frontend: `🔗 Add Manual Link` on the Topology page, manual
+  edges drawn **dashed + coloured by type** (`MANUAL_LINK_COLORS`), Settings→Network **Manual Links**
+  mgmt page + sidebar, device-detail menu item (pre-fills this device). `tests/test_manual_topology.py` (10).
+- **Periodic environment/PoE collection** — `apps/telemetry/environment_poll.py` scheduler task
+  (5m, `ENVIRONMENT_POLL_INTERVAL_S`) REST-collects AOS-CX temp/fan/PSU + PoE and writes the SAME
+  `device_environment` InfluxDB schema the Environment tab reads (so it's stored for alerting/
+  trending even when the tab is closed). Standing **"High PoE Usage"** alert (>`POE_ALERT_THRESHOLD_PCT`,
+  default 80; auto-resolves), rule seeded. PoE summary from per-port `get_poe_status()`
+  (used=Σdrawn, budget=Σallocated). `tests/test_environment_poll.py` (8).
+- **Compliance score unified + on-demand/scheduled runs** — `DeviceComplianceScore` (compliance
+  migration 0009, OneToOne) stores the **weighted** score (template 50% + interface 30% + role 20%
+  + startup); the device-list subquery now reads it so the list and the Compliance tab show the
+  SAME number. `engine.run_compliance_for_device()` **always** persists it (opt-out for callers that
+  reconcile first). On-demand: `POST /api/compliance/run-all/` (background, progress in shared
+  Valkey cache) + `GET /run-all/status/` + `POST /run/{device_id}/`; UI triggers on the Compliance
+  settings page (with progress), the device Compliance tab ("Run Now"), and a device-list bulk
+  "Run Compliance". **Daily** scheduled fleet run at 03:00 (`COMPLIANCE_RUN_HOUR`, hour-gated +
+  same-day deduped — after the 02:00 backup). `tests/test_compliance_run.py` (11),
+  `test_compliance_schedule.py` (6), `test_device_score.py` (+6).
+- **Alerts bulk actions + state tabs** — `POST /api/alerts/events/bulk-acknowledge/` + `bulk-resolve/`
+  (`{updated,failed,errors}`), `GET /api/alerts/events/summary/` (counts). The model has no ACK
+  state, so "acknowledged" is derived (firing + has `AlertAcknowledgement`); `?state=firing|
+  acknowledged|resolved` handled in `get_queryset`. Frontend: checkbox column + select-all
+  (indeterminate), bulk toolbar, All/Firing/Acknowledged/Resolved tabs with counts, 5+ confirm,
+  keyboard shortcuts (a/r/Esc/⌘A).
+- **Flow Analytics DNS enrichment** — `POST /api/flows/resolve/` (inventory-first, then parallel
+  reverse DNS, Django-cached 5m, ≤100 IPs/req) + `POST /api/flows/resolve/clear-cache/` (admin).
+  Frontend: "🔍 Resolve hostnames" toggle (localStorage + `?resolve=1` URL), hostname-with-IP-on-hover.
+- **flow-threshold alert fix** — full exporter IP (was truncated to the first octet by `split('.')`
+  on the NATS subject), sane Mbps (0-duration records were /1ms → 100s of Gbps; floored at 1s), and
+  device-hostname + top-talker enrichment in labels/annotations.
+- **Per-user temperature unit (°C/°F)** — `UserPreferences.temperature_unit` (core migration 0010);
+  flows through `GET/PUT /api/users/me/` + `/api/users/me/preferences/`. Frontend: Profile→Display
+  toggle (instant localStorage + background save), `unitsStore` + `useTemperature()`, applied across
+  the device Environment tab (tile, sensors, 24h chart axis/tooltip/thresholds), Wireless, Console.
+- **Version display fix** — `/api/health/[infrastructure/]` returned `"unknown"`; `_netpulse_version()`
+  now resolves `SPANE_VERSION`/`NETPULSE_VERSION` env → bind-mounted `/app/VERSION` → `settings.VERSION`
+  (`1.0.<count>`). Root `VERSION` file (bind-mounted into the api container, so it updates without a
+  rebuild). Shown in Settings→System + the TV footer (sidebar `VersionBadge` already worked).
+- **Safe update flow** — `./netpulse.sh update` (`scripts/update.sh`): snapshot git tag, refuse dirty
+  tree, ff-only pull, **`.env` back-fill** from `.env.example`, **DB backup** (`.update-db-backup-*.sql.gz`),
+  rebuild changed services, **explicit migrate**, NAT re-apply, **health verify** (rollback hint on
+  failure), append to `.update-history.log`. Plus `show-version` + `rollback [tag]`. Stamps
+  `SPANE_VERSION` into `.env`. `CHANGELOG.md` added.
+- **Security** — Dependabot **form-data** 4.0.5→4.0.6 (CRLF, #8) + **js-yaml** 4.1.1→4.2.0 (DoS, #7)
+  via `package.json` overrides (DOMPurify was the prior sweep). Exception-exposure (CWE-209) is fully
+  scrubbed via `safe_detail`/`internal_error_response`; enforced by `tests/test_security.py::
+  TestNoExceptionExposure` (AST guard over every `apps/**/views.py`), `scripts/check_exception_exposure.py`,
+  a pre-commit hook (`.pre-commit-config.yaml`), and a CI workflow (`.github/workflows/security-checks.yml`).
 
 **Recently completed (security-alert sweep — 2026-06-20):** Dependabot **DOMPurify**
 (transitive via `swagger-ui-react`) bumped 3.4.7 → **3.4.11**, clearing
@@ -431,7 +502,13 @@ key in OpenBao at netpulse/integrations/unifi/cloud, GET/PUT + cloud/test + clou
 (OpenSearch + LogFilter regex suppress/highlight/tag) · tls (SSL/CA mgmt) ·
 checks (ServiceCheck, CheckResult; http/https/tcp/icmp/dns/tls/smtp/ssh_banner) · alerting (Team,
 EscalationPolicy, AlertRoute — Stage 1: route matching + email) · sso (SSOProvider; Google OAuth2
-Stage 1) · arp_mac (ARPEntry, MACEntry, MACVendor — SSH collection + OUI lookup) · mibs.
+Stage 1) · arp_mac (ARPEntry, MACEntry, MACVendor — SSH collection + OUI lookup) · mibs ·
+**circuits** (WanCircuit — WAN circuit inventory + InfluxDB utilization + util/contract alerts;
+`/api/circuits/`) · **chatops** (ChatOps Phase 1+2 — persistence/config + identity/RBAC/audit) ·
+agents (Agent server monitoring) · frameworks (regulatory compliance) · reports · backup. Note:
+**ManualTopologyLink** (manual topology links, `/api/topology/manual-links/`) and
+**DeviceComplianceScore** (persisted weighted compliance score) live in the **devices**/**compliance**
+apps respectively.
 
 ## Scheduler
 
@@ -440,8 +517,12 @@ openbao-data:ro). Celery/django-celery-beat are in requirements but UNUSED — d
 scheduler; add periodic work to run_scheduler. Startup one-shots (idempotent): seed alert rules,
 unseal OpenBao, load OUI registry if empty. Periodic (tick 300s): alert purge (daily), ARP/MAC
 collection (6h), MAC-vendor OUI refresh (weekly), hostname verification (24h,
-`HOSTNAME_CHECK_INTERVAL_S`), UniFi controller sync (6h, `UNIFI_SYNC_INTERVAL_S`); recurring tasks
-first fire one interval after start.
+`HOSTNAME_CHECK_INTERVAL_S`), UniFi controller sync (6h, `UNIFI_SYNC_INTERVAL_S`),
+**daily compliance run** (hour-gated at `COMPLIANCE_RUN_HOUR`=03:00, same-day deduped),
+**environment/PoE poll** (5m, `ENVIRONMENT_POLL_INTERVAL_S` — AOS-CX env+PoE → InfluxDB + PoE alert),
+**WAN circuit checks** (15m, `CIRCUIT_CHECK_INTERVAL_S` — utilization + contract-expiry alerts),
+plus the existing scheduled-reports + platform-backup tasks (both hour-gated + same-day deduped);
+recurring tasks first fire one interval after start.
 
 **Hostname verification** (`apps/devices/hostname_check.py`): re-checks active devices' hostnames via
 SNMP sysName (1.3.6.1.2.1.1.5.0) then DNS reverse lookup; on a change it updates the device, raises an
@@ -461,6 +542,11 @@ INFO alert ("Device hostname changed", never auto-resolved), and re-applies host
 · `/api/credentials/[:id/test/]` · `/api/sites/` · `/api/alerts/` · `/api/logs/[filters/]` ·
 `/api/checks/[summary/|:id/{run-now,results}/]` · `/api/alerting/{teams,policies,routes,notifications}/`
 · `/api/cve/` · `/api/lifecycle/` · `/api/network/{search,mac-vendor}/` ·
+`/api/users/me/[preferences/]` (incl. `temperature_unit`) ·
+`/api/circuits/[:id/utilization/]` · `/api/topology/manual-links/` ·
+`/api/compliance/{run-all/[status/],run/:device_id/}` ·
+`/api/alerts/events/{bulk-acknowledge,bulk-resolve,summary}/` ·
+`/api/flows/resolve/[clear-cache/]` · `/api/devices/{id}/compliance/` (weighted score) ·
 WS: `/ws/{telemetry,alerts,devices}/`. SSL/CA mgmt under `/api/settings/system/ssl/*`.
 
 ## Platform Support & Quirks (1–2 lines each; full guides in docs/platforms/)
