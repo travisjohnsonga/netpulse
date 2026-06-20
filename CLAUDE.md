@@ -34,6 +34,17 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~1574 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7.
 
+**Recently completed (security-alert sweep — 2026-06-20):** Dependabot **DOMPurify**
+(transitive via `swagger-ui-react`) bumped 3.4.7 → **3.4.11**, clearing
+GHSA-vxr8-fq34-vvx9 / -gvmj-g25r-r7wr / -cmwh-pvxp-8882 (`npm audit` clean for
+dompurify; frontend rebuilt). CodeQL **exception-exposure** fixes:
+`apps/integrations/wireless.py` Mist-location endpoint no longer returns
+`str(exc)` (logs detail, returns a static 404 message); `apps/frameworks/views.py`
+confirmed already routed through `internal_error_response`; `apps/devices/views.py`
+confirmed clean (its `str(exc)` only stores to internal `DiscoveryJob` fields, not
+HTTP responses). Whole-`apps/` sweep found no other `Response(... str(exc) ...)`
+leaks. 1850 api tests pass. See `SECURITY-REPORT.md` (2026-06-20 entry).
+
 **Recently completed (overnight platform/security session — 2026-06-19):**
 - **TV/NOC dashboard mode** — `/tv` launcher (large tiles + auto-rotation builder) and chrome-free
   fullscreen screens `/tv/{network,wireless,security,ops,sites,servers,compliance}` rendered OUTSIDE

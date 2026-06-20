@@ -1,3 +1,31 @@
+# spane — Security Alert Remediation (2026-06-20)
+
+Scanner-flagged alert sweep (Dependabot + CodeQL). Full api suite (1850) passes
+after the fixes; frontend rebuilt.
+
+- **Dependabot #5/#6 — DOMPurify vulnerabilities** (transitive via
+  `swagger-ui-react`, `services/frontend/package-lock.json`). 3.4.7 was affected
+  by GHSA-vxr8-fq34-vvx9 (Trusted Types policy survives `clearConfig()`),
+  GHSA-gvmj-g25r-r7wr (`SAFE_FOR_TEMPLATES` bypass) and GHSA-cmwh-pvxp-8882
+  (`ALLOWED_ATTR` pollution via `setConfig()`). *Fix:* `npm update dompurify` →
+  **3.4.11** (advisories cover ≤3.4.10); `npm audit` no longer reports dompurify;
+  frontend image rebuilt.
+- **CodeQL #43/#44 — exception exposure in `apps/frameworks/views.py`** (re-flag
+  of #38/#39). Verified already remediated: `list`/`retrieve`/`report` route every
+  `except` through `apps.core.errors.internal_error_response` (logs server-side,
+  returns a generic message). No `str(e)`/`str(exc)` reaches a client in this file.
+- **CodeQL #45 — exception exposure in `apps/integrations/wireless.py:190`.** The
+  Mist-location endpoint returned `str(exc)` from a `ValueError` in the HTTP body.
+  *Fix:* log the detail server-side (`logger.info`), return a static
+  `"No floor-plan map available for this Mist site."` (404).
+- **CodeQL #40 — `apps/devices/views.py`.** Verified no client exposure: the only
+  `str(exc)` uses store the discovery-job failure on internal model fields
+  (`DiscoveryJob.progress_message`/`error_message`), never returned in a Response.
+- **General sweep** of `apps/` for `return Response(... str(e/exc) ...)` /
+  `JsonResponse(...)` exposure found no further HTTP-response leaks. Remaining
+  `str(exc)` occurrences are internal (model `last_error` fields, CLI health-check
+  output, service-check diagnostic result dicts), not client exception exposure.
+
 # spane — Security Audit Addendum (2026-06-19)
 
 Application-layer review (input-validation/injection, authn/authz, WebSocket,

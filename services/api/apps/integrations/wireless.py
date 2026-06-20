@@ -15,6 +15,7 @@ endpoints serve the fleet overview (summary cards, AP table, channel heatmap).
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 from rest_framework.decorators import api_view, permission_classes
@@ -24,6 +25,8 @@ from rest_framework.response import Response
 # The only platforms shown on the Wireless page (access points). NOT switches/
 # gateways/consoles — those are Network Devices.
 WIRELESS_AP_PLATFORMS = ["unifi_ap", "mist_ap"]
+
+logger = logging.getLogger(__name__)
 
 
 def wireless_source(platform: str) -> str:
@@ -187,7 +190,10 @@ def wireless_location(request):
         try:
             payload = mist_location.refresh(site_id, map_id)
         except ValueError as exc:
-            return Response({"error": str(exc)}, status=404)
+            logger.info("Mist location refresh: %s", exc)
+            return Response(
+                {"error": "No floor-plan map available for this Mist site."},
+                status=404)
         except Exception:  # noqa: BLE001
             return Response({"error": "Mist location refresh failed"}, status=502)
     if payload is None:
