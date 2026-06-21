@@ -37,8 +37,12 @@ CHATOPS_VAULT_PREFIX = "spane/chatops"
 # never returned in any API response (Security Rules 3 + 4).
 PLATFORM_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "slack":      ("signing_secret", "bot_token"),
-    "teams":      ("bot_token",),
-    "gchat":      ("bot_token",),
+    # teams "hmac_secret" = the base64 security token of an outgoing-webhook
+    # registration; verifies the HMAC-SHA256 in the Authorization header.
+    "teams":      ("bot_token", "hmac_secret"),
+    # gchat "bearer_token" = a shared bearer compared constant-time on the
+    # Authorization header (interim until full Google-signed JWT validation).
+    "gchat":      ("bot_token", "bearer_token"),
     "discord":    ("public_key", "bot_token"),
     "mattermost": ("token",),
 }

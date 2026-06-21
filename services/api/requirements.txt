@@ -44,6 +44,7 @@ bcrypt>=4.0  # per-collector API-key / enrollment-token hashing (already a trans
 # Django :: 6.0); 5.4.x predates it. Pulls social-auth-core (<5.0,>=4.8.3).
 social-auth-app-django~=5.9
 python-jose~=3.3       # JWT/JWS ID-token validation for SSO
+PyNaCl~=1.5            # Ed25519 verification for Discord interaction webhooks (apps.core.chatops)
 
 # Device access (config collection / interface discovery) — imported lazily
 netmiko~=4.4
@@ -54,6 +55,7 @@ ntc-templates~=9.1   # TextFSM templates for show-command parsing (LLDP, interfa
 textfsm~=2.1
 ncclient~=0.6
 pysnmp~=7.1
+defusedxml~=0.7        # XXE/entity-expansion-safe XML parsing (apps.devices run_discovery nmap output)
 requests~=2.32       # AOS-CX REST API client (apps.devices.aos_cx_client)
 Jinja2~=3.1
 

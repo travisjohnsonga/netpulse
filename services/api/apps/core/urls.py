@@ -1,7 +1,13 @@
 from django.urls import path
 from rest_framework.routers import SimpleRouter
 
-from .chatops import webhook_discord, webhook_gchat, webhook_slack, webhook_teams
+from .chatops import (
+    webhook_discord,
+    webhook_gchat,
+    webhook_mattermost,
+    webhook_slack,
+    webhook_teams,
+)
 from .version import version, version_check
 from .views import (
     AuditLogViewSet,
@@ -39,6 +45,7 @@ urlpatterns = [
     path("webhooks/teams/",   webhook_teams,   name="webhook-teams"),
     path("webhooks/gchat/",   webhook_gchat,   name="webhook-gchat"),
     path("webhooks/discord/", webhook_discord, name="webhook-discord"),
+    path("webhooks/mattermost/", webhook_mattermost, name="webhook-mattermost"),
     # Admin user management (/users/, /users/{id}/) — AdminOnly.
     *router.urls,
 ]
