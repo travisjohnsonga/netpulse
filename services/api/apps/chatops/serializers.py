@@ -123,8 +123,34 @@ class ChatOpsIdentityLinkSerializer(serializers.Serializer):
 
 
 class ChatOpsConfigSerializer(serializers.ModelSerializer):
+    # Write-only API key for the ``api`` NLP backend; stored in OpenBao at
+    # spane/chatops/nlp, never returned. ``nlp_api_key_set`` reports presence only.
+    nlp_api_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    nlp_api_key_set = serializers.SerializerMethodField()
+
     class Meta:
         model = ChatOpsConfig
         fields = ("allow_unmapped_read", "require_approved_channel",
+                  "nlp_provider", "nlp_endpoint", "nlp_model",
+                  "nlp_api_key", "nlp_api_key_set",
                   "created_at", "updated_at")
         read_only_fields = ("created_at", "updated_at")
+
+    def get_nlp_api_key_set(self, obj) -> bool:
+        from .models import get_chatops_secret
+        try:
+            return bool(get_chatops_secret("nlp", "api_key"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def update(self, instance, validated_data):
+        api_key = validated_data.pop("nlp_api_key", None)
+        for field_name, value in validated_data.items():
+            setattr(instance, field_name, value)
+        instance.save()
+        # Only touch OpenBao when a non-blank key is supplied (so saving other
+        # settings never wipes the stored key).
+        if api_key:
+            from .models import write_chatops_secrets
+            write_chatops_secrets("nlp", {"api_key": api_key})
+        return instance

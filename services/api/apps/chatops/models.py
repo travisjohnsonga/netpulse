@@ -183,6 +183,11 @@ class ChatOpsConfig(TimestampedModel):
     queries to channels in the ``ChatOpsChannel`` allow-list. Use ``load()`` to
     fetch the single row (mirrors EmailSettings).
     """
+    class NLPProvider(models.TextChoices):
+        NONE = "none", "None (regex only)"
+        LOCAL = "local", "Local (Ollama)"
+        API = "api", "Hosted API"
+
     allow_unmapped_read = models.BooleanField(
         default=True,
         help_text="Allow read-only queries from chat users with no linked spane account.",
@@ -191,6 +196,18 @@ class ChatOpsConfig(TimestampedModel):
         default=False,
         help_text="Only answer queries from channels on the approved allow-list.",
     )
+    # NLP fallback (Phase 3). The regex parser is always the default; this only
+    # kicks in when the parser returns "unknown". The ``api`` provider's key lives
+    # in OpenBao at spane/chatops/nlp (key "api_key") — never the DB.
+    nlp_provider = models.CharField(
+        max_length=10, choices=NLPProvider.choices, default=NLPProvider.NONE,
+        help_text="Fallback intent classifier used only when the regex parser fails.",
+    )
+    nlp_endpoint = models.URLField(
+        blank=True,
+        help_text="Ollama base URL (local) or messages endpoint (api). Optional.",
+    )
+    nlp_model = models.CharField(max_length=128, blank=True, help_text="Model name for the NLP backend.")
 
     class Meta:
         verbose_name = "ChatOps Config"
