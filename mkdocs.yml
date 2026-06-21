@@ -30,6 +30,8 @@ nav:
     - Overview: compliance/overview.md
     - Interface & Role Rules: compliance/interface-rules.md
   - Reports: reports.md
+  - Metrics & Alerting: metrics-and-alerting.md
+  - Flow Collection: flow-collection.md
   - Integrations:
     - UniFi: integrations/unifi.md
     - Wireless Monitoring: integrations/wireless.md
