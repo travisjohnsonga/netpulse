@@ -27,6 +27,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 
 from apps.chatops.enforcement import enforce_policy, platform_live
+from apps.chatops.format import deny_response, format_for
+from apps.chatops.nlp import resolve_nlp
+from apps.chatops.resolve import resolve
 
 
 def _chatops_enabled(platform: str) -> bool:
@@ -61,16 +64,6 @@ _INTENTS: list[tuple[str, re.Pattern]] = [
     ("help",           re.compile(r"^help$", re.I)),
 ]
 
-_HELP_TEXT = (
-    "spane commands:\n"
-    "• `status of <device>` — device status\n"
-    "• `status of site <site>` — site status\n"
-    "• `any alerts` — list active alerts\n"
-    "• `CVEs affecting <device>` — CVE query\n"
-    "• `EOL for <device>` — lifecycle status\n"
-)
-
-
 def _parse_intent(text: str) -> tuple[str, dict]:
     cleaned = text.strip()
     for intent, pattern in _INTENTS:
@@ -80,68 +73,21 @@ def _parse_intent(text: str) -> tuple[str, dict]:
     return "unknown", {}
 
 
-def _resolve_intent(intent: str, params: dict) -> str:
-    """Map parsed intent to a plain-text response. Queries Django ORM synchronously."""
-    try:
-        if intent == "device_status":
-            from apps.devices.models import Device
-            name = params.get("name", "")
-            try:
-                d = Device.objects.filter(hostname__icontains=name).first()
-                if not d:
-                    # Only try the IP lookup when the term parses as an IP —
-                    # ip_address is an INET column and a non-IP string errors.
-                    import ipaddress
-                    try:
-                        ipaddress.ip_address(name)
-                    except ValueError:
-                        pass
-                    else:
-                        d = Device.objects.filter(ip_address=name).first()
-                if d:
-                    return f"*{d.hostname}* — status: `{d.status}`, vendor: {d.vendor or 'unknown'}"
-                return f"Device `{name}` not found."
-            except Exception:
-                return f"Error looking up device `{name}`."
+def _classify(text: str) -> tuple[str, dict]:
+    """Regex parse first (always-on default); only on ``unknown`` consult the
+    optional NLP fallback. A known NLP result is used; anything else stays
+    ``unknown`` so the resolver returns help. The chosen intent is returned to the
+    caller, which still runs it through ``enforce_policy`` (no policy bypass)."""
+    intent, params = _parse_intent(text)
+    if intent == "unknown":
+        nlp = resolve_nlp(text)
+        if nlp:
+            return nlp
+    return intent, params
 
-        if intent == "site_status":
-            from apps.devices.models import Device, Site
-            name = params.get("name", "")
-            try:
-                site = Site.objects.filter(name__icontains=name).first()
-                if not site:
-                    return f"Site `{name}` not found."
-                count   = Device.objects.filter(site=site).count()
-                active  = Device.objects.filter(site=site, status="active").count()
-                return f"Site *{site.name}*: {active}/{count} devices active."
-            except Exception:
-                return f"Error looking up site `{name}`."
 
-        if intent == "active_alerts":
-            from apps.alerts.models import AlertEvent
-            try:
-                count = AlertEvent.objects.filter(state="firing").count()
-                if count == 0:
-                    return "No active alerts."
-                recent = AlertEvent.objects.filter(state="firing").select_related("rule")[:5]
-                lines = [f"*{e.rule.severity.upper()}* — {e.rule.name}" for e in recent]
-                return f"{count} active alert(s):\n" + "\n".join(f"• {l}" for l in lines)
-            except Exception:
-                return "Error fetching alerts."
-
-        if intent == "cve_query":
-            return f"CVE query for `{params.get('name', '?')}` — see the Security tab for details."
-
-        if intent == "eol_query":
-            return f"Lifecycle query for `{params.get('name', '?')}` — see the Lifecycle tab for details."
-
-        if intent == "help":
-            return _HELP_TEXT
-
-    except Exception as exc:
-        logger.error("intent resolution error: %s", exc)
-
-    return _HELP_TEXT
+# Intent resolution (data gathering) lives in apps.chatops.resolve, and
+# per-platform rendering in apps.chatops.format — see resolve()/format_for above.
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
@@ -183,14 +129,12 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
     channel = event.get("channel", "unknown")
 
     logger.info("slack query from %s in %s: %s", user, channel, text[:200])
-    intent, params = _parse_intent(text)
+    intent, params = _classify(text)
     decision = enforce_policy("slack", channel_id=channel, user_id=user,
                               user_name=user, intent=intent, request=request)
     if not decision.allowed:
-        return JsonResponse({"text": decision.message})
-    response_text  = _resolve_intent(intent, params)
-
-    return JsonResponse({"text": response_text})
+        return JsonResponse(deny_response("slack", decision.message))
+    return JsonResponse(format_for("slack", resolve(intent, params)))
 
 
 # ── Microsoft Teams ───────────────────────────────────────────────────────────
@@ -213,18 +157,12 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
     channel  = payload.get("conversation", {}).get("id", "") or "unknown"
 
     logger.info("teams query from %s: %s", user, text[:200])
-    intent, params = _parse_intent(text)
+    intent, params = _classify(text)
     decision = enforce_policy("teams", channel_id=channel, user_id=user_id,
                               user_name=user, intent=intent, request=request)
     if not decision.allowed:
-        return JsonResponse({"type": "message", "text": decision.message})
-    response_text  = _resolve_intent(intent, params)
-
-    # Teams expects Adaptive Card or simple text in `text` field
-    return JsonResponse({
-        "type": "message",
-        "text": response_text,
-    })
+        return JsonResponse(deny_response("teams", decision.message))
+    return JsonResponse(format_for("teams", resolve(intent, params)))
 
 
 # ── Google Chat ───────────────────────────────────────────────────────────────
@@ -244,14 +182,12 @@ def webhook_gchat(request: HttpRequest) -> JsonResponse:
     channel   = payload.get("space", {}).get("name", "") or "unknown"
 
     logger.info("gchat query from %s: %s", sender, text[:200])
-    intent, params = _parse_intent(text)
+    intent, params = _classify(text)
     decision = enforce_policy("gchat", channel_id=channel, user_id=user_id,
                               user_name=sender, intent=intent, request=request)
     if not decision.allowed:
-        return JsonResponse({"text": decision.message})
-    response_text  = _resolve_intent(intent, params)
-
-    return JsonResponse({"text": response_text})
+        return JsonResponse(deny_response("gchat", decision.message))
+    return JsonResponse(format_for("gchat", resolve(intent, params)))
 
 
 # ── Discord ───────────────────────────────────────────────────────────────────
@@ -274,11 +210,9 @@ def webhook_discord(request: HttpRequest) -> JsonResponse:
     channel  = payload.get("channel_id", "") or "unknown"
 
     logger.info("discord query: %s", text[:200])
-    intent, params = _parse_intent(text)
+    intent, params = _classify(text)
     decision = enforce_policy("discord", channel_id=channel, user_id=user_id,
                               user_name=user_nm, intent=intent, request=request)
     if not decision.allowed:
-        return JsonResponse({"content": decision.message})
-    response_text  = _resolve_intent(intent, params)
-
-    return JsonResponse({"content": response_text})
+        return JsonResponse(deny_response("discord", decision.message))
+    return JsonResponse(format_for("discord", resolve(intent, params)))
