@@ -322,3 +322,352 @@ class TestIdentityAPI:
         resp = api_client.post("/api/chatops/identities/link/",
                                data={"platform": "slack", "platform_user_id": "Ux"}, format="json")
         assert resp.status_code == 401
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 3: rich resolution, per-platform formatting, pluggable NLP fallback
+# ══════════════════════════════════════════════════════════════════════════════
+
+import json as _json
+from datetime import date
+
+from apps.chatops.format import (
+    deny_response, format_discord, format_for, format_gchat, format_mattermost,
+    format_slack, format_teams,
+)
+from apps.chatops.nlp import resolve_nlp
+from apps.chatops.resolve import IntentResult, resolve
+
+
+def _make_device(hostname="rtr-1", **kw):
+    from apps.devices.models import Device
+    return Device.objects.create(
+        hostname=hostname, ip_address=kw.pop("ip", "10.0.0.5"),
+        vendor=kw.pop("vendor", "Cisco"), status=kw.pop("status", "active"),
+        is_reachable=kw.pop("is_reachable", True), **kw)
+
+
+def _add_cve(device, severity="critical", cve_id="CVE-2024-0001", is_patched=False):
+    from apps.cve.models import CVE, DeviceCVE
+    cve = CVE.objects.create(cve_id=cve_id, description="test", severity=severity)
+    return DeviceCVE.objects.create(device=device, cve=cve, is_patched=is_patched)
+
+
+@pytest.fixture
+def no_metrics(monkeypatch):
+    monkeypatch.setattr("apps.devices.metrics_influx.query_device_metrics",
+                        lambda did, *a, **k: {"metrics": {"cpu_pct": None, "memory_used_pct": None}})
+
+
+@pytest.fixture
+def with_metrics(monkeypatch):
+    monkeypatch.setattr("apps.devices.metrics_influx.query_device_metrics",
+                        lambda did, *a, **k: {"metrics": {"cpu_pct": 33.4, "memory_used_pct": 56.0}})
+
+
+# ── resolve(): IntentResult shape per intent ──────────────────────────────────
+
+class TestResolveDeviceStatus:
+    def test_full_device_status(self, with_metrics):
+        d = _make_device()
+        _add_cve(d, "critical", "CVE-2024-1")
+        _add_cve(d, "medium", "CVE-2024-2")
+        from apps.security.models import DeviceRiskScore
+        DeviceRiskScore.objects.create(device=d, score=42)
+        from apps.lifecycle.models import LifecycleMilestone
+        LifecycleMilestone.objects.create(device=d, milestone_type="eol",
+                                          milestone_date=date(2020, 1, 1))
+        res = resolve("device_status", {"name": "rtr-1"})
+        assert isinstance(res, IntentResult)
+        assert res.title == "rtr-1"
+        f = dict(res.fields)
+        assert f["Status"] == "active"
+        assert f["CPU"] == "33%" and f["Memory"] == "56%"
+        assert "1 critical" in f["CVEs (unpatched)"] and "1 medium" in f["CVEs (unpatched)"]
+        assert f["Risk score"] == "42/100"
+        assert res.severity == "critical"
+        assert any("Past lifecycle" in l for l in res.lines)
+
+    def test_no_metrics_omits_cpu_mem(self, no_metrics):
+        _make_device()
+        res = resolve("device_status", {"name": "rtr-1"})
+        f = dict(res.fields)
+        assert "CPU" not in f and "Memory" not in f
+        assert f["CVEs (unpatched)"] == "none"
+
+    def test_unreachable_is_high_severity(self, no_metrics):
+        from django.utils import timezone
+        _make_device(is_reachable=False, unreachable_since=timezone.now())
+        res = resolve("device_status", {"name": "rtr-1"})
+        f = dict(res.fields)
+        assert f["Reachability"] == "unreachable"
+        assert "Down since" in f
+        assert res.severity == "high"
+
+    def test_device_not_found(self, no_metrics):
+        res = resolve("device_status", {"name": "ghost"})
+        assert "not found" in res.title
+
+    def test_ip_lookup_only_for_valid_ip(self, no_metrics):
+        _make_device(ip="10.9.9.9", hostname="byip")
+        res = resolve("device_status", {"name": "10.9.9.9"})
+        assert res.title == "byip"
+        # a non-IP, non-matching term must not raise (INET-safe guard)
+        assert "not found" in resolve("device_status", {"name": "not-an-ip!!"}).title
+
+
+class TestResolveOthers:
+    def test_site_status(self):
+        from apps.alerts.models import AlertEvent, AlertRule
+        from apps.devices.models import Site
+        from apps.security.models import DeviceRiskScore
+        site = Site.objects.create(name="Dallas")
+        d1 = _make_device("dal-1", status="active", ip="10.1.0.1", site=site)
+        _make_device("dal-2", status="inactive", ip="10.1.0.2", site=site)
+        DeviceRiskScore.objects.create(device=d1, score=77)
+        rule = AlertRule.objects.create(name="x", severity="high", condition={})
+        AlertEvent.objects.create(rule=rule, state="firing", labels={"device_id": str(d1.id)})
+        res = resolve("site_status", {"name": "Dallas"})
+        f = dict(res.fields)
+        assert f["Devices active"] == "1/2"
+        assert f["Firing alerts"] == "1"
+        assert "77/100" in f["Worst risk"]
+        assert res.severity == "high"
+
+    def test_site_not_found(self):
+        assert "not found" in resolve("site_status", {"name": "nowhere"}).title
+
+    def test_active_alerts(self):
+        from apps.alerts.models import AlertEvent, AlertRule
+        r = AlertRule.objects.create(name="CPU High", severity="critical", condition={})
+        AlertEvent.objects.create(rule=r, state="firing")
+        res = resolve("active_alerts", {})
+        assert "1 active alert" in res.title
+        assert any("CPU High" in l for l in res.lines)
+        assert res.severity == "critical"
+
+    def test_active_alerts_none(self):
+        res = resolve("active_alerts", {})
+        assert res.title == "No active alerts."
+
+    def test_cve_query(self):
+        d = _make_device()
+        _add_cve(d, "critical", "CVE-2024-A")
+        _add_cve(d, "high", "CVE-2024-B")
+        _add_cve(d, "high", "CVE-2024-C", is_patched=True)  # patched → excluded
+        res = resolve("cve_query", {"name": "rtr-1"})
+        assert "2 unpatched" in res.title
+        assert any("CVE-2024-A" in l for l in res.lines)
+        assert not any("CVE-2024-C" in l for l in res.lines)
+        assert res.severity == "critical"
+
+    def test_cve_query_clean(self):
+        _make_device()
+        res = resolve("cve_query", {"name": "rtr-1"})
+        assert "no unpatched CVEs" in res.title
+
+    def test_eol_query(self):
+        d = _make_device()
+        from apps.lifecycle.models import LifecycleMilestone
+        LifecycleMilestone.objects.create(device=d, milestone_type="eol",
+                                          milestone_date=date(2020, 1, 1))
+        LifecycleMilestone.objects.create(device=d, milestone_type="eos",
+                                          milestone_date=date(2099, 1, 1))
+        res = resolve("eol_query", {"name": "rtr-1"})
+        assert any("PASSED" in l for l in res.lines)
+        assert res.severity == "medium"
+
+    def test_help(self):
+        res = resolve("help", {})
+        assert res.title == "spane commands"
+        assert len(res.lines) >= 4
+
+    def test_unknown_intent_degrades_to_help(self):
+        assert resolve("bogus", {}).title == "spane commands"
+
+
+# ── formatters: valid platform JSON + plain fallback + no-asterisk regression ──
+
+class TestFormatters:
+    def _sample(self, with_metrics):
+        d = _make_device()
+        _add_cve(d, "high", "CVE-2024-Z")
+        return resolve("device_status", {"name": "rtr-1"})
+
+    def test_slack_blockkit(self, with_metrics):
+        out = format_slack(self._sample(with_metrics))
+        assert out["blocks"][0]["type"] == "header"
+        assert isinstance(out["text"], str) and out["text"]  # plain fallback
+
+    def test_teams_adaptive_card(self, with_metrics):
+        out = format_teams(self._sample(with_metrics))
+        assert out["type"] == "message"
+        att = out["attachments"][0]
+        assert att["contentType"] == "application/vnd.microsoft.card.adaptive"
+        assert att["content"]["type"] == "AdaptiveCard"
+        assert out["text"]  # plain fallback
+
+    def test_gchat_cardsv2(self, with_metrics):
+        out = format_gchat(self._sample(with_metrics))
+        assert "cardsV2" in out and out["cardsV2"][0]["card"]["sections"]
+        assert out["text"]  # plain fallback
+
+    def test_discord_embed(self, with_metrics):
+        out = format_discord(self._sample(with_metrics))
+        assert out["embeds"][0]["title"]
+        assert out["content"]  # plain fallback
+
+    def test_mattermost_attachment(self, with_metrics):
+        out = format_mattermost(self._sample(with_metrics))
+        assert out["attachments"][0]["title"] == "rtr-1"
+        assert out["text"]  # plain fallback
+
+    def test_no_literal_asterisks_for_non_slack(self, with_metrics):
+        res = self._sample(with_metrics)
+        for fmt in (format_teams, format_gchat, format_discord, format_mattermost):
+            blob = _json.dumps(fmt(res), ensure_ascii=False)
+            assert "*" not in blob, f"{fmt.__name__} leaked a literal asterisk"
+
+    def test_plain_fallback_is_asterisk_free(self):
+        # IntentResult.plain() must never emit Slack-style bold markers.
+        res = resolve("help", {})
+        assert "*" not in res.plain()
+
+    def test_format_for_dispatch_and_default(self, with_metrics):
+        res = self._sample(with_metrics)
+        assert "blocks" in format_for("slack", res)
+        assert format_for("unknownplat", res) == {"text": res.plain()}
+
+    def test_deny_response_shapes(self):
+        assert deny_response("teams", "no")["type"] == "message"
+        assert deny_response("discord", "no") == {"content": "no"}
+        assert deny_response("slack", "no") == {"text": "no"}
+
+
+# ── NLP fallback ──────────────────────────────────────────────────────────────
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+    def raise_for_status(self):
+        pass
+    def json(self):
+        return self._payload
+
+
+class TestNLP:
+    def test_provider_none_returns_none(self):
+        # default ChatOpsConfig has nlp_provider="none"
+        assert resolve_nlp("how is rtr-1 doing") is None
+
+    def test_local_good_json(self, monkeypatch):
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "local"; cfg.nlp_endpoint = "http://ollama:11434"; cfg.save()
+        captured = {}
+        def fake_post(url, **kw):
+            captured["url"] = url
+            return _FakeResp({"response": '{"intent":"device_status","params":{"name":"rtr-1"}}'})
+        monkeypatch.setattr("requests.post", fake_post)
+        assert resolve_nlp("tell me about rtr-1") == ("device_status", {"name": "rtr-1"})
+        assert captured["url"].endswith("/api/generate")
+
+    def test_local_malformed_rejected(self, monkeypatch):
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "local"; cfg.nlp_endpoint = "http://ollama:11434"; cfg.save()
+        monkeypatch.setattr("requests.post", lambda url, **kw: _FakeResp({"response": "not json at all"}))
+        assert resolve_nlp("tell me about rtr-1") is None
+
+    def test_local_unknown_intent_rejected(self, monkeypatch):
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "local"; cfg.nlp_endpoint = "http://ollama:11434"; cfg.save()
+        monkeypatch.setattr("requests.post",
+                            lambda url, **kw: _FakeResp({"response": '{"intent":"shutdown","params":{}}'}))
+        assert resolve_nlp("nuke rtr-1") is None
+
+    def test_local_timeout_fails_closed(self, monkeypatch):
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "local"; cfg.nlp_endpoint = "http://ollama:11434"; cfg.save()
+        def boom(url, **kw):
+            raise RuntimeError("timed out")
+        monkeypatch.setattr("requests.post", boom)
+        assert resolve_nlp("tell me about rtr-1") is None
+
+    def test_api_good_json_with_key(self, monkeypatch, fake_vault):
+        from apps.chatops.models import write_chatops_secrets
+        write_chatops_secrets("nlp", {"api_key": "sk-test"})
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "api"; cfg.nlp_model = "claude-haiku-4-5-20251001"; cfg.save()
+        seen = {}
+        def fake_post(url, **kw):
+            seen["key"] = kw["headers"]["x-api-key"]
+            return _FakeResp({"content": [{"type": "text",
+                              "text": '{"intent":"cve_query","params":{"name":"rtr-1"}}'}]})
+        monkeypatch.setattr("requests.post", fake_post)
+        assert resolve_nlp("vulns on rtr-1") == ("cve_query", {"name": "rtr-1"})
+        assert seen["key"] == "sk-test"
+
+    def test_api_no_key_returns_none(self, monkeypatch, fake_vault):
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "api"; cfg.save()
+        # ensure requests.post is never reached without a key
+        monkeypatch.setattr("requests.post",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not POST")))
+        assert resolve_nlp("vulns on rtr-1") is None
+
+    def test_config_api_key_write_only(self, admin_client, fake_vault):
+        resp = admin_client.put("/api/chatops/config/",
+                                data={"nlp_provider": "api", "nlp_api_key": "sk-secret"},
+                                format="json")
+        assert resp.status_code == 200
+        assert "sk-secret" not in resp.content.decode()
+        assert resp.json()["nlp_api_key_set"] is True
+        assert fake_vault[chatops_vault_path("nlp")]["api_key"] == "sk-secret"
+
+
+# ── NLP path still flows through enforce_policy + audit ───────────────────────
+
+class TestNLPWebhookIntegration:
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        _enable("slack")
+
+    def _enable_local_nlp(self, intent="device_status", name="rtr-1"):
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "local"; cfg.nlp_endpoint = "http://ollama:11434"; cfg.save()
+        payload = {"response": _json.dumps({"intent": intent, "params": {"name": name}})}
+        return payload
+
+    def test_nlp_resolves_unknown_and_audits(self, api_client, monkeypatch, with_metrics):
+        _make_device("rtr-1")
+        payload = self._enable_local_nlp()
+        monkeypatch.setattr("requests.post", lambda url, **kw: _FakeResp(payload))
+        # "tell me about rtr-1" is NOT regex-matchable → NLP kicks in
+        resp = api_client.post("/api/webhooks/slack/",
+                               data={"event": {"text": "tell me about rtr-1",
+                                               "user": "U1", "channel": "C1"}}, format="json")
+        assert resp.status_code == 200
+        assert "rtr-1" in resp.json()["text"]  # device_status rendered
+        from apps.core.models import AuditLog
+        row = AuditLog.objects.filter(event_type=AuditLog.EventType.CHATOPS_QUERY).first()
+        assert row is not None and row.metadata["intent"] == "device_status"
+
+    def test_nlp_intent_still_enforced_when_unmapped_blocked(self, api_client, monkeypatch):
+        payload = self._enable_local_nlp()
+        cfg = ChatOpsConfig.load()
+        cfg.allow_unmapped_read = False; cfg.save()
+        monkeypatch.setattr("requests.post", lambda url, **kw: _FakeResp(payload))
+        resp = api_client.post("/api/webhooks/slack/",
+                               data={"event": {"text": "tell me about rtr-1",
+                                               "user": "U1", "channel": "C1"}}, format="json")
+        # enforce_policy must still deny the NLP-resolved intent for an unmapped user
+        assert "isn't linked" in resp.json()["text"]
+        from apps.core.models import AuditLog
+        row = AuditLog.objects.filter(event_type=AuditLog.EventType.CHATOPS_DENIED).first()
+        assert row is not None and row.metadata["intent"] == "device_status"
+
+    def test_unknown_with_no_nlp_falls_through_to_help(self, api_client):
+        resp = api_client.post("/api/webhooks/slack/",
+                               data={"event": {"text": "asldkfj qwerty",
+                                               "user": "U1", "channel": "C1"}}, format="json")
+        assert "spane commands" in resp.json()["text"]
