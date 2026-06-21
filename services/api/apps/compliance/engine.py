@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import logging
 
-from jinja2 import BaseLoader, Environment
+from jinja2 import BaseLoader
+from jinja2.sandbox import SandboxedEnvironment
 
 from .models import (
     ComplianceTemplate,
@@ -48,7 +49,15 @@ class ComplianceEngine:
             "role": device.role.name if device.role else "",
         }
 
-        env = Environment(loader=BaseLoader(), keep_trailing_newline=False)
+        # SandboxedEnvironment (not the plain Environment): compliance templates
+        # are author-editable by the engineer/api roles (not admin-only — see
+        # ComplianceTemplateViewSet), and are rendered server-side, so an
+        # unsandboxed Jinja2 template would be an SSTI→RCE vector. The sandbox
+        # blocks access to unsafe attributes/builtins. autoescape stays off below
+        # (these render device configs, not HTML).
+        env = SandboxedEnvironment(  # nosec B701 — autoescape off: renders device
+            # config text (not HTML); output is diffed, never sent to a browser as markup.
+            loader=BaseLoader(), keep_trailing_newline=False, autoescape=False)
         return env.from_string(template.template_content).render(**variables)
 
     def check_device(self, device, template, config_text=None) -> ComplianceTemplateResult:
@@ -77,7 +86,13 @@ class ComplianceEngine:
         try:
             expected = self.render_template(template, device, overrides)
         except Exception as exc:  # noqa: BLE001 — template authoring error
-            return self._error_result(device, template, f"Template render error: {exc}")
+            # Log the detail server-side; the finding text (returned to clients via
+            # the compliance endpoints) must not carry exception text (CodeQL
+            # py/stack-trace-exposure).
+            logger.warning("compliance template render failed for %s / %s: %s",
+                           device.hostname, template.name, exc)
+            return self._error_result(device, template,
+                                      "Template render error (details in server logs).")
 
         findings = self.compare_configs(expected, config_text)
 
@@ -228,7 +243,9 @@ def run_compliance_for_device(device, config_snapshot=None, *, store_score=True,
             result = engine.check_device(device, tmpl, config_text=config_text)
         except Exception as exc:  # noqa: BLE001 — never let one template break the run
             logger.warning("compliance check failed for %s / %s: %s", device.hostname, tmpl.name, exc)
-            result = ComplianceEngine._error_result(device, tmpl, str(exc))
+            # exc logged above; keep its text out of the client-visible finding.
+            result = ComplianceEngine._error_result(
+                device, tmpl, "Compliance check error (details in server logs).")
         result.config_snapshot = config_snapshot
         result.save()
         results.append(result)

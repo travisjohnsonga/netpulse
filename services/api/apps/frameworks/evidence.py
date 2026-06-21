@@ -239,5 +239,7 @@ def evaluate_control(mapping_key: str, ctx=None) -> dict:
     try:
         return collector(ctx)
     except Exception as exc:  # noqa: BLE001 — never let one control break a report
+        # exc logged here; the returned detail is surfaced via the frameworks API,
+        # so it must not carry exception text (CodeQL py/stack-trace-exposure).
         logger.warning("evidence collector %s failed: %s", mapping_key, exc)
-        return _result(GAP, f"Evidence collection failed: {exc}")
+        return _result(GAP, "Evidence collection failed (details in server logs).")

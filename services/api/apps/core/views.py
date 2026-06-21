@@ -5,6 +5,8 @@ import time
 import urllib.request
 import urllib.error
 
+from apps.core.net_safety import validate_outbound_url
+
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.models import Q
@@ -108,7 +110,8 @@ def _openbao_healthy() -> bool:
 
     addr = getattr(dj_settings, "OPENBAO_ADDR", "") or os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
     try:
-        with urllib.request.urlopen(f"{addr.rstrip('/')}/v1/sys/health", timeout=2.0) as resp:
+        url = validate_outbound_url(f"{addr.rstrip('/')}/v1/sys/health", block_metadata=False)
+        with urllib.request.urlopen(url, timeout=2.0) as resp:
             return resp.status == 200
     except urllib.error.HTTPError as exc:
         # 429 = unsealed standby (still usable); anything else (501 uninit,
@@ -164,7 +167,6 @@ def _netpulse_version() -> str:
             "setup_complete": serializers.BooleanField(),
             "openbao_healthy": serializers.BooleanField(),
             "database_healthy": serializers.BooleanField(),
-            "version": serializers.CharField(),
         },
     ),
 )
@@ -179,11 +181,13 @@ def setup_status(request):
     except OperationalError:
         db_ok = False
 
+    # NOTE: no "version" here — this endpoint is unauthenticated, so the exact
+    # build version is intentionally withheld (info-leak / fingerprinting). The
+    # authenticated /api/version/ and infrastructure-health endpoints still report it.
     return Response({
         "setup_complete": bool(getattr(dj_settings, "SETUP_COMPLETE", False)),
         "openbao_healthy": _openbao_healthy(),
         "database_healthy": db_ok,
-        "version": _netpulse_version(),
     })
 
 
@@ -209,6 +213,7 @@ def _http_probe(url: str, timeout: float = 2.0):
     """(ok, response_ms). ok = the endpoint answered below 500."""
     start = time.monotonic()
     try:
+        url = validate_outbound_url(url, block_metadata=False)
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return resp.status < 500, round((time.monotonic() - start) * 1000, 1)
     except urllib.error.HTTPError as exc:
@@ -226,7 +231,8 @@ def _openbao_probe(timeout: float = 2.0):
     )
     start = time.monotonic()
     try:
-        with urllib.request.urlopen(f"{addr.rstrip('/')}/v1/sys/health", timeout=timeout) as resp:
+        url = validate_outbound_url(f"{addr.rstrip('/')}/v1/sys/health", block_metadata=False)
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
             return resp.status == 200, round((time.monotonic() - start) * 1000, 1)
     except urllib.error.HTTPError as exc:
         # 429 = unsealed standby (still usable).

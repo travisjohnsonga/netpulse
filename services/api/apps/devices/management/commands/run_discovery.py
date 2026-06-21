@@ -239,10 +239,11 @@ _PROBE_PORTS = [22, 443, 80, 830, 8443, 23]
 
 def parse_nmap_hosts(xml_data: bytes) -> list[str]:
     """Extract live IPv4 host addresses from `nmap -oX -` output."""
-    import xml.etree.ElementTree as ET
+    import defusedxml.ElementTree as ET  # XXE/entity-expansion-safe drop-in
+    from defusedxml.common import DefusedXmlException
     try:
         root = ET.fromstring(xml_data)
-    except ET.ParseError:
+    except (ET.ParseError, DefusedXmlException):
         return []
     hosts: list[str] = []
     for host in root.findall("host"):
@@ -257,11 +258,12 @@ def parse_nmap_hosts(xml_data: bytes) -> list[str]:
 
 def parse_nmap_services(xml_data: bytes) -> dict[int, dict]:
     """Extract {port: {name, product, version, extrainfo}} for open ports."""
-    import xml.etree.ElementTree as ET
+    import defusedxml.ElementTree as ET  # XXE/entity-expansion-safe drop-in
+    from defusedxml.common import DefusedXmlException
     services: dict[int, dict] = {}
     try:
         root = ET.fromstring(xml_data)
-    except ET.ParseError:
+    except (ET.ParseError, DefusedXmlException):
         return services
     for host in root.findall("host"):
         ports = host.find("ports")
@@ -705,8 +707,10 @@ class DiscoveryRunner:
         """
         proc = None
         try:
+            # "--" terminates option parsing so an IP/host beginning with "-"
+            # can't be misread as a ping flag (argument-injection defense-in-depth).
             proc = await asyncio.create_subprocess_exec(
-                "ping", "-c", "1", "-W", "2", str(ip),
+                "ping", "-c", "1", "-W", "2", "--", str(ip),
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             await asyncio.wait_for(proc.communicate(), timeout=3)
             return proc.returncode == 0
@@ -834,10 +838,11 @@ class DiscoveryRunner:
     @staticmethod
     def _parse_first_host_os(xml_data: bytes) -> dict:
         """parse_nmap_os against the first <host> in single-host scan output."""
-        import xml.etree.ElementTree as ET
+        import defusedxml.ElementTree as ET  # XXE/entity-expansion-safe drop-in
+        from defusedxml.common import DefusedXmlException
         try:
             root = ET.fromstring(xml_data)
-        except ET.ParseError:
+        except (ET.ParseError, DefusedXmlException):
             return {}
         host = root.find("host")
         return parse_nmap_os(host) if host is not None else {}

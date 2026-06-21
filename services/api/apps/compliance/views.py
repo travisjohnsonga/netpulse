@@ -199,7 +199,12 @@ class ComplianceCheckView(APIView):
         try:
             result = engine.check_device(device, template)
         except Exception as exc:  # noqa: BLE001
-            result = engine._error_result(device, template, str(exc))
+            # Log server-side; never persist/return exception text in the finding
+            # (CodeQL py/stack-trace-exposure — the result is exposed via the API).
+            logger.warning("compliance check failed for %s / %s: %s",
+                           device.hostname, template.name, exc)
+            result = engine._error_result(
+                device, template, "Compliance check error (details in server logs).")
         result.save()
         return result
 

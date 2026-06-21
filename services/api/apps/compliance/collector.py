@@ -391,7 +391,10 @@ def _check_aos_cx_startup(device) -> dict:
         running = _aos_cx_ssh_exec(device, profile, creds, "show running-config")
         startup = _aos_cx_ssh_exec(device, profile, creds, "show startup-config")
     except Exception as exc:  # noqa: BLE001
-        return {"checked": False, "match": None, "error": str(exc)[:300]}
+        # Log detail server-side; this dict is surfaced via the compliance API as
+        # startup_status, so it must not carry exception text (CodeQL).
+        logger.warning("AOS-CX startup-config check failed for %s: %s", device.hostname, exc)
+        return {"checked": False, "match": None, "error": "startup check failed (see server logs)"}
 
     if running.strip() == startup.strip():
         return {"checked": True, "match": True, "diff": "", "method": "ssh", "added": 0, "removed": 0}
@@ -431,7 +434,10 @@ def _check_cisco_startup(device) -> dict:
         finally:
             conn.disconnect()
     except Exception as exc:  # noqa: BLE001
-        return {"checked": False, "match": None, "error": str(exc)[:300]}
+        # Log detail server-side; surfaced via the compliance API as startup_status,
+        # so it must not carry exception text (CodeQL).
+        logger.warning("Cisco startup-config check failed for %s: %s", device.hostname, exc)
+        return {"checked": False, "match": None, "error": "startup check failed (see server logs)"}
 
     text = output or ""
     if not text.strip() or "no differences" in text.lower():

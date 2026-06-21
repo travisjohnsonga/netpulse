@@ -64,7 +64,8 @@ SECTIONS = ["snmp", "syslog", "gnmi", "netflow"]
 
 def _env():
     from jinja2 import Environment, FileSystemLoader
-    return Environment(
+    return Environment(  # nosec B701 — autoescape off renders device config text
+        # (gNMI/SNMP collector configs), not HTML; templates are bundled, not user-authored.
         loader=FileSystemLoader(str(_TEMPLATE_DIR)),
         autoescape=False, trim_blocks=True, lstrip_blocks=True,
     )
