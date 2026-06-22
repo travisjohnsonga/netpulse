@@ -41,13 +41,14 @@ class TestSetupStatus:
     def test_body_shape(self, api_client, monkeypatch, settings):
         from apps.core import views
         monkeypatch.setattr(views, "_openbao_healthy", lambda: True)
-        monkeypatch.setattr(views, "_netpulse_version", lambda: "v1.2.3")
         settings.SETUP_COMPLETE = True
         data = api_client.get("/api/setup/status/").json()
         assert data["setup_complete"] is True
         assert data["openbao_healthy"] is True
         assert data["database_healthy"] is True
-        assert data["version"] == "v1.2.3"
+        # The exact build version is intentionally NOT exposed on this
+        # unauthenticated endpoint (info-leak hardening); see setup_status.
+        assert "version" not in data
 
     def test_reflects_setup_incomplete(self, api_client, monkeypatch, settings):
         from apps.core import views
