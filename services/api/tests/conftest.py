@@ -1,9 +1,38 @@
+import os
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
+
+_EXPECTED_SETTINGS = "config.settings.test"
+
+
+def pytest_configure(config):
+    """Fail fast if the suite is not running under the documented test settings.
+
+    The api container defaults DJANGO_SETTINGS_MODULE to config.settings.development
+    (Postgres). Under Postgres the threaded compliance run-all tests flake with
+    "connection closed" (a background thread closes the shared connection); under
+    config.settings.test (in-memory SQLite) they pass. pytest.ini pins
+    --ds=config.settings.test; this guard turns any non-test settings module into
+    an immediate, obvious error instead of a confusing mid-run flake.
+
+    By the time any pytest_configure runs, pytest-django has already resolved the
+    settings and written the result back to os.environ, so reading it here is
+    reliable regardless of plugin/conftest ordering.
+    """
+    actual = os.environ.get("DJANGO_SETTINGS_MODULE")
+    if actual != _EXPECTED_SETTINGS:
+        raise pytest.UsageError(
+            f"Tests must run under {_EXPECTED_SETTINGS} (got {actual!r}). "
+            "pytest.ini pins this via addopts=--ds; do not override it with an "
+            "explicit --ds or a different DJANGO_SETTINGS_MODULE. Running under "
+            "config.settings.development (Postgres) reintroduces the compliance "
+            "run-all 'connection closed' flake."
+        )
 
 
 @pytest.fixture(autouse=True)
