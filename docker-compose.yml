@@ -273,7 +273,10 @@ services:
         condition: service_healthy
     healthcheck:
       # GET /api/health/ → 200. Uses Python (curl/wget aren't in the slim image).
-      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/api/health/'); sys.exit(0 if r.status==200 else 1)"]
+      # Send X-Forwarded-Proto: https so SECURE_SSL_REDIRECT doesn't 301 the
+      # plain-HTTP probe to https:// (which would fail the TLS handshake against
+      # plain-HTTP gunicorn → WRONG_VERSION_NUMBER → false "unhealthy").
+      test: ["CMD", "python", "-c", "import urllib.request,sys; req=urllib.request.Request('http://localhost:8000/api/health/', headers={'X-Forwarded-Proto':'https'}); r=urllib.request.urlopen(req); sys.exit(0 if r.status==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3

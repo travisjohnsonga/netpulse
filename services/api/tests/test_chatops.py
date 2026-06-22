@@ -1123,3 +1123,84 @@ class TestNlpEnvConfig:
         # Hit the env-configured endpoint/model with no DB/admin config.
         assert captured["url"] == "http://ollama:11434/api/generate"
         assert captured["json"]["model"] == "qwen2.5:3b"
+# ── ChatOps v1: enriched regex intent parser (parser-recall only) ─────────────
+
+class TestIntentParsing:
+    """_parse_intent recall over richer phrasings of the existing six intents.
+
+    Parser-only: no new intents, no resolver/enforce/NLP changes.
+    """
+
+    @pytest.mark.parametrize("text,intent,name", [
+        # device_status — many phrasings, all → the same device name.
+        ("is core-sw-01 up?", "device_status", "core-sw-01"),
+        ("is core-sw-01 down", "device_status", "core-sw-01"),
+        ("is core-sw-01 reachable", "device_status", "core-sw-01"),
+        ("how's core-sw-01 doing", "device_status", "core-sw-01"),
+        ("how is core-sw-01", "device_status", "core-sw-01"),
+        ("show me core-sw-01", "device_status", "core-sw-01"),
+        ("show core-sw-01", "device_status", "core-sw-01"),
+        ("check core-sw-01", "device_status", "core-sw-01"),
+        ("status of core-sw-01", "device_status", "core-sw-01"),
+        ("core-sw-01 status", "device_status", "core-sw-01"),
+        # site_status — must beat device_status when "site" is present.
+        ("status of site DC1", "site_status", "DC1"),
+        ("how's site DC1", "site_status", "DC1"),
+        ("site DC1 status", "site_status", "DC1"),
+        # active_alerts — no name; "show me alerts" must NOT become device name="alerts".
+        ("any alerts", "active_alerts", None),
+        ("alerts", "active_alerts", None),
+        ("active alerts", "active_alerts", None),
+        ("show me alerts", "active_alerts", None),
+        ("what's firing", "active_alerts", None),
+        ("anything alerting", "active_alerts", None),
+        # cve_query
+        ("cves on edge-rtr-2", "cve_query", "edge-rtr-2"),
+        ("cve affecting edge-rtr-2", "cve_query", "edge-rtr-2"),
+        ("cves for edge-rtr-2", "cve_query", "edge-rtr-2"),
+        ("vulnerabilities on edge-rtr-2", "cve_query", "edge-rtr-2"),
+        # eol_query — name is the final token, connectors skipped.
+        ("eol for edge-rtr-2", "eol_query", "edge-rtr-2"),
+        ("end of life edge-rtr-2", "eol_query", "edge-rtr-2"),
+        ("end of support for edge-rtr-2", "eol_query", "edge-rtr-2"),
+        ("lifecycle of edge-rtr-2", "eol_query", "edge-rtr-2"),
+        # help
+        ("help", "help", None),
+        ("commands", "help", None),
+        ("what can you do?", "help", None),
+        ("?", "help", None),
+        # no match → unknown (lets the NLP fallback decide downstream).
+        ("the quick brown fox", "unknown", None),
+        ("", "unknown", None),
+    ])
+    def test_phrasings(self, text, intent, name):
+        from apps.chatops.pipeline import _parse_intent
+        got_intent, params = _parse_intent(text)
+        assert got_intent == intent
+        assert params.get("name") == name
+
+    def test_trailing_question_mark_never_in_name(self):
+        from apps.chatops.pipeline import _parse_intent
+        intent, params = _parse_intent("status of core-sw-01?")
+        assert intent == "device_status"
+        assert params["name"] == "core-sw-01"
+        assert "?" not in params["name"]
+
+    def test_internal_whitespace_collapsed(self):
+        from apps.chatops.pipeline import _parse_intent
+        intent, params = _parse_intent("   status   of    core-sw-01  ")
+        assert intent == "device_status"
+        assert params["name"] == "core-sw-01"
+
+    def test_classify_consults_nlp_only_on_unknown(self, monkeypatch):
+        """classify() runs the regex first; the NLP fallback is hit only when the
+        regex yields 'unknown' — never for a matched intent."""
+        from apps.chatops import pipeline
+        calls = []
+        monkeypatch.setattr(pipeline, "resolve_nlp", lambda t: calls.append(t) or None)
+
+        assert pipeline.classify("status of core-sw-01") == ("device_status", {"name": "core-sw-01"})
+        assert calls == []                      # matched → NLP not consulted
+
+        assert pipeline.classify("the quick brown fox")[0] == "unknown"
+        assert calls == ["the quick brown fox"]  # unmatched → NLP consulted once
