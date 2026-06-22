@@ -25,12 +25,17 @@ logger = logging.getLogger(__name__)
 # The closed set of intents the parser/NLP may produce. Kept here so nlp.py and
 # the tests share one source of truth.
 KNOWN_INTENTS = frozenset({
-    "device_status", "site_status", "active_alerts", "cve_query", "eol_query", "help",
+    "device_status", "site_status", "active_alerts", "cve_query", "eol_query",
+    "device_list", "help",
 })
+
+# How many devices a fleet (device_list) result lists before truncating.
+_DEVICE_LIST_CAP = 25
 
 _HELP_LINES = [
     "`status of <device>` — device status, health, CVEs, risk, EOL",
     "`status of site <site>` — site rollup",
+    "`down devices` / `all devices` / `devices at site <site>` — fleet listing",
     "`any alerts` — active alerts right now",
     "`CVEs affecting <device>` — unpatched CVEs for a device",
     "`EOL for <device>` — lifecycle / end-of-life dates",
@@ -298,6 +303,58 @@ def _resolve_eol_query(params) -> IntentResult:
                         severity="medium" if any_passed else "info")
 
 
+def _resolve_device_list(params) -> IntentResult:
+    """Fleet listing. ``filter`` = "down" (unreachable) or "all" (default);
+    optional ``site`` narrows to one site (matched by name icontains).
+
+    Degrades gracefully: an unknown site → a plain message; nothing down →
+    "All devices reachable." Lists at most ``_DEVICE_LIST_CAP`` rows and notes the
+    total when truncated. Per-device site is shown only in an un-scoped listing.
+    """
+    from apps.devices.models import Device, Site
+
+    qs = Device.objects.select_related("site").all()
+    site = None
+    site_term = (params.get("site") or "").strip()
+    if site_term:
+        site = Site.objects.filter(name__icontains=site_term).first()
+        if not site:
+            return IntentResult(title=f'No site matching "{site_term}".', severity="info")
+        qs = qs.filter(site=site)
+    scope = f" at {site.name}" if site else ""
+
+    raw = (params.get("filter") or "").lower()
+    want_down = raw in ("down", "unreachable", "offline")
+
+    if want_down:
+        qs = qs.filter(is_reachable=False)
+        total = qs.count()
+        if total == 0:
+            return IntentResult(title=f"All devices{scope} reachable.", severity="info")
+        rows = list(qs.order_by("hostname")[:_DEVICE_LIST_CAP])
+        extra = f" — showing {len(rows)}" if total > len(rows) else ""
+        return IntentResult(
+            title=f"Down devices{scope} ({total}){extra}",
+            lines=[_device_line(d, site) for d in rows], severity="high")
+
+    total = qs.count()
+    if total == 0:
+        return IntentResult(title=f"No devices{scope}.", severity="info")
+    rows = list(qs.order_by("hostname")[:_DEVICE_LIST_CAP])
+    title = (f"Devices{scope} ({len(rows)} of {total})" if total > len(rows)
+             else f"Devices{scope} ({total})")
+    return IntentResult(title=title, lines=[_device_line(d, site) for d in rows],
+                        severity="info")
+
+
+def _device_line(device, site) -> str:
+    """One fleet-listing line: hostname — status, plus the site when un-scoped."""
+    line = f"{device.hostname} — {device.status}"
+    if site is None and device.site_id:
+        line += f" [{device.site.name}]"
+    return line
+
+
 def _resolve_help(_params) -> IntentResult:
     return IntentResult(title="spane commands", lines=list(_HELP_LINES), severity="info")
 
@@ -308,6 +365,7 @@ _RESOLVERS = {
     "active_alerts": _resolve_active_alerts,
     "cve_query": _resolve_cve_query,
     "eol_query": _resolve_eol_query,
+    "device_list": _resolve_device_list,
     "help": _resolve_help,
 }
 
