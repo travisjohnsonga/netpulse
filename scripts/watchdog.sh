@@ -25,6 +25,25 @@ log() {
 
 cd "$COMPOSE_DIR" || { echo "watchdog: cannot cd to $COMPOSE_DIR" >&2; exit 1; }
 
+# Grace window (seconds) during which a freshly (re)started api is considered to
+# be still booting — migrations, OpenBao unseal, gunicorn warm-up — and so an
+# "unhealthy"/non-ok status is NOT treated as broken.
+API_STARTUP_GRACE_S="${SPANE_WATCHDOG_API_GRACE_S:-120}"
+
+# Seconds since the api container last (re)started, or empty if it can't be
+# determined (e.g. container missing). Resolves the container id via compose so
+# it works regardless of the project/container-name prefix.
+api_uptime_s() {
+    local cid started started_s now_s
+    cid=$(docker compose ps -q api 2>/dev/null)
+    [ -z "$cid" ] && return 1
+    started=$(docker inspect "$cid" --format '{{.State.StartedAt}}' 2>/dev/null)
+    [ -z "$started" ] && return 1
+    started_s=$(date -d "$started" +%s 2>/dev/null) || return 1
+    now_s=$(date +%s)
+    echo $(( now_s - started_s ))
+}
+
 # ── Critical container health ────────────────────────────────────────────────
 CRITICAL_SERVICES=(api postgres openbao valkey nats influxdb opensearch)
 for service in "${CRITICAL_SERVICES[@]}"; do
@@ -38,6 +57,13 @@ for service in "${CRITICAL_SERVICES[@]}"; do
             || docker compose up -d "$service" 2>/dev/null || true
         sleep 10
     elif [ "$HEALTH" = "unhealthy" ]; then
+        if [ "$service" = "api" ]; then
+            UPTIME_S=$(api_uptime_s)
+            if [ -n "$UPTIME_S" ] && [ "$UPTIME_S" -lt "$API_STARTUP_GRACE_S" ] 2>/dev/null; then
+                log "api unhealthy but only started ${UPTIME_S}s ago — waiting (grace ${API_STARTUP_GRACE_S}s)"
+                continue
+            fi
+        fi
         log "WARNING: $service unhealthy — restarting"
         docker compose restart "$service" 2>/dev/null || true
         sleep 10
@@ -57,6 +83,15 @@ except Exception:
 
 API_STATUS=$(check_api)
 if [ "$API_STATUS" != "ok" ]; then
+    # Don't restart an api that's still inside its startup grace window — a
+    # freshly (re)started container reports non-ok while it boots (migrations,
+    # OpenBao unseal, gunicorn warm-up). Restarting now would loop it forever.
+    UPTIME_S=$(api_uptime_s)
+    if [ -n "$UPTIME_S" ] && [ "$UPTIME_S" -lt "$API_STARTUP_GRACE_S" ] 2>/dev/null; then
+        log "API unhealthy (health=$API_STATUS) but only started ${UPTIME_S}s ago — waiting (grace ${API_STARTUP_GRACE_S}s)"
+        log "Watchdog OK (api=$API_STATUS, starting)"
+        exit 0
+    fi
     log "WARNING: API health=$API_STATUS — restarting api"
     docker compose restart api 2>/dev/null || true
     sleep 20
