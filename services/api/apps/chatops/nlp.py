@@ -98,6 +98,14 @@ def _backend_local(text: str, config):
         return None
     if not endpoint.endswith("/api/generate"):
         endpoint = f"{endpoint}/api/generate"
+    # SSRF guard: http/https only + no cloud-metadata target (private/on-prem
+    # endpoints like http://ollama:11434 stay allowed). Fail closed on rejection.
+    from apps.core.net_safety import UnsafeURLError, validate_outbound_url
+    try:
+        validate_outbound_url(endpoint)
+    except UnsafeURLError as exc:
+        logger.warning("chatops NLP local endpoint rejected: %s", exc)
+        return None
     import requests
     resp = requests.post(
         endpoint,
@@ -128,6 +136,13 @@ def _backend_api(text: str, config):
         return None
     endpoint = (config.nlp_endpoint or "").strip() or _DEFAULT_API_ENDPOINT
     model = config.nlp_model or _DEFAULT_API_MODEL
+    # SSRF guard (same policy as the local backend): http/https + no metadata.
+    from apps.core.net_safety import UnsafeURLError, validate_outbound_url
+    try:
+        validate_outbound_url(endpoint)
+    except UnsafeURLError as exc:
+        logger.warning("chatops NLP api endpoint rejected: %s", exc)
+        return None
     import requests
     resp = requests.post(
         endpoint,

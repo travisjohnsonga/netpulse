@@ -54,6 +54,7 @@ ntc-templates~=9.1   # TextFSM templates for show-command parsing (LLDP, interfa
 textfsm~=2.1
 ncclient~=0.6
 pysnmp~=7.1
+defusedxml~=0.7        # XXE/entity-expansion-safe XML parsing (apps.devices run_discovery nmap output)
 requests~=2.32       # AOS-CX REST API client (apps.devices.aos_cx_client)
 Jinja2~=3.1
 

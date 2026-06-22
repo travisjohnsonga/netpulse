@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import AdminOnly
 from .models import (
     ApprovedOSVersion,
     CompliancePolicy,
@@ -92,6 +93,17 @@ class ComplianceTemplateViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "description"]
     ordering_fields = ["name", "created_at"]
     ordering = ["name"]
+
+    # Authoring a template = writing a server-side-rendered Jinja2 string (an SSTI
+    # surface even behind the sandbox), so creating/editing/deleting templates is
+    # admin-only. Reading (list/retrieve) and rendering (preview) stay open to the
+    # operational roles that need to view templates.
+    _ADMIN_ACTIONS = frozenset({"create", "update", "partial_update", "destroy"})
+
+    def get_permissions(self):
+        if self.action in self._ADMIN_ACTIONS:
+            return [AdminOnly()]
+        return super().get_permissions()
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
@@ -199,7 +211,12 @@ class ComplianceCheckView(APIView):
         try:
             result = engine.check_device(device, template)
         except Exception as exc:  # noqa: BLE001
-            result = engine._error_result(device, template, str(exc))
+            # Log server-side; never persist/return exception text in the finding
+            # (CodeQL py/stack-trace-exposure — the result is exposed via the API).
+            logger.warning("compliance check failed for %s / %s: %s",
+                           device.hostname, template.name, exc)
+            result = engine._error_result(
+                device, template, "Compliance check error (details in server logs).")
         result.save()
         return result
 

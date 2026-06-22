@@ -73,6 +73,14 @@ class NetBoxClient:
 
     def _get(self, path: str) -> dict:
         url = f"{self.base}{path}"
+        # Restrict to http/https (admin-set base URL + NetBox-supplied pagination
+        # links). Scheme-only; an on-prem NetBox is legitimately private so the
+        # cloud-metadata block isn't applied here.
+        from apps.core.net_safety import UnsafeURLError, validate_outbound_url
+        try:
+            validate_outbound_url(url, block_metadata=False)
+        except UnsafeURLError as exc:
+            raise NetBoxError(f"Refusing to fetch unsafe URL for {path}: {exc}") from exc
         req = urllib.request.Request(url, headers={
             "Authorization": _get_auth_header(self.token),
             "Accept": "application/json",
