@@ -1207,8 +1207,9 @@ Push alerts to designated channels without being asked:
 ## Recent Additions (implemented)
 
 This section summarizes capabilities added since the original design above. The
-living, authoritative status list lives in [CLAUDE.md](../CLAUDE.md) ("Current
-Status").
+living, authoritative status list lives in
+[CLAUDE.md](https://github.com/travisjohnsonga/netpulse/blob/main/CLAUDE.md)
+("Current Status").
 
 - **Adaptive SNMP/gNMI polling** — ingest-grpc stamps a Valkey heartbeat
   (`gnmi:last_seen:{id}`, TTL 180s). While gNMI streams, ingest-snmp polls only
