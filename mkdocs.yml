@@ -33,6 +33,7 @@ nav:
   - Metrics & Alerting: metrics-and-alerting.md
   - Flow Collection: flow-collection.md
   - Integrations:
+    - ChatOps: integrations/chatops.md
     - UniFi: integrations/unifi.md
     - Wireless Monitoring: integrations/wireless.md
     - NetBox: integrations/netbox.md
