@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import AdminOnly
 from . import ca_store, certs
 from .models import CACertificate, ServerCertificate
 from .serializers import (
@@ -52,6 +53,8 @@ class SSLStatusView(APIView):
 class SSLSelfSignedView(APIView):
     """Generate and install a self-signed HTTPS certificate."""
 
+    permission_classes = [AdminOnly]   # mutates server cert/key — admin-only
+
     @extend_schema(request=SelfSignedRequestSerializer, responses=ServerCertificateStatusSerializer,
                    summary="Generate a self-signed certificate")
     def post(self, request):
@@ -68,6 +71,8 @@ class SSLSelfSignedView(APIView):
 
 class SSLCSRView(APIView):
     """Generate a CSR (GET returns the pending CSR; POST creates a new key+CSR)."""
+
+    permission_classes = [AdminOnly]   # CSR generation/retrieval = admin cert mgmt
 
     @extend_schema(responses=CSRResponseSerializer, summary="Get the pending CSR")
     def get(self, request):
@@ -92,6 +97,8 @@ class SSLCSRView(APIView):
 
 class SSLUploadView(APIView):
     """Upload a CA-signed (or any) certificate, optionally with its private key."""
+
+    permission_classes = [AdminOnly]   # installs server cert/key — admin-only
 
     @extend_schema(request=UploadCertificateSerializer, responses=ServerCertificateStatusSerializer,
                    summary="Upload a certificate")
@@ -137,6 +144,11 @@ def _decode_upload(raw_text: str) -> bytes:
 class CACertificateListView(APIView):
     """List trusted CA certificates (GET) or add one/many (POST)."""
 
+    # Adding a trusted CA changes the trust store — admin-only (POST); the GET
+    # list stays on the default permission.
+    def get_permissions(self):
+        return [AdminOnly()] if self.request.method == "POST" else super().get_permissions()
+
     @extend_schema(responses=CACertificateSerializer(many=True), summary="List trusted CA certificates")
     def get(self, request):
         qs = CACertificate.objects.all()
@@ -179,6 +191,8 @@ class CACertificateListView(APIView):
 
 class CACertificateDetailView(APIView):
     """Delete a trusted CA certificate and rebuild the bundle."""
+
+    permission_classes = [AdminOnly]   # removing a trusted CA — admin-only
 
     @extend_schema(summary="Delete a trusted CA certificate")
     def delete(self, request, pk):

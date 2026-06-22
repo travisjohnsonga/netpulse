@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import AdminOnly
 from apps.credentials import vault
 
 from . import netbox
@@ -30,6 +31,20 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
 
     queryset = UnifiController.objects.all()
     serializer_class = UnifiControllerSerializer
+
+    # Mutating a controller (CRUD) and writing the cloud Site-Manager API key
+    # (cloud PUT) are admin-only. list/retrieve, the cloud GET, and the
+    # operational probes (test/sync/sync-all/cloud-test/cloud-discover) stay on
+    # the default permission. (Track 2 → integration:manage capability.)
+    _ADMIN_ACTIONS = frozenset({"create", "update", "partial_update", "destroy"})
+
+    def get_permissions(self):
+        if self.action in self._ADMIN_ACTIONS:
+            return [AdminOnly()]
+        # The cloud account secret write (PUT) is admin-only; its GET is a read.
+        if self.action == "cloud" and self.request.method == "PUT":
+            return [AdminOnly()]
+        return super().get_permissions()
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
@@ -148,6 +163,11 @@ class MistViewSet(viewsets.ViewSet):
     DB (MistIntegration), so a connected account survives an api restart.
     """
 
+    # Writing the Mist account + API token (update/PUT) is admin-only; retrieve,
+    # test, sync, and sites stay on the default. (Track 2 → integration:manage.)
+    def get_permissions(self):
+        return [AdminOnly()] if self.action == "update" else super().get_permissions()
+
     def _account_data(self):
         from .models import MistIntegration
         from .serializers import MistIntegrationSerializer
@@ -231,6 +251,11 @@ class MistViewSet(viewsets.ViewSet):
 
 class EmailSettingsView(APIView):
     """GET / PUT the singleton SMTP configuration (Settings → Integrations → Email)."""
+
+    # Writing SMTP settings (PUT) stores the SMTP password in OpenBao — admin-only.
+    # GET stays operational. (Track 2 → integration:manage capability.)
+    def get_permissions(self):
+        return [AdminOnly()] if self.request.method == "PUT" else super().get_permissions()
 
     @extend_schema(responses=EmailSettingsSerializer)
     def get(self, request):
