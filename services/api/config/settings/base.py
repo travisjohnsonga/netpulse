@@ -374,6 +374,10 @@ REST_FRAMEWORK = {
     # credential brute-force. Backed by the Valkey cache.
     "DEFAULT_THROTTLE_RATES": {
         "auth": os.environ.get("AUTH_THROTTLE_RATE", "10/min"),
+        # Inbound ChatOps webhooks (Slack/Teams/Google Chat/Discord/Mattermost):
+        # rate-limit per client IP to blunt signature/token brute-force and cap
+        # NLP-call amplification from unknown-intent floods. See apps.core.chatops.
+        "chatops": os.environ.get("CHATOPS_THROTTLE_RATE", "30/min"),
     },
     # The API runs behind the frontend nginx (proxy_pass to api:8000). Without
     # this, DRF keys throttles on REMOTE_ADDR — which is the nginx container IP

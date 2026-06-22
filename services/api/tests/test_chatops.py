@@ -29,6 +29,21 @@ def fake_vault(monkeypatch):
     return store
 
 
+@pytest.fixture(autouse=True)
+def _clear_throttle_cache():
+    """Reset the rate-throttle history before every test.
+
+    The webhook endpoints carry the "chatops" ScopedRateThrottle (30/min). DRF
+    binds SimpleRateThrottle.THROTTLE_RATES at import, so the test-settings
+    DEFAULT_THROTTLE_RATES override doesn't disable it; without this, webhook
+    posts accumulated across the file would eventually trip a 429 in unrelated
+    tests. Clearing the (LocMem) cache per test makes each one deterministic;
+    the dedicated throttle test re-enables a tiny rate against a clean cache."""
+    from django.core.cache import cache
+    cache.clear()
+    yield
+
+
 def _enable(platform):
     return ChatOpsPlatform.objects.update_or_create(
         platform=platform, defaults={"enabled": True})[0]
@@ -671,3 +686,277 @@ class TestNLPWebhookIntegration:
                                data={"event": {"text": "asldkfj qwerty",
                                                "user": "U1", "channel": "C1"}}, format="json")
         assert "spane commands" in resp.json()["text"]
+
+
+# ── Phase 3.5: per-platform webhook authentication ────────────────────────────
+#
+# Identity (user_id/channel) is read from the payload and fed to enforce_policy,
+# so an unauthenticated webhook is identity-spoofable. Each platform must verify
+# the request genuinely came from the platform BEFORE _classify/enforce_policy.
+# The verifier is skipped only when no secret is configured (dev mode).
+
+import base64 as _b64
+import hashlib as _hashlib
+import hmac as _hmac
+import json as _json
+
+from apps.chatops.models import write_chatops_secrets
+
+
+def _raw_post(api_client, url, body: str, **extra):
+    """POST a raw JSON body (so request.body is byte-exact for signature checks)."""
+    return api_client.post(url, data=body, content_type="application/json", **extra)
+
+
+class TestDiscordVerification:
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        _enable("discord")
+
+    @staticmethod
+    def _signing_key():
+        from nacl.signing import SigningKey
+        sk = SigningKey.generate()
+        return sk, sk.verify_key.encode().hex()
+
+    @staticmethod
+    def _sign(sk, ts: str, body: str) -> str:
+        return sk.sign((ts + body).encode()).signature.hex()
+
+    def test_valid_signature_passes(self, api_client, fake_vault):
+        sk, pub = self._signing_key()
+        write_chatops_secrets("discord", {"public_key": pub})
+        body = _json.dumps({"type": 2, "data": {"options": [{"value": "help"}]}})
+        ts = "1700000000"
+        resp = _raw_post(api_client, "/api/webhooks/discord/", body,
+                         HTTP_X_SIGNATURE_ED25519=self._sign(sk, ts, body),
+                         HTTP_X_SIGNATURE_TIMESTAMP=ts)
+        assert resp.status_code == 200
+
+    def test_ping_returns_ack(self, api_client, fake_vault):
+        sk, pub = self._signing_key()
+        write_chatops_secrets("discord", {"public_key": pub})
+        body = _json.dumps({"type": 1})
+        ts = "1700000000"
+        resp = _raw_post(api_client, "/api/webhooks/discord/", body,
+                         HTTP_X_SIGNATURE_ED25519=self._sign(sk, ts, body),
+                         HTTP_X_SIGNATURE_TIMESTAMP=ts)
+        assert resp.status_code == 200
+        assert resp.json() == {"type": 1}
+
+    def test_missing_signature_returns_401(self, api_client, fake_vault):
+        _, pub = self._signing_key()
+        write_chatops_secrets("discord", {"public_key": pub})
+        resp = _raw_post(api_client, "/api/webhooks/discord/", _json.dumps({"type": 2}))
+        assert resp.status_code == 401
+
+    def test_wrong_signature_returns_401(self, api_client, fake_vault):
+        sk, pub = self._signing_key()
+        write_chatops_secrets("discord", {"public_key": pub})
+        wrong, _ = self._signing_key()        # signed by a different key
+        body = _json.dumps({"type": 2, "data": {"options": [{"value": "help"}]}})
+        ts = "1700000000"
+        resp = _raw_post(api_client, "/api/webhooks/discord/", body,
+                         HTTP_X_SIGNATURE_ED25519=self._sign(wrong, ts, body),
+                         HTTP_X_SIGNATURE_TIMESTAMP=ts)
+        assert resp.status_code == 401
+
+    def test_no_secret_dev_path_processes(self, api_client, fake_vault):
+        # No public key stored → verification skipped; the PING still ACKs.
+        resp = _raw_post(api_client, "/api/webhooks/discord/", _json.dumps({"type": 1}))
+        assert resp.status_code == 200
+        assert resp.json() == {"type": 1}
+
+    def test_forged_identity_rejected_before_enforce_policy(self, api_client, fake_vault,
+                                                            monkeypatch):
+        """A spoofed user_id must be rejected at verification, before policy runs."""
+        _, pub = self._signing_key()
+        write_chatops_secrets("discord", {"public_key": pub})
+        import apps.core.chatops as chatops_mod
+        called = {"enforce": False}
+        monkeypatch.setattr(chatops_mod, "enforce_policy",
+                            lambda *a, **k: called.__setitem__("enforce", True))
+        body = _json.dumps({"type": 2,
+                            "member": {"user": {"id": "admin-spoof", "username": "root"}},
+                            "data": {"options": [{"value": "status of core"}]}})
+        resp = _raw_post(api_client, "/api/webhooks/discord/", body)   # no valid signature
+        assert resp.status_code == 401
+        assert called["enforce"] is False
+
+
+class TestMattermostVerification:
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        _enable("mattermost")
+
+    def _post(self, api_client, **fields):
+        return api_client.post("/api/webhooks/mattermost/", data=fields, format="json")
+
+    def test_valid_token_passes(self, api_client, fake_vault):
+        write_chatops_secrets("mattermost", {"token": "s3cr3t-token"})
+        resp = self._post(api_client, token="s3cr3t-token", text="help",
+                          user_name="bob", channel_id="C1")
+        assert resp.status_code == 200
+
+    def test_wrong_token_returns_401(self, api_client, fake_vault):
+        write_chatops_secrets("mattermost", {"token": "s3cr3t-token"})
+        resp = self._post(api_client, token="nope", text="help", channel_id="C1")
+        assert resp.status_code == 401
+
+    def test_missing_token_returns_401(self, api_client, fake_vault):
+        write_chatops_secrets("mattermost", {"token": "s3cr3t-token"})
+        resp = self._post(api_client, text="help", channel_id="C1")
+        assert resp.status_code == 401
+
+    def test_no_secret_dev_path_processes(self, api_client, fake_vault):
+        resp = self._post(api_client, text="help", user_name="bob", channel_id="C1")
+        assert resp.status_code == 200
+        assert "spane commands" in resp.json()["text"]
+
+    def test_forged_identity_rejected_before_enforce_policy(self, api_client, fake_vault,
+                                                            monkeypatch):
+        write_chatops_secrets("mattermost", {"token": "s3cr3t-token"})
+        import apps.core.chatops as chatops_mod
+        called = {"enforce": False}
+        monkeypatch.setattr(chatops_mod, "enforce_policy",
+                            lambda *a, **k: called.__setitem__("enforce", True))
+        resp = self._post(api_client, token="WRONG", user_id="admin-spoof",
+                          user_name="root", text="status of core", channel_id="C1")
+        assert resp.status_code == 401
+        assert called["enforce"] is False
+
+
+class TestTeamsVerification:
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        _enable("teams")
+
+    @staticmethod
+    def _key_and_b64():
+        key = b"teams-outgoing-webhook-key-bytes"
+        return key, _b64.b64encode(key).decode()
+
+    @staticmethod
+    def _hmac(key: bytes, body: str) -> str:
+        return _b64.b64encode(_hmac.new(key, body.encode(), _hashlib.sha256).digest()).decode()
+
+    def _body(self):
+        return _json.dumps({"text": "help", "from": {"id": "u1", "name": "bob"},
+                            "conversation": {"id": "C1"}})
+
+    def test_valid_hmac_passes(self, api_client, fake_vault):
+        key, b64key = self._key_and_b64()
+        write_chatops_secrets("teams", {"hmac_secret": b64key})
+        body = self._body()
+        resp = _raw_post(api_client, "/api/webhooks/teams/", body,
+                         HTTP_AUTHORIZATION=f"HMAC {self._hmac(key, body)}")
+        assert resp.status_code == 200
+
+    def test_wrong_hmac_returns_401(self, api_client, fake_vault):
+        _, b64key = self._key_and_b64()
+        write_chatops_secrets("teams", {"hmac_secret": b64key})
+        body = self._body()
+        bad = self._hmac(b"some-other-key", body)
+        resp = _raw_post(api_client, "/api/webhooks/teams/", body,
+                         HTTP_AUTHORIZATION=f"HMAC {bad}")
+        assert resp.status_code == 401
+
+    def test_missing_auth_returns_401(self, api_client, fake_vault):
+        _, b64key = self._key_and_b64()
+        write_chatops_secrets("teams", {"hmac_secret": b64key})
+        resp = _raw_post(api_client, "/api/webhooks/teams/", self._body())
+        assert resp.status_code == 401
+
+    def test_no_secret_dev_path_processes(self, api_client, fake_vault):
+        resp = _raw_post(api_client, "/api/webhooks/teams/", self._body())
+        assert resp.status_code == 200
+        assert "spane commands" in resp.json()["text"]
+
+
+class TestGchatVerification:
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        _enable("gchat")
+
+    def _body(self):
+        return _json.dumps({"message": {"text": "help",
+                                        "sender": {"displayName": "bob", "name": "users/1"}},
+                            "space": {"name": "spaces/AAA"}})
+
+    def test_valid_bearer_passes(self, api_client, fake_vault):
+        write_chatops_secrets("gchat", {"bearer_token": "shared-bearer-123"})
+        resp = _raw_post(api_client, "/api/webhooks/gchat/", self._body(),
+                         HTTP_AUTHORIZATION="Bearer shared-bearer-123")
+        assert resp.status_code == 200
+
+    def test_wrong_bearer_returns_401(self, api_client, fake_vault):
+        write_chatops_secrets("gchat", {"bearer_token": "shared-bearer-123"})
+        resp = _raw_post(api_client, "/api/webhooks/gchat/", self._body(),
+                         HTTP_AUTHORIZATION="Bearer nope")
+        assert resp.status_code == 401
+
+    def test_missing_auth_returns_401(self, api_client, fake_vault):
+        write_chatops_secrets("gchat", {"bearer_token": "shared-bearer-123"})
+        resp = _raw_post(api_client, "/api/webhooks/gchat/", self._body())
+        assert resp.status_code == 401
+
+    def test_no_secret_dev_path_processes(self, api_client, fake_vault):
+        resp = _raw_post(api_client, "/api/webhooks/gchat/", self._body())
+        assert resp.status_code == 200
+        assert "spane commands" in resp.json()["text"]
+
+
+class TestSlackVerification:
+    """The pre-existing Slack HMAC step, now alongside the other four platforms."""
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        _enable("slack")
+
+    def _body(self):
+        return _json.dumps({"event": {"text": "help", "user": "U1", "channel": "C1"}})
+
+    def test_valid_signature_passes(self, api_client, fake_vault):
+        write_chatops_secrets("slack", {"signing_secret": "sign-me"})
+        body = self._body()
+        ts = str(int(__import__("time").time()))
+        base = f"v0:{ts}:{body}"
+        sig = "v0=" + _hmac.new(b"sign-me", base.encode(), _hashlib.sha256).hexdigest()
+        resp = _raw_post(api_client, "/api/webhooks/slack/", body,
+                         HTTP_X_SLACK_REQUEST_TIMESTAMP=ts, HTTP_X_SLACK_SIGNATURE=sig)
+        assert resp.status_code == 200
+
+    def test_wrong_signature_returns_401(self, api_client, fake_vault):
+        write_chatops_secrets("slack", {"signing_secret": "sign-me"})
+        body = self._body()
+        ts = str(int(__import__("time").time()))
+        resp = _raw_post(api_client, "/api/webhooks/slack/", body,
+                         HTTP_X_SLACK_REQUEST_TIMESTAMP=ts, HTTP_X_SLACK_SIGNATURE="v0=bad")
+        assert resp.status_code == 401
+
+
+class TestWebhookThrottle:
+    """All five webhooks carry the "chatops" ScopedRateThrottle."""
+    @pytest.fixture(autouse=True)
+    def _live(self, settings):
+        settings.CHATOPS_ENABLED = True
+        for p in ("slack", "teams", "gchat", "discord", "mattermost"):
+            _enable(p)
+
+    @pytest.mark.parametrize("platform", ["slack", "teams", "gchat", "discord", "mattermost"])
+    def test_webhook_is_rate_limited(self, api_client, monkeypatch, platform):
+        from django.core.cache import cache
+        from rest_framework.throttling import SimpleRateThrottle
+        cache.clear()
+        # The "chatops" rate is disabled in test settings; patch a tiny rate.
+        monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", {"chatops": "2/min"})
+        try:
+            codes = [api_client.post(f"/api/webhooks/{platform}/", data={}, format="json").status_code
+                     for _ in range(4)]
+            assert 429 in codes, f"expected a 429 after the limit for {platform}, got {codes}"
+        finally:
+            cache.clear()

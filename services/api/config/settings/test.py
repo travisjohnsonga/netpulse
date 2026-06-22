@@ -58,9 +58,10 @@ DEVICE_AUTO_ENRICH = False
 # misconfigured; this setting remains the first line of isolation.
 OPENBAO_DISABLED = True
 
-# Disable the auth throttle by default so the suite is deterministic; the
-# throttle test re-enables a tiny rate via override_settings.
-REST_FRAMEWORK = {**REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": None}}  # noqa: F405
+# Disable the auth + chatops throttles by default so the suite is deterministic;
+# the throttle tests re-enable a tiny rate via override_settings.
+REST_FRAMEWORK = {**REST_FRAMEWORK,  # noqa: F405
+                  "DEFAULT_THROTTLE_RATES": {"auth": None, "chatops": None}}
 
 LOGGING = {"version": 1, "disable_existing_loggers": True}
 

@@ -27,6 +27,8 @@ class ChatOpsPlatformSerializer(serializers.ModelSerializer):
     bot_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
     public_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
     token = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    hmac_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    bearer_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
     # Read-only: which secret fields this platform uses + whether each is stored.
     secret_fields = serializers.SerializerMethodField()
     secrets = serializers.SerializerMethodField()
@@ -38,6 +40,7 @@ class ChatOpsPlatformSerializer(serializers.ModelSerializer):
             "secret_fields", "secrets",
             # write-only secret inputs
             "signing_secret", "bot_token", "public_key", "token",
+            "hmac_secret", "bearer_token",
             "created_at", "updated_at",
         )
         read_only_fields = ("platform", "created_at", "updated_at")
