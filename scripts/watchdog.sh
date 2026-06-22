@@ -72,8 +72,12 @@ done
 
 # ── API health endpoint ──────────────────────────────────────────────────────
 # api exposes ${API_PORT} on the host; GET /api/health/ → {"status": "ok", ...}.
+# Send X-Forwarded-Proto: https (trusted via SECURE_PROXY_SSL_HEADER) so
+# SECURE_SSL_REDIRECT doesn't 301 this plain-HTTP probe to https:// (empty body
+# → false "error"). Mirrors the header nginx forwards.
 check_api() {
-    curl -sf --max-time 5 "http://localhost:${API_PORT}/api/health/" 2>/dev/null \
+    curl -sf --max-time 5 -H 'X-Forwarded-Proto: https' \
+        "http://localhost:${API_PORT}/api/health/" 2>/dev/null \
         | python3 -c 'import sys, json
 try:
     print(json.load(sys.stdin).get("status", "unknown"))
