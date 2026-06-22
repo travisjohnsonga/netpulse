@@ -21,22 +21,72 @@ import re
 from .nlp import resolve_nlp
 
 # ── intent patterns ───────────────────────────────────────────────────────────
+# A hostname-ish capture: letters/digits/_ plus the chars that show up in device
+# names and addresses (dot, dash, colon, slash). Shared across patterns; a
+# trailing-punctuation strip after matching cleans up any stray "." / ":" caught
+# at the end. Re-used per pattern (one `name` group per compiled regex, so no
+# duplicate-group-name error).
+_NAME = r"(?P<name>[\w.\-:/]+)"
+
+# Ordered most-specific → most-general; the FIRST match wins. active_alerts and
+# the site_* rows precede device_status so "alerts" / "show me alerts" / "site X"
+# are not swallowed as a device name. Several intents have more than one phrasing
+# row (kept separate so each carries a single `name` group). The six intent keys
+# are unchanged — this only broadens recall (no new intents, no resolver change).
 _INTENTS: list[tuple[str, re.Pattern]] = [
-    ("site_status",    re.compile(r"status\s+of\s+site\s+(?P<name>\S+)", re.I)),
-    ("device_status",  re.compile(r"status\s+of\s+(?P<name>\S+)", re.I)),
-    ("active_alerts",  re.compile(r"(any\s+)?alerts?(\s+right\s+now)?", re.I)),
-    ("cve_query",      re.compile(r"cve.*(affect|on)\s+(?P<name>\S+)", re.I)),
-    ("eol_query",      re.compile(r"(eol|end.of.life|lifecycle).*(?P<name>\S+)", re.I)),
-    ("help",           re.compile(r"^help$", re.I)),
+    # help — exact phrases only.
+    ("help", re.compile(r"^(?:help|commands|what can you do|\?)$", re.I)),
+
+    # active_alerts — any mention of alerts, plus "what's firing" / "anything alerting".
+    ("active_alerts", re.compile(
+        r"\b(?:any|active|firing|open|current)?\s*alerts?\b"
+        r"|\bwhat'?s firing\b"
+        r"|\banything alerting\b", re.I)),
+
+    # cve_query — "cves on/for/affecting NAME" and a "vulnerabilities on NAME" variant.
+    ("cve_query", re.compile(r"\bcves?\b.*?\b(?:affect(?:ing)?|on|for)\s+" + _NAME, re.I)),
+    ("cve_query", re.compile(r"\bvulnerab\w*\b.*?\bon\s+" + _NAME, re.I)),
+
+    # eol_query — eol / end-of-life / end-of-support / lifecycle … NAME. The name
+    # is the final token (anchored with \s…$ so it isn't reduced to the last
+    # character by the greedy gap, and connector words like "for"/"of" are skipped).
+    ("eol_query", re.compile(
+        r"\b(?:eol|end[\s.\-]?of[\s.\-]?life|end[\s.\-]?of[\s.\-]?support|lifecycle)\b.*\s"
+        + _NAME + r"$", re.I)),
+
+    # site_status — must precede device_status so "site X" isn't read as a device.
+    ("site_status", re.compile(r"\b(?:status of|how'?s|how is)\s+site\s+" + _NAME, re.I)),
+    ("site_status", re.compile(r"\bsite\s+" + _NAME + r"\s+status\b", re.I)),
+
+    # device_status — most general; checked last.
+    ("device_status", re.compile(
+        r"\b(?:status of|how'?s|how is|check|show(?:\s+me)?)\s+" + _NAME, re.I)),
+    ("device_status", re.compile(
+        r"\bis\s+" + _NAME + r"\s+(?:up|down|reachable|online|offline)\b", re.I)),
+    ("device_status", re.compile(r"^" + _NAME + r"\s+status$", re.I)),
 ]
+
+# Trailing punctuation a captured name should never keep (NAME may grab a stray
+# "." or ":" at the very end, e.g. "edge-rtr-2.").
+_NAME_TRIM = ".,;:!?"
 
 
 def _parse_intent(text: str) -> tuple[str, dict]:
-    cleaned = text.strip()
+    # Normalize: strip + collapse internal whitespace to single spaces, then drop
+    # trailing ? . ! — but keep a lone "?" so it can match `help`. Case is kept
+    # (lookups are case-insensitive downstream; we don't lowercase the name).
+    cleaned = " ".join(text.split())
+    trimmed = cleaned.rstrip("?.!")
+    cleaned = trimmed if trimmed else cleaned
+
     for intent, pattern in _INTENTS:
         m = pattern.search(cleaned)
         if m:
-            return intent, m.groupdict()
+            params = m.groupdict()
+            name = params.get("name")
+            if name:
+                params["name"] = name.rstrip(_NAME_TRIM) or name
+            return intent, params
     return "unknown", {}
 
 
