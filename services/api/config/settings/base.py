@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "apps.backup",
     "apps.circuits",
     "apps.chatops",
+    "apps.config_templates",
 ]
 
 MIDDLEWARE = [

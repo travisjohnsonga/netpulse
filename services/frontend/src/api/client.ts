@@ -295,6 +295,104 @@ export async function deleteManualLink(id: number): Promise<void> {
   await api.delete(`/topology/manual-links/${id}/`)
 }
 
+// ── Config push templates ────────────────────────────────────────────────────
+
+export type ConfigTemplateCategory =
+  'snmp' | 'syslog' | 'ntp' | 'dns' | 'aaa' | 'banner' | 'logging' | 'other'
+
+export interface DetectedVariable {
+  name: string
+  sensitive: boolean
+}
+
+export interface ConfigTemplate {
+  id: number
+  name: string
+  description: string
+  category: ConfigTemplateCategory
+  platform: string
+  template_content: string
+  variables: Record<string, string>
+  detected_variables: DetectedVariable[]
+  enabled: boolean
+  builtin: boolean
+  created_by_username?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ConfigTemplatePayload {
+  name: string
+  description?: string
+  category: ConfigTemplateCategory
+  platform?: string
+  template_content: string
+  variables?: Record<string, string>
+  enabled?: boolean
+}
+
+export interface PushResult {
+  device_id: number
+  hostname: string
+  success: boolean
+  error: string
+}
+
+export interface PushResponse {
+  success: boolean
+  succeeded: number
+  total: number
+  results: PushResult[]
+  error?: string
+}
+
+export async function fetchConfigTemplates(params?: Record<string, string>): Promise<ConfigTemplate[]> {
+  const { data } = await api.get<MaybePaginated<ConfigTemplate>>('/config-templates/', { params })
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
+
+export async function createConfigTemplate(payload: ConfigTemplatePayload): Promise<ConfigTemplate> {
+  const { data } = await api.post<ConfigTemplate>('/config-templates/', payload)
+  return data
+}
+
+export async function updateConfigTemplate(id: number, payload: ConfigTemplatePayload): Promise<ConfigTemplate> {
+  const { data } = await api.put<ConfigTemplate>(`/config-templates/${id}/`, payload)
+  return data
+}
+
+export async function deleteConfigTemplate(id: number): Promise<void> {
+  await api.delete(`/config-templates/${id}/`)
+}
+
+export async function previewConfigTemplate(
+  id: number, deviceId: number, variables: Record<string, string>, templateContent?: string,
+): Promise<{ device: string; rendered: string }> {
+  const { data } = await api.post<{ device: string; rendered: string }>(
+    `/config-templates/${id}/preview/`,
+    { device_id: deviceId, variables, template_content: templateContent })
+  return data
+}
+
+export async function pushConfigTemplate(
+  id: number, deviceIds: number[], variables: Record<string, string>,
+): Promise<PushResponse> {
+  const { data } = await api.post<PushResponse>(
+    `/config-templates/${id}/push/`, { device_ids: deviceIds, variables })
+  return data
+}
+
+export const CONFIG_TEMPLATE_CATEGORIES: { value: ConfigTemplateCategory; label: string }[] = [
+  { value: 'snmp', label: 'SNMP' },
+  { value: 'syslog', label: 'Syslog' },
+  { value: 'ntp', label: 'NTP' },
+  { value: 'dns', label: 'DNS' },
+  { value: 'aaa', label: 'AAA/RADIUS' },
+  { value: 'banner', label: 'Banner/MOTD' },
+  { value: 'logging', label: 'Logging' },
+  { value: 'other', label: 'Other' },
+]
+
 // Color per manual link type — shared by the topology map + management UI.
 export const MANUAL_LINK_COLORS: Record<ManualLinkType, string> = {
   ethernet: '#4f86c6', fiber: '#10b981', wan: '#f59e0b',

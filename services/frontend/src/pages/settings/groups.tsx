@@ -11,6 +11,7 @@ import AlertRouting from './AlertRouting'
 import Roles from './Roles'
 import Mibs from './Mibs'
 import LldpSettings from './LldpSettings'
+import ConfigTemplates from './ConfigTemplates'
 import ComplianceTemplates from './ComplianceTemplates'
 import OSVersions from './OSVersions'
 import FleetInventory from './FleetInventory'
@@ -40,6 +41,7 @@ export function AlertingSettings() {
 export function NetworkDeviceSettings() {
   return <TabbedSettingsPage tabs={[
     { id: 'roles', label: 'Device Roles', element: <Roles /> },
+    { id: 'config-templates', label: 'Config Templates', element: <ConfigTemplates /> },
     { id: 'mibs', label: 'MIB Files', element: <Mibs /> },
     { id: 'lldp', label: 'LLDP', element: <LldpSettings /> },
   ]} />

@@ -31,6 +31,8 @@ nav:
     - Interface & Role Rules: compliance/interface-rules.md
   - Reports: reports.md
   - Metrics & Alerting: metrics-and-alerting.md
+  - Custom Alerts & InfluxDB Metrics: custom-alerts.md
+  - Config Push Templates: config-push-templates.md
   - Flow Collection: flow-collection.md
   - Integrations:
     - UniFi: integrations/unifi.md
