@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     ChatOpsChannelViewSet, ChatOpsConfigView, ChatOpsIdentityViewSet,
-    ChatOpsPlatformViewSet,
+    ChatOpsPlatformViewSet, ChatOpsQueryView,
 )
 
 router = DefaultRouter()
@@ -22,5 +22,7 @@ urlpatterns = [
          name="chatops-platform-test"),
     # Singleton global policy.
     path("config/", ChatOpsConfigView.as_view(), name="chatops-config"),
+    # Authenticated in-UI chat query (the slide-out panel).
+    path("query/", ChatOpsQueryView.as_view(), name="chatops-query"),
     *router.urls,
 ]

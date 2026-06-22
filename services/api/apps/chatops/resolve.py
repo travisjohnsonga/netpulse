@@ -64,6 +64,19 @@ class IntentResult:
         out.extend(self.lines)
         return "\n".join(out) if out else "No data."
 
+    def to_dict(self) -> dict:
+        """Serialize for the authenticated in-UI query endpoint
+        (``apps.chatops.views.ChatOpsQueryView``). ``fields`` become
+        ``[label, value]`` pairs; ``plain`` carries the text fallback the chat
+        panel uses for denials/errors and as a copy-friendly summary."""
+        return {
+            "title": self.title,
+            "fields": [[label, value] for label, value in self.fields],
+            "lines": list(self.lines),
+            "severity": self.severity,
+            "plain": self.plain(),
+        }
+
 
 # ── device resolution ─────────────────────────────────────────────────────────
 

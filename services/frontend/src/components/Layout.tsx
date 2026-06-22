@@ -12,6 +12,7 @@ import VersionBadge from './VersionBadge'
 import HeaderSearch from './HeaderSearch'
 import SiteSelector from './SiteSelector'
 import LogoMark from './LogoMark'
+import ChatOpsPanel from './ChatOpsPanel'
 
 interface NavItem {
   label: string
@@ -336,6 +337,10 @@ export default function Layout({ children }: Props) {
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>
+
+      {/* In-UI ChatOps chat — a sibling to {children} (outside the page Routes),
+          so it overlays every page and persists across navigation. */}
+      <ChatOpsPanel />
     </div>
   )
 }

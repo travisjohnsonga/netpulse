@@ -13,20 +13,24 @@ from __future__ import annotations
 
 import logging
 
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import SAFE_METHODS, BasePermission
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS, BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import Role
 from apps.core.permissions import AdminOnly, IsAnyRole
 
+from .enforcement import enforce_policy
 from .models import (
     ChatOpsChannel, ChatOpsConfig, ChatOpsIdentity, ChatOpsPlatform,
     PLATFORM_SECRET_FIELDS, read_chatops_secrets,
 )
+from .pipeline import classify
+from .resolve import resolve
 from .serializers import (
     ChatOpsChannelSerializer, ChatOpsConfigSerializer,
     ChatOpsIdentityLinkSerializer, ChatOpsIdentitySerializer,
@@ -173,3 +177,44 @@ class ChatOpsConfigView(APIView):
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ChatOpsConfigSerializer(ChatOpsConfig.load()).data)
+
+
+class ChatOpsQueryView(APIView):
+    """Authenticated in-UI ChatOps query — the slide-out chat panel's backend.
+
+    Runs the SAME classify → enforce_policy → resolve pipeline the platform
+    webhooks use, but with the logged-in user as the resolved identity: no
+    signature, no ChatOpsIdentity mapping — a first-party authenticated call.
+
+    Deliberately NOT gated behind ``CHATOPS_ENABLED``. That master switch governs
+    the inbound *webhook* endpoints, which are AllowAny (the platforms can't send a
+    JWT) and therefore unauthenticated reads into inventory/alert data the kill
+    switch must be able to shut off. This in-UI surface requires a logged-in
+    session and audits every query, so it has none of those risks and works
+    regardless of the webhook kill switch.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT,
+                   tags=["chatops"], summary="Run an authenticated in-UI ChatOps query")
+    def post(self, request):
+        text = (request.data.get("text") or "").strip()
+        if not text:
+            return Response({"detail": "Enter a question to ask spane."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        intent, params = classify(text)
+        decision = enforce_policy(
+            "web",
+            channel_id=f"web:{request.user.username}",
+            user_id=str(request.user.pk),
+            user_name=request.user.username,
+            intent=intent,
+            request=request,
+            authenticated_user=request.user,
+        )
+        if not decision.allowed:
+            return Response({"denied": True, "message": decision.message})
+
+        return Response(resolve(intent, params).to_dict())

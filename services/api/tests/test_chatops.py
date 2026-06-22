@@ -960,3 +960,98 @@ class TestWebhookThrottle:
             assert 429 in codes, f"expected a 429 after the limit for {platform}, got {codes}"
         finally:
             cache.clear()
+
+
+# ── ChatOps v1: authenticated in-UI query endpoint ────────────────────────────
+
+class TestQueryEndpoint:
+    """POST /api/chatops/query/ — first-party authenticated chat.
+
+    Reuses the SAME classify → enforce_policy → resolve pipeline the webhooks use,
+    with the logged-in user as identity (no signature, no ChatOpsIdentity).
+    """
+
+    URL = "/api/chatops/query/"
+
+    def test_unauthenticated_returns_401(self, api_client):
+        resp = api_client.post(self.URL, data={"text": "help"}, format="json")
+        assert resp.status_code == 401
+
+    def test_blank_text_returns_400(self, auth_client):
+        assert auth_client.post(self.URL, data={"text": "   "}, format="json").status_code == 400
+        assert auth_client.post(self.URL, data={}, format="json").status_code == 400
+
+    def test_known_intent_returns_intent_result_json(self, auth_client):
+        # "help" is a known intent that needs no external data source.
+        resp = auth_client.post(self.URL, data={"text": "help"}, format="json")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body) == {"title", "fields", "lines", "severity", "plain"}
+        assert body["title"] == "spane commands"
+        assert isinstance(body["lines"], list) and body["lines"]
+        assert body["severity"] == "info"
+        assert "spane commands" in body["plain"]
+
+    def test_active_alerts_intent_no_data(self, auth_client):
+        # active_alerts hits only the DB (no firing alerts → deterministic).
+        resp = auth_client.post(self.URL, data={"text": "any alerts"}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "No active alerts."
+
+    def test_fields_serialized_as_label_value_pairs(self, auth_client, monkeypatch):
+        # Mock the resolve data source to assert IntentResult.fields → [[l, v], …].
+        from apps.chatops.resolve import IntentResult
+        monkeypatch.setattr(
+            "apps.chatops.views.resolve",
+            lambda intent, params: IntentResult(
+                title="router1", fields=[["Status", "active"], ["CVEs", "0"]],
+                lines=["All good."], severity="high"),
+        )
+        body = auth_client.post(self.URL, data={"text": "status of router1"},
+                                format="json").json()
+        assert body["fields"] == [["Status", "active"], ["CVEs", "0"]]
+        assert body["lines"] == ["All good."]
+        assert body["severity"] == "high"
+        assert body["plain"] == "router1\nStatus: active\nCVEs: 0\nAll good."
+
+    def test_audit_row_tied_to_real_user(self, auth_client, user):
+        from apps.core.models import AuditLog
+        auth_client.post(self.URL, data={"text": "help"}, format="json")
+        row = AuditLog.objects.filter(event_type=AuditLog.EventType.CHATOPS_QUERY).first()
+        assert row is not None
+        assert row.success is True
+        assert row.user_id == user.id
+        assert row.username == user.username
+        assert row.metadata["platform"] == "web"
+        assert row.metadata["channel"] == f"web:{user.username}"
+        assert row.metadata["intent"] == "help"
+
+    def test_works_regardless_of_chatops_enabled(self, auth_client, settings):
+        # The master kill switch governs only the inbound webhooks, not this surface.
+        settings.CHATOPS_ENABLED = False
+        assert auth_client.post(self.URL, data={"text": "help"}, format="json").status_code == 200
+
+
+class TestEnforceAuthenticatedUser:
+    """enforce_policy(authenticated_user=…) skips the gates but still audits."""
+
+    def test_skips_channel_and_unmapped_checks_but_audits(self, db, user):
+        from apps.chatops.enforcement import enforce_policy
+        from apps.chatops.models import ChatOpsConfig
+        from apps.core.models import AuditLog
+        # Both gates that would deny a webhook for an unmapped user / bad channel.
+        cfg = ChatOpsConfig.load()
+        cfg.require_approved_channel = True
+        cfg.allow_unmapped_read = False
+        cfg.save()
+
+        decision = enforce_policy(
+            "web", channel_id=f"web:{user.username}", user_id=str(user.pk),
+            user_name=user.username, intent="help", authenticated_user=user)
+
+        assert decision.allowed is True
+        assert decision.user == user
+        row = AuditLog.objects.filter(event_type=AuditLog.EventType.CHATOPS_QUERY).first()
+        assert row is not None and row.success is True
+        assert row.user_id == user.id
+        assert row.metadata["platform"] == "web"
