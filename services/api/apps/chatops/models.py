@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import models
 
@@ -226,3 +227,26 @@ class ChatOpsConfig(TimestampedModel):
         if obj is None:
             obj = cls.objects.create()
         return obj
+
+    # ── Effective NLP config (DB value if an admin set one, else env/settings) ──
+    # This is what makes the local LLM zero-manual-config: with no admin choice
+    # the env defaults (settings.CHATOPS_NLP_*) apply, so CHATOPS_NLP_PROVIDER=local
+    # in .env + `docker compose --profile llm up -d` is working NLP. An admin
+    # selecting a provider/endpoint/model in Settings → ChatOps overrides env.
+
+    def effective_nlp_provider(self) -> str:
+        """Admin-set DB provider wins; otherwise the env/settings default. A DB
+        value of "none" (the default) is treated as unset so a .env default such
+        as CHATOPS_NLP_PROVIDER=local takes effect with no admin step; choosing
+        "local"/"api" in the UI overrides env."""
+        if self.nlp_provider and self.nlp_provider != self.NLPProvider.NONE:
+            return self.nlp_provider
+        return getattr(settings, "CHATOPS_NLP_PROVIDER", "none") or "none"
+
+    def effective_nlp_endpoint(self) -> str:
+        """DB endpoint if set, else the env/settings default."""
+        return self.nlp_endpoint or getattr(settings, "CHATOPS_NLP_ENDPOINT", "")
+
+    def effective_nlp_model(self) -> str:
+        """DB model if set, else the env/settings default."""
+        return self.nlp_model or getattr(settings, "CHATOPS_NLP_MODEL", "")

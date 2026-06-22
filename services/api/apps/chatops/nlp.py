@@ -93,7 +93,7 @@ def _parse_model_json(raw: str):
 
 def _backend_local(text: str, config):
     """Ollama-style /api/generate. Returns (intent, params) or None."""
-    endpoint = (config.nlp_endpoint or "").rstrip("/")
+    endpoint = (config.effective_nlp_endpoint() or "").rstrip("/")
     if not endpoint:
         return None
     if not endpoint.endswith("/api/generate"):
@@ -110,7 +110,7 @@ def _backend_local(text: str, config):
     resp = requests.post(
         endpoint,
         json={
-            "model": config.nlp_model or "llama3",
+            "model": config.effective_nlp_model() or "llama3",
             "prompt": _PROMPT + text,
             "stream": False,
             "format": "json",
@@ -134,8 +134,8 @@ def _backend_api(text: str, config):
     if not api_key:
         logger.warning("chatops NLP api backend: no key configured in OpenBao")
         return None
-    endpoint = (config.nlp_endpoint or "").strip() or _DEFAULT_API_ENDPOINT
-    model = config.nlp_model or _DEFAULT_API_MODEL
+    endpoint = (config.effective_nlp_endpoint() or "").strip() or _DEFAULT_API_ENDPOINT
+    model = config.effective_nlp_model() or _DEFAULT_API_MODEL
     # SSRF guard (same policy as the local backend): http/https + no metadata.
     from apps.core.net_safety import UnsafeURLError, validate_outbound_url
     try:
@@ -185,7 +185,7 @@ def resolve_nlp(text: str):
     from .models import ChatOpsConfig
     try:
         config = ChatOpsConfig.load()
-        backend = _BACKENDS.get(config.nlp_provider)
+        backend = _BACKENDS.get(config.effective_nlp_provider())
         if backend is None:  # "none" or unrecognised
             return None
         return backend(text, config)

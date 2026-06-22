@@ -437,6 +437,19 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
 
 ---
 
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Metrics & Alerting Reference](docs/metrics-and-alerting.md)
+- [Custom Alerts & InfluxDB Metrics](docs/custom-alerts.md)
+- [Config Push Templates](docs/config-push-templates.md)
+- [Reports](docs/reports.md)
+- [Backup & Restore](docs/admin/backup.md)
+- [TV Dashboards](docs/tv-dashboards.md)
+- [Agent Installation](docs/agents/installation.md)
+
+---
+
 ## Supported Platforms
 
 ### Telemetry & access

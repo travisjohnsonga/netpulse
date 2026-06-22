@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "apps.backup",
     "apps.circuits",
     "apps.chatops",
+    "apps.config_templates",
 ]
 
 MIDDLEWARE = [
@@ -394,6 +395,17 @@ REST_FRAMEWORK = {
 # planned, not hardened, so it is DISABLED by default; enable explicitly once
 # per-platform signature verification is enforced.
 CHATOPS_ENABLED = os.environ.get("CHATOPS_ENABLED", "false").lower() == "true"
+
+# ChatOps NLP fallback default config (env → settings). These are the EFFECTIVE
+# NLP settings whenever an admin hasn't set them in the DB ChatOpsConfig
+# singleton (see apps.chatops.models.ChatOpsConfig.effective_nlp_*): a DB value
+# wins, otherwise these env values apply — so `CHATOPS_NLP_PROVIDER=local` in
+# .env plus `docker compose --profile llm up -d` is working NLP with no admin
+# step. Default provider "none" keeps NLP off (regex parser only) until enabled.
+# The "api" provider's key still comes from OpenBao, never env.
+CHATOPS_NLP_PROVIDER = os.environ.get("CHATOPS_NLP_PROVIDER", "none")
+CHATOPS_NLP_ENDPOINT = os.environ.get("CHATOPS_NLP_ENDPOINT", "http://ollama:11434")
+CHATOPS_NLP_MODEL = os.environ.get("CHATOPS_NLP_MODEL", "qwen2.5:3b")
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "spane API",

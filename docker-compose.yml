@@ -273,7 +273,10 @@ services:
         condition: service_healthy
     healthcheck:
       # GET /api/health/ → 200. Uses Python (curl/wget aren't in the slim image).
-      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/api/health/'); sys.exit(0 if r.status==200 else 1)"]
+      # Send X-Forwarded-Proto: https so SECURE_SSL_REDIRECT doesn't 301 the
+      # plain-HTTP probe to https:// (which would fail the TLS handshake against
+      # plain-HTTP gunicorn → WRONG_VERSION_NUMBER → false "unhealthy").
+      test: ["CMD", "python", "-c", "import urllib.request,sys; req=urllib.request.Request('http://localhost:8000/api/health/', headers={'X-Forwarded-Proto':'https'}); r=urllib.request.urlopen(req); sys.exit(0 if r.status==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -624,6 +627,63 @@ services:
       openbao:
         condition: service_healthy
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Optional local LLM for the ChatOps NLP fallback — fully opt-in.
+  #   Enable with:  docker compose --profile llm up -d
+  # Nothing here runs for installs that don't pass --profile llm. The api reaches
+  # the model at http://ollama:11434 over the netpulse-net bridge via compose DNS;
+  # set CHATOPS_NLP_PROVIDER=local in .env to use it (see .env.example). No manual
+  # API/admin step is required, and no production path depends on the model being
+  # present (NLP fails closed to the regex parser).
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    profiles: ["llm"]
+    environment:
+      # Pin the model resident so the first query after idle doesn't pay a
+      # cold-start reload (ChatOps fails the NLP call closed after ~5s).
+      OLLAMA_KEEP_ALIVE: "-1"
+    volumes:
+      - ollama-models:/root/.ollama
+    # Published to localhost only — for operator testing; never exposed publicly.
+    ports:
+      - "127.0.0.1:11434:11434"
+    networks:
+      - netpulse-net
+    # CPU is the default and is fine for a 3B model. To use an NVIDIA GPU, install
+    # the NVIDIA Container Toolkit and uncomment the reservation below (or pass
+    # `--gpus all`):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: ["gpu"]
+
+  # One-shot init: wait for ollama, pull the configured model, then exit. Brought
+  # up by the same `--profile llm`; re-runs are cheap (pull is a no-op once the
+  # model is present). The model name comes from .env (CHATOPS_NLP_MODEL).
+  ollama-pull:
+    image: ollama/ollama
+    profiles: ["llm"]
+    restart: "no"
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until ollama list >/dev/null 2>&1; do
+          echo "waiting for ollama to come up..."; sleep 1;
+        done
+        echo "pulling ${CHATOPS_NLP_MODEL:-qwen2.5:3b} (first run downloads ~2 GB)..."
+        ollama pull "${CHATOPS_NLP_MODEL:-qwen2.5:3b}"
+    networks:
+      - netpulse-net
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Volumes
 # ─────────────────────────────────────────────────────────────────────────────
@@ -636,6 +696,7 @@ volumes:
   nats-data:
   openbao-data:
   ssl-certs:
+  ollama-models:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Networks
