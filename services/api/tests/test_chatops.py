@@ -1055,3 +1055,71 @@ class TestEnforceAuthenticatedUser:
         assert row is not None and row.success is True
         assert row.user_id == user.id
         assert row.metadata["platform"] == "web"
+
+
+# ── ChatOps NLP: env/.env config + DB-override resolution ─────────────────────
+
+class TestNlpEnvConfig:
+    """The effective NLP config resolves from .env/settings with no admin step,
+    while an admin-set DB ChatOpsConfig value still overrides it. Backs the
+    opt-in `docker compose --profile llm up -d` + CHATOPS_NLP_PROVIDER=local flow.
+    """
+
+    def test_env_default_applies_when_db_unset(self, db, settings):
+        settings.CHATOPS_NLP_PROVIDER = "local"
+        settings.CHATOPS_NLP_ENDPOINT = "http://ollama:11434"
+        settings.CHATOPS_NLP_MODEL = "qwen2.5:3b"
+        cfg = ChatOpsConfig.load()   # fresh row → nlp_provider defaults to "none"
+        assert cfg.effective_nlp_provider() == "local"
+        assert cfg.effective_nlp_endpoint() == "http://ollama:11434"
+        assert cfg.effective_nlp_model() == "qwen2.5:3b"
+
+    def test_db_value_overrides_env(self, db, settings):
+        settings.CHATOPS_NLP_PROVIDER = "local"
+        settings.CHATOPS_NLP_ENDPOINT = "http://ollama:11434"
+        settings.CHATOPS_NLP_MODEL = "qwen2.5:3b"
+        cfg = ChatOpsConfig.load()
+        cfg.nlp_provider = "api"
+        cfg.nlp_endpoint = "https://api.example.com/v1/messages"
+        cfg.nlp_model = "custom-model"
+        cfg.save()
+        assert cfg.effective_nlp_provider() == "api"
+        assert cfg.effective_nlp_endpoint() == "https://api.example.com/v1/messages"
+        assert cfg.effective_nlp_model() == "custom-model"
+
+    def test_provider_unset_resolves_none(self, db, settings):
+        settings.CHATOPS_NLP_PROVIDER = "none"
+        cfg = ChatOpsConfig.load()
+        assert cfg.effective_nlp_provider() == "none"
+        # resolve_nlp short-circuits to None (regex parser only) when provider none.
+        from apps.chatops.nlp import resolve_nlp
+        assert resolve_nlp("anything at all") is None
+
+    def test_local_provider_from_env_classifies(self, db, settings, monkeypatch):
+        """provider/endpoint/model come from env (no DB/admin step); the Ollama
+        HTTP call is mocked. Proves the zero-config local path end-to-end."""
+        settings.CHATOPS_NLP_PROVIDER = "local"
+        settings.CHATOPS_NLP_ENDPOINT = "http://ollama:11434"
+        settings.CHATOPS_NLP_MODEL = "qwen2.5:3b"
+
+        captured = {}
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"response": '{"intent": "active_alerts", "params": {}}'}
+
+        def _fake_post(url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            return _Resp()
+
+        monkeypatch.setattr("requests.post", _fake_post)
+
+        from apps.chatops.nlp import resolve_nlp
+        assert resolve_nlp("is anything broken") == ("active_alerts", {})
+        # Hit the env-configured endpoint/model with no DB/admin config.
+        assert captured["url"] == "http://ollama:11434/api/generate"
+        assert captured["json"]["model"] == "qwen2.5:3b"
