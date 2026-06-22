@@ -7,6 +7,12 @@ echo "[entrypoint] waiting for postgres..."
 # pg_isready isn't available in the slim image; the depends_on healthcheck
 # in docker-compose guarantees postgres is healthy before this container starts.
 
+# Ensure the generated-reports dir exists on the (persistent) media-data volume.
+# Runs for EVERY api-image service — not just the api — because the scheduler
+# also writes scheduled reports here and the api serves them back; both mount the
+# same volume. MEDIA_ROOT defaults to /app/media (the Dockerfile pre-creates it).
+mkdir -p "${MEDIA_ROOT:-/app/media}/reports" 2>/dev/null || true
+
 # Initialise + auto-unseal OpenBao (api service only — it mounts the data
 # volume). Runs before migrations so secrets are reachable as the app starts.
 if [ "$INIT_OPENBAO" = "1" ]; then

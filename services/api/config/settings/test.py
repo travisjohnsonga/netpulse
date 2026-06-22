@@ -32,6 +32,13 @@ CELERY_TASK_EAGER_PROPAGATES = True
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
+# Generated reports go to a throwaway temp dir, never the deployment's media
+# volume — keeps the suite hermetic regardless of how /app/media is mounted (a
+# root-owned named media-data volume would otherwise EACCES on report writes).
+import tempfile as _tempfile  # noqa: E402
+
+MEDIA_ROOT = _tempfile.mkdtemp(prefix="netpulse-test-media-")
+
 # No NATS in the unit-test environment — don't publish device configs on save.
 SNMP_DEVICE_PUBLISH = False
 

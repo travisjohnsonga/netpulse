@@ -37,6 +37,12 @@ RUN mkdir -p /app/staticfiles
 # `chown -R netpulse:netpulse /app` below sets the ownership it propagates.
 RUN mkdir -p /app/ssl
 
+# Generated reports (apps.reports) are written under MEDIA_ROOT/reports/{y}/{m}/.
+# The media-data named volume mounts at /app/media at runtime; create it here so
+# the (empty) volume inherits this dir's netpulse ownership (same reason as
+# /app/ssl above) and the non-root user can write reports.
+RUN mkdir -p /app/media/reports
+
 # Bake the version (git isn't present in the image). Supplied by the build —
 # see docker-compose api build.args / netpulse.sh; empty in plain builds.
 ARG GIT_COMMIT=""

@@ -246,6 +246,10 @@ services:
       # AGENT_DIR/scripts/install.sh, so the whole agent/ dir is mounted here
       # (dist/ holds the CI-built binaries; both are gitignored).
       - ./agent:/agent:ro
+      # Generated reports (MEDIA_ROOT=/app/media). Persisted across restarts and
+      # SHARED with the scheduler so on-demand (api) and scheduled (scheduler)
+      # reports land in one place and the authed download endpoint can serve both.
+      - media-data:/app/media
     # Service-check "Run now" executes the probe in this process, so the api
     # needs the same unprivileged-ICMP sysctl as check-engine for ICMP checks.
     sysctls:
@@ -615,6 +619,9 @@ services:
       # collection can fetch each device's SSH credentials (same as
       # config-manager). Read-only — the scheduler never writes secrets.
       - openbao-data:/openbao/data:ro
+      # Scheduled reports are generated here and emailed; shared with the api
+      # (which serves downloads) via the same persistent volume.
+      - media-data:/app/media
     networks:
       - netpulse-net
     depends_on:
@@ -697,6 +704,7 @@ volumes:
   openbao-data:
   ssl-certs:
   ollama-models:
+  media-data:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Networks
