@@ -35,6 +35,7 @@ nav:
   - Config Push Templates: config-push-templates.md
   - Flow Collection: flow-collection.md
   - Integrations:
+    - ChatOps: integrations/chatops.md
     - UniFi: integrations/unifi.md
     - Wireless Monitoring: integrations/wireless.md
     - NetBox: integrations/netbox.md

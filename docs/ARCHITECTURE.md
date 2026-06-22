@@ -1154,6 +1154,11 @@ single platform monitors multiple customers simultaneously.
 
 ## ChatOps Integration
 
+> **Operator guide:** see [Integrations → ChatOps](integrations/chatops.md) for
+> the in-UI "Ask spane" chat, the external chat-platform setup (Slack/Teams/
+> Google Chat/Discord/Mattermost), host/TLS requirements, and the optional local
+> NLP model.
+
 ### Overview
 Engineers query spane directly from chat platforms using natural language.
 No need to open a dashboard for quick health checks.
