@@ -1204,3 +1204,117 @@ class TestIntentParsing:
 
         assert pipeline.classify("the quick brown fox")[0] == "unknown"
         assert calls == ["the quick brown fox"]  # unmatched → NLP consulted once
+
+
+# ── ChatOps: stopword guard + device_list intent ──────────────────────────────
+
+class TestStopwordGuard:
+    """Greedy device_status verbs must not capture stopwords as a device name."""
+
+    @pytest.mark.parametrize("text", [
+        "show me the health of all devices",
+        "show that status of all site",
+    ])
+    def test_stopword_never_a_device_name(self, text):
+        from apps.chatops.pipeline import _parse_intent
+        intent, params = _parse_intent(text)
+        # Must NOT resolve to device_status with a stopword name (no "Device 'the'
+        # not found"). Falls through to device_list or unknown (→ NLP).
+        assert intent in ("device_list", "unknown")
+        if intent == "device_status":
+            assert (params.get("name") or "").lower() not in {"the", "that", "all"}
+
+    def test_real_device_status_still_matches(self):
+        from apps.chatops.pipeline import _parse_intent
+        assert _parse_intent("status of core-sw-01") == ("device_status", {"name": "core-sw-01"})
+
+
+class TestDeviceListParsing:
+    @pytest.mark.parametrize("text,want", [
+        ("are there any down devices", "down"),
+        ("which devices are down", "down"),
+        ("down devices", "down"),
+        ("unreachable devices", "down"),
+        ("offline devices", "down"),
+        ("all devices", "all"),
+        ("list devices", "all"),
+        ("show me the health of all devices", "all"),
+    ])
+    def test_filter_phrasings(self, text, want):
+        from apps.chatops.pipeline import _parse_intent
+        intent, params = _parse_intent(text)
+        assert intent == "device_list"
+        raw = (params.get("filter") or "").lower()
+        got = "down" if raw in ("down", "unreachable", "offline") else "all"
+        assert got == want
+
+    def test_site_capture(self):
+        from apps.chatops.pipeline import _parse_intent
+        intent, params = _parse_intent("devices at site DC1")
+        assert intent == "device_list"
+        assert params.get("site") == "DC1"
+
+
+class TestDeviceListResolver:
+    pytestmark = pytest.mark.django_db
+
+    def _dev(self, hostname, ip, reachable=True, site=None, status="active"):
+        from apps.devices.models import Device
+        return Device.objects.create(hostname=hostname, ip_address=ip,
+                                     is_reachable=reachable, status=status, site=site)
+
+    def test_down_lists_unreachable(self, db):
+        from apps.chatops.resolve import resolve
+        self._dev("up-1", "10.0.0.1", reachable=True)
+        self._dev("down-1", "10.0.0.2", reachable=False)
+        self._dev("down-2", "10.0.0.3", reachable=False)
+        r = resolve("device_list", {"filter": "down"})
+        assert r.title == "Down devices (2)"
+        assert r.severity == "high"
+        body = "\n".join(r.lines)
+        assert "down-1" in body and "down-2" in body and "up-1" not in body
+
+    def test_down_normalizes_unreachable_keyword(self, db):
+        from apps.chatops.resolve import resolve
+        self._dev("d", "10.0.0.9", reachable=False)
+        assert resolve("device_list", {"filter": "unreachable"}).title == "Down devices (1)"
+
+    def test_down_none_is_graceful(self, db):
+        from apps.chatops.resolve import resolve
+        self._dev("up-1", "10.0.0.1", reachable=True)
+        r = resolve("device_list", {"filter": "down"})
+        assert r.title == "All devices reachable."
+        assert r.severity == "info"
+
+    def test_all_lists_with_count(self, db):
+        from apps.chatops.resolve import resolve
+        self._dev("a", "10.0.0.1")
+        self._dev("b", "10.0.0.2")
+        r = resolve("device_list", {"filter": "all"})
+        assert r.title == "Devices (2)"
+        assert len(r.lines) == 2
+
+    def test_all_truncates_and_notes_total(self, db, monkeypatch):
+        from apps.chatops import resolve as rmod
+        monkeypatch.setattr(rmod, "_DEVICE_LIST_CAP", 2)
+        for i in range(3):
+            self._dev(f"h{i}", f"10.0.1.{i}")
+        r = rmod.resolve("device_list", {"filter": "all"})
+        assert r.title == "Devices (2 of 3)"
+        assert len(r.lines) == 2
+
+    def test_site_filter(self, db):
+        from apps.chatops.resolve import resolve
+        from apps.devices.models import Site
+        s = Site.objects.create(name="DC1")
+        self._dev("in-dc1", "10.0.0.1", site=s)
+        self._dev("elsewhere", "10.0.0.2")
+        r = resolve("device_list", {"site": "DC1"})
+        assert "at DC1" in r.title
+        body = "\n".join(r.lines)
+        assert "in-dc1" in body and "elsewhere" not in body
+
+    def test_site_not_found_is_graceful(self, db):
+        from apps.chatops.resolve import resolve
+        r = resolve("device_list", {"site": "Nowhere"})
+        assert "No site matching" in r.title
