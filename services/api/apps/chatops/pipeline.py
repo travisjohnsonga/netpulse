@@ -58,6 +58,19 @@ _INTENTS: list[tuple[str, re.Pattern]] = [
     ("site_status", re.compile(r"\b(?:status of|how'?s|how is)\s+site\s+" + _NAME, re.I)),
     ("site_status", re.compile(r"\bsite\s+" + _NAME + r"\s+status\b", re.I)),
 
+    # device_list — fleet queries. BEFORE device_status so "down devices",
+    # "all devices", and "devices at site X" win over the singular device_status
+    # patterns. `filter` (down/unreachable/offline → down; all/list → all) and
+    # `site` are captured per pattern and read by the resolver.
+    ("device_list", re.compile(r"\b(?P<filter>down|unreachable|offline)\s+devices?\b", re.I)),
+    ("device_list", re.compile(
+        r"\bwhich\s+devices?\s+are\s+(?P<filter>down|unreachable|offline)\b", re.I)),
+    ("device_list", re.compile(
+        r"\bany\s+(?P<filter>down|unreachable|offline)\s+devices?\b", re.I)),
+    ("device_list", re.compile(r"\bdevices?\s+at\s+site\s+(?P<site>[\w.\-:/]+)\b", re.I)),
+    ("device_list", re.compile(r"\bhealth\s+of\s+all\s+devices?\b", re.I)),
+    ("device_list", re.compile(r"\b(?P<filter>all|list)\s+devices?\b", re.I)),
+
     # device_status — most general; checked last.
     ("device_status", re.compile(
         r"\b(?:status of|how'?s|how is|check|show(?:\s+me)?)\s+" + _NAME, re.I)),
@@ -70,6 +83,16 @@ _INTENTS: list[tuple[str, re.Pattern]] = [
 # "." or ":" at the very end, e.g. "edge-rtr-2.").
 _NAME_TRIM = ".,;:!?"
 
+# Words that are never a device name. If a pattern captures one of these as
+# `name` (e.g. the greedy device_status verbs grabbing "the" from "show me the
+# health of all devices"), reject the match and fall through to the next pattern
+# — and ultimately to "unknown" so classify() consults the NLP fallback, rather
+# than resolving to a bogus device named "the"/"all".
+_NAME_STOPWORDS = frozenset({
+    "the", "that", "this", "these", "those", "a", "an", "all", "any", "some",
+    "my", "our", "your", "it", "them", "device", "devices", "host", "hosts",
+})
+
 
 def _parse_intent(text: str) -> tuple[str, dict]:
     # Normalize: strip + collapse internal whitespace to single spaces, then drop
@@ -81,12 +104,18 @@ def _parse_intent(text: str) -> tuple[str, dict]:
 
     for intent, pattern in _INTENTS:
         m = pattern.search(cleaned)
-        if m:
-            params = m.groupdict()
-            name = params.get("name")
-            if name:
-                params["name"] = name.rstrip(_NAME_TRIM) or name
-            return intent, params
+        if not m:
+            continue
+        params = m.groupdict()
+        name = params.get("name")
+        if name:
+            name = name.rstrip(_NAME_TRIM) or name
+            # A stopword captured as the device name is never a real match —
+            # skip this pattern and keep looking (→ unknown → NLP if nothing else).
+            if name.lower() in _NAME_STOPWORDS:
+                continue
+            params["name"] = name
+        return intent, params
     return "unknown", {}
 
 
