@@ -57,6 +57,7 @@ import Login from './pages/Login'
 import ForcePasswordChange from './pages/ForcePasswordChange'
 import OnboardingWizard from './components/OnboardingWizard'
 import { useAuthStore } from './store/authStore'
+import { ChatOpsProvider } from './store/chatOpsStore'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
@@ -145,6 +146,10 @@ function AppRoutes() {
         path="/*"
         element={
           <RequireAuth>
+            {/* ChatOpsProvider wraps the authenticated app (above the page
+                Routes) so the chat panel's open state + message history survive
+                navigation between pages. */}
+            <ChatOpsProvider>
             <Layout>
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -209,6 +214,7 @@ function AppRoutes() {
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </Layout>
+            </ChatOpsProvider>
           </RequireAuth>
         }
       />

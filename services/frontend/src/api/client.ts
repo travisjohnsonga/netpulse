@@ -4123,3 +4123,36 @@ export async function saveAuditRetention(days: number): Promise<number> {
   const { data } = await api.put<{ audit_log_retention_days: number }>('/settings/audit-retention/', { audit_log_retention_days: days })
   return data.audit_log_retention_days
 }
+
+// ── ChatOps in-UI query (the slide-out chat panel) ────────────────────────────
+
+export type ChatOpsSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical'
+
+// The structured IntentResult the backend returns (apps.chatops.resolve).
+export interface ChatOpsResult {
+  title: string
+  fields: [string, string][]   // [label, value] pairs
+  lines: string[]
+  severity: ChatOpsSeverity
+  plain: string
+}
+
+// A denied query carries a guidance message instead of a result.
+export interface ChatOpsDenied {
+  denied: true
+  message: string
+}
+
+export type ChatOpsResponse = ChatOpsResult | ChatOpsDenied
+
+export function isChatOpsDenied(r: ChatOpsResponse): r is ChatOpsDenied {
+  return (r as ChatOpsDenied).denied === true
+}
+
+// Runs the authenticated parse → enforce → resolve pipeline server-side and
+// returns either a structured result or a denial. Auth + 401-refresh are handled
+// by the shared `api` interceptors.
+export async function chatOpsQuery(text: string): Promise<ChatOpsResponse> {
+  const { data } = await api.post<ChatOpsResponse>('/chatops/query/', { text })
+  return data
+}

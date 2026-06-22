@@ -42,7 +42,7 @@ from rest_framework.throttling import SimpleRateThrottle
 
 from apps.chatops.enforcement import enforce_policy, platform_live
 from apps.chatops.format import deny_response, format_for
-from apps.chatops.nlp import resolve_nlp
+from apps.chatops.pipeline import classify
 from apps.chatops.resolve import resolve
 
 
@@ -90,40 +90,10 @@ _webhook_schema = extend_schema(
 
 logger = logging.getLogger(__name__)
 
-# ── intent patterns ───────────────────────────────────────────────────────────
-_INTENTS: list[tuple[str, re.Pattern]] = [
-    ("site_status",    re.compile(r"status\s+of\s+site\s+(?P<name>\S+)", re.I)),
-    ("device_status",  re.compile(r"status\s+of\s+(?P<name>\S+)", re.I)),
-    ("active_alerts",  re.compile(r"(any\s+)?alerts?(\s+right\s+now)?", re.I)),
-    ("cve_query",      re.compile(r"cve.*(affect|on)\s+(?P<name>\S+)", re.I)),
-    ("eol_query",      re.compile(r"(eol|end.of.life|lifecycle).*(?P<name>\S+)", re.I)),
-    ("help",           re.compile(r"^help$", re.I)),
-]
-
-def _parse_intent(text: str) -> tuple[str, dict]:
-    cleaned = text.strip()
-    for intent, pattern in _INTENTS:
-        m = pattern.search(cleaned)
-        if m:
-            return intent, m.groupdict()
-    return "unknown", {}
-
-
-def _classify(text: str) -> tuple[str, dict]:
-    """Regex parse first (always-on default); only on ``unknown`` consult the
-    optional NLP fallback. A known NLP result is used; anything else stays
-    ``unknown`` so the resolver returns help. The chosen intent is returned to the
-    caller, which still runs it through ``enforce_policy`` (no policy bypass)."""
-    intent, params = _parse_intent(text)
-    if intent == "unknown":
-        nlp = resolve_nlp(text)
-        if nlp:
-            return nlp
-    return intent, params
-
-
-# Intent resolution (data gathering) lives in apps.chatops.resolve, and
-# per-platform rendering in apps.chatops.format — see resolve()/format_for above.
+# NL classification (regex parse → NLP fallback) lives in apps.chatops.pipeline
+# (classify) so the authenticated in-UI query endpoint shares it; intent
+# resolution (data gathering) lives in apps.chatops.resolve, and per-platform
+# rendering in apps.chatops.format — see classify()/resolve()/format_for above.
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
@@ -166,7 +136,7 @@ def webhook_slack(request: HttpRequest) -> JsonResponse:
     channel = event.get("channel", "unknown")
 
     logger.info("slack query from %s in %s: %s", user, channel, text[:200])
-    intent, params = _classify(text)
+    intent, params = classify(text)
     decision = enforce_policy("slack", channel_id=channel, user_id=user,
                               user_name=user, intent=intent, request=request)
     if not decision.allowed:
@@ -228,7 +198,7 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
     channel  = payload.get("conversation", {}).get("id", "") or "unknown"
 
     logger.info("teams query from %s: %s", user, text[:200])
-    intent, params = _classify(text)
+    intent, params = classify(text)
     decision = enforce_policy("teams", channel_id=channel, user_id=user_id,
                               user_name=user, intent=intent, request=request)
     if not decision.allowed:
@@ -282,7 +252,7 @@ def webhook_gchat(request: HttpRequest) -> JsonResponse:
     channel   = payload.get("space", {}).get("name", "") or "unknown"
 
     logger.info("gchat query from %s: %s", sender, text[:200])
-    intent, params = _classify(text)
+    intent, params = classify(text)
     decision = enforce_policy("gchat", channel_id=channel, user_id=user_id,
                               user_name=sender, intent=intent, request=request)
     if not decision.allowed:
@@ -344,7 +314,7 @@ def webhook_discord(request: HttpRequest) -> JsonResponse:
     channel  = payload.get("channel_id", "") or "unknown"
 
     logger.info("discord query: %s", text[:200])
-    intent, params = _classify(text)
+    intent, params = classify(text)
     decision = enforce_policy("discord", channel_id=channel, user_id=user_id,
                               user_name=user_nm, intent=intent, request=request)
     if not decision.allowed:
@@ -388,7 +358,7 @@ def webhook_mattermost(request: HttpRequest) -> JsonResponse:
     channel  = payload.get("channel_id", "") or "unknown"
 
     logger.info("mattermost query from %s: %s", user, text[:200])
-    intent, params = _classify(text)
+    intent, params = classify(text)
     decision = enforce_policy("mattermost", channel_id=channel, user_id=user_id,
                               user_name=user, intent=intent, request=request)
     if not decision.allowed:
