@@ -30,6 +30,15 @@ jobs:
   pytest:
     name: services/api pytest
     runs-on: ubuntu-latest
+    env:
+      # The repo-root advisories/ (arista/juniper YAML) is bind-mounted into the
+      # api container at /app/advisories (docker-compose.yml), which is the
+      # COMMUNITY_ADVISORIES_DIR default. On the runner the repo is at
+      # $GITHUB_WORKSPACE, not /app, so point this at the checked-out copy so
+      # test_community_advisories::test_shipped_advisories_parse runs here too
+      # (matching in-container) instead of self-skipping "advisories dir not
+      # mounted". This is checked-out repo data, not a provisioned service.
+      COMMUNITY_ADVISORIES_DIR: ${{ github.workspace }}/advisories
     defaults:
       run:
         working-directory: services/api
