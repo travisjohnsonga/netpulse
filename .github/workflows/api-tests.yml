@@ -1,0 +1,74 @@
+name: API tests
+
+# Runs the services/api pytest suite as a merge gate for main. Previously the
+# suite ran only in-container locally; CI gated only on the Go build, CodeQL, and
+# the exception-exposure guard.
+#
+# The suite is settings-pinned (services/api/pytest.ini: addopts=--ds=config.settings.test)
+# to in-memory SQLite, so this job needs NO external Postgres/InfluxDB/OpenSearch.
+# We deliberately run a bare `python -m pytest -q` with NO --ds and NO
+# DJANGO_SETTINGS_MODULE so the run also proves the pin carries the suite to
+# config.settings.test outside the api container. If a test needs a real backing
+# service rather than SQLite/mocks, it should FAIL here — that's a settings-
+# isolation signal we want to see, not something to mask with service containers.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/api/**'
+      - '.github/workflows/api-tests.yml'
+  pull_request:
+    paths:
+      - 'services/api/**'
+      - '.github/workflows/api-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: services/api pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+
+      # Match the api image base (services/api/Dockerfile: FROM python:3.13-slim).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: services/api/requirements.txt
+
+      # System libs the api image installs so pip builds / runtime tools resolve
+      # the same way (libpq-dev/gcc for C extensions; nmap/ping/ip/nc for the
+      # run_discovery code paths). Kept in sync with services/api/Dockerfile.
+      - name: Install system dependencies (match api image)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpq-dev gcc nmap iputils-ping iproute2 netcat-openbsd
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Surface the resolved settings module in the logs. With the pin this prints
+      # "settings: config.settings.test (from option)"; pytest_configure in
+      # tests/conftest.py hard-fails here if anything resolves to a non-test
+      # module. NO DJANGO_SETTINGS_MODULE / --ds is set anywhere in this job.
+      - name: Report resolved Django settings module
+        run: |
+          echo "DJANGO_SETTINGS_MODULE (expected unset in CI): '${DJANGO_SETTINGS_MODULE:-<unset>}'"
+          # Default-verbosity header includes pytest-django's
+          # "django: settings: <module> (from option/ini)" line. head closes the
+          # pipe early (exit 0) so this never fails the step on its own.
+          python -m pytest --collect-only 2>&1 | head -12
+
+      # The gate. Bare invocation, no settings flag — the pin must carry it.
+      - name: Run test suite
+        run: python -m pytest -q
