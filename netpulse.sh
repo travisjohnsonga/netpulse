@@ -25,11 +25,20 @@ case "$1" in
     ;;
   stop)
     echo "Stopping NetPulse..."
-    docker compose down
+    # `--profile "*"` activates every profile so `down` also tears down
+    # profile-gated containers (e.g. the llm/ollama profile) that are no longer
+    # active after COMPOSE_PROFILES is blanked — `--remove-orphans` alone does NOT
+    # remove them (a profile-disabled service is still defined, so it's not an
+    # orphan). --remove-orphans additionally clears services dropped from compose.
+    docker compose --profile "*" down --remove-orphans
     ;;
   restart)
     echo "Restarting NetPulse..."
-    docker compose down
+    # See `stop`: `--profile "*"` + --remove-orphans so a profile disabled since
+    # the last start (e.g. llm/ollama) is torn down on restart, not left running.
+    # The `up` below uses the active COMPOSE_PROFILES, so a disabled profile stays
+    # down.
+    docker compose --profile "*" down --remove-orphans
     docker compose up -d
     sleep 5
     docker compose ps
