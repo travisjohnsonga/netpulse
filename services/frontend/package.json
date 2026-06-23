@@ -10,7 +10,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.51.0",
     "@types/diff": "^7.0.2",
-    "axios": "^1.7.0",
+    "axios": "^1.18.1",
     "clsx": "^2.1.0",
     "cytoscape": "^3.30.0",
     "diff": "^9.0.0",
