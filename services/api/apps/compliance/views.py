@@ -4,12 +4,13 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 
 from apps.core.errors import safe_detail
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 from .models import (
     ApprovedOSVersion,
     CompliancePolicy,
@@ -59,20 +60,25 @@ def _refresh_stored_scores(run_result: dict) -> None:
             logger.warning("score refresh failed for %s: %s", device.hostname, exc)
 
 
-class CompliancePolicyViewSet(viewsets.ModelViewSet):
+class CompliancePolicyViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = CompliancePolicy.objects.prefetch_related("rules").all()
     serializer_class = CompliancePolicySerializer
     filterset_fields = ["is_active"]
     search_fields = ["name"]
 
 
-class CompliancePolicyRuleViewSet(viewsets.ModelViewSet):
+class CompliancePolicyRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = CompliancePolicyRule.objects.select_related("policy").all()
     serializer_class = CompliancePolicyRuleSerializer
     filterset_fields = ["policy", "check_type", "is_active"]
 
 
-class ComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class ComplianceResultViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
+    view_capability = "compliance:view"
     queryset = ComplianceResult.objects.select_related("device", "policy", "rule").all()
     serializer_class = ComplianceResultSerializer
     filterset_fields = ["device", "policy", "outcome"]
@@ -81,12 +87,14 @@ class ComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet
 
 # ── Template-based compliance ───────────────────────────────────────────────────
 
-class ComplianceTemplateViewSet(viewsets.ModelViewSet):
+class ComplianceTemplateViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage compliance templates — Jinja2 templates of expected config, scoped by
     role / platform / site. The `preview/` action renders a template for a device.
     """
 
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = ComplianceTemplate.objects.select_related("role", "site").all()
     serializer_class = ComplianceTemplateSerializer
     filterset_fields = ["platform", "role", "site", "enabled"]
@@ -102,7 +110,7 @@ class ComplianceTemplateViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in self._ADMIN_ACTIONS:
-            return [AdminOnly()]
+            return [HasCapability("compliance:template:edit")()]
         return super().get_permissions()
 
     def perform_create(self, serializer):
@@ -139,9 +147,10 @@ class ComplianceTemplateViewSet(viewsets.ModelViewSet):
         return Response({"device_id": device.id, "hostname": device.hostname, "rendered": rendered})
 
 
-class ComplianceTemplateResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class ComplianceTemplateResultViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """Read template-compliance results. Filter by device, template, status."""
 
+    view_capability = "compliance:view"
     queryset = ComplianceTemplateResult.objects.select_related("device", "template").all()
     serializer_class = ComplianceTemplateResultSerializer
     filterset_fields = ["device", "template", "status"]
@@ -160,6 +169,8 @@ class ComplianceCheckView(APIView):
 
     Returns {"checked", "compliant", "non_compliant", "error"}.
     """
+
+    permission_classes = [HasCapability("compliance:run")]
 
     @extend_schema(request=None, responses=None, summary="Run compliance checks")
     def post(self, request):
@@ -221,10 +232,12 @@ class ComplianceCheckView(APIView):
         return result
 
 
-class ApprovedOSVersionViewSet(viewsets.ModelViewSet):
+class ApprovedOSVersionViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """CRUD over OS-version policy entries. Recomputes cached fleet statuses on
     any change so the inventory page reflects the new policy immediately."""
 
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = ApprovedOSVersion.objects.all()
     serializer_class = ApprovedOSVersionSerializer
     filterset_fields = ["platform", "status", "is_regex"]
@@ -262,10 +275,12 @@ class ApprovedOSVersionViewSet(viewsets.ModelViewSet):
         return Response(result)
 
 
-class DiscoveredPlatformModelViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class DiscoveredPlatformModelViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """Read the fleet platform/model/version inventory. `refresh` rebuilds it
     from current devices; the detail `devices` action lists matching devices."""
 
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = DiscoveredPlatformModel.objects.all()
     serializer_class = DiscoveredPlatformModelSerializer
     filterset_fields = ["platform", "os_status"]
@@ -294,23 +309,32 @@ class DiscoveredPlatformModelViewSet(ListModelMixin, RetrieveModelMixin, Generic
 class OSComplianceSummaryView(APIView):
     """Fleet-wide OS-version compliance tallies for the dashboard donut."""
 
+    permission_classes = [HasCapability("compliance:view")]
+
     @extend_schema(request=None, responses=None, summary="OS compliance summary")
     def get(self, request):
         from .os_policy import os_summary
         return Response(os_summary())
 
 
-class InterfaceComplianceRuleViewSet(viewsets.ModelViewSet):
+class InterfaceComplianceRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     LLDP-aware interface compliance rules. `run/` evaluates the rule against
     every matching switch interface and returns + persists the results.
     """
 
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = InterfaceComplianceRule.objects.prefetch_related("results").all()
     serializer_class = InterfaceComplianceRuleSerializer
     filterset_fields = ["trigger", "platform", "enabled"]
     search_fields = ["name", "description"]
     ordering = ["name"]
+
+    def get_permissions(self):
+        if self.action == "run":
+            return [HasCapability("compliance:run")()]
+        return super().get_permissions()
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
@@ -321,9 +345,10 @@ class InterfaceComplianceRuleViewSet(viewsets.ModelViewSet):
         return Response(result)
 
 
-class InterfaceComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class InterfaceComplianceResultViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """Read-only interface-compliance results; filter by device_id / rule_id."""
 
+    view_capability = "compliance:view"
     serializer_class = InterfaceComplianceResultSerializer
     queryset = InterfaceComplianceResult.objects.select_related("device", "rule").all()
 
@@ -344,17 +369,24 @@ class InterfaceComplianceResultViewSet(ListModelMixin, RetrieveModelMixin, Gener
         return qs
 
 
-class RoleConsistencyRuleViewSet(viewsets.ModelViewSet):
+class RoleConsistencyRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Cross-device consistency rules (VLAN/NTP/DNS/SNMP/AAA/banner). `run/` compares
     the configured item across the scoped group and returns drift per device.
     """
 
+    view_capability = "compliance:view"
+    write_capability = "compliance:edit"
     queryset = RoleConsistencyRule.objects.select_related("role", "site").all()
     serializer_class = RoleConsistencyRuleSerializer
     filterset_fields = ["check_type", "platform", "role", "site", "enabled"]
     search_fields = ["name", "description"]
     ordering = ["name"]
+
+    def get_permissions(self):
+        if self.action == "run":
+            return [HasCapability("compliance:run")()]
+        return super().get_permissions()
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
@@ -372,6 +404,11 @@ class ComplianceRunAllView(APIView):
     given subset); returns the initial status. 409 if a run is already going.
     GET → current/last run status for polling.
     """
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("compliance:view")()]
+        return [HasCapability("compliance:run")()]
 
     @extend_schema(request=None, responses=None, summary="Run compliance for all (or selected) devices")
     def post(self, request):
@@ -395,6 +432,8 @@ class ComplianceRunAllView(APIView):
 class ComplianceRunAllStatusView(APIView):
     """GET → current/last fleet compliance run status (polled by the UI)."""
 
+    permission_classes = [HasCapability("compliance:view")]
+
     @extend_schema(responses=None, summary="Fleet compliance run status")
     def get(self, request):
         from .runner import get_status
@@ -403,6 +442,8 @@ class ComplianceRunAllStatusView(APIView):
 
 class ComplianceRunDeviceView(APIView):
     """POST → re-run compliance for one device and return its weighted score."""
+
+    permission_classes = [HasCapability("compliance:run")]
 
     @extend_schema(request=None, responses=None, summary="Run compliance for one device")
     def post(self, request, device_id=None):

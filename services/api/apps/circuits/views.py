@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.core.errors import internal_error_response
+from apps.core.permissions import CapabilityViewSetMixin
 
 from .models import WanCircuit
 from .serializers import WanCircuitSerializer
@@ -12,12 +13,14 @@ from .serializers import WanCircuitSerializer
 logger = logging.getLogger(__name__)
 
 
-class WanCircuitViewSet(viewsets.ModelViewSet):
+class WanCircuitViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """CRUD for WAN circuits + a per-circuit utilization endpoint.
 
     Filter by ``?site`` / ``?device`` / ``?circuit_type`` / ``?status``.
     """
 
+    view_capability = "circuit:view"
+    write_capability = "circuit:edit"
     queryset = WanCircuit.objects.select_related("device", "site").all()
     serializer_class = WanCircuitSerializer
     filterset_fields = ["site", "device", "circuit_type", "status"]

@@ -15,11 +15,11 @@ import logging
 from django.conf import settings
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 from .models import LogFilter
 from .serializers import LogFilterSerializer
 
@@ -169,7 +169,7 @@ def _apply_suppress_filters(results: list[dict]) -> tuple[list[dict], int]:
 
 
 class LogQueryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("log:view")]
 
     def get(self, request):
         from apps.devices.models import Device
@@ -297,7 +297,7 @@ class LogQueryView(APIView):
         return {"count": count, "results": results, "summary": {"by_severity": summary}}
 
 
-class LogFilterViewSet(viewsets.ModelViewSet):
+class LogFilterViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage log filters — regex rules that suppress noise, highlight, or tag fleet
     log messages, optionally scoped to specific platforms.
@@ -306,6 +306,9 @@ class LogFilterViewSet(viewsets.ModelViewSet):
     with `?apply_filters=false`). The `test/` action dry-runs a pattern against a
     sample message.
     """
+
+    view_capability = "log:view"
+    write_capability = "log:edit"
 
     queryset = LogFilter.objects.all()
     serializer_class = LogFilterSerializer

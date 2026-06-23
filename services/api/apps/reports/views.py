@@ -6,12 +6,14 @@ import os
 
 from django.conf import settings
 from django.http import FileResponse
-from rest_framework import mixins, permissions, status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from .generate import generate
 from .models import GeneratedReport, ReportSchedule, ReportType
@@ -48,7 +50,7 @@ def _generate_and_respond(report_type, fmt, params, request):
 
 
 class ComplianceSummaryView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasCapability("report:generate")]
 
     def post(self, request):
         req = ComplianceSummaryRequestSerializer(data=request.data)
@@ -64,7 +66,7 @@ class ComplianceSummaryView(APIView):
 
 
 class DailyOpsView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasCapability("report:generate")]
 
     def post(self, request):
         req = DailyOpsRequestSerializer(data=request.data)
@@ -79,7 +81,7 @@ class DailyOpsView(APIView):
 
 class OpsReportView(APIView):
     """Operations report for any reporting period (daily/weekly/monthly/quarterly)."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasCapability("report:generate")]
 
     def post(self, request):
         req = OpsReportRequestSerializer(data=request.data)
@@ -95,8 +97,12 @@ class OpsReportView(APIView):
 
 class ScheduleListCreateView(APIView):
     """GET (list) / POST (create) schedules for one report type (spec endpoint)."""
-    permission_classes = [permissions.IsAuthenticated]
     report_type = None  # set per-URL
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("report:view")()]
+        return [HasCapability("report:generate")()]
 
     def get(self, request):
         qs = ReportSchedule.objects.filter(report_type=self.report_type)
@@ -118,11 +124,12 @@ class DailyOpsScheduleView(ScheduleListCreateView):
     report_type = ReportType.DAILY_OPS
 
 
-class ReportScheduleViewSet(viewsets.ModelViewSet):
+class ReportScheduleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Manage existing schedules (update/delete/list-all)."""
+    view_capability = "report:view"
+    write_capability = "report:generate"
     queryset = ReportSchedule.objects.all()
     serializer_class = ReportScheduleSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
 
 def _delete_report_file(report) -> None:
@@ -142,7 +149,11 @@ class GeneratedReportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
     """Report history + download + delete (single and bulk)."""
     queryset = GeneratedReport.objects.select_related("generated_by").all()
     serializer_class = GeneratedReportSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve", "download"):
+            return [HasCapability("report:view")()]
+        return [HasCapability("report:generate")()]
 
     def get_queryset(self):
         qs = super().get_queryset()

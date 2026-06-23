@@ -5,11 +5,12 @@ import logging
 
 from django.http import HttpResponse
 from django.utils import timezone
-from rest_framework import permissions, status, viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.core.errors import internal_error_response
+from apps.core.permissions import HasCapability
 
 from .engine import evaluate_framework, framework_summary
 from .models import RegulatoryFramework
@@ -26,7 +27,7 @@ class RegulatoryFrameworkViewSet(viewsets.ViewSet):
     - ``GET /api/frameworks/{key}/report/`` — PDF evidence package.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasCapability("framework:view")]
     lookup_field = "key"
 
     def list(self, request):

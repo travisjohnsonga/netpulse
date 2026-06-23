@@ -25,12 +25,11 @@ from django.http import FileResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 
 from .models import BackupConfig, BackupRecord
 from .runner import run_backup
@@ -47,10 +46,9 @@ class BackupConfigView(APIView):
     """GET / PUT the singleton backup configuration."""
 
     def get_permissions(self):
-        # Any authenticated user can read; only admins can change settings.
         if self.request.method == "GET":
-            return [IsAuthenticated()]
-        return [AdminOnly()]
+            return [HasCapability("backup:view")()]
+        return [HasCapability("backup:manage")()]
 
     @extend_schema(responses=BackupConfigSerializer)
     def get(self, request):
@@ -67,7 +65,7 @@ class BackupConfigView(APIView):
 class BackupRunView(APIView):
     """POST /api/backup/run/ — run a backup synchronously (admin only)."""
 
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("backup:manage")]
 
     @extend_schema(request=None, responses=None)
     def post(self, request):
@@ -144,13 +142,13 @@ class BackupRecordViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = BackupRecord.objects.all()
     serializer_class = BackupRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("backup:view")]
 
 
 class BackupTestConnectionView(APIView):
     """POST /api/backup/test-connection/ — best-effort destination reachability."""
 
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("backup:manage")]
 
     @extend_schema(request=None, responses=None)
     def post(self, request):
@@ -171,7 +169,7 @@ class BackupTestConnectionView(APIView):
 class BackupDownloadView(APIView):
     """GET /api/backup/download/{id}/ — stream a local backup file (authed)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("backup:view")]
 
     def get(self, request, pk=None):
         record = BackupRecord.objects.filter(pk=pk).first()

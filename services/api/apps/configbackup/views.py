@@ -10,6 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import HasCapability
 from apps.credentials import vault
 
 from .diff import generate_diff
@@ -36,7 +37,13 @@ class DeviceConfigViewSet(viewsets.ReadOnlyModelViewSet):
     """
 
     serializer_class = DeviceConfigSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        # Manual collection is a write/operate action (config:backup:manage);
+        # browsing snapshots (list/retrieve/diff) stays at IsAuthenticated.
+        if self.action == "collect":
+            return [HasCapability("config:backup:manage")()]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         qs = DeviceConfig.objects.all().order_by("-collected_at")
@@ -143,6 +150,11 @@ class ConfigBackupSettingsView(generics.RetrieveUpdateAPIView):
 
     serializer_class = ConfigBackupSettingsSerializer
 
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticated()]
+        return [HasCapability("config:backup:manage")()]
+
     def get_object(self):
         return ConfigBackupSettings.load()
 
@@ -186,6 +198,8 @@ def _probe_host(repo_url: str, ssh: bool, timeout: float = 3.0) -> tuple[bool, s
 class TestGitView(APIView):
     """Probe reachability of the configured (or supplied) git repository host."""
 
+    permission_classes = [HasCapability("config:backup:manage")]
+
     @extend_schema(request=TestGitRequestSerializer, responses=SimpleResultSerializer)
     def post(self, request):
         obj = ConfigBackupSettings.load()
@@ -202,6 +216,8 @@ class SyncNowView(APIView):
     The actual commit/push is performed by the config-manager worker; this records
     the request and surfaces config status honestly.
     """
+
+    permission_classes = [HasCapability("config:backup:manage")]
 
     @extend_schema(request=None, responses=SimpleResultSerializer)
     def post(self, request):

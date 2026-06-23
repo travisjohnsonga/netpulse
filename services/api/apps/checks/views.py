@@ -9,6 +9,8 @@ from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
+from apps.core.permissions import CapabilityViewSetMixin
+
 from .models import CheckResult, ServiceCheck, ServiceCheckCollector
 from .runner import run_check
 from .serializers import (
@@ -20,7 +22,7 @@ from .service import check_to_dict, persist_result
 _PERIODS = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
 
 
-class ServiceCheckViewSet(viewsets.ModelViewSet):
+class ServiceCheckViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Agentless service checks (HTTP/HTTPS, TCP, … externally probed).
 
@@ -28,6 +30,9 @@ class ServiceCheckViewSet(viewsets.ModelViewSet):
     or host. `run-now/` probes immediately; `results/` returns recent history;
     `summary/` returns up/down/degraded counts.
     """
+
+    view_capability = "check:view"
+    write_capability = "check:manage"
 
     queryset = ServiceCheck.objects.select_related("device", "site").all()
     serializer_class = ServiceCheckSerializer
@@ -153,8 +158,10 @@ class CheckResultFilter(df.FilterSet):
         fields = ["check", "status"]
 
 
-class CheckResultViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class CheckResultViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """Read-only access to individual probe results."""
+
+    view_capability = "check:view"
 
     queryset = CheckResult.objects.select_related("service_check").all()
     serializer_class = CheckResultSerializer

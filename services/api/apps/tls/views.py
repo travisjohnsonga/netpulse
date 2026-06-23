@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 from . import ca_store, certs
 from .models import CACertificate, ServerCertificate
 from .serializers import (
@@ -45,6 +45,8 @@ def _status_payload() -> dict:
 class SSLStatusView(APIView):
     """Current HTTPS server certificate status (metadata + expiry; no secrets)."""
 
+    permission_classes = [HasCapability("tls:view")]
+
     @extend_schema(responses=ServerCertificateStatusSerializer, summary="HTTPS certificate status")
     def get(self, request):
         return Response(ServerCertificateStatusSerializer(_status_payload()).data)
@@ -53,7 +55,7 @@ class SSLStatusView(APIView):
 class SSLSelfSignedView(APIView):
     """Generate and install a self-signed HTTPS certificate."""
 
-    permission_classes = [AdminOnly]   # mutates server cert/key — admin-only
+    permission_classes = [HasCapability("tls:manage")]   # mutates server cert/key
 
     @extend_schema(request=SelfSignedRequestSerializer, responses=ServerCertificateStatusSerializer,
                    summary="Generate a self-signed certificate")
@@ -72,7 +74,7 @@ class SSLSelfSignedView(APIView):
 class SSLCSRView(APIView):
     """Generate a CSR (GET returns the pending CSR; POST creates a new key+CSR)."""
 
-    permission_classes = [AdminOnly]   # CSR generation/retrieval = admin cert mgmt
+    permission_classes = [HasCapability("tls:manage")]   # CSR generation/retrieval = cert mgmt
 
     @extend_schema(responses=CSRResponseSerializer, summary="Get the pending CSR")
     def get(self, request):
@@ -98,7 +100,7 @@ class SSLCSRView(APIView):
 class SSLUploadView(APIView):
     """Upload a CA-signed (or any) certificate, optionally with its private key."""
 
-    permission_classes = [AdminOnly]   # installs server cert/key — admin-only
+    permission_classes = [HasCapability("tls:manage")]   # installs server cert/key
 
     @extend_schema(request=UploadCertificateSerializer, responses=ServerCertificateStatusSerializer,
                    summary="Upload a certificate")
@@ -144,10 +146,11 @@ def _decode_upload(raw_text: str) -> bytes:
 class CACertificateListView(APIView):
     """List trusted CA certificates (GET) or add one/many (POST)."""
 
-    # Adding a trusted CA changes the trust store — admin-only (POST); the GET
-    # list stays on the default permission.
+    # Adding a trusted CA changes the trust store — tls:manage (POST); listing
+    # the trust store is tls:view (GET).
     def get_permissions(self):
-        return [AdminOnly()] if self.request.method == "POST" else super().get_permissions()
+        return [HasCapability("tls:manage")()] if self.request.method == "POST" \
+            else [HasCapability("tls:view")()]
 
     @extend_schema(responses=CACertificateSerializer(many=True), summary="List trusted CA certificates")
     def get(self, request):
@@ -192,7 +195,7 @@ class CACertificateListView(APIView):
 class CACertificateDetailView(APIView):
     """Delete a trusted CA certificate and rebuild the bundle."""
 
-    permission_classes = [AdminOnly]   # removing a trusted CA — admin-only
+    permission_classes = [HasCapability("tls:manage")]   # removing a trusted CA
 
     @extend_schema(summary="Delete a trusted CA certificate")
     def delete(self, request, pk):
@@ -207,6 +210,8 @@ class CACertificateDetailView(APIView):
 
 class CACertificateVerifyView(APIView):
     """Verify a stored CA cert is currently valid (dates) and report expiry."""
+
+    permission_classes = [HasCapability("tls:verify")]
 
     @extend_schema(summary="Verify a trusted CA certificate")
     def post(self, request, pk):

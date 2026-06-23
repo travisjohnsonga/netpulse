@@ -9,6 +9,7 @@ from rest_framework.response import Response
 logger = logging.getLogger(__name__)
 
 from apps.core.errors import internal_error_response, safe_detail
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 from apps.credentials import vault
 from apps.credentials.models import CredentialProfile
 
@@ -50,7 +51,7 @@ def _ssh_creds(profile_id):
     return profile, secrets.get("ssh_password", "")
 
 
-class SiteViewSet(viewsets.ModelViewSet):
+class SiteViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage sites/locations — a hierarchy of datacenters, campuses and branches.
 
@@ -58,6 +59,9 @@ class SiteViewSet(viewsets.ModelViewSet):
     hierarchy. Filter by `site_type` or `parent_site`; search by name/city. The
     `devices/` action lists the devices located at a site.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = Site.objects.select_related("parent_site").annotate(
         device_count=Count("devices", distinct=True),
@@ -185,12 +189,15 @@ class SiteViewSet(viewsets.ModelViewSet):
         })
 
 
-class DeviceGroupViewSet(viewsets.ModelViewSet):
+class DeviceGroupViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
+    view_capability = "device:view"
+    write_capability = "device:edit"
+
     queryset = DeviceGroup.objects.all()
     serializer_class = DeviceGroupSerializer
 
 
-class DeviceRoleViewSet(viewsets.ModelViewSet):
+class DeviceRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage device roles — labelled, colour-coded classifications (Core Switch,
     Firewall, Router, …) shown as bubbles in the device list and detail pages.
@@ -198,6 +205,9 @@ class DeviceRoleViewSet(viewsets.ModelViewSet):
     A role assigned to one or more devices cannot be deleted; reassign those
     devices first.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = DeviceRole.objects.all()
     serializer_class = DeviceRoleSerializer
@@ -216,7 +226,7 @@ class DeviceRoleViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-class DeviceViewSet(viewsets.ModelViewSet):
+class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage network devices — the core inventory of spane.
 
@@ -226,6 +236,9 @@ class DeviceViewSet(viewsets.ModelViewSet):
     `vendor` or `site`; search across hostname, IP and serial number. The
     `topology/` action returns nodes + edges for the network map.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = Device.objects.select_related("site", "role").prefetch_related("groups").all()
     filterset_fields = ["status", "platform", "vendor", "site", "role"]
@@ -939,7 +952,7 @@ class DeviceViewSet(viewsets.ModelViewSet):
         return Response({"count": len(undiscovered)})
 
 
-class HostnameRuleViewSet(viewsets.ModelViewSet):
+class HostnameRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage hostname pattern rules that auto-assign device role and/or site
     during discovery approval, enrichment, and manual/bulk apply.
@@ -947,6 +960,9 @@ class HostnameRuleViewSet(viewsets.ModelViewSet):
     Rules are evaluated in priority order (lowest number first); the first match
     per type wins. The `test/` action dry-runs a pattern against sample hostnames.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = HostnameRule.objects.select_related("role", "site").all()
     serializer_class = HostnameRuleSerializer
@@ -1002,7 +1018,7 @@ _RUNNABLE_METHODS = (
 )
 
 
-class DiscoveryJobViewSet(viewsets.ModelViewSet):
+class DiscoveryJobViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage device discovery jobs (ping+SNMP / ping / topology / active scan /
     passive / import).
@@ -1013,6 +1029,9 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
     Safety: `allowed_subnets` bound probing, `excluded_subnets` must list any
     OT/ICS ranges, `rate_limit_pps` defaults to 10.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = DiscoveryJob.objects.select_related("seed_device").order_by("-created_at")
     serializer_class = DiscoveryJobSerializer
@@ -1174,13 +1193,16 @@ class DiscoveryJobViewSet(viewsets.ModelViewSet):
         })
 
 
-class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
+class DiscoveredDeviceViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """
     Inspect discovered devices and approve/reject them.
 
     Approval creates an ACTIVE Device from the fingerprint (never automatic).
     Rejection marks the candidate rejected. Filter by `status` or `job`.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = DiscoveredDevice.objects.select_related("job", "approved_device").all()
     serializer_class = DiscoveredDeviceSerializer
@@ -1316,12 +1338,15 @@ class DiscoveredDeviceViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(DiscoveredDeviceSerializer(dd).data)
 
 
-class ManualTopologyLinkViewSet(viewsets.ModelViewSet):
+class ManualTopologyLinkViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """CRUD for operator-defined topology links (devices without LLDP/CDP).
 
     Filter by ``?device_id=`` (links touching a device) or ``?site_id=`` (links
     where either endpoint is at the site). Create/update/delete are audit-logged.
     """
+
+    view_capability = "device:view"
+    write_capability = "device:edit"
 
     queryset = ManualTopologyLink.objects.select_related(
         "device_a", "device_b", "created_by").all()

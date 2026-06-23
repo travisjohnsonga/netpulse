@@ -16,12 +16,12 @@ from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, serializers, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Role, SystemSetting, UserPreferences
-from .permissions import AdminOnly
+from .permissions import HasCapability
 from .serializers import (
     AdminUserSerializer,
     AuditLogSerializer,
@@ -309,6 +309,7 @@ def infrastructure_health(request):
 class MeView(generics.RetrieveUpdateAPIView):
     """Get or update the current user's account info (with nested preferences)."""
 
+    permission_classes = [IsAuthenticated]
     serializer_class = MeSerializer
 
     def get_object(self):
@@ -320,6 +321,7 @@ class MeView(generics.RetrieveUpdateAPIView):
 class MyPreferencesView(generics.RetrieveUpdateAPIView):
     """Get or update the current user's preferences (auto-created on first access)."""
 
+    permission_classes = [IsAuthenticated]
     serializer_class = UserPreferencesSerializer
 
     def get_object(self):
@@ -334,6 +336,8 @@ class OnboardingStatusView(APIView):
     it: ``not Device.objects.exists() and not prefs.onboarding_completed``. Once
     any device exists, the wizard is hidden for everyone.
     """
+
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(
         summary="Onboarding status for the current user",
@@ -368,6 +372,8 @@ class OnboardingStatusView(APIView):
 class OnboardingCompleteView(APIView):
     """Mark the current user's onboarding as complete (dismiss the wizard)."""
 
+    permission_classes = [IsAuthenticated]
+
     @extend_schema(
         summary="Mark onboarding complete for the current user",
         request=None,
@@ -391,6 +397,8 @@ class SystemSettingsView(APIView):
     "Push to Device" controls without hardcoding the flag, plus the configured
     collector IP for convenience.
     """
+
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(
         summary="System settings (config-push flag, collector IP)",
@@ -421,9 +429,9 @@ class HostnameDisplayView(APIView):
     """
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return super().get_permissions()
-        return [AdminOnly()]
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticated()]
+        return [HasCapability("system:manage")()]
 
     def _state(self):
         from .hostname import hostname_display_config
@@ -488,9 +496,9 @@ class LldpSettingsView(APIView):
     """
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return super().get_permissions()
-        return [AdminOnly()]
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticated()]
+        return [HasCapability("system:manage")()]
 
     def _state(self):
         from apps.devices.lldp import (
@@ -566,7 +574,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
     queryset = User.objects.all().order_by("username")
     serializer_class = AdminUserSerializer
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("user:manage")]
     filterset_fields = ["role", "is_active"]
     search_fields = ["username", "email", "first_name", "last_name"]
 
@@ -634,6 +642,8 @@ class UserViewSet(viewsets.ModelViewSet):
 class ChangePasswordView(APIView):
     """Change the current user's password (requires the current password)."""
 
+    permission_classes = [IsAuthenticated]
+
     @extend_schema(
         request=ChangePasswordSerializer,
         responses=inline_serializer("ChangePasswordResponse", {
@@ -679,7 +689,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     event_type / user_id / target / success / date range, free-text search,
     CSV export, and a stats summary."""
 
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("rbac:manage")]
     filterset_class = AuditLogFilter
     search_fields = ["username", "description", "target_name"]
     ordering_fields = ["created_at", "event_type"]
@@ -749,9 +759,9 @@ class AuditRetentionView(APIView):
     """Get/set how many days audit-log rows are kept (admin to change)."""
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return super().get_permissions()
-        return [AdminOnly()]
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticated()]
+        return [HasCapability("rbac:manage")()]
 
     def _days(self) -> int:
         try:

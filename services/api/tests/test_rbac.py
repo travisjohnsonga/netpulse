@@ -362,9 +362,12 @@ class TestAPIRole:
     def test_api_can_read_cve(self, api_svc_client):
         assert api_svc_client.get("/api/cve/cves/").status_code == 200
 
-    def test_api_can_create_collector(self, api_svc_client):
+    def test_api_cannot_create_collector(self, api_svc_client):
+        # RBAC Track 2 Phase B deliberate tightening #2: CollectorViewSet writes
+        # now require collector:manage (admin-only). The api service account
+        # mirrors engineer, which does NOT hold collector:manage → 403.
         resp = api_svc_client.post("/api/collectors/", {"name": "api-coll"})
-        assert resp.status_code == 201
+        assert resp.status_code == 403
 
 
 # ── NetPulseUser model ────────────────────────────────────────────────────────

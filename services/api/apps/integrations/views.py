@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.errors import safe_detail
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 from apps.credentials import vault
 
 from . import netbox
@@ -33,18 +33,25 @@ class UnifiControllerViewSet(viewsets.ModelViewSet):
     serializer_class = UnifiControllerSerializer
 
     # Mutating a controller (CRUD) and writing the cloud Site-Manager API key
-    # (cloud PUT) are admin-only. list/retrieve, the cloud GET, and the
-    # operational probes (test/sync/sync-all/cloud-test/cloud-discover) stay on
-    # the default permission. (Track 2 → integration:manage capability.)
-    _ADMIN_ACTIONS = frozenset({"create", "update", "partial_update", "destroy"})
+    # (cloud PUT) require integration:manage. list/retrieve + cloud GET are
+    # integration:view; sync/sync-all mutate inventory (device:edit); the probes
+    # (test/cloud-test/cloud-discover) are integration:sync.
+    _MANAGE_ACTIONS = frozenset({"create", "update", "partial_update", "destroy"})
 
     def get_permissions(self):
-        if self.action in self._ADMIN_ACTIONS:
-            return [AdminOnly()]
-        # The cloud account secret write (PUT) is admin-only; its GET is a read.
-        if self.action == "cloud" and self.request.method == "PUT":
-            return [AdminOnly()]
-        return super().get_permissions()
+        if self.action in self._MANAGE_ACTIONS:
+            return [HasCapability("integration:manage")()]
+        if self.action == "cloud":
+            # The cloud account secret write (PUT) is manage; its GET is a read.
+            if self.request.method == "PUT":
+                return [HasCapability("integration:manage")()]
+            return [HasCapability("integration:view")()]
+        if self.action in ("sync", "sync_all"):
+            return [HasCapability("device:edit")()]
+        if self.action in ("test", "cloud_test", "cloud_discover"):
+            return [HasCapability("integration:sync")()]
+        # list / retrieve
+        return [HasCapability("integration:view")()]
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
@@ -163,10 +170,18 @@ class MistViewSet(viewsets.ViewSet):
     DB (MistIntegration), so a connected account survives an api restart.
     """
 
-    # Writing the Mist account + API token (update/PUT) is admin-only; retrieve,
-    # test, sync, and sites stay on the default. (Track 2 → integration:manage.)
+    # Writing the Mist account + API token (update/PUT) requires
+    # integration:manage; sync mutates inventory (device:edit); test is a probe
+    # (integration:sync); retrieve + sites are integration:view.
     def get_permissions(self):
-        return [AdminOnly()] if self.action == "update" else super().get_permissions()
+        if self.action == "update":
+            return [HasCapability("integration:manage")()]
+        if self.action == "sync":
+            return [HasCapability("device:edit")()]
+        if self.action == "test":
+            return [HasCapability("integration:sync")()]
+        # retrieve / sites
+        return [HasCapability("integration:view")()]
 
     def _account_data(self):
         from .models import MistIntegration
@@ -252,10 +267,12 @@ class MistViewSet(viewsets.ViewSet):
 class EmailSettingsView(APIView):
     """GET / PUT the singleton SMTP configuration (Settings → Integrations → Email)."""
 
-    # Writing SMTP settings (PUT) stores the SMTP password in OpenBao — admin-only.
-    # GET stays operational. (Track 2 → integration:manage capability.)
+    # Writing SMTP settings (PUT) stores the SMTP password in OpenBao —
+    # integration:manage. GET is integration:view.
     def get_permissions(self):
-        return [AdminOnly()] if self.request.method == "PUT" else super().get_permissions()
+        if self.request.method == "PUT":
+            return [HasCapability("integration:manage")()]
+        return [HasCapability("integration:view")()]
 
     @extend_schema(responses=EmailSettingsSerializer)
     def get(self, request):
@@ -273,6 +290,8 @@ class EmailSettingsView(APIView):
 
 class EmailTestView(APIView):
     """Send a test email with the saved settings to verify the configuration."""
+
+    permission_classes = [HasCapability("integration:sync")]
 
     @extend_schema(
         request=drf_serializers.Serializer,
@@ -308,6 +327,16 @@ class NetBoxImportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
     queryset = NetBoxImport.objects.all()
     serializer_class = NetBoxImportSerializer
     ordering = ["-created_at"]
+
+    # create runs an inventory import (device:edit); test-connection/preview are
+    # probes (integration:sync); list/retrieve are integration:view.
+    def get_permissions(self):
+        if self.action == "create":
+            return [HasCapability("device:edit")()]
+        if self.action in ("test_connection", "preview"):
+            return [HasCapability("integration:sync")()]
+        # list / retrieve
+        return [HasCapability("integration:view")()]
 
     @extend_schema(request=NetBoxTestRequestSerializer, responses=NetBoxTestResponseSerializer)
     @action(detail=False, methods=["post"], url_path="test-connection")

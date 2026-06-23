@@ -22,6 +22,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
+from apps.core.permissions import CapabilityViewSetMixin
 from apps.devices.serializers import DeviceListSerializer
 
 from . import auth, pki
@@ -43,9 +44,11 @@ def authenticate_collector(request) -> Collector | None:
     return collector if auth.verify_secret(key, collector.api_key_hash) else None
 
 
-class CollectorViewSet(viewsets.ModelViewSet):
+class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     queryset = Collector.objects.all()
     serializer_class = CollectorSerializer
+    view_capability = "collector:view"
+    write_capability = "collector:manage"
     filterset_fields = ["status", "collector_type"]
     search_fields = ["name", "remote_ip", "hostname"]
     ordering_fields = ["last_seen_at", "created_at", "status", "collector_type"]
@@ -54,6 +57,8 @@ class CollectorViewSet(viewsets.ModelViewSet):
         # The bootstrap exchange authenticates itself (one-time token / API key).
         if self.action in ("enroll", "heartbeat"):
             return [AllowAny()]
+        # Reads → collector:view; writes (incl. regenerate_token/revoke/devices)
+        # by method via the mixin.
         return super().get_permissions()
 
     def get_throttles(self):
