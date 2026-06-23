@@ -668,9 +668,13 @@ services:
     #           count: all
     #           capabilities: ["gpu"]
 
-  # One-shot init: wait for ollama, pull the configured model, then exit. Brought
-  # up by the same `--profile llm`; re-runs are cheap (pull is a no-op once the
-  # model is present). The model name comes from .env (CHATOPS_NLP_MODEL).
+  # One-shot init: wait for ollama, pull the configured model, warm it into
+  # memory, then exit. Brought up by the same `--profile llm`; re-runs are cheap
+  # (pull is a no-op once present). The model name comes from .env
+  # (CHATOPS_NLP_MODEL). The warm `ollama run` loads the model so the first NLP
+  # query after a restart doesn't pay the ~2-min CPU cold-load; with the ollama
+  # service's OLLAMA_KEEP_ALIVE=-1 it then stays resident. Best-effort — a failed
+  # warm-up never fails the stack (the model still loads on first query).
   ollama-pull:
     image: ollama/ollama
     profiles: ["llm"]
@@ -687,6 +691,9 @@ services:
         done
         echo "pulling ${CHATOPS_NLP_MODEL:-qwen2.5:3b} (first run downloads ~2 GB)..."
         ollama pull "${CHATOPS_NLP_MODEL:-qwen2.5:3b}"
+        echo "warming ${CHATOPS_NLP_MODEL:-qwen2.5:3b} into memory..."
+        ollama run "${CHATOPS_NLP_MODEL:-qwen2.5:3b}" "ok" >/dev/null 2>&1 \
+          || echo "warm-up skipped (model will load on first query)"
     networks:
       - netpulse-net
 
