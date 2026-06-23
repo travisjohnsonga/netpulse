@@ -93,6 +93,22 @@ def has_capability(user, capability: str) -> bool:
     return capability in role.capability_set()
 
 
+def capabilities_of(user) -> set[str]:
+    """The effective capability set for ``user``.
+
+    Superusers get the full catalog (django-admin parity). An authenticated user
+    with an ``rbac_role`` gets that role's set; anyone else gets the empty set.
+    Used by the anti-escalation guardrail (a user may never grant a capability
+    they don't themselves hold).
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return set()
+    if getattr(user, "is_superuser", False):
+        return set(ALL_CAPABILITIES)
+    role = getattr(user, "rbac_role", None)
+    return role.capability_set() if role is not None else set()
+
+
 def HasCapability(required_capability: str):
     """DRF permission factory gating on a single capability.
 

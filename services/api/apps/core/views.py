@@ -15,7 +15,7 @@ from django_filters import rest_framework as _df
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, serializers, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -574,9 +574,15 @@ class UserViewSet(viewsets.ModelViewSet):
 
     queryset = User.objects.all().order_by("username")
     serializer_class = AdminUserSerializer
-    permission_classes = [HasCapability("user:manage")]
     filterset_fields = ["role", "is_active"]
     search_fields = ["username", "email", "first_name", "last_name"]
+
+    def get_permissions(self):
+        # Direct RBAC-role assignment is gated by rbac:manage (a role-management
+        # action); all other user CRUD stays on user:manage.
+        if getattr(self, "action", None) == "assign_rbac_role":
+            return [HasCapability("rbac:manage")()]
+        return [HasCapability("user:manage")()]
 
     @staticmethod
     def _is_last_admin(user) -> bool:
@@ -637,6 +643,52 @@ class UserViewSet(viewsets.ModelViewSet):
         log_event(AuditLog.EventType.USER_DELETED, request=self.request, target=instance,
                   description=f"User {name} deleted")
         instance.delete()
+
+    @action(detail=True, methods=["patch"], url_path="rbac-role")
+    def assign_rbac_role(self, request, pk=None):
+        """Assign a user's RBAC role (rbac:manage). Anti-escalation applies: you
+        can't assign a role containing capabilities you don't hold.
+
+        Sets ``rbac_role`` directly (authoritative — bypasses the save()-time
+        role→rbac_role sync via the _rbac_role_explicit flag). For a SYSTEM role
+        the legacy ``role`` field is aligned too so the JWT role claim / Django
+        group / is_admin stay consistent; custom roles have no legacy equivalent,
+        so the legacy ``role`` is left as-is and rbac_role drives capabilities.
+        """
+        from .capabilities import LEGACY_ROLE_TO_SYSTEM
+        from .models import AuditLog, RBACRole
+        from .permissions import capabilities_of
+
+        user = self.get_object()
+        role_id = request.data.get("rbac_role_id", request.data.get("role_id"))
+        role = RBACRole.objects.filter(pk=role_id).first()
+        if role is None:
+            return Response({"detail": "rbac_role_id not found."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        disallowed = role.capability_set() - capabilities_of(request.user)
+        if disallowed:
+            raise PermissionDenied(
+                "You cannot assign a role with capabilities you do not hold: "
+                f"{sorted(disallowed)}")
+
+        user.rbac_role = role
+        if role.is_system:
+            # superadmin has no legacy equivalent → keep the user's current legacy
+            # role for the JWT claim; rbac_role still wins for capabilities.
+            reverse = {v: k for k, v in LEGACY_ROLE_TO_SYSTEM.items()}
+            user.role = reverse.get(role.name, user.role)
+        user._rbac_role_explicit = True
+        user.save()
+
+        from .audit import log_event
+        log_event(AuditLog.EventType.USER_ROLE_CHANGED, request=request, target=user,
+                  description=f"User {user.username} RBAC role set to {role.name}")
+        return Response({
+            "id": user.id, "username": user.username, "role": user.role,
+            "rbac_role": {"name": role.name, "is_system": role.is_system},
+            "capabilities": sorted(role.capability_set()),
+        })
 
 
 class ChangePasswordView(APIView):

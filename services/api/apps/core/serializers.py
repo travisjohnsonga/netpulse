@@ -62,8 +62,26 @@ class MeSerializer(serializers.Serializer):
     is_superuser = serializers.BooleanField(read_only=True)
     must_change_password = serializers.BooleanField(read_only=True)
     preferences = UserPreferencesSerializer(read_only=True)
+    # RBAC Track 2 Phase C: the logged-in user's OWN effective capabilities +
+    # role identity, so the frontend can gate nav/buttons/routes (the API 403 is
+    # still the real security boundary). Read-only — role assignment happens via
+    # the role-management API, never by PUTting /me. Never exposes other users.
+    capabilities = serializers.SerializerMethodField()
+    rbac_role = serializers.SerializerMethodField()
+
+    def get_capabilities(self, obj) -> list[str]:
+        from apps.core.permissions import capabilities_of
+        return sorted(capabilities_of(obj))
+
+    def get_rbac_role(self, obj) -> dict | None:
+        role = getattr(obj, "rbac_role", None)
+        if role is None:
+            return None
+        return {"name": role.name, "is_system": role.is_system}
 
     def update(self, instance, validated_data):
+        # Only self-service profile fields are writable; capabilities/rbac_role are
+        # method fields (read-only) and silently ignored on PUT.
         for field in ("email", "first_name", "last_name"):
             if field in validated_data:
                 setattr(instance, field, validated_data[field])
