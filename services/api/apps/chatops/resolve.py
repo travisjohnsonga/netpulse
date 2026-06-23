@@ -325,6 +325,7 @@ def _resolve_device_list(params) -> IntentResult:
 
     raw = (params.get("filter") or "").lower()
     want_down = raw in ("down", "unreachable", "offline")
+    want_up = raw in ("up", "reachable", "online")
 
     if want_down:
         qs = qs.filter(is_reachable=False)
@@ -336,6 +337,17 @@ def _resolve_device_list(params) -> IntentResult:
         return IntentResult(
             title=f"Down devices{scope} ({total}){extra}",
             lines=[_device_line(d, site) for d in rows], severity="high")
+
+    if want_up:
+        qs = qs.filter(is_reachable=True)
+        total = qs.count()
+        if total == 0:
+            return IntentResult(title=f"No reachable devices{scope}.", severity="info")
+        rows = list(qs.order_by("hostname")[:_DEVICE_LIST_CAP])
+        extra = f" — showing {len(rows)}" if total > len(rows) else ""
+        return IntentResult(
+            title=f"Reachable devices{scope} ({total}){extra}",
+            lines=[_device_line(d, site) for d in rows], severity="info")
 
     total = qs.count()
     if total == 0:

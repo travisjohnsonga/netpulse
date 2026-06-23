@@ -95,6 +95,11 @@ logger = logging.getLogger(__name__)
 # resolution (data gathering) lives in apps.chatops.resolve, and per-platform
 # rendering in apps.chatops.format — see classify()/resolve()/format_for above.
 
+# Teams times out an outgoing webhook after 5s, so the NLP fallback gets a tight
+# budget here (leaving room for resolve + render); the other surfaces use the
+# full CHATOPS_NLP_TIMEOUT_S. Passed to classify(nlp_budget=…) below.
+TEAMS_NLP_BUDGET_S = 3
+
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
@@ -198,7 +203,8 @@ def webhook_teams(request: HttpRequest) -> JsonResponse:
     channel  = payload.get("conversation", {}).get("id", "") or "unknown"
 
     logger.info("teams query from %s: %s", user, text[:200])
-    intent, params = classify(text)
+    # Cap the NLP wait so a fallback stays inside Teams' 5s response window.
+    intent, params = classify(text, nlp_budget=TEAMS_NLP_BUDGET_S)
     decision = enforce_policy("teams", channel_id=channel, user_id=user_id,
                               user_name=user, intent=intent, request=request)
     if not decision.allowed:

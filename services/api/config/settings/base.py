@@ -406,6 +406,15 @@ CHATOPS_ENABLED = os.environ.get("CHATOPS_ENABLED", "false").lower() == "true"
 CHATOPS_NLP_PROVIDER = os.environ.get("CHATOPS_NLP_PROVIDER", "none")
 CHATOPS_NLP_ENDPOINT = os.environ.get("CHATOPS_NLP_ENDPOINT", "http://ollama:11434")
 CHATOPS_NLP_MODEL = os.environ.get("CHATOPS_NLP_MODEL", "qwen2.5:3b")
+# Per-call NLP HTTP timeout (seconds). The default 5s was too tight for a 3B CPU
+# model (every query "Read timed out"); 15s gives it a realistic budget. The
+# fallback still fails closed to help on timeout. Per-surface the effective wait
+# is min(this, surface budget) — the Teams webhook caps lower to stay inside its
+# 5s response window (see apps.chatops.nlp / apps.core.chatops).
+try:
+    CHATOPS_NLP_TIMEOUT_S = int(os.environ.get("CHATOPS_NLP_TIMEOUT_S", "15"))
+except ValueError:
+    CHATOPS_NLP_TIMEOUT_S = 15
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "spane API",

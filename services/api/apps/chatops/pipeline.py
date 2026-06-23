@@ -60,11 +60,13 @@ _INTENTS: list[tuple[str, re.Pattern]] = [
 
     # device_list — fleet queries. BEFORE device_status so "down devices",
     # "all devices", and "devices at site X" win over the singular device_status
-    # patterns. `filter` (down/unreachable/offline → down; all/list → all) and
-    # `site` are captured per pattern and read by the resolver.
+    # patterns. `filter` (down/unreachable/offline → down; up/reachable/online →
+    # up; all/list → all) and `site` are captured per pattern and read by the
+    # resolver.
     ("device_list", re.compile(r"\b(?P<filter>down|unreachable|offline)\s+devices?\b", re.I)),
+    ("device_list", re.compile(r"\b(?P<filter>up|reachable|online)\s+devices?\b", re.I)),
     ("device_list", re.compile(
-        r"\bwhich\s+devices?\s+are\s+(?P<filter>down|unreachable|offline)\b", re.I)),
+        r"\bwhich\s+devices?\s+are\s+(?P<filter>down|unreachable|offline|up|reachable|online)\b", re.I)),
     ("device_list", re.compile(
         r"\bany\s+(?P<filter>down|unreachable|offline)\s+devices?\b", re.I)),
     ("device_list", re.compile(r"\bdevices?\s+at\s+site\s+(?P<site>[\w.\-:/]+)\b", re.I)),
@@ -119,14 +121,18 @@ def _parse_intent(text: str) -> tuple[str, dict]:
     return "unknown", {}
 
 
-def classify(text: str) -> tuple[str, dict]:
+def classify(text: str, *, nlp_budget=None) -> tuple[str, dict]:
     """Regex parse first (always-on default); only on ``unknown`` consult the
     optional NLP fallback. A known NLP result is used; anything else stays
     ``unknown`` so the resolver returns help. The chosen intent is returned to the
-    caller, which still runs it through ``enforce_policy`` (no policy bypass)."""
+    caller, which still runs it through ``enforce_policy`` (no policy bypass).
+
+    ``nlp_budget`` is an optional per-surface deadline (seconds) forwarded to the
+    NLP fallback — the Teams webhook passes ~3s to stay inside its 5s window; the
+    in-UI chat passes none (the full ``CHATOPS_NLP_TIMEOUT_S``)."""
     intent, params = _parse_intent(text)
     if intent == "unknown":
-        nlp = resolve_nlp(text)
+        nlp = resolve_nlp(text, budget=nlp_budget)
         if nlp:
             return nlp
     return intent, params

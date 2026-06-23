@@ -1197,7 +1197,8 @@ class TestIntentParsing:
         regex yields 'unknown' — never for a matched intent."""
         from apps.chatops import pipeline
         calls = []
-        monkeypatch.setattr(pipeline, "resolve_nlp", lambda t: calls.append(t) or None)
+        monkeypatch.setattr(pipeline, "resolve_nlp",
+                            lambda t, **kw: calls.append(t) or None)
 
         assert pipeline.classify("status of core-sw-01") == ("device_status", {"name": "core-sw-01"})
         assert calls == []                      # matched → NLP not consulted
@@ -1318,3 +1319,107 @@ class TestDeviceListResolver:
         from apps.chatops.resolve import resolve
         r = resolve("device_list", {"site": "Nowhere"})
         assert "No site matching" in r.title
+
+
+# ── ChatOps NLP: configurable timeout + per-surface budget, prompt sync ────────
+# (reuses the module-level _FakeResp defined in the NLP-fallback section above)
+
+
+class TestNlpTimeout:
+    """The NLP HTTP timeout reads from settings (default 15) and is capped by an
+    optional per-surface budget (Teams ~3s); the web path uses the full value."""
+
+    def _wire_local(self, settings, monkeypatch, reply='{"intent":"active_alerts","params":{}}'):
+        settings.CHATOPS_NLP_PROVIDER = "local"
+        settings.CHATOPS_NLP_ENDPOINT = "http://ollama:11434"
+        captured = {}
+
+        def _post(url, **kw):
+            captured["timeout"] = kw.get("timeout")
+            return _FakeResp({"response": reply})
+
+        monkeypatch.setattr("requests.post", _post)
+        return captured
+
+    def test_default_timeout_from_settings(self, db, settings, monkeypatch):
+        settings.CHATOPS_NLP_TIMEOUT_S = 15
+        captured = self._wire_local(settings, monkeypatch)
+        from apps.chatops.nlp import resolve_nlp
+        assert resolve_nlp("is anything wrong") == ("active_alerts", {})
+        assert captured["timeout"] == 15
+
+    def test_within_budget_succeeds(self, db, settings, monkeypatch):
+        settings.CHATOPS_NLP_TIMEOUT_S = 15
+        self._wire_local(settings, monkeypatch, reply='{"intent":"help","params":{}}')
+        from apps.chatops.nlp import resolve_nlp
+        # A backend that answers inside the budget classifies normally.
+        assert resolve_nlp("what can you do for me") == ("help", {})
+
+    def test_teams_budget_caps_timeout(self, db, settings, monkeypatch):
+        settings.CHATOPS_NLP_TIMEOUT_S = 15
+        captured = self._wire_local(settings, monkeypatch)
+        from apps.chatops.nlp import resolve_nlp
+        resolve_nlp("foo", budget=3)          # Teams surface
+        assert captured["timeout"] == 3
+        resolve_nlp("foo")                    # web surface (full budget)
+        assert captured["timeout"] == 15
+
+    def test_classify_threads_budget(self, db, settings, monkeypatch):
+        settings.CHATOPS_NLP_PROVIDER = "local"
+        settings.CHATOPS_NLP_TIMEOUT_S = 15
+        captured = self._wire_local(settings, monkeypatch)
+        from apps.chatops.pipeline import classify
+        # An unmatched query routes to NLP; the budget is forwarded.
+        classify("please summarize the widget situation", nlp_budget=3)
+        assert captured["timeout"] == 3
+
+
+class TestNlpPromptSync:
+    """The classifier prompt must list every KNOWN_INTENTS member (no drift)."""
+
+    def test_prompt_lists_every_known_intent(self):
+        from apps.chatops import nlp
+        from apps.chatops.resolve import KNOWN_INTENTS
+        for intent in KNOWN_INTENTS:
+            assert intent in nlp._PROMPT, f"intent {intent!r} missing from the NLP prompt"
+
+    def test_device_list_described_in_prompt(self):
+        from apps.chatops import nlp
+        assert "device_list" in nlp._PROMPT and "filter" in nlp._PROMPT
+
+    def test_nlp_resolves_device_list_filter(self, db, settings, monkeypatch):
+        settings.CHATOPS_NLP_PROVIDER = "local"
+        settings.CHATOPS_NLP_ENDPOINT = "http://ollama:11434"
+        monkeypatch.setattr(
+            "requests.post",
+            lambda url, **kw: _FakeResp({"response": '{"intent":"device_list","params":{"filter":"down"}}'}))
+        from apps.chatops.nlp import resolve_nlp
+        # A fleet query that falls through to NLP now maps to device_list (not help).
+        assert resolve_nlp("what devices are broken") == ("device_list", {"filter": "down"})
+
+
+class TestDeviceListUpFilter:
+    pytestmark = pytest.mark.django_db
+
+    @pytest.mark.parametrize("text", ["up devices", "reachable devices", "which devices are up"])
+    def test_up_phrasings(self, text):
+        from apps.chatops.pipeline import _parse_intent
+        intent, params = _parse_intent(text)
+        assert intent == "device_list"
+        assert (params.get("filter") or "").lower() in ("up", "reachable", "online")
+
+    def test_resolver_lists_reachable(self, db):
+        from apps.chatops.resolve import resolve
+        from apps.devices.models import Device
+        Device.objects.create(hostname="up-1", ip_address="10.0.0.1", is_reachable=True)
+        Device.objects.create(hostname="down-1", ip_address="10.0.0.2", is_reachable=False)
+        r = resolve("device_list", {"filter": "up"})
+        assert r.title == "Reachable devices (1)"
+        body = "\n".join(r.lines)
+        assert "up-1" in body and "down-1" not in body
+
+    def test_resolver_none_reachable_graceful(self, db):
+        from apps.chatops.resolve import resolve
+        from apps.devices.models import Device
+        Device.objects.create(hostname="down-1", ip_address="10.0.0.2", is_reachable=False)
+        assert resolve("device_list", {"filter": "up"}).title == "No reachable devices."

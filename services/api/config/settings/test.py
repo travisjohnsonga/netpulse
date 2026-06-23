@@ -15,6 +15,15 @@ ALLOWED_HOSTS = ["*"]
 # Exercise the ChatOps webhook handlers in tests (disabled by default in prod).
 CHATOPS_ENABLED = True
 
+# Pin the ChatOps NLP fallback off by default so tests are hermetic regardless of
+# the host env (a lab with the llm profile exports CHATOPS_NLP_PROVIDER=local,
+# which base.py would otherwise read here and route to a live Ollama). Tests that
+# need a provider set it explicitly via the `settings` fixture.
+CHATOPS_NLP_PROVIDER = "none"
+CHATOPS_NLP_ENDPOINT = "http://ollama:11434"
+CHATOPS_NLP_MODEL = "qwen2.5:3b"
+CHATOPS_NLP_TIMEOUT_S = 15
+
 # SQLite — no external DB needed for unit tests.
 DATABASES = {
     "default": {
