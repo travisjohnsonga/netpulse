@@ -14,7 +14,7 @@
     "clsx": "^2.1.0",
     "cytoscape": "^3.30.0",
     "diff": "^9.0.0",
-    "echarts": "^5.5.0",
+    "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.2",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
