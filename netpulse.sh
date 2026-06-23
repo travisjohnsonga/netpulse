@@ -39,6 +39,13 @@ case "$1" in
     # The `up` below uses the active COMPOSE_PROFILES, so a disabled profile stays
     # down.
     docker compose --profile "*" down --remove-orphans
+    # Rebuild the code-bearing images (all api services + frontend) BEFORE `up` so
+    # a `git pull` + restart actually ships merged backend code/migrations and UI.
+    # Without this, `up` recreates from the existing image and merged migrations
+    # stay unapplied (the api entrypoint runs `migrate` on start, but only sees the
+    # migrations baked into the stale image). Layer cache makes an unchanged build
+    # fast. `start`/`stop`/`up` stay pure bounces (no rebuild) for quick restarts.
+    docker compose build $API_SERVICES frontend
     docker compose up -d
     sleep 5
     docker compose ps
