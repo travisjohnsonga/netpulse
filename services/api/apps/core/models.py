@@ -58,6 +58,10 @@ class NetPulseUser(AbstractUser):
     def _sync_rbac_role(self):
         from apps.core.capabilities import LEGACY_ROLE_TO_SYSTEM
 
+        # A direct rbac_role assignment (Phase C role-management API) is
+        # authoritative — never re-derive it from the legacy `role` on that save.
+        if getattr(self, "_rbac_role_explicit", False):
+            return
         # Respect an explicit custom (non-system) role assignment.
         if self.rbac_role_id is not None and not getattr(self.rbac_role, "is_system", False):
             return

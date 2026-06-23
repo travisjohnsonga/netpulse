@@ -8,6 +8,7 @@ from .chatops import (
     webhook_slack,
     webhook_teams,
 )
+from .rbac_views import CapabilityCatalogView, RoleViewSet
 from .version import version, version_check
 from .views import (
     AuditLogViewSet,
@@ -25,9 +26,12 @@ from .views import (
 router = SimpleRouter()
 router.register("users", UserViewSet)
 router.register("audit-log", AuditLogViewSet, basename="audit-log")
+# RBAC Track 2 Phase C: role-management API (all gated by rbac:manage).
+router.register("rbac/roles", RoleViewSet, basename="rbac-role")
 
 urlpatterns = [
     path("health/", health, name="health"),
+    path("rbac/capabilities/", CapabilityCatalogView.as_view(), name="rbac-capabilities"),
     path("health/infrastructure/", infrastructure_health, name="health-infrastructure"),
     path("setup/status/", setup_status, name="setup-status"),
     path("version/", version, name="version"),
