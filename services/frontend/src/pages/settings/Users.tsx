@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
 import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, useCapabilities, useHasCapability } from '../../store/authStore'
 import { SectionHeader, Tabs } from '../Settings'
 import {
   fetchUsers, createUser, updateUser, deleteUser,
-  type AdminUser, type UserRole as RoleId,
+  fetchRbacRoles, assignUserRbacRole,
+  type AdminUser, type UserRole as RoleId, type RbacRole,
 } from '../../api/client'
 import { parseApiErrors } from '../../api/errors'
 
@@ -54,6 +55,7 @@ export default function Users() {
 
 function UsersTab() {
   const { username: me } = useAuthStore()
+  const canAssignRoles = useHasCapability('rbac:manage')
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -137,9 +139,16 @@ function UsersTab() {
                     </div>
                   </td>
                   <td className="px-5 py-3">
-                    <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[u.role])}>
-                      {ROLE_LABEL[u.role]}
-                    </span>
+                    {u.rbac_role && !u.rbac_role.is_system ? (
+                      // Custom RBAC role — the legacy `role` badge can't name it.
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400" title="Custom role">
+                        {u.rbac_role.name}
+                      </span>
+                    ) : (
+                      <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[u.role])}>
+                        {ROLE_LABEL[u.role]}
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{relTime(u.last_login)}</td>
                   <td className="px-5 py-3">
@@ -150,7 +159,9 @@ function UsersTab() {
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => setEditing(u)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Edit Role</button>
+                      {canAssignRoles && (
+                        <button onClick={() => setEditing(u)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Assign Role</button>
+                      )}
                       <button disabled={busyId === u.id} onClick={() => toggleActive(u)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
                         {u.is_active ? 'Deactivate' : 'Reactivate'}
                       </button>
@@ -180,7 +191,7 @@ function UsersTab() {
         />
       )}
       {editing && (
-        <EditRoleModal
+        <AssignRoleModal
           user={editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load() }}
@@ -268,36 +279,71 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   )
 }
 
-function EditRoleModal({ user, onClose, onSaved }: { user: AdminUser; onClose: () => void; onSaved: () => void }) {
-  const [role, setRole] = useState<RoleId>(user.role)
+// Assign an RBAC role to a user (PATCH /api/users/{id}/rbac-role/). Lists all
+// roles from /api/rbac/roles/. Anti-escalation mirrors the server: a role whose
+// capabilities aren't all held by the current user is greyed/unselectable (the
+// server's 403 stays authoritative, surfaced inline if it fires).
+function AssignRoleModal({ user, onClose, onSaved }: { user: AdminUser; onClose: () => void; onSaved: () => void }) {
+  const myCaps = useCapabilities()
+  const [roles, setRoles] = useState<RbacRole[]>([])
+  const [roleId, setRoleId] = useState<number | null>(user.rbac_role?.id ?? null)
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username
 
+  useEffect(() => {
+    fetchRbacRoles()
+      .then((r) => { setRoles(r); setErr(null) })
+      .catch(() => setErr('Failed to load roles.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const canAssign = (r: RbacRole) => r.capabilities.every((c) => myCaps.includes(c))
+
   const submit = async () => {
+    if (roleId == null) { setErr('Select a role.'); return }
     setSaving(true); setErr(null)
     try {
-      await updateUser(user.id, { role })
+      await assignUserRbacRole(user.id, roleId)
       onSaved()
     } catch (e) {
-      setSaving(false); setErr(apiError(e, 'Failed to update role.'))
+      setSaving(false); setErr(apiError(e, 'Failed to assign role.'))
     }
   }
 
   return (
     <Modal
-      title={`Edit role — ${name}`}
+      title={`Assign role — ${name}`}
       onClose={onClose}
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
+          <button onClick={submit} disabled={saving || loading || roleId == null} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Assign'}</button>
         </>
       }
     >
       {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400 mb-3">{err}</div>}
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
-      <RoleSelect value={role} onChange={setRole} />
+      <select
+        className={inputCls}
+        value={roleId ?? ''}
+        disabled={loading}
+        onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="" disabled>{loading ? 'Loading…' : 'Select a role'}</option>
+        {roles.map((r) => {
+          const allowed = canAssign(r)
+          return (
+            <option key={r.id} value={r.id} disabled={!allowed}>
+              {r.name}{r.is_system ? ' (system)' : ''}{allowed ? '' : ' — needs capabilities you don’t hold'}
+            </option>
+          )
+        })}
+      </select>
+      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
+        You can only assign roles whose capabilities you hold yourself.
+      </p>
     </Modal>
   )
 }

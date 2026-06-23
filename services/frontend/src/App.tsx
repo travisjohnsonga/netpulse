@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Layout from './components/Layout'
 import SetupRequired, { OpenBaoDegradedBanner } from './pages/SetupRequired'
-import { fetchSetupStatus, fetchOnboardingStatus, completeOnboarding, type SetupStatus } from './api/client'
+import { fetchSetupStatus, fetchOnboardingStatus, completeOnboarding, fetchMe, type SetupStatus } from './api/client'
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/Devices'
 import Profile from './pages/Profile'
@@ -29,6 +29,8 @@ import Collectors from './pages/settings/Collectors'
 import Agents from './pages/settings/Agents'
 import DataSources from './pages/settings/DataSources'
 import PlatformStatus from './pages/settings/PlatformStatus'
+import AccessRoles from './pages/settings/RbacRoles'
+import RequireCapability from './components/RequireCapability'
 import {
   UsersAccessSettings, AlertingSettings, NetworkDeviceSettings,
   ComplianceSettings, SystemSettings,
@@ -82,6 +84,17 @@ function AppRoutes() {
     fetchOnboardingStatus()
       .then((s) => setOnboarding(s.show_onboarding ? 'show' : 'skip'))
       .catch(() => setOnboarding('skip'))   // fail open → straight to the app
+  }, [isAuthenticated])
+
+  // RBAC Track 2 Phase C: the JWT only carries the legacy role, so resolve the
+  // user's effective capabilities from /me on auth-init (and re-resolve on every
+  // mount/reload so capability changes + custom roles repopulate). Failures
+  // leave capabilities empty (deny-by-default in the UI; the API stays the boundary).
+  useEffect(() => {
+    if (!isAuthenticated) return
+    fetchMe()
+      .then((me) => useAuthStore.getState().setCapabilities(me.capabilities ?? [], me.rbac_role ?? null))
+      .catch(() => { /* keep whatever was persisted; API 403s remain authoritative */ })
   }, [isAuthenticated])
 
   // Forced password change takes precedence over onboarding and the app: an
@@ -188,6 +201,10 @@ function AppRoutes() {
                   <Route path="compliance" element={<ComplianceSettings />} />
                   <Route path="system" element={<SystemSettings />} />
                   {/* Standalone settings */}
+                  {/* RBAC role management — its own route, guarded by rbac:manage
+                      (NotAuthorized for anyone else, incl. deep-links). Distinct
+                      from the device-roles tab under network-devices. */}
+                  <Route path="access-roles" element={<RequireCapability capability="rbac:manage"><AccessRoles /></RequireCapability>} />
                   <Route path="integrations" element={<Integrations />} />
                   <Route path="collectors" element={<Collectors />} />
                   <Route path="agents" element={<Agents />} />

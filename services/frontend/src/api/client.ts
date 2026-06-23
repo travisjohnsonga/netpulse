@@ -1,5 +1,14 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
+import { useNoticeStore } from '../store/noticeStore'
+
+// Per-request opt-out of the global 403 "Not authorized" notice (for calls that
+// present their own inline forbidden message — e.g. the RBAC role editor).
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    skipForbiddenNotice?: boolean
+  }
+}
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -42,6 +51,21 @@ api.interceptors.response.use(
         logout()
         return Promise.reject(error)
       }
+    }
+    // Global 403 boundary (RBAC Track 2 Phase C): surface a clear, non-destructive
+    // "Not authorized" notice rather than letting the page render broken empty
+    // panels — catches deep-links and mid-session capability changes that nav-
+    // gating misses. Calls that present their own inline 403 (e.g. the role
+    // editor's anti-escalation message) opt out via `skipForbiddenNotice`.
+    if (
+      axiosError.response?.status === 403 &&
+      !(original as { skipForbiddenNotice?: boolean } | undefined)?.skipForbiddenNotice
+    ) {
+      const data = axiosError.response.data as { detail?: string } | undefined
+      const msg = typeof data?.detail === 'string'
+        ? data.detail
+        : "You don't have permission to do that."
+      useNoticeStore.getState().showForbidden(msg)
     }
     return Promise.reject(error)
   },
@@ -2287,11 +2311,69 @@ export interface Me {
   role: string
   is_superuser: boolean
   preferences: UserPreferences
+  // RBAC Track 2 Phase C: the caller's OWN effective capabilities + role identity.
+  capabilities: string[]
+  rbac_role: { name: string; is_system: boolean } | null
 }
 
 export async function fetchMe(): Promise<Me> {
   const { data } = await api.get<Me>('/users/me/')
   return data
+}
+
+// ── RBAC roles & capabilities (Phase C) ──────────────────────────────────────
+
+export interface CapabilityGroup {
+  group: string
+  capabilities: { name: string; description?: string }[]
+}
+
+export interface RbacRole {
+  id: number
+  name: string
+  description: string
+  capabilities: string[]
+  is_system: boolean
+  is_immutable: boolean
+  user_count: number
+  created_at?: string
+  updated_at?: string
+}
+
+export async function fetchCapabilityCatalog(): Promise<CapabilityGroup[]> {
+  const { data } = await api.get<CapabilityGroup[]>('/rbac/capabilities/')
+  return data
+}
+
+export async function fetchRbacRoles(): Promise<RbacRole[]> {
+  // The roles endpoint is a paginated ViewSet ({results:[...]}).
+  const { data } = await api.get<{ results: RbacRole[] } | RbacRole[]>('/rbac/roles/')
+  return Array.isArray(data) ? data : data.results
+}
+
+export interface RbacRolePayload {
+  name: string
+  description: string
+  capabilities: string[]
+}
+
+export async function createRbacRole(payload: RbacRolePayload): Promise<RbacRole> {
+  // skipForbiddenNotice: the role editor shows the anti-escalation 403 inline.
+  const { data } = await api.post<RbacRole>('/rbac/roles/', payload, { skipForbiddenNotice: true })
+  return data
+}
+
+export async function updateRbacRole(id: number, payload: Partial<RbacRolePayload>): Promise<RbacRole> {
+  const { data } = await api.patch<RbacRole>(`/rbac/roles/${id}/`, payload, { skipForbiddenNotice: true })
+  return data
+}
+
+export async function deleteRbacRole(id: number): Promise<void> {
+  await api.delete(`/rbac/roles/${id}/`, { skipForbiddenNotice: true })
+}
+
+export async function assignUserRbacRole(userId: number, roleId: number): Promise<void> {
+  await api.patch(`/users/${userId}/rbac-role/`, { rbac_role_id: roleId }, { skipForbiddenNotice: true })
 }
 
 export async function updateMe(payload: Partial<Pick<Me, 'email' | 'first_name' | 'last_name'>>): Promise<Me> {
@@ -2330,6 +2412,9 @@ export interface AdminUser {
   first_name: string
   last_name: string
   role: UserRole
+  // RBAC role identity (read-only). Reflects the actual assigned role, incl.
+  // custom roles the legacy `role` field can't express. null until assigned.
+  rbac_role: { id: number; name: string; is_system: boolean } | null
   is_active: boolean
   is_superuser: boolean
   last_login: string | null
