@@ -27,6 +27,16 @@ class NetPulseUser(AbstractUser):
         db_index=True,
     )
 
+    # RBAC Track 2 (Phase A): roles-as-data. The legacy ``role`` CharField above
+    # stays the live enforcement input for now; this FK is populated by the seed
+    # migration (mapped from ``role``) and read by has_capability()/HasCapability
+    # in Phase B. Kept alongside ``role`` — NOT replacing it — for rollback safety.
+    # SET_NULL so deleting a (non-system) role never cascades into users.
+    rbac_role = models.ForeignKey(
+        "core.RBACRole", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="users",
+    )
+
     # Set on the seeded initial admin (default password) so the UI forces a
     # password change on first login. Cleared once the user picks a new password.
     must_change_password = models.BooleanField(default=False)
@@ -53,6 +63,60 @@ class TimestampedModel(models.Model):
     class Meta:
         abstract = True
         ordering = ["-created_at"]
+
+
+class RBACRole(TimestampedModel):
+    """A role as data (RBAC Track 2): a named set of capability strings.
+
+    Capability identity is code-defined (``apps.core.capabilities.ALL_CAPABILITIES``);
+    ``capabilities`` is stored as a JSON list and validated to be a subset of it
+    (a JSONField is simpler to query for membership than an M2M lookup table and
+    keeps capability identity in code). ``is_system`` marks the seeded roles;
+    ``is_immutable`` marks the superadmin role, which can never be deleted or
+    down-scoped below the full capability set.
+    """
+    name = models.CharField(max_length=64, unique=True)
+    description = models.TextField(blank=True)
+    capabilities = models.JSONField(default=list)
+    is_system = models.BooleanField(default=False)
+    is_immutable = models.BooleanField(default=False)
+
+    class Meta(TimestampedModel.Meta):
+        verbose_name = "RBAC Role"
+        verbose_name_plural = "RBAC Roles"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    def capability_set(self) -> set[str]:
+        """The role's capabilities as a set (for membership tests)."""
+        return set(self.capabilities or [])
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        from .capabilities import ALL_CAPABILITIES
+        unknown = self.capability_set() - ALL_CAPABILITIES
+        if unknown:
+            raise ValidationError(
+                {"capabilities": f"Unknown capabilities: {sorted(unknown)}"})
+
+    def save(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+
+        from .capabilities import ALL_CAPABILITIES
+        self.clean()  # reject any capability not in the code catalog
+        # The immutable (superadmin) role can never be down-scoped.
+        if self.is_immutable and not ALL_CAPABILITIES.issubset(self.capability_set()):
+            raise ValidationError("The superadmin role cannot be down-scoped.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        if self.is_immutable:
+            raise ValidationError("The superadmin role cannot be deleted.")
+        return super().delete(*args, **kwargs)
 
 
 class SystemSetting(TimestampedModel):
