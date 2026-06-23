@@ -18,6 +18,11 @@ function decodePayload(token: string): JWTPayload | null {
   }
 }
 
+export interface RbacRoleIdentity {
+  name: string
+  is_system: boolean
+}
+
 interface AuthState {
   accessToken: string | null
   refreshToken: string | null
@@ -27,8 +32,14 @@ interface AuthState {
   email: string | null
   mustChangePassword: boolean
   isAuthenticated: boolean
+  // RBAC Track 2 Phase C: the user's effective capabilities + RBAC role identity,
+  // resolved from GET /api/users/me/ (the JWT only carries the legacy `role`).
+  // Drives capability-aware UI gating; the API 403 stays the real boundary.
+  capabilities: string[]
+  rbacRole: RbacRoleIdentity | null
   setTokens: (access: string, refresh: string) => void
   setAccessToken: (access: string) => void
+  setCapabilities: (capabilities: string[], rbacRole: RbacRoleIdentity | null) => void
   logout: () => void
 }
 
@@ -43,6 +54,8 @@ export const useAuthStore = create<AuthState>()(
       email: null,
       mustChangePassword: false,
       isAuthenticated: false,
+      capabilities: [],
+      rbacRole: null,
 
       setTokens: (access, refresh) => {
         const payload = decodePayload(access)
@@ -71,6 +84,8 @@ export const useAuthStore = create<AuthState>()(
         })
       },
 
+      setCapabilities: (capabilities, rbacRole) => set({ capabilities, rbacRole }),
+
       logout: () =>
         set({
           accessToken: null,
@@ -81,6 +96,8 @@ export const useAuthStore = create<AuthState>()(
           email: null,
           mustChangePassword: false,
           isAuthenticated: false,
+          capabilities: [],
+          rbacRole: null,
         }),
     }),
     {
@@ -94,7 +111,25 @@ export const useAuthStore = create<AuthState>()(
         email: s.email,
         mustChangePassword: s.mustChangePassword,
         isAuthenticated: s.isAuthenticated,
+        // Persisted so a page reload doesn't briefly hide nav/routes before the
+        // /me refetch lands; the auth-init refetch then refreshes them.
+        capabilities: s.capabilities,
+        rbacRole: s.rbacRole,
       }),
     },
   ),
 )
+
+/** All effective capabilities for the current user (empty until /me resolves). */
+export function useCapabilities(): string[] {
+  return useAuthStore((s) => s.capabilities)
+}
+
+/**
+ * True if the current user holds `capability`. Convenience for UI gating only —
+ * the API 403 remains the authoritative security boundary. Superusers already
+ * receive the full catalog from /me, so no client-side special-casing is needed.
+ */
+export function useHasCapability(capability: string): boolean {
+  return useAuthStore((s) => s.capabilities.includes(capability))
+}

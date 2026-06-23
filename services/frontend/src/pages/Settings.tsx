@@ -1,40 +1,53 @@
 import { type ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import clsx from 'clsx'
+import { useCapabilities } from '../store/authStore'
 
 interface SettingsNavItem {
   to: string
   label: string
   icon: string
+  // Capability gating it on (its primary API). Omitted → visible to all. Items
+  // gate on the relevant :view/:manage cap; the API 403 stays the real boundary.
+  requiredCapability?: string | string[]
 }
 
 // Grouped to cut clutter: related sections live as tabs under one entry.
 // Standalone entries below the divider are complex enough to stand alone.
 const SETTINGS_NAV: SettingsNavItem[] = [
-  { to: 'users',           label: 'Users & Access',  icon: '👥' },
-  { to: 'alerting',        label: 'Alerting',        icon: '🔔' },
-  { to: 'network-devices', label: 'Network Devices', icon: '🖥' },
-  { to: 'integrations',    label: 'Integrations',    icon: '🔗' },
-  { to: 'compliance',      label: 'Compliance',      icon: '✅' },
+  { to: 'users',           label: 'Users & Access',  icon: '👥', requiredCapability: ['user:manage', 'rbac:manage', 'sso:manage'] },
+  { to: 'access-roles',    label: 'Access Roles',    icon: '🛡️', requiredCapability: 'rbac:manage' },
+  { to: 'alerting',        label: 'Alerting',        icon: '🔔', requiredCapability: 'alert:view' },
+  { to: 'network-devices', label: 'Network Devices', icon: '🖥', requiredCapability: 'device:view' },
+  { to: 'integrations',    label: 'Integrations',    icon: '🔗', requiredCapability: 'integration:view' },
+  { to: 'compliance',      label: 'Compliance',      icon: '✅', requiredCapability: 'compliance:view' },
   { to: 'system',          label: 'System',          icon: '⚙' },
-  { to: 'collectors',      label: 'Collectors',      icon: '📡' },
-  { to: 'agents',          label: 'Agents',          icon: '🤖' },
-  { to: 'discovery',       label: 'Discovery',       icon: '🔍' },
-  { to: 'hostname-rules',  label: 'Hostname Rules',  icon: '📋' },
-  { to: 'log-filters',     label: 'Log Filters',     icon: '🔇' },
-  { to: 'credentials',     label: 'Credentials',     icon: '🔑' },
-  { to: 'polling',         label: 'Polling',         icon: '⏱' },
-  { to: 'data-sources',    label: 'Data Sources',    icon: '🗄' },
+  { to: 'collectors',      label: 'Collectors',      icon: '📡', requiredCapability: 'collector:view' },
+  { to: 'agents',          label: 'Agents',          icon: '🤖', requiredCapability: 'agent:view' },
+  { to: 'discovery',       label: 'Discovery',       icon: '🔍', requiredCapability: 'device:view' },
+  { to: 'hostname-rules',  label: 'Hostname Rules',  icon: '📋', requiredCapability: 'device:view' },
+  { to: 'log-filters',     label: 'Log Filters',     icon: '🔇', requiredCapability: 'log:view' },
+  { to: 'credentials',     label: 'Credentials',     icon: '🔑', requiredCapability: 'credential:view' },
+  { to: 'polling',         label: 'Polling',         icon: '⏱', requiredCapability: 'telemetry:view' },
+  { to: 'data-sources',    label: 'Data Sources',    icon: '🗄', requiredCapability: 'config:backup:manage' },
   { to: 'platform-status', label: 'Platform Status', icon: '🩺' },
 ]
 
+export function hasAnyCapability(caps: string[], required?: string | string[]): boolean {
+  if (!required) return true
+  const needed = Array.isArray(required) ? required : [required]
+  return needed.some((c) => caps.includes(c))
+}
+
 export default function Settings() {
+  const caps = useCapabilities()
+  const visible = SETTINGS_NAV.filter((i) => hasAnyCapability(caps, i.requiredCapability))
   return (
     <div className="flex gap-6">
       {/* Settings sub-navigation — icons only on narrow screens, full on desktop */}
       <nav className="shrink-0 w-14 lg:w-56 space-y-1">
         <h1 className="hidden lg:block text-lg font-bold text-gray-900 dark:text-gray-100 px-3 mb-3">Settings</h1>
-        {SETTINGS_NAV.map((item) => (
+        {visible.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { fetchUndiscoveredLldpCount } from '../api/client'
-import { useAuthStore } from '../store/authStore'
+import { useAuthStore, useCapabilities } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
 import { useSite, useSiteStore } from '../store/siteStore'
@@ -13,6 +13,18 @@ import HeaderSearch from './HeaderSearch'
 import SiteSelector from './SiteSelector'
 import LogoMark from './LogoMark'
 import ChatOpsPanel from './ChatOpsPanel'
+import ForbiddenNotice from './ForbiddenNotice'
+
+// Drop nav leaves the user lacks the capability for (groups with no remaining
+// children are dropped too). Convenience gating; the API 403 is the boundary.
+function filterNav(entries: NavEntry[], caps: string[]): NavEntry[] {
+  const allowed = (i: NavItem) => !i.requiredCapability || caps.includes(i.requiredCapability)
+  return entries.flatMap<NavEntry>((e) => {
+    if (!isGroup(e)) return allowed(e) ? [e] : []
+    const children = e.children.filter(allowed)
+    return children.length ? [{ ...e, children }] : []
+  })
+}
 
 interface NavItem {
   label: string
@@ -20,6 +32,9 @@ interface NavItem {
   icon: string
   divider?: boolean // render a section divider above this item
   badge?: 'lldp'    // render a live count badge keyed by this source
+  // RBAC Track 2 Phase C: hide this leaf when the user lacks the capability that
+  // gates its primary API. Convenience only — the API 403 is the real boundary.
+  requiredCapability?: string
 }
 
 interface NavGroup {
@@ -42,31 +57,31 @@ const navEntries: NavEntry[] = [
   { label: 'Sites', href: '/sites', icon: '🏢' },
   {
     label: 'Network', icon: '🌐', children: [
-      { label: 'Devices', href: '/devices', icon: '⬡' },
+      { label: 'Devices', href: '/devices', icon: '⬡', requiredCapability: 'device:view' },
       { label: 'Wireless', href: '/wireless', icon: '📶' },
       { label: 'Wireless Location', href: '/wireless/location', icon: '📍' },
       { label: 'Topology', href: '/topology', icon: '🗺️' },
       { label: 'Manual Links', href: '/network/manual-links', icon: '🔗' },
-      { label: 'Circuits', href: '/circuits', icon: '🔌' },
+      { label: 'Circuits', href: '/circuits', icon: '🔌', requiredCapability: 'circuit:view' },
       { label: 'LLDP Neighbors', href: '/lldp-neighbors', icon: '📡', badge: 'lldp' },
-      { label: 'Flow Analytics', href: '/flows', icon: '〰️' },
+      { label: 'Flow Analytics', href: '/flows', icon: '〰️', requiredCapability: 'flow:view' },
       { label: 'IP/MAC Lookup', href: '/network/lookup', icon: '🔍' },
       { label: 'Compare', href: '/configs/compare', icon: '🔀' },
     ],
   },
   {
     label: 'Servers', icon: '🖥️', children: [
-      { label: 'All Servers', href: '/servers', icon: '🖥️' },
-      { label: 'Agents', href: '/settings/agents', icon: '🛰️' },
+      { label: 'All Servers', href: '/servers', icon: '🖥️', requiredCapability: 'agent:view' },
+      { label: 'Agents', href: '/settings/agents', icon: '🛰️', requiredCapability: 'agent:view' },
     ],
   },
-  { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true },
-  { label: 'Logs', href: '/logs', icon: '🧾' },
-  { label: 'Checks', href: '/checks', icon: '✓' },
-  { label: 'CVE', href: '/cve', icon: '🛡', divider: true },
-  { label: 'Lifecycle', href: '/lifecycle', icon: '📅' },
-  { label: 'Compliance', href: '/compliance', icon: '📋' },
-  { label: 'Reports', href: '/reports', icon: '📈' },
+  { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true, requiredCapability: 'alert:view' },
+  { label: 'Logs', href: '/logs', icon: '🧾', requiredCapability: 'log:view' },
+  { label: 'Checks', href: '/checks', icon: '✓', requiredCapability: 'check:view' },
+  { label: 'CVE', href: '/cve', icon: '🛡', divider: true, requiredCapability: 'cve:view' },
+  { label: 'Lifecycle', href: '/lifecycle', icon: '📅', requiredCapability: 'lifecycle:view' },
+  { label: 'Compliance', href: '/compliance', icon: '📋', requiredCapability: 'compliance:view' },
+  { label: 'Reports', href: '/reports', icon: '📈', requiredCapability: 'report:view' },
   { label: 'API Docs', href: '/api-docs', icon: '📖', divider: true },
   { label: 'Settings', href: '/settings', icon: '⚙' },
   { label: 'TV Dashboards', href: '/tv', icon: '📺', divider: true },
@@ -192,6 +207,10 @@ export default function Layout({ children }: Props) {
 
   const isDark = theme === 'dark' || (theme === 'system' && typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
+  // Capability-aware nav (RBAC Track 2 Phase C). `currentPage` still derives from
+  // the full set so the header titles a page the user reached directly.
+  const caps = useCapabilities()
+  const entries = filterNav(navEntries, caps)
   const allLeaves = navEntries.flatMap((e) => (isGroup(e) ? e.children : [e]))
   const currentPage = allLeaves.find((n) => location.pathname.startsWith(n.href))?.label ?? 'spane'
 
@@ -221,7 +240,7 @@ export default function Layout({ children }: Props) {
 
         {/* Nav */}
         <nav className="flex-1 py-4 overflow-y-auto">
-          {navEntries.map((entry) => (
+          {entries.map((entry) => (
             <div key={isGroup(entry) ? entry.label : entry.href}>
               {entry.divider && <div className="my-2 mx-5 border-t border-gray-800" aria-hidden />}
               {isGroup(entry)
@@ -341,6 +360,9 @@ export default function Layout({ children }: Props) {
       {/* In-UI ChatOps chat — a sibling to {children} (outside the page Routes),
           so it overlays every page and persists across navigation. */}
       <ChatOpsPanel />
+
+      {/* Global "Not authorized" banner for any 403 the API client surfaces. */}
+      <ForbiddenNotice />
     </div>
   )
 }

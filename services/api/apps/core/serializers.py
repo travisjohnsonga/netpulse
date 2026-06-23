@@ -93,14 +93,24 @@ class AdminUserSerializer(serializers.ModelSerializer):
     """Admin-facing user management (Settings → Users). Password is write-only."""
 
     password = serializers.CharField(write_only=True, required=False, allow_blank=False)
+    # Read-only RBAC role identity so the Users list reflects the actual assigned
+    # role (incl. custom roles, which the legacy `role` field can't express).
+    # Assignment happens via UserViewSet.assign_rbac_role, not by writing this.
+    rbac_role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
-            "id", "username", "email", "first_name", "last_name", "role",
+            "id", "username", "email", "first_name", "last_name", "role", "rbac_role",
             "is_active", "is_superuser", "last_login", "date_joined", "password",
         )
         read_only_fields = ("id", "is_superuser", "last_login", "date_joined")
+
+    def get_rbac_role(self, obj) -> dict | None:
+        role = getattr(obj, "rbac_role", None)
+        if role is None:
+            return None
+        return {"id": role.id, "name": role.name, "is_system": role.is_system}
 
     def validate_password(self, value):
         password_validation.validate_password(value)
