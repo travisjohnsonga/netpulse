@@ -1,11 +1,17 @@
-allo dependabot# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# Dependabot configuration.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # Frontend npm dependencies (the React/Vite app lives under services/frontend).
+  - package-ecosystem: "npm"
+    directory: "/services/frontend"
     schedule:
       interval: "weekly"
+    ignore:
+      # Vite major upgrades are intentional, not auto-merged: Vite 8 crosses the
+      # peer range @vitejs/plugin-react pins (^4 || ^5 || ^6 || ^7) and must be
+      # bumped together with the plugin + a regenerated lockfile + a build check.
+      # Dependabot mislabeled the v8 bump as a security update (closed PR #5);
+      # this stops it resurfacing. Minor/patch Vite updates still flow normally.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
