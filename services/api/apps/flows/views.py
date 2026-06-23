@@ -24,11 +24,10 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 
 from .protocols import PROTOCOL_NUMBERS, protocol_name, service_name
 
@@ -219,7 +218,7 @@ def _total(hits: dict) -> int:
 class _FlowListBase(APIView):
     """Shared base for the two endpoints that return a recent-flows list."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("flow:view")]
 
     def _run_list(self, musts: list[dict], window: str, limit: int) -> Response:
         musts = [*musts, _range_filter(window)]
@@ -307,7 +306,7 @@ class TopTalkersView(APIView):
     ?window=1h|6h|24h ?by=bytes|packets|flows (default bytes) ?limit=10.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("flow:view")]
 
     def get(self, request):
         params = request.query_params
@@ -366,7 +365,7 @@ class FlowSummaryView(APIView):
     ?window=1h|6h|24h ?device_id=1.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("flow:view")]
 
     def get(self, request):
         params = request.query_params
@@ -471,7 +470,7 @@ class FlowDeviceSummaryView(APIView):
     ?device_id=1 (required) ?window=1h|6h|24h|7d (default 1h).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("flow:view")]
 
     # ip_protocol number → donut group; anything else rolls up into "Other".
     _PROTO_GROUP = {6: "TCP", 17: "UDP", 1: "ICMP"}
@@ -592,7 +591,7 @@ class FlowSankeyView(APIView):
     device IP is src OR dst) ?limit=30 (max links/conversations, cap 100).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("flow:view")]
 
     def get(self, request):
         params = request.query_params
@@ -668,7 +667,7 @@ class FlowResolveView(APIView):
     cached rDNS). Unresolved IPs map back to themselves. Capped at 100 IPs.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("flow:view")]
 
     def post(self, request):
         from .dns import resolve_ips
@@ -684,7 +683,7 @@ class FlowResolveView(APIView):
 class FlowResolveClearCacheView(APIView):
     """POST → clear all dns_resolve_* cache entries (admin only)."""
 
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("flow:manage")]
 
     def post(self, request):
         from .dns import clear_cache

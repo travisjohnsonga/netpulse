@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
 from apps.alerting.models import AlertAcknowledgement
+from apps.core.permissions import CapabilityViewSetMixin
 
 from .models import AlertChannel, AlertEvent, AlertRule
 from .serializers import AlertChannelSerializer, AlertEventSerializer, AlertRuleSerializer
@@ -15,7 +16,7 @@ from .serializers import AlertChannelSerializer, AlertEventSerializer, AlertRule
 logger = logging.getLogger(__name__)
 
 
-class AlertChannelViewSet(viewsets.ModelViewSet):
+class AlertChannelViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage alert delivery channels (Slack, email, PagerDuty, webhook).
 
@@ -24,12 +25,14 @@ class AlertChannelViewSet(viewsets.ModelViewSet):
     `channel_type` or `is_active`.
     """
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = AlertChannel.objects.all()
     serializer_class = AlertChannelSerializer
     filterset_fields = ["channel_type", "is_active"]
 
 
-class AlertRuleViewSet(viewsets.ModelViewSet):
+class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Define alert rules — the conditions that generate alerts.
 
@@ -38,6 +41,8 @@ class AlertRuleViewSet(viewsets.ModelViewSet):
     or `is_active`; search by name.
     """
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = AlertRule.objects.prefetch_related("channels").all()
     serializer_class = AlertRuleSerializer
     filterset_fields = ["severity", "is_active", "is_system"]
@@ -96,7 +101,7 @@ class AlertRuleViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
+class AlertEventViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
     """
     Inspect and acknowledge fired alert events.
 
@@ -105,6 +110,8 @@ class AlertEventViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, Ge
     `rule__severity`; order by created/resolved time.
     """
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = AlertEvent.objects.select_related("rule").prefetch_related(
         Prefetch("acknowledgements",
                  queryset=AlertAcknowledgement.objects.select_related("acknowledged_by")

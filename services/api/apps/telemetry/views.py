@@ -2,13 +2,15 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, serializers, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 import logging
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import HasCapability
 from apps.credentials import vault
 from apps.devices.models import Device
 
@@ -37,6 +39,7 @@ from .serializers import (
     responses={501: inline_serializer("NotImplemented", {"detail": serializers.CharField()})},
 )
 @api_view(["GET"])
+@permission_classes([HasCapability("telemetry:view")])
 def metrics_stub(request):
     return Response({"detail": "Telemetry metrics API — not yet implemented."}, status=501)
 
@@ -45,6 +48,11 @@ class TelemetryConfigView(generics.RetrieveUpdateAPIView):
     """Get or update (auto-creating) the device's telemetry collection config."""
 
     serializer_class = TelemetryConfigSerializer
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("telemetry:view")()]
+        return [HasCapability("telemetry:edit")()]
 
     def get_object(self):
         device = get_object_or_404(Device, pk=self.kwargs["device_id"])
@@ -71,12 +79,19 @@ class PollingSettingsView(generics.RetrieveUpdateAPIView):
 
     serializer_class = PollingSettingsSerializer
 
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("telemetry:view")()]
+        return [HasCapability("telemetry:edit")()]
+
     def get_object(self):
         return SNMPGlobalSettings.load()
 
 
 class DiscoverInterfacesView(APIView):
     """Discover interfaces on a device via SNMP or SSH (does not persist)."""
+
+    permission_classes = [HasCapability("telemetry:edit")]
 
     @extend_schema(request=None, responses=DiscoveredInterfaceSerializer(many=True))
     def post(self, request, device_id):
@@ -96,6 +111,11 @@ class DiscoverInterfacesView(APIView):
 
 class InterfaceListCreateView(APIView):
     """GET the device's monitored interfaces; POST to replace the selection."""
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("telemetry:view")()]
+        return [HasCapability("telemetry:edit")()]
 
     @extend_schema(responses=MonitoredInterfaceSerializer(many=True))
     def get(self, request, device_id):
@@ -168,6 +188,8 @@ class InterfaceListCreateView(APIView):
 class InterfaceDeleteView(APIView):
     """Remove a single interface from monitoring (if_name may contain slashes)."""
 
+    permission_classes = [HasCapability("telemetry:edit")]
+
     def delete(self, request, device_id, if_name):
         obj = get_object_or_404(MonitoredInterface, device_id=device_id, if_name=if_name)
         obj.delete()
@@ -176,6 +198,8 @@ class InterfaceDeleteView(APIView):
 
 class InterfaceAlertConfigView(APIView):
     """Bulk-apply state-change alert settings to a device's interfaces (by name)."""
+
+    permission_classes = [HasCapability("telemetry:edit")]
 
     @extend_schema(request=InterfaceAlertConfigSerializer, responses=MonitoredInterfaceSerializer(many=True))
     def post(self, request, device_id):
@@ -196,6 +220,8 @@ class InterfaceAlertConfigView(APIView):
 class GenerateConfigView(APIView):
     """Return platform-appropriate telemetry config snippets for a device."""
 
+    permission_classes = [HasCapability("telemetry:view")]
+
     def get(self, request, device_id):
         device = get_object_or_404(Device, pk=device_id)
         return Response(config_gen.generate(device))
@@ -203,6 +229,11 @@ class GenerateConfigView(APIView):
 
 class PushConfigView(APIView):
     """Push generated telemetry config to a device (POST); list push history (GET)."""
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("telemetry:view")()]
+        return [HasCapability("config:push")()]
 
     @extend_schema(responses=ConfigPushSerializer(many=True))
     def get(self, request, device_id):

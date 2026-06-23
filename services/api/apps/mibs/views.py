@@ -8,24 +8,23 @@ MIB management API.
   GET    /api/mibs/resolve/<oid>/   resolve a numeric OID to a name
 """
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 
 from . import index
 
 
 class MibListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("mib:view")]
 
     def get(self, request):
         return Response({"mibs": index.list_mibs()})
 
 
 class MibUploadView(APIView):
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("mib:manage")]
 
     def post(self, request):
         upload = request.FILES.get("file")
@@ -43,7 +42,7 @@ class MibUploadView(APIView):
 
 
 class MibDetailView(APIView):
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("mib:manage")]
 
     def delete(self, request, name):
         if index.delete_mib(name):
@@ -54,7 +53,7 @@ class MibDetailView(APIView):
 
 
 class MibReloadView(APIView):
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("mib:manage")]
 
     def post(self, request, name=None):
         index.reload()
@@ -62,7 +61,7 @@ class MibReloadView(APIView):
 
 
 class MibResolveView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("mib:view")]
 
     def get(self, request, oid):
         return Response(index.resolve_oid(oid))

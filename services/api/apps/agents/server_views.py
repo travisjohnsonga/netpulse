@@ -11,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.alerts.models import AlertEvent
+from apps.core.permissions import CapabilityViewSetMixin
 
 from .detection import auto_detect_roles
 from .metrics_read import detail_metrics, metric_history
@@ -18,8 +19,11 @@ from .models import Agent, AgentRole, ServerRole
 from .serializers import AssignedRoleSerializer, ServerSerializer
 
 
-class ServerViewSet(viewsets.ReadOnlyModelViewSet):
+class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """List/retrieve agent-monitored servers, their metrics, and role assignments."""
+    view_capability = "agent:view"
+    write_capability = "agent:edit"
+
     queryset = (Agent.objects.exclude(status=Agent.Status.REVOKED)
                 .select_related("device", "device__site")
                 .prefetch_related("assigned_roles__role"))

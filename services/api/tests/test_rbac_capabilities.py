@@ -28,14 +28,20 @@ EXPECTED = {
 
 class TestCatalog:
     def test_all_capabilities_count(self):
-        assert len(caps.ALL_CAPABILITIES) == 31
+        # Phase B extended the catalog from the Phase-A 31 with granular per-
+        # viewset caps + engineer operate caps (agent:edit, credential:test,
+        # integration:sync, tls:verify).
+        assert len(caps.ALL_CAPABILITIES) == 54
 
     def test_subsets_within_all(self):
         for s in (caps.VIEW_CAPABILITIES, caps.ENGINEER_CAPABILITIES, caps.API_CAPABILITIES):
             assert s <= caps.ALL_CAPABILITIES
 
     def test_view_caps_all_end_in_view(self):
-        assert all(c.endswith(":view") for c in caps.VIEW_CAPABILITIES)
+        # chatops:use is the one intentional viewer-tier exception (the in-UI
+        # chat is a "use" capability, not a ":view" read).
+        assert all(c.endswith(":view") or c == caps.CHATOPS_USE
+                   for c in caps.VIEW_CAPABILITIES)
 
 
 class TestSeededRoles:
@@ -130,6 +136,11 @@ class TestHasCapability:
 
     def test_no_role_has_no_capabilities(self):
         u = User.objects.create_user(username="n", password="x")
+        # Phase B: User.save() auto-syncs rbac_role from the legacy role, so a
+        # default user is a viewer. Clear the FK directly (bypassing save) to
+        # exercise the genuinely-no-role path of has_capability.
+        User.objects.filter(pk=u.pk).update(rbac_role=None)
+        u.refresh_from_db()
         assert u.rbac_role is None
         assert has_capability(u, caps.DEVICE_VIEW) is False
 
@@ -142,6 +153,9 @@ class TestHasCapability:
                                      rbac_role=RBACRole.objects.get(name="engineer"))
         req = rf.get("/"); req.user = u
         assert Perm().has_permission(req, None) is True
-        u.rbac_role = RBACRole.objects.get(name="viewer"); u.save(update_fields=["rbac_role"])
+        # Set rbac_role directly via the ORM (bypassing User.save()'s Phase-B
+        # rbac_role↔role sync, which would otherwise re-derive it from role).
+        User.objects.filter(pk=u.pk).update(rbac_role=RBACRole.objects.get(name="viewer"))
+        u.refresh_from_db()
         req2 = rf.get("/"); req2.user = u
         assert Perm().has_permission(req2, None) is False

@@ -17,12 +17,11 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, SAFE_METHODS, BasePermission
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.models import Role
-from apps.core.permissions import AdminOnly, IsAnyRole
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from .enforcement import enforce_policy
 from .models import (
@@ -42,23 +41,11 @@ logger = logging.getLogger(__name__)
 _VALID_PLATFORMS = {c[0] for c in ChatOpsPlatform.Platform.choices}
 
 
-class AdminOrReadOnly(BasePermission):
-    """Any authenticated role may read; only admin (or superuser) may write."""
-
-    def has_permission(self, request, view) -> bool:
-        if not request.user or not request.user.is_authenticated:
-            return False
-        if request.method in SAFE_METHODS:
-            return True
-        if request.user.is_superuser:
-            return True
-        return getattr(request.user, "role", None) == Role.ADMIN
-
-
-class ChatOpsPlatformViewSet(viewsets.ViewSet):
+class ChatOpsPlatformViewSet(CapabilityViewSetMixin, viewsets.ViewSet):
     """Per-platform ChatOps config (one row per platform), keyed by platform slug."""
 
-    permission_classes = [AdminOrReadOnly]
+    view_capability = "chatops:use"
+    write_capability = "chatops:manage"
 
     def _load(self, platform: str) -> ChatOpsPlatform | None:
         if platform not in _VALID_PLATFORMS:
@@ -113,12 +100,13 @@ class ChatOpsPlatformViewSet(viewsets.ViewSet):
                          "message": "Stored credentials present."})
 
 
-class ChatOpsChannelViewSet(viewsets.ModelViewSet):
+class ChatOpsChannelViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Approved-channel allow-list CRUD (admin writes)."""
 
+    view_capability = "chatops:use"
+    write_capability = "chatops:manage"
     queryset = ChatOpsChannel.objects.all()
     serializer_class = ChatOpsChannelSerializer
-    permission_classes = [AdminOrReadOnly]
     filterset_fields = ["platform", "enabled", "purpose"]
 
 
@@ -127,11 +115,15 @@ class ChatOpsIdentityViewSet(viewsets.ModelViewSet):
 
     queryset = ChatOpsIdentity.objects.select_related("user").all()
     serializer_class = ChatOpsIdentitySerializer
-    permission_classes = [AdminOnly]
     filterset_fields = ["platform", "user"]
 
+    def get_permissions(self):
+        if self.action == "link":
+            return [IsAuthenticated()]
+        return [HasCapability("chatops:manage")()]
+
     @extend_schema(request=ChatOpsIdentityLinkSerializer, responses=ChatOpsIdentitySerializer)
-    @action(detail=False, methods=["post"], permission_classes=[IsAnyRole])
+    @action(detail=False, methods=["post"])
     def link(self, request):
         """Claim a (platform, platform_user_id) for the authenticated spane user.
 
@@ -165,7 +157,10 @@ class ChatOpsIdentityViewSet(viewsets.ModelViewSet):
 class ChatOpsConfigView(APIView):
     """GET / PUT the singleton global ChatOps policy."""
 
-    permission_classes = [AdminOrReadOnly]
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("chatops:use")()]
+        return [HasCapability("chatops:manage")()]
 
     @extend_schema(responses=ChatOpsConfigSerializer)
     def get(self, request):
@@ -194,7 +189,7 @@ class ChatOpsQueryView(APIView):
     regardless of the webhook kill switch.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("chatops:use")]
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT,
                    tags=["chatops"], summary="Run an authenticated in-UI ChatOps query")

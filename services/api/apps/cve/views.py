@@ -8,7 +8,9 @@ from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, UpdateMode
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
-from apps.core.permissions import AdminOnly
+from rest_framework.permissions import SAFE_METHODS
+
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from .models import CVE, CVEFeedSettings, DeviceCVE
 from .serializers import CVEFeedSettingsSerializer, CVESerializer, DeviceCVESerializer
@@ -53,7 +55,7 @@ def _inventory_relevance(platforms: list[str]) -> Q:
     return relevance
 
 
-class CVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class CVEViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """
     Browse the CVE intelligence catalog.
 
@@ -62,6 +64,8 @@ class CVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
     order by CVSS score / publish date. Per-device exposure lives at
     `/api/cve/device-cves/`.
     """
+
+    view_capability = "cve:view"
 
     queryset = CVE.objects.all()
     serializer_class = CVESerializer
@@ -125,7 +129,12 @@ class CVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
             "last_sync_summary": settings_obj.last_sync_summary,
         })
 
-    @action(detail=False, methods=["post"], permission_classes=[AdminOnly])
+    def get_permissions(self):
+        if self.action == "sync":
+            return [HasCapability("cve:manage")()]
+        return super().get_permissions()
+
+    @action(detail=False, methods=["post"])
     def sync(self, request):
         """Trigger a CVE sync in the background (admin only)."""
         settings_obj = CVEFeedSettings.load()
@@ -143,11 +152,14 @@ class CVEViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
         return Response({"status": "started"}, status=202)
 
 
-class DeviceCVEViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
+class DeviceCVEViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
     """
     Per-device CVE exposure. List/retrieve, plus PATCH to mark a CVE
     patched/un-patched on a device (`{"is_patched": true}`).
     """
+
+    view_capability = "cve:view"
+    write_capability = "cve:triage"
 
     queryset = DeviceCVE.objects.select_related("device", "cve").all()
     serializer_class = DeviceCVESerializer
@@ -155,9 +167,20 @@ class DeviceCVEViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, Gen
 
 
 class CVEFeedSettingsView(generics.RetrieveUpdateAPIView):
-    """Get or update the CVE feed settings (enable toggles + credentials)."""
+    """Get or update the CVE feed settings (enable toggles + credentials).
+
+    The feed config holds secret-bearing credentials, so editing it is admin-tier
+    (cve:manage), consistent with integration:manage / config:backup:manage. Reads
+    stay open to viewers; per-device CVE triage (DeviceCVEViewSet) stays engineer
+    (cve:triage).
+    """
 
     serializer_class = CVEFeedSettingsSerializer
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [HasCapability("cve:view")()]
+        return [HasCapability("cve:manage")()]
 
     def get_object(self):
         return CVEFeedSettings.load()

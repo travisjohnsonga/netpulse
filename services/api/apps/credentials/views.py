@@ -3,7 +3,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from .models import CredentialProfile, PROTOCOL_LABELS
 from .serializers import CredentialProfileListSerializer, CredentialProfileSerializer
@@ -20,7 +20,7 @@ _PROBE_TYPE = {
 }
 
 
-class CredentialProfileViewSet(viewsets.ModelViewSet):
+class CredentialProfileViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage multi-protocol credential profiles (SSH, SNMPv2c/v3, HTTPS, NETCONF, gNMI).
 
@@ -31,6 +31,8 @@ class CredentialProfileViewSet(viewsets.ModelViewSet):
     outcome; `devices/` lists the devices using the profile.
     """
 
+    view_capability = "credential:view"
+
     queryset = CredentialProfile.objects.all()
     filterset_fields = [
         "ssh_enabled", "snmpv2c_enabled", "snmpv3_enabled",
@@ -40,15 +42,18 @@ class CredentialProfileViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "last_tested", "created_at"]
 
     # Creating/editing/deleting a profile writes (and on delete, removes) secret
-    # material in OpenBao — admin-only. Reads (list/retrieve) and the operational
-    # actions (test/ connectivity probe, devices/ listing) stay on the default
-    # permission so engineers can still see profiles and run probes.
-    # (Track 2 replaces this hardcoded AdminOnly with a credential:manage capability.)
-    _ADMIN_ACTIONS = frozenset({"create", "update", "partial_update", "destroy"})
+    # material in OpenBao — credential:manage. The connectivity probe is a separate
+    # operate capability (credential:test); reads (list/retrieve) and the devices/
+    # listing fall through to the mixin's credential:view.
+    _MANAGE_ACTIONS = frozenset({"create", "update", "partial_update", "destroy"})
 
     def get_permissions(self):
-        if self.action in self._ADMIN_ACTIONS:
-            return [AdminOnly()]
+        if self.action in self._MANAGE_ACTIONS:
+            return [HasCapability("credential:manage")()]
+        if self.action == "test":
+            return [HasCapability("credential:test")()]
+        if self.action == "devices":
+            return [HasCapability("credential:view")()]
         return super().get_permissions()
 
     def get_serializer_class(self):

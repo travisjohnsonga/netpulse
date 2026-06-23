@@ -1,11 +1,14 @@
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
 from rest_framework.viewsets import GenericViewSet
 
+from apps.core.permissions import HasCapability
+
 from .models import DeviceRiskScore
 from .serializers import DeviceRiskScoreSerializer
 
 
 class DeviceRiskScoreViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+    permission_classes = [HasCapability("device:view")]
     queryset = DeviceRiskScore.objects.select_related("device").all()
     serializer_class = DeviceRiskScoreSerializer
     # Keyed by device id (/api/security/risk-scores/{device_id}/), since a

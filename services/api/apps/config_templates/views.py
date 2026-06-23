@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.core.errors import internal_error_response
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 from apps.devices.models import Device
 
 from .models import ConfigPushTemplate
@@ -28,7 +28,7 @@ class ConfigPushTemplateViewSet(viewsets.ModelViewSet):
 
     queryset = ConfigPushTemplate.objects.select_related("created_by").all()
     serializer_class = ConfigPushTemplateSerializer
-    permission_classes = [AdminOnly]
+    permission_classes = [HasCapability("config:template:edit")]
     filterset_fields = ["category", "platform", "enabled", "builtin"]
     search_fields = ["name", "description"]
     ordering_fields = ["name", "category", "updated_at"]

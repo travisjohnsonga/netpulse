@@ -19,8 +19,9 @@ import logging
 from collections import defaultdict
 
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.core.permissions import HasCapability
 
 # The only platforms shown on the Wireless page (access points). NOT switches/
 # gateways/consoles — those are Network Devices.
@@ -148,7 +149,7 @@ def _channel_utilization(aps: list) -> dict:
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasCapability("device:view")])
 def wireless_summary(request):
     """Fleet summary cards + full AP list + channel-utilization heatmap data."""
     aps = _all_ap_entries()
@@ -159,14 +160,14 @@ def wireless_summary(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasCapability("device:view")])
 def wireless_aps(request):
     """Flat list of every wireless AP (UniFi snapshots + Mist inventory rows)."""
     return Response(_all_ap_entries())
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasCapability("device:view")])
 def wireless_location(request):
     """Serve the cached Mist warehouse-dashboard payload (see mist_location.py).
     The scheduler keeps the cache warm; this view just returns it, with an

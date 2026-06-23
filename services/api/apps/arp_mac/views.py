@@ -7,10 +7,10 @@ import threading
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import HasCapability
 from apps.devices.models import Device
 from .models import ARPEntry, MACEntry, MACVendor
 from .normalize import normalize_mac, oui_of
@@ -46,7 +46,7 @@ def _mac_dict(e: MACEntry, vendors: dict) -> dict:
 
 
 class DeviceARPView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("device:view")]
 
     def get(self, request, device_id):
         device = get_object_or_404(Device, pk=device_id)
@@ -65,7 +65,7 @@ class DeviceARPView(APIView):
 
 
 class DeviceMACView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("device:view")]
 
     def get(self, request, device_id):
         device = get_object_or_404(Device, pk=device_id)
@@ -108,7 +108,7 @@ def _run_arp_collection(device, secrets: dict, username: str) -> None:
 
 class DeviceARPMACCollectView(APIView):
     """Trigger an immediate ARP/MAC collection for one device (runs async)."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("device:edit")]
 
     def post(self, request, device_id):
         device = get_object_or_404(Device, pk=device_id)
@@ -138,7 +138,7 @@ class DeviceARPMACCollectView(APIView):
 
 class NetworkSearchView(APIView):
     """Find which device(s) see a given IP or MAC — 'where is this host?'."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("device:view")]
 
     def get(self, request):
         q = (request.query_params.get("q") or "").strip()
@@ -164,7 +164,7 @@ class NetworkSearchView(APIView):
 
 
 class MACVendorView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasCapability("device:view")]
 
     def get(self, request, mac):
         oui = oui_of(mac)

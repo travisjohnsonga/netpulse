@@ -4,6 +4,8 @@ from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
+from apps.core.permissions import CapabilityViewSetMixin
+
 from . import engine
 from .models import (
     AlertNotification, AlertRoute, ContactMethod, EscalationPolicy,
@@ -16,9 +18,11 @@ from .serializers import (
 )
 
 
-class TeamViewSet(viewsets.ModelViewSet):
+class TeamViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Alerting teams + their membership."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = Team.objects.all()
     serializer_class = TeamSerializer
     search_fields = ["name"]
@@ -66,17 +70,21 @@ class TeamViewSet(viewsets.ModelViewSet):
         return Response(ser.data)
 
 
-class ContactMethodViewSet(viewsets.ModelViewSet):
+class ContactMethodViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Per-user contact methods (email/sms/slack/…)."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = ContactMethod.objects.select_related("user").all()
     serializer_class = ContactMethodSerializer
     filterset_fields = ["user", "type", "is_primary"]
 
 
-class EscalationPolicyViewSet(viewsets.ModelViewSet):
+class EscalationPolicyViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Escalation policies and their ordered steps."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = EscalationPolicy.objects.select_related("team").prefetch_related("steps").all()
     serializer_class = EscalationPolicySerializer
     filterset_fields = ["team"]
@@ -93,9 +101,11 @@ class EscalationPolicyViewSet(viewsets.ModelViewSet):
         return Response(ser.data, status=status.HTTP_201_CREATED)
 
 
-class AlertRouteViewSet(viewsets.ModelViewSet):
+class AlertRouteViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Alert routing rules (priority-ordered)."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = AlertRoute.objects.select_related("escalation_policy").prefetch_related("match_sites").all()
     serializer_class = AlertRouteSerializer
     filterset_fields = ["is_active", "escalation_policy"]
@@ -117,27 +127,32 @@ class AlertRouteViewSet(viewsets.ModelViewSet):
         })
 
 
-class EscalationStepViewSet(viewsets.ModelViewSet):
+class EscalationStepViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Direct CRUD on escalation steps (also editable via the policy action)."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = EscalationStep.objects.all()
     serializer_class = EscalationStepSerializer
     filterset_fields = ["policy"]
     ordering = ["policy", "step_number"]
 
 
-class AlertNotificationViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class AlertNotificationViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet):
     """Read-only history of notification deliveries."""
 
+    view_capability = "alert:view"
     queryset = AlertNotification.objects.select_related("user", "team", "alert_event").all()
     serializer_class = AlertNotificationSerializer
     filterset_fields = ["alert_event", "status", "channel", "team"]
     ordering = ["-created_at"]
 
 
-class OnCallScheduleViewSet(viewsets.ModelViewSet):
+class OnCallScheduleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """On-call schedules and their shifts."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = OnCallSchedule.objects.select_related("team").prefetch_related("shifts").all()
     serializer_class = OnCallScheduleSerializer
     filterset_fields = ["team"]
@@ -166,15 +181,19 @@ class OnCallScheduleViewSet(viewsets.ModelViewSet):
         return Response(out)
 
 
-class OnCallShiftViewSet(viewsets.ModelViewSet):
+class OnCallShiftViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = OnCallShift.objects.select_related("user", "schedule").all()
     serializer_class = OnCallShiftSerializer
     filterset_fields = ["schedule", "user"]
 
 
-class MaintenanceWindowViewSet(viewsets.ModelViewSet):
+class MaintenanceWindowViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Scheduled maintenance windows that suppress alerts while active."""
 
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
     queryset = MaintenanceWindow.objects.prefetch_related("devices", "sites").all()
     serializer_class = MaintenanceWindowSerializer
     filterset_fields = ["is_active", "recurrence"]

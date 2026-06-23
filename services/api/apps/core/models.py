@@ -44,6 +44,34 @@ class NetPulseUser(AbstractUser):
     class Meta(AbstractUser.Meta):
         swappable = "AUTH_USER_MODEL"
 
+    def save(self, *args, **kwargs):
+        # RBAC Track 2 (Phase B): capabilities are resolved from ``rbac_role``,
+        # but the legacy ``role`` CharField is still the management input (the
+        # Users UI + serializers set it). Keep ``rbac_role`` synced to the system
+        # role mapped from ``role`` so EVERY user — new ones created via the API,
+        # SSO, ``createsuperuser``, or the seeded admin — resolves to the right
+        # capability set, and a role change updates capabilities. An explicitly
+        # assigned *custom* (non-system) role is respected and never overwritten.
+        self._sync_rbac_role()
+        super().save(*args, **kwargs)
+
+    def _sync_rbac_role(self):
+        from apps.core.capabilities import LEGACY_ROLE_TO_SYSTEM
+
+        # Respect an explicit custom (non-system) role assignment.
+        if self.rbac_role_id is not None and not getattr(self.rbac_role, "is_system", False):
+            return
+        target = LEGACY_ROLE_TO_SYSTEM.get(self.role)
+        if not target:
+            return
+        if self.rbac_role_id is None or self.rbac_role.name != target:
+            try:
+                self.rbac_role = RBACRole.objects.filter(name=target).first()
+            except Exception:
+                # RBACRole table may not exist yet during early migrations; the
+                # seed/data migration backfills existing users afterwards.
+                pass
+
     def __str__(self):
         return f"{self.username} ({self.role})"
 

@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.errors import safe_detail
+from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from . import pki
 from .authentication import AgentCertAuthentication
@@ -34,8 +35,11 @@ def _server_url() -> str:
     return f"https://{host}"
 
 
-class ServerRoleViewSet(viewsets.ModelViewSet):
+class ServerRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """CRUD for server-role profiles. Built-in roles can't be deleted."""
+    view_capability = "agent:view"
+    write_capability = "agent:edit"
+
     queryset = ServerRole.objects.all()
     serializer_class = ServerRoleSerializer
 
@@ -47,8 +51,11 @@ class ServerRoleViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-class AgentEnrollmentTokenViewSet(viewsets.ModelViewSet):
+class AgentEnrollmentTokenViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """Create/list/revoke enrollment tokens. Token value shown once on create."""
+    view_capability = "agent:view"
+    write_capability = "agent:edit"
+
     queryset = AgentEnrollmentToken.objects.all()
     serializer_class = AgentEnrollmentTokenSerializer
 
@@ -88,7 +95,10 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
             return [AllowAny()]
         if action in self.CERT_ACTIONS:
             return [IsAuthenticated()]
-        return super().get_permissions()
+        if action == "destroy":
+            return [HasCapability("agent:edit")()]
+        # list, retrieve, roles, download.
+        return [HasCapability("agent:view")()]
 
     def get_authenticators(self):
         # Public actions: no authenticators (also skips SessionAuthentication's

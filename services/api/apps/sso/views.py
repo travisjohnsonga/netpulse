@@ -8,7 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.core.errors import log_internal_error
-from apps.core.permissions import AdminOnly
+from apps.core.permissions import HasCapability
 from apps.credentials import vault
 from .models import SSOProvider
 from .serializers import SSOProviderAdminSerializer, SSOProviderPublicSerializer
@@ -28,7 +28,7 @@ def get_tokens_for_user(user) -> dict:
 class SSOProviderViewSet(viewsets.ModelViewSet):
     """
     list  → public (no auth): enabled providers for the login page buttons.
-    other → AdminOnly: full CRUD with secret handling via OpenBao.
+    other → sso:manage: full CRUD with secret handling via OpenBao.
     """
 
     queryset = SSOProvider.objects.all()
@@ -38,8 +38,9 @@ class SSOProviderViewSet(viewsets.ModelViewSet):
         return bool(u and u.is_authenticated and (u.is_superuser or getattr(u, "role", "") == "admin"))
 
     def get_permissions(self):
-        # list is public (login page buttons); everything else is AdminOnly.
-        return [AllowAny()] if self.action == "list" else [AdminOnly()]
+        # list is public (login page buttons); everything else (incl. test)
+        # requires sso:manage.
+        return [AllowAny()] if self.action == "list" else [HasCapability("sso:manage")()]
 
     def get_serializer_class(self):
         # Anonymous / non-admin callers see the public shape; admins get full
@@ -54,7 +55,7 @@ class SSOProviderViewSet(viewsets.ModelViewSet):
             return SSOProvider.objects.filter(is_enabled=True)
         return SSOProvider.objects.all()
 
-    @action(detail=True, methods=["post"], permission_classes=[AdminOnly])
+    @action(detail=True, methods=["post"])
     def test(self, request, pk=None):
         """Validate a provider's configuration. Returns {valid, error}."""
         provider = self.get_object()

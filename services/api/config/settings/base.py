@@ -359,8 +359,14 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
+    # Deny-by-default (RBAC Track 2 Phase B): a view that declares no
+    # permission_classes/get_permissions inherits DenyByDefault and is DENIED
+    # (superuser excepted). This makes a forgotten capability fail CLOSED instead
+    # of silently granting viewer-read/engineer-write. Every reachable endpoint
+    # must explicitly declare HasCapability / CapabilityViewSetMixin, or be on the
+    # unauthenticated allowlist (AllowAny) / a self-service IsAuthenticated view.
     "DEFAULT_PERMISSION_CLASSES": [
-        "apps.core.permissions.NetPulsePermission",
+        "apps.core.permissions.DenyByDefault",
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
