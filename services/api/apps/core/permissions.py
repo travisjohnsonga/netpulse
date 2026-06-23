@@ -70,3 +70,40 @@ class IsAnyRole(BasePermission):
         if request.user.is_superuser:
             return True
         return _role(request) in _READ_ROLES
+
+
+# ── RBAC Track 2: capability-based authorization (Phase A — defined, not yet
+# applied to any viewset). has_capability resolves a user → their RBACRole → its
+# capability set; HasCapability is the DRF gate Phase B will attach to viewsets.
+
+def has_capability(user, capability: str) -> bool:
+    """True if ``user`` holds ``capability``.
+
+    Superusers always pass (django.contrib.admin parity). Otherwise the user's
+    ``rbac_role`` capability set is consulted; a user with no role has none.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    role = getattr(user, "rbac_role", None)
+    if role is None:
+        return False
+    return capability in role.capability_set()
+
+
+def HasCapability(required_capability: str):
+    """DRF permission factory gating on a single capability.
+
+    Usage (Phase B): ``permission_classes = [HasCapability("device:edit")]``.
+    Returns a ``BasePermission`` subclass bound to ``required_capability``.
+    """
+
+    class _HasCapability(BasePermission):
+        capability = required_capability
+
+        def has_permission(self, request, view) -> bool:
+            return has_capability(request.user, required_capability)
+
+    _HasCapability.__name__ = f"HasCapability[{required_capability}]"
+    return _HasCapability
