@@ -141,12 +141,21 @@ def test_challenge_token_is_not_an_access_token(django_user_model):
     assert c.get("/api/auth/mfa/").status_code == 401  # not a JWT → rejected
 
 
-def test_intermediate_tokens_cannot_refresh_into_jwt(django_user_model):
-    user = _make_user(django_user_model, "heidi", role="admin")  # privileged → enrollment token
-    enr = APIClient().post("/api/auth/token/", {"username": "heidi", "password": PW}, format="json").data["enrollment_token"]
-    secret, _ = (None, None)
-    # neither the enrollment token nor a challenge token may be refreshed
-    assert APIClient().post("/api/auth/token/refresh/", {"refresh": enr}, format="json").status_code == 401
+def test_neither_intermediate_token_can_refresh_into_jwt(django_user_model):
+    # enrollment token (privileged user, no MFA yet)
+    _make_user(django_user_model, "heidi", role="admin")
+    enr = APIClient().post("/api/auth/token/", {"username": "heidi", "password": PW},
+                           format="json").data["enrollment_token"]
+    # challenge token (MFA-enabled user)
+    henry = _make_user(django_user_model, "henry")
+    _enroll(henry)
+    ch = APIClient().post("/api/auth/token/", {"username": "henry", "password": PW},
+                          format="json").data["challenge_token"]
+    # NEITHER blob is a refresh token — /token/refresh/ rejects both, no JWT issued.
+    for tok in (enr, ch):
+        r = APIClient().post("/api/auth/token/refresh/", {"refresh": tok}, format="json")
+        assert r.status_code == 401
+        assert "access" not in r.data and "refresh" not in r.data
 
 
 # ── forced enrollment for privileged accounts (A.8.2) ─────────────────────────
@@ -167,10 +176,17 @@ def test_enrollment_token_reaches_only_setup_confirm(django_user_model):
     c = APIClient()
     r_setup = c.post("/api/auth/mfa/setup/", {}, format="json", HTTP_X_MFA_ENROLLMENT_TOKEN=enr)
     assert r_setup.status_code == 200
-    # as a Bearer on a normal endpoint → not a JWT → denied
+    # As a Bearer on a normal endpoint it is DENIED — the signing blob is not a
+    # JWT, so JWTAuthentication fails outright (401) and it never reaches a
+    # capability check. Verify across several normal endpoints, with no data leak.
     c2 = APIClient()
     c2.credentials(HTTP_AUTHORIZATION=f"Bearer {enr}")
-    assert c2.get("/api/users/").status_code in (401, 403)
+    for path in ("/api/users/", "/api/auth/mfa/", "/api/devices/"):
+        resp = c2.get(path)
+        assert resp.status_code in (401, 403), (path, resp.status_code)
+        assert "access" not in (resp.data or {})
+    # And the enrollment token in the body of a normal endpoint is ignored too.
+    assert APIClient().get("/api/users/", {"enrollment_token": enr}).status_code in (401, 403)
 
 
 def test_forced_enrollment_completes_and_issues_jwt(django_user_model):
