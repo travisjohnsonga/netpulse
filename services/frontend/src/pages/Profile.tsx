@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchMe, updateMe, savePreferences, changePassword,
+  fetchMfaStatus, mfaDisable, type MfaStatus,
   type Me, type UserPreferences,
 } from '../api/client'
 import { parseApiErrors } from '../api/errors'
+import MfaEnrollmentFlow from '../components/MfaEnrollmentFlow'
 import { useThemeStore, type Theme } from '../store/themeStore'
 import { usePreferencesStore } from '../store/preferencesStore'
 import { useUnitsStore, type TempUnit } from '../store/unitsStore'
@@ -59,6 +61,7 @@ export default function Profile() {
 
       <AccountSection me={me} onSaved={setMe} onError={setError} />
       <PasswordSection onError={setError} />
+      <TwoFactorSection onError={setError} />
 
       {/* Appearance */}
       <div className={card}>
@@ -267,6 +270,90 @@ function PasswordSection({ onError }: { onError: (e: string | null) => void }) {
       <button onClick={submit} disabled={busy || !cur || !next} className={clsx(btn, 'mt-4')}>
         {busy ? 'Updating…' : 'Update Password'}
       </button>
+    </div>
+  )
+}
+
+function TwoFactorSection({ onError }: { onError: (e: string | null) => void }) {
+  const [status, setStatus] = useState<MfaStatus | null>(null)
+  const [enrolling, setEnrolling] = useState(false)
+  const [disabling, setDisabling] = useState(false)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const load = () => fetchMfaStatus().then(setStatus).catch(() => onError('Failed to load two-factor status.'))
+  useEffect(() => { load() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onEnrolled = () => {
+    setEnrolling(false); setMsg('Two-factor authentication is on.'); onError(null); load()
+  }
+
+  const disable = async () => {
+    setBusy(true); onError(null); setMsg(null)
+    try {
+      await mfaDisable(code.trim())
+      setDisabling(false); setCode(''); setMsg('Two-factor authentication turned off.'); load()
+    } catch (e: unknown) {
+      onError(parseApiErrors(e, 'A valid current code is required to turn off two-factor.'))
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className={card}>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Two-Factor Authentication</h2>
+        {status && (
+          <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium',
+            status.mfa_enabled
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+              : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')}>
+            {status.mfa_enabled ? 'On' : 'Off'}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        Protect your account with a time-based code from an authenticator app. Applies to password sign-in; SSO accounts use their provider&apos;s 2FA.
+      </p>
+      {msg && <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-900 rounded-lg px-3 py-2 text-sm text-green-700 dark:text-green-300 mb-3">{msg}</div>}
+
+      {status === null ? (
+        <p className="text-sm text-gray-400">Loading…</p>
+      ) : status.mfa_enabled ? (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {status.recovery_codes_remaining} recovery code{status.recovery_codes_remaining === 1 ? '' : 's'} remaining.
+          </p>
+          {!disabling ? (
+            <button onClick={() => { setDisabling(true); setMsg(null) }} className="px-4 py-2 text-sm rounded-lg font-medium border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20">
+              Turn off two-factor
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <label className={label}>Enter a current code to confirm</label>
+              <div className="flex gap-2">
+                <input className={clsx(input, 'max-w-[10rem]')} inputMode="numeric" autoComplete="one-time-code" maxLength={8} placeholder="123456" value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9a-fA-F-]/g, ''))} />
+                <button onClick={disable} disabled={busy || !code} className="px-4 py-2 text-sm rounded-lg font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">{busy ? 'Turning off…' : 'Turn off'}</button>
+                <button onClick={() => { setDisabling(false); setCode('') }} disabled={busy} className="px-4 py-2 text-sm rounded-lg font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+              </div>
+              <p className="text-[11px] text-gray-400">You can also use a recovery code.</p>
+            </div>
+          )}
+        </div>
+      ) : enrolling ? (
+        <MfaEnrollmentFlow onComplete={onEnrolled} onCancel={() => setEnrolling(false)} />
+      ) : (
+        <div className="space-y-3">
+          {status.required && (
+            <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+              Your account requires two-factor authentication. Set it up to keep access.
+            </div>
+          )}
+          <button onClick={() => { setEnrolling(true); setMsg(null); onError(null) }} className={btn}>
+            Enable two-factor authentication
+          </button>
+        </div>
+      )}
     </div>
   )
 }

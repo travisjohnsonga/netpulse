@@ -1,8 +1,12 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { login, fetchSSOProvidersPublic, type SSOProviderPublic } from '../api/client'
+import {
+  login, loginMfa, fetchSSOProvidersPublic,
+  type SSOProviderPublic, type TokenPair,
+} from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import LogoMark from '../components/LogoMark'
+import MfaEnrollmentFlow from '../components/MfaEnrollmentFlow'
 
 /** Brand-ish icon for each SSO provider (lucide-react isn't a dependency). */
 function providerIcon(provider: string): ReactNode {
@@ -31,11 +35,45 @@ function providerIcon(provider: string): ReactNode {
   }
 }
 
+const inputCls =
+  'w-full px-3 py-2.5 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+
+/** Shared card chrome for every login step. */
+function Shell({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <LogoMark className="w-14 h-14 text-blue-500 rounded-2xl mx-auto mb-4 shadow-lg" />
+          <h1 className="text-2xl font-bold text-white">spane</h1>
+          <p className="text-gray-400 text-sm mt-1">Network Intelligence Platform</p>
+        </div>
+        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl p-8">{children}</div>
+        <p className="text-center text-xs text-gray-500 mt-6">spane — unified infrastructure visibility</p>
+      </div>
+    </div>
+  )
+}
+
+function Alert({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-4 px-4 py-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg text-sm text-red-700 dark:text-red-300">
+      {children}
+    </div>
+  )
+}
+
+type Step =
+  | { kind: 'login' }
+  | { kind: 'mfa'; challengeToken: string }
+  | { kind: 'enroll'; enrollmentToken: string }
+
 export default function Login() {
   const navigate = useNavigate()
   const location = useLocation()
   const setTokens = useAuthStore((s) => s.setTokens)
 
+  const [step, setStep] = useState<Step>({ kind: 'login' })
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -44,10 +82,13 @@ export default function Login() {
 
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/dashboard'
 
+  const finishLogin = (t: TokenPair) => {
+    setTokens(t.access, t.refresh)
+    navigate(t.must_change_password ? '/change-password' : from, { replace: true })
+  }
+
   // The successful SSO token (`/#token=…&refresh=…`) is captured in main.tsx
-  // before React renders (otherwise the "/" → "/login" redirect drops the hash
-  // first). Here we only surface the failure case: the backend redirects to
-  // `/login?sso_error=…` when auth fails.
+  // before React renders. Here we only surface the failure case.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('sso_error')) {
@@ -56,22 +97,19 @@ export default function Login() {
     }
   }, [])
 
-  // Load enabled SSO providers for the buttons (public endpoint; best-effort).
   useEffect(() => {
-    fetchSSOProvidersPublic()
-      .then(setSsoProviders)
-      .catch(() => setSsoProviders([]))
+    fetchSSOProvidersPublic().then(setSsoProviders).catch(() => setSsoProviders([]))
   }, [])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (!username || !password) { setError('Username and password are required.'); return }
-    setLoading(true)
-    setError(null)
+    setLoading(true); setError(null)
     try {
-      const { access, refresh, must_change_password } = await login(username, password)
-      setTokens(access, refresh)
-      navigate(must_change_password ? '/change-password' : from, { replace: true })
+      const res = await login(username, password)
+      if ('mfa_required' in res) setStep({ kind: 'mfa', challengeToken: res.challenge_token })
+      else if ('mfa_enrollment_required' in res) setStep({ kind: 'enroll', enrollmentToken: res.enrollment_token })
+      else finishLogin(res)
     } catch {
       setError('Invalid username or password.')
     } finally {
@@ -79,101 +117,142 @@ export default function Login() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <LogoMark className="w-14 h-14 text-blue-500 rounded-2xl mx-auto mb-4 shadow-lg" />
-          <h1 className="text-2xl font-bold text-white">spane</h1>
-          <p className="text-gray-400 text-sm mt-1">Network Intelligence Platform</p>
-        </div>
+  // ── Second factor ──────────────────────────────────────────────────────────
+  if (step.kind === 'mfa') {
+    return (
+      <Shell>
+        <SecondFactor
+          challengeToken={step.challengeToken}
+          onSuccess={finishLogin}
+          onBack={() => { setStep({ kind: 'login' }); setError(null) }}
+        />
+      </Shell>
+    )
+  }
 
-        {/* Card */}
-        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl p-8">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">Sign in</h2>
-
-          {error && (
-            <div className="mb-4 px-4 py-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg text-sm text-red-700 dark:text-red-300">
-              {error}
-            </div>
-          )}
-
-          {/* SSO providers (shown above the local form when configured) */}
-          {ssoProviders.length > 0 && (
-            <div className="mb-6">
-              <div className="space-y-3">
-                {ssoProviders.map((provider) => (
-                  <a
-                    key={provider.id}
-                    href={provider.login_url}
-                    className="flex items-center justify-center w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition text-sm font-medium gap-3 text-gray-700 dark:text-gray-200"
-                  >
-                    {providerIcon(provider.provider)}
-                    Sign in with {provider.name}
-                  </a>
-                ))}
-              </div>
-
-              <div className="relative my-4">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-300 dark:border-gray-600" />
-                </div>
-                <div className="relative flex justify-center text-xs text-gray-500">
-                  <span className="px-2 bg-white dark:bg-gray-900">or sign in with username</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Username
-              </label>
-              <input
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="admin"
-                disabled={loading}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Password
-              </label>
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
-                disabled={loading}
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors mt-2 flex items-center justify-center gap-2"
-            >
-              {loading && (
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              )}
-              {loading ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
-        </div>
-
-        <p className="text-center text-xs text-gray-500 mt-6">
-          spane — unified infrastructure visibility
+  // ── Forced enrollment (privileged local account, no MFA yet) ────────────────
+  if (step.kind === 'enroll') {
+    return (
+      <Shell>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">Set up two-factor authentication</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
+          Your account requires two-factor authentication. Set it up now to continue — you won&apos;t be able to sign in until it&apos;s on.
         </p>
+        <MfaEnrollmentFlow
+          enrollmentToken={step.enrollmentToken}
+          onComplete={(r) => { if (r.tokens) finishLogin(r.tokens) }}
+        />
+      </Shell>
+    )
+  }
+
+  // ── Username + password ─────────────────────────────────────────────────────
+  return (
+    <Shell>
+      <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">Sign in</h2>
+      {error && <Alert>{error}</Alert>}
+
+      {ssoProviders.length > 0 && (
+        <div className="mb-6">
+          <div className="space-y-3">
+            {ssoProviders.map((provider) => (
+              <a
+                key={provider.id}
+                href={provider.login_url}
+                className="flex items-center justify-center w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition text-sm font-medium gap-3 text-gray-700 dark:text-gray-200"
+              >
+                {providerIcon(provider.provider)}
+                Sign in with {provider.name}
+              </a>
+            ))}
+          </div>
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300 dark:border-gray-600" />
+            </div>
+            <div className="relative flex justify-center text-xs text-gray-500">
+              <span className="px-2 bg-white dark:bg-gray-900">or sign in with username</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+          <input type="text" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder="admin" disabled={loading} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+          <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} placeholder="••••••••" disabled={loading} />
+        </div>
+        <button type="submit" disabled={loading} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors mt-2 flex items-center justify-center gap-2">
+          {loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </Shell>
+  )
+}
+
+function SecondFactor({
+  challengeToken, onSuccess, onBack,
+}: {
+  challengeToken: string
+  onSuccess: (t: TokenPair) => void
+  onBack: () => void
+}) {
+  const [code, setCode] = useState('')
+  const [recovery, setRecovery] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setLoading(true); setError(null)
+    try {
+      const tokens = await loginMfa(challengeToken, recovery ? { recovery_code: code.trim() } : { code: code.trim() })
+      onSuccess(tokens)
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 429) setError('Too many attempts. Wait a minute, then try again.')
+      else if (status === 401) setError('Your sign-in expired. Go back and enter your password again.')
+      else setError(recovery ? "That recovery code didn't work." : "That code didn't match. Enter the current 6-digit code from your app.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">Two-factor authentication</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
+        {recovery ? 'Enter one of your recovery codes.' : 'Enter the 6-digit code from your authenticator app.'}
+      </p>
+      {error && <Alert>{error}</Alert>}
+      <form onSubmit={submit} className="space-y-4">
+        <input
+          autoFocus
+          className={inputCls + ' text-center tracking-[0.3em] font-mono'}
+          inputMode={recovery ? 'text' : 'numeric'}
+          autoComplete="one-time-code"
+          maxLength={recovery ? 12 : 6}
+          placeholder={recovery ? 'xxxxx-xxxxx' : '123456'}
+          value={code}
+          onChange={(e) => setCode(recovery ? e.target.value : e.target.value.replace(/\D/g, '').slice(0, 6))}
+          disabled={loading}
+        />
+        <button type="submit" disabled={loading || !code} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+          {loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+          {loading ? 'Verifying…' : 'Verify'}
+        </button>
+      </form>
+      <div className="flex items-center justify-between mt-4 text-xs">
+        <button onClick={onBack} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">← Back to sign in</button>
+        <button onClick={() => { setRecovery((r) => !r); setCode(''); setError(null) }} className="text-blue-600 dark:text-blue-400 hover:underline">
+          {recovery ? 'Use an authenticator code' : 'Use a recovery code'}
+        </button>
       </div>
-    </div>
+    </>
   )
 }

@@ -649,12 +649,79 @@ export async function fetchConfigDiff(
 
 // ── API calls ────────────────────────────────────────────────────────────────
 
-export async function login(
-  username: string,
-  password: string,
-): Promise<{ access: string; refresh: string; must_change_password?: boolean }> {
-  const { data } = await api.post<{ access: string; refresh: string; must_change_password?: boolean }>(
-    '/auth/token/', { username, password },
+// ── Auth + MFA (TOTP) ──────────────────────────────────────────────────────
+export interface TokenPair { access: string; refresh: string; must_change_password?: boolean }
+/** /api/auth/token/ returns ONE of these: the JWT pair, a second-factor
+ *  challenge, or a forced-enrollment ticket (privileged local account). */
+export type LoginResult =
+  | TokenPair
+  | { mfa_required: true; methods?: string[]; challenge_token: string }
+  | { mfa_enrollment_required: true; enrollment_token: string; detail?: string }
+
+export async function login(username: string, password: string): Promise<LoginResult> {
+  const { data } = await api.post<LoginResult>('/auth/token/', { username, password })
+  return data
+}
+
+/** Exchange the login challenge + a TOTP or recovery code for the real JWT pair. */
+export async function loginMfa(
+  challengeToken: string,
+  opts: { code?: string; recovery_code?: string },
+): Promise<TokenPair> {
+  const { data } = await api.post<TokenPair>('/auth/token/mfa/', {
+    challenge_token: challengeToken, ...opts,
+  })
+  return data
+}
+
+export interface MfaStatus {
+  mfa_enabled: boolean
+  confirmed_at: string | null
+  recovery_codes_remaining: number
+  required: boolean
+}
+export interface MfaSetup { otpauth_uri: string; qr_code: string; secret: string }
+export interface MfaConfirmResult {
+  recovery_codes: string[]
+  mfa_enabled: boolean
+  // present only on the forced-enrollment path (the user had no full token yet)
+  tokens?: TokenPair
+}
+
+// The forced-enrollment ticket isn't a JWT, so it's passed via header — never as
+// a Bearer. When present, the request carries no normal auth (the user has none).
+function enrollHeaders(enrollmentToken?: string) {
+  return enrollmentToken ? { headers: { 'X-MFA-Enrollment-Token': enrollmentToken } } : undefined
+}
+
+export async function fetchMfaStatus(): Promise<MfaStatus> {
+  const { data } = await api.get<MfaStatus>('/auth/mfa/')
+  return data
+}
+
+/** Begin enrollment — returns the otpauth URI + QR + manual-entry secret (pending). */
+export async function mfaSetup(enrollmentToken?: string): Promise<MfaSetup> {
+  const { data } = await api.post<MfaSetup>('/auth/mfa/setup/', {}, enrollHeaders(enrollmentToken))
+  return data
+}
+
+/** Confirm a code → activates MFA + returns one-time recovery codes (and, on the
+ *  forced path, the JWT pair). */
+export async function mfaConfirm(code: string, enrollmentToken?: string): Promise<MfaConfirmResult> {
+  const { data } = await api.post<MfaConfirmResult>(
+    '/auth/mfa/confirm/', { code }, enrollHeaders(enrollmentToken),
+  )
+  return data
+}
+
+export async function mfaDisable(code: string): Promise<void> {
+  await api.post('/auth/mfa/disable/', { code })
+}
+
+/** Admin: clear a user's MFA (user:manage). Never returns a secret. */
+export async function resetUserMfa(userId: number): Promise<{ had_mfa: boolean; username: string }> {
+  const { data } = await api.post<{ had_mfa: boolean; username: string }>(
+    `/users/${userId}/reset-mfa/`, {},
   )
   return data
 }
