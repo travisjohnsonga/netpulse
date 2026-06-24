@@ -1,2 +1,2 @@
-nats-py~=2.7
+nats-py~=2.15
 redis~=5.0
