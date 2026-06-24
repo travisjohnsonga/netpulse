@@ -14,6 +14,15 @@ theme:
 nav:
   - Home: index.md
   - Architecture: ARCHITECTURE.md
+  - Security:
+    - Overview: security/overview.md
+    - Authentication: security/authentication.md
+    - Authorization (RBAC): security/authorization.md
+    - Secrets Management: security/secrets.md
+    - Transport & Hardening: security/transport-and-hardening.md
+    - Input Hardening: security/input-hardening.md
+    - Audit Logging: security/audit-logging.md
+    - Supply Chain: security/supply-chain.md
   - Setup:
     - Deployment: setup/deployment.md
     - NAT Configuration: setup/nat.md
