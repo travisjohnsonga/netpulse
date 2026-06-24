@@ -55,15 +55,24 @@ jobs:
 
       # BLOCKING at medium+ severity. Every High/Medium finding in
       # services/api/apps has been triaged: each is either fixed or carries an
-      # inline `# nosec <id> — <justification>` (e.g. B310 urlopen guarded by
+      # inline `# nosec <id> — <justification>` (B310 urlopen guarded by
       # net_safety.validate_outbound_url; B501 verify=False on internal-only
-      # OpenSearch; B507/B601 device-automation paramiko with a constant command).
+      # OpenSearch; B601 paramiko exec_command with a constant command).
       # The grandfathering baseline is removed, so the suppressions are explicit
       # in code, not hidden in a file, and any NEW medium+ finding fails the build.
+      #
+      # --skip B507 (paramiko AutoAddPolicy): deliberately delegated to CodeQL's
+      # py/paramiko-missing-host-key-validation, which tracks every instance and
+      # where the two device-automation instances (compliance + arp_mac
+      # collectors) are reviewed/dismissed as accepted. Skipping it in bandit
+      # avoids duplicate coverage AND the bandit↔CodeQL conflict where adding an
+      # inline `# nosec` would edit the flagged line and re-open the dismissed
+      # CodeQL alert.
+      #
       # Low-severity findings (try/except/pass best-effort handlers, "password"-
       # substring string constants that are field names not secrets, parameterized
       # shell-free subprocess) are surfaced by a full `bandit -r services/api/apps`
       # scan but excluded from the gate by the severity threshold as
       # low-risk / false-positive-heavy.
       - name: bandit (services/api/apps, blocking, medium+)
-        run: bandit -r services/api/apps --severity-level medium
+        run: bandit -r services/api/apps --severity-level medium --skip B507

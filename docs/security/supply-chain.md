@@ -43,11 +43,16 @@ pre-commit hook (`.pre-commit-config.yaml`) and is asserted in the test suite
   CVEs. The backend dependency set is clean today, so a newly-disclosed CVE in a
   pinned dependency fails the build and gets triaged rather than ignored.
 - **`bandit` — BLOCKING (medium+ severity).** Static security lint over
-  `services/api/apps`. Every High/Medium finding has been triaged: each is
-  fixed or carries an inline `# nosec <id> — <justification>` (e.g. `B310`
-  `urlopen` guarded by `net_safety.validate_outbound_url`; `B501` `verify=False`
-  on internal-only OpenSearch; `B507`/`B601` device-automation paramiko with a
-  constant command). The grandfathering baseline has been removed, so the
+  `services/api/apps`. Every High/Medium finding has been triaged: each is fixed
+  or carries an inline `# nosec <id> — <justification>` (e.g. `B310` `urlopen`
+  guarded by `net_safety.validate_outbound_url`; `B501` `verify=False` on
+  internal-only OpenSearch; `B601` paramiko `exec_command` with a constant
+  command). `B507` (paramiko `AutoAddPolicy`) is `--skip`-ped at the gate and
+  **delegated to CodeQL's `py/paramiko-missing-host-key-validation`**, which
+  tracks every instance and where the two device-automation instances are
+  reviewed/dismissed as accepted — this also avoids a bandit↔CodeQL conflict
+  (an inline `# nosec` would edit the flagged line and re-open the dismissed
+  CodeQL alert). The grandfathering baseline has been removed, so the
   suppressions are explicit in code and any **new** medium+ finding fails the
   build. Low-severity findings (try/except/pass handlers, `"password"`-substring
   string constants that are field names not secrets, parameterized shell-free

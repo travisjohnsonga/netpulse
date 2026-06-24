@@ -311,7 +311,7 @@ def _aos_cx_ssh_exec(device, profile, creds: dict, command: str,
     port = (profile.ssh_port if profile else 22) or 22
 
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 — multi-vendor network-device automation: targets are operator-curated inventory devices (device_host), host keys are not centrally pre-provisioned
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         ssh.connect(
             host, port=port, username=username, password=password,
