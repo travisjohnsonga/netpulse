@@ -2,11 +2,13 @@
 
 This page describes what runs in CI to keep the codebase and its dependencies
 honest. It is deliberately specific about what is **enforced in CI** versus what
-is a manual or on-demand gate, because the difference matters for a reviewer.
+is report-only or a manual/on-demand gate, because the difference matters for a
+reviewer.
 
 ## Workflows in the repository
 
-Three workflows live in `.github/workflows/`:
+Three workflows live in `.github/workflows/`, plus CodeQL via GitHub default
+setup (below).
 
 ### `api-tests.yml` — the test gate
 
@@ -20,48 +22,92 @@ The enforced correctness gate. Runs the full backend test suite:
 
 This is the gate that must be green before merge.
 
-### `security-checks.yml` — exception-exposure guard (CWE-209)
+### `security-checks.yml` — exception-exposure guard + Python security scan
 
-- **Triggers:** push to `main` and pull requests, path-filtered to
-  `services/api/apps/**/views.py` and the guard script.
-- **Step:** runs `scripts/check_exception_exposure.py`.
+Two jobs, path-filtered to `services/api/**`, the guard script, and the workflow
+file (push to `main` and pull requests):
 
-`check_exception_exposure.py` is an AST-based guard: it flags any
-`Response(...)` / `JsonResponse(...)` / `HttpResponse(...)` returned from inside
-an `except ... as <var>:` handler that references the exception variable, unless
-it is funneled through an approved sanitizer (`safe_detail`,
-`internal_error_response`, `log_internal_error`). This prevents leaking internal
-exception text to API clients. The same check runs as a pre-commit hook
-(`.pre-commit-config.yaml`) and is asserted in the test suite
+**`exception-exposure` (CWE-209).** Runs `scripts/check_exception_exposure.py`,
+an AST-based guard that flags any `Response(...)` / `JsonResponse(...)` /
+`HttpResponse(...)` returned from inside an `except ... as <var>:` handler that
+references the exception variable, unless it is funneled through an approved
+sanitizer (`safe_detail`, `internal_error_response`, `log_internal_error`). This
+prevents leaking internal exception text to API clients. The same check runs as a
+pre-commit hook (`.pre-commit-config.yaml`) and is asserted in the test suite
 (`tests/test_security.py`).
+
+**`python-security-scan`.** Pinned tool versions (`pip-audit==2.9.0`,
+`bandit==1.8.6`):
+
+- **`pip-audit` — BLOCKING.** Audits `services/api/requirements.txt` for known
+  CVEs. The backend dependency set is clean today, so a newly-disclosed CVE in a
+  pinned dependency fails the build and gets triaged rather than ignored.
+- **`bandit` — BLOCKING (medium+ severity).** Static security lint over
+  `services/api/apps`. Every High/Medium finding has been triaged: each is fixed
+  or carries an inline `# nosec <id> — <justification>` (e.g. `B310` `urlopen`
+  guarded by `net_safety.validate_outbound_url`; `B501` `verify=False` on
+  internal-only OpenSearch; `B601` paramiko `exec_command` with a constant
+  command). `B507` (paramiko `AutoAddPolicy` — missing SSH host-key validation)
+  is `--skip`-ped at the gate as an **explicit accepted risk**: spane collects
+  config from multi-vendor network devices over SSH whose host keys are not
+  pre-provisioned (maintaining per-device `known_hosts` across a discovery-driven
+  multi-vendor fleet is operationally infeasible), and connections target
+  operator-curated inventory devices over the trusted, access-controlled
+  management network. The residual first-connection-MITM risk is accepted because
+  that plane is segmented, device credentials are per-device from OpenBao, and
+  this matches standard network-automation tooling (netmiko/Ansible default to
+  auto-add). It is reviewed/tracked by CodeQL's
+  `py/paramiko-missing-host-key-validation` (both instances dismissed there) and
+  `--skip`-ped rather than inline-`# nosec`-suppressed so the edit doesn't
+  re-open that dismissed CodeQL alert. The grandfathering baseline has been
+  removed, so the
+  suppressions are explicit in code and any **new** medium+ finding fails the
+  build. Low-severity findings (try/except/pass handlers, `"password"`-substring
+  string constants that are field names not secrets, parameterized shell-free
+  subprocess) are surfaced by a full `bandit -r services/api/apps` scan but
+  excluded from the gate by the severity threshold as low-risk / false-positive
+  heavy.
 
 ### `build-agent.yml`
 
 Builds the Go monitoring-agent binaries. It carries least-privilege
 `permissions` and is not a security-scanning job.
 
+### CodeQL (GitHub default setup)
+
+CodeQL static analysis runs via GitHub **default setup** — configured in the
+repository's **Settings → Code security**, not as an in-repo workflow file. It
+analyzes **`actions`, `go`, `javascript-typescript`, and `python`** (verifiable
+via the `code-scanning/default-setup` API) on pushes, pull requests, and a weekly
+schedule; results surface as the `CodeQL` / `Analyze (<language>)` checks and in
+the repository's code-scanning alerts.
+
+An in-repo *advanced* CodeQL workflow was considered but intentionally **not**
+adopted: advanced setup is mutually exclusive with default setup (GitHub won't
+process advanced results while default setup is enabled), so committing one would
+require disabling default setup first and then maintaining the workflow by hand.
+Default setup gives the same four-language coverage with no config to maintain.
+
 ## Dependency updates (Dependabot)
 
-`.github/dependabot.yml` configures **npm** updates for the frontend
-(`/services/frontend`) on a **weekly** schedule, ignoring Vite major bumps.
+`.github/dependabot.yml` runs weekly across three ecosystems, with minor/patch
+updates grouped per ecosystem and nothing auto-merged:
 
-## What is NOT enforced in CI
+- **npm** — `services/frontend` (Vite major bumps ignored — they require a
+  coordinated plugin + lockfile bump).
+- **pip** — the Django backend (`services/api`) and every ingest/stream service
+  with a `requirements.txt` (`ingest-snmp`, `ingest-grpc`, `ingest-syslog`,
+  `ingest-flow`, `ingest-otlp`, `ingest-api-poller`, `stream-processor`).
+- **github-actions** — the action versions pinned in `.github/workflows/`.
 
-These were verified absent at the time of writing. Some are referenced elsewhere
-in the project (CLAUDE.md, the pre-release checklist) as having been used
-ad hoc, but there is no committed CI configuration for them:
+## What is NOT (yet) enforced in CI
 
-- **No CodeQL workflow file** exists in `.github/workflows/`. CodeQL alerts have
-  historically been triaged for this repo, which is consistent with GitHub's
-  "default setup" (configured in repo settings, not as an in-repo workflow) —
-  but that cannot be verified from the source tree, so it is not claimed here as
-  a repo-defined control.
-- **Dependabot does not cover Python (`pip`) or GitHub Actions** — only npm.
-- **No `bandit`, `pip-audit`, `safety`, `trivy`, `docker scout`, or
-  `gitleaks`/`trufflehog` step** runs in CI. These are listed in the
-  pre-production security-audit checklist (see the "Pre-Release / Production
-  Checklist" in `CLAUDE.md`) as tools to run as a release gate, not as
+- **Low-severity `bandit` findings do not gate.** The blocking gate is medium+
+  severity; the 51 Low findings are surfaced by a full scan but excluded as
+  low-risk / false-positive heavy (see the `bandit` job above).
+- **No `safety`, `trivy`, `docker scout`, or `gitleaks`/`trufflehog` step** runs
+  in CI. These remain release-gate tools in the pre-production security-audit
+  checklist (see the "Pre-Release / Production Checklist" in `CLAUDE.md`), not
   continuous CI jobs.
-
-Closing these gaps — at minimum CodeQL-as-code and pip/actions Dependabot
-ecosystems — is reasonable future hardening.
+- **Go modules are not yet covered by Dependabot** — `agent/go.mod` could be
+  added as a `gomod` ecosystem in a follow-up.

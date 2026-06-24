@@ -1,12 +1,21 @@
 # Dependabot configuration.
 # Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Coverage: frontend npm, the Django backend + every ingest/stream service
+# requirements.txt (pip), and the GitHub Actions used in .github/workflows
+# (github-actions). Minor/patch bumps are grouped per ecosystem to cut PR noise;
+# majors still arrive as individual PRs (intentional, reviewed by hand). Nothing
+# is auto-merged.
 version: 2
 updates:
-  # Frontend npm dependencies (the React/Vite app lives under services/frontend).
+  # ── Frontend (React/Vite app under services/frontend) ────────────────────
   - package-ecosystem: "npm"
     directory: "/services/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
     ignore:
       # Vite major upgrades are intentional, not auto-merged: Vite 8 crosses the
       # peer range @vitejs/plugin-react pins (^4 || ^5 || ^6 || ^7) and must be
@@ -15,3 +24,78 @@ updates:
       # this stops it resurfacing. Minor/patch Vite updates still flow normally.
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
+
+  # ── Backend (Django API) ─────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/services/api"
+    schedule:
+      interval: "weekly"
+    groups:
+      api-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # ── Ingest + stream-processing services (one pip block per requirements.txt)
+  - package-ecosystem: "pip"
+    directory: "/services/ingest-snmp"
+    schedule:
+      interval: "weekly"
+    groups:
+      ingest-snmp-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/services/ingest-grpc"
+    schedule:
+      interval: "weekly"
+    groups:
+      ingest-grpc-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/services/ingest-syslog"
+    schedule:
+      interval: "weekly"
+    groups:
+      ingest-syslog-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/services/ingest-flow"
+    schedule:
+      interval: "weekly"
+    groups:
+      ingest-flow-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/services/ingest-otlp"
+    schedule:
+      interval: "weekly"
+    groups:
+      ingest-otlp-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/services/ingest-api-poller"
+    schedule:
+      interval: "weekly"
+    groups:
+      ingest-api-poller-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/services/stream-processor"
+    schedule:
+      interval: "weekly"
+    groups:
+      stream-processor-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # ── GitHub Actions used by the workflows in .github/workflows ─────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
