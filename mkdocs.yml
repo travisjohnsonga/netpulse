@@ -23,6 +23,8 @@ nav:
     - Input Hardening: security/input-hardening.md
     - Audit Logging: security/audit-logging.md
     - Supply Chain: security/supply-chain.md
+    - Compliance Overview: security/compliance-overview.md
+    - Compliance Control Mapping: security/compliance-mapping.md
   - Setup:
     - Deployment: setup/deployment.md
     - NAT Configuration: setup/nat.md
