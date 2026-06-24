@@ -55,6 +55,16 @@ def _never_touch_real_vault(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _mfa_optional_by_default(settings):
+    """Forced-MFA-for-privileged accounts (ISO A.8.2) is ON by default in
+    production, so an admin login returns a forced-enrollment challenge rather
+    than a token. Disable it across the suite so the pre-MFA login tests keep
+    exercising the direct-token path; tests/test_mfa.py re-enables it (and the
+    challenge path) to verify the MFA behaviour explicitly."""
+    settings.MFA_REQUIRED_FOR_CAPABILITIES = []
+
+
 def _make_user(username, role, **kwargs):
     return User.objects.create_user(
         username=username,

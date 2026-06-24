@@ -644,6 +644,27 @@ class UserViewSet(viewsets.ModelViewSet):
                   description=f"User {name} deleted")
         instance.delete()
 
+    @action(detail=True, methods=["post"], url_path="reset-mfa")
+    def reset_mfa(self, request, pk=None):
+        """Reset (clear) a user's MFA — lost-device recovery (user:manage).
+
+        Clears the device so the user can re-enroll; if they are a privileged/
+        required account this re-triggers forced enrollment on their next login
+        (it is NOT a free pass). Never exposes the user's TOTP secret. Audited.
+        """
+        from .audit import log_event
+        from .models import AuditLog
+        user = self.get_object()
+        device = getattr(user, "mfa_device", None)
+        had_mfa = bool(device and device.mfa_enabled)
+        if device is not None:
+            device.clear()
+            device.save()
+        log_event(AuditLog.EventType.MFA_RESET_BY_ADMIN, request=request, user=request.user,
+                  target=user, description=f"MFA reset for {user.username}",
+                  metadata={"had_mfa": had_mfa})
+        return Response({"detail": "MFA reset.", "username": user.username, "had_mfa": had_mfa})
+
     @action(detail=True, methods=["patch"], url_path="rbac-role")
     def assign_rbac_role(self, request, pk=None):
         """Assign a user's RBAC role (rbac:manage). Anti-escalation applies: you

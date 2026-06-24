@@ -131,9 +131,102 @@ The custom pipeline steps (`apps/sso/pipeline.py`) enforce access policy:
 `NetPulseTokenObtainPairSerializer` used by local login, so SSO-issued tokens
 carry the identical claim set (username/role/email/name/must_change_password).
 
+## Multi-factor authentication (TOTP)
+
+spane supports **time-based one-time-password** MFA (RFC 6238 — Google
+Authenticator, Microsoft Authenticator, Authy, 1Password, etc.) for **local
+password accounts**. The implementation is a lean `pyotp` integration into the
+JWT flow (`apps/core/mfa.py`, `apps/core/mfa_views.py`); it is not session- or
+template-based.
+
+### Local accounts only — the SSO split
+
+TOTP applies to **local password logins** (the `/api/auth/token/` path). **SSO
+accounts authenticate — and MFA — at their identity provider**, so spane does
+**not** layer app-level TOTP on social logins (no double-MFA). The split is
+structural: SSO logins mint their JWT on a different path
+(`get_tokens_for_user`) that never reaches the local MFA gate. A user who logs
+in with a password is, by definition, on the local path and subject to local
+TOTP policy.
+
+### Secret & recovery-code storage
+
+The TOTP secret is treated as a credential (`MFADevice`, `apps/core/models.py`):
+in OpenBao-configured deployments it lives in OpenBao at `netpulse/mfa/{user_id}`;
+otherwise it is held **Fernet-encrypted** in the DB. It is **never** stored
+plaintext, returned by the API once active, or logged. Recovery codes are stored
+**hashed** (PBKDF2, like passwords), shown **once** at generation, and are
+**single-use**. TOTP verification allows a ±1 step skew and rejects replay of an
+already-consumed step (`MFADevice.last_step`).
+
+### Enrollment
+
+1. `POST /api/auth/mfa/setup/` — generates a *pending* secret, returns the
+   `otpauth://` provisioning URI + an SVG-data-URI QR.
+2. `POST /api/auth/mfa/confirm/` `{code}` — verifies a code against the pending
+   secret (proving the user scanned it), activates MFA, and returns one-time
+   recovery codes.
+3. `POST /api/auth/mfa/disable/` `{code}` — requires a valid TOTP/recovery code
+   from the authenticated owner to turn MFA off.
+
+### Login second factor
+
+When a local user with MFA enabled posts a valid username/password to
+`/api/auth/token/`, spane does **not** issue a JWT. It returns a short-lived
+(`MFA_INTERMEDIATE_TOKEN_TTL_S`, default 5 min) single-purpose **challenge
+token**. The client then posts `POST /api/auth/token/mfa/` `{challenge_token,
+code|recovery_code}` to receive the real access+refresh pair. Failures are
+throttled on the same `auth` scope as the password endpoint and audited.
+
+### Required MFA for privileged accounts (A.8.2)
+
+`MFA_REQUIRED_FOR_CAPABILITIES` (default `user:manage`, `rbac:manage`) and the
+org-wide `mfa_required_all_local` toggle (or `MFA_REQUIRED_FOR_ALL_LOCAL`) make
+MFA mandatory for the listed local accounts. A privileged local user **without**
+MFA who logs in is **not** locked out and **not** silently let through: they
+receive a restricted **enrollment token** that authorizes **only** the MFA
+setup/confirm endpoints. After they complete setup→confirm, the real JWT pair is
+issued. They cannot reach any other endpoint until MFA is active.
+
+### Token-scope isolation (no bypass)
+
+The challenge and enrollment tokens are `django.core.signing` blobs with
+distinct salts/purposes — **not JWTs** — so DRF's `JWTAuthentication` rejects
+them as access tokens and `/api/auth/token/refresh/` rejects them as refresh
+tokens. The enrollment token is honored only by the setup/confirm views; every
+other endpoint denies it.
+
+### Admin reset & break-glass
+
+An admin with `user:manage` can clear a user's MFA (lost-device recovery) via
+`POST /api/users/{id}/reset-mfa/` — audited, and it does **not** expose the
+secret. Because a reset clears `mfa_enabled`, a privileged user is re-forced
+through enrollment on their next login (not a free pass).
+
+For a locked-out account that the API can't rescue — notably the immutable
+superadmin, who is always MFA-required — there is a **console break-glass**:
+
+```bash
+docker compose exec api python manage.py reset_mfa <username>
+```
+
+It clears the user's MFA from the server console (host/stack access required) and
+is audit-logged. This guarantees a lost privileged device can never permanently
+brick admin access.
+
+### Audited MFA events
+
+`mfa_enabled`, `mfa_disabled`, `mfa_failed`, `mfa_reset_by_admin`,
+`mfa_enrollment_forced`, `mfa_enrollment_completed` (`AuditLog.EventType`). The
+secret and recovery codes are never logged.
+
 ## Known gaps
 
-- No MFA, no password-expiry policy, and no refresh-token revocation/blacklist
-  are implemented.
+- No password-expiry policy and no refresh-token revocation/blacklist are
+  implemented. (A refresh token issued before MFA was enabled stays valid for its
+  7-day life; forced privileged enrollment is unaffected, since it precedes any
+  full-token issuance.)
+- The enrollment **UI** (QR screen, login second-factor prompt) is a separate
+  frontend follow-up; this is the backend implementation.
 - SAML and LDAP appear as `SSOProvider` choices but have no functional backend
   yet (only Google/Azure/Okta/GitHub OAuth2 are wired).

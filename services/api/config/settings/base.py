@@ -354,6 +354,26 @@ SIMPLE_JWT = {
     "TOKEN_OBTAIN_SERIALIZER": "apps.core.serializers.NetPulseTokenObtainPairSerializer",
 }
 
+# ── Multi-factor authentication (TOTP, RFC 6238) ─────────────────────────────
+# Applies to LOCAL password accounts only; SSO accounts are covered by their
+# provider's MFA (no app-level double-MFA). See docs/security/authentication.md.
+MFA_ISSUER = os.environ.get("MFA_ISSUER", "spane")
+# TTL for the single-purpose login-challenge / forced-enrollment intermediate
+# tokens (signed blobs, never JWTs, never usable as access tokens).
+MFA_INTERMEDIATE_TOKEN_TTL_S = int(os.environ.get("MFA_INTERMEDIATE_TOKEN_TTL_S", "300"))
+MFA_RECOVERY_CODE_COUNT = int(os.environ.get("MFA_RECOVERY_CODE_COUNT", "10"))
+# Capabilities whose LOCAL holders MUST have MFA (ISO A.8.2 privileged access).
+# Such a user without MFA is forced through enrollment at login before any full
+# token is issued. Tunable via env (comma-separated).
+MFA_REQUIRED_FOR_CAPABILITIES = [
+    c.strip() for c in os.environ.get(
+        "MFA_REQUIRED_FOR_CAPABILITIES", "user:manage,rbac:manage").split(",") if c.strip()
+]
+# Org-wide: require MFA for ALL local accounts. Default off; the runtime
+# ``mfa_required_all_local`` system setting (admin toggle) overrides this.
+MFA_REQUIRED_FOR_ALL_LOCAL = os.environ.get(
+    "MFA_REQUIRED_FOR_ALL_LOCAL", "false").lower() == "true"
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
