@@ -44,3 +44,10 @@ Certificates are issued for 1 year. To rotate before expiry, re-enroll the agent
 with a fresh token (it generates a new keypair + CSR and overwrites its cert).
 Automatic in-place renewal and pre-expiry UI alerts are planned but not yet
 built — track certificate expiry from the agent's record in the meantime.
+
+## Platform security
+
+This page covers the agent's transport and identity only. For the platform-wide
+security model — authentication, RBAC, secrets management, transport hardening,
+input hardening, audit logging, and CI — see the
+[Security](../security/overview.md) section.
