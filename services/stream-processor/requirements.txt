@@ -1,4 +1,4 @@
 nats-py~=2.7
-influxdb-client~=1.43
+influxdb-client~=1.50
 # [async] pulls aiohttp so `from opensearchpy import AsyncOpenSearch` works.
 opensearch-py[async]~=2.7
