@@ -107,9 +107,21 @@ export default function Login() {
     setLoading(true); setError(null)
     try {
       const res = await login(username, password)
-      if ('mfa_required' in res) setStep({ kind: 'mfa', challengeToken: res.challenge_token })
-      else if ('mfa_enrollment_required' in res) setStep({ kind: 'enroll', enrollmentToken: res.enrollment_token })
-      else finishLogin(res)
+      // /api/auth/token/ returns one of THREE distinct 200 shapes. Discriminate
+      // on the explicit flag value (not just key presence) so each is routed
+      // distinctly and an unexpected shape can't be mistaken for a login:
+      //  (b) mfa_required        → the user HAS MFA → second-factor code prompt
+      //  (c) mfa_enrollment_required → privileged user with NO MFA → forced setup
+      //  (a) otherwise           → the JWT pair → logged in
+      if ('mfa_required' in res && res.mfa_required === true) {
+        setStep({ kind: 'mfa', challengeToken: res.challenge_token })
+      } else if ('mfa_enrollment_required' in res && res.mfa_enrollment_required === true) {
+        setStep({ kind: 'enroll', enrollmentToken: res.enrollment_token })
+      } else if ('access' in res && res.access) {
+        finishLogin(res)
+      } else {
+        setError('Unexpected sign-in response. Please try again.')
+      }
     } catch {
       setError('Invalid username or password.')
     } finally {
