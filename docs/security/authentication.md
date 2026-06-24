@@ -139,6 +139,10 @@ password accounts**. The implementation is a lean `pyotp` integration into the
 JWT flow (`apps/core/mfa.py`, `apps/core/mfa_views.py`); it is not session- or
 template-based.
 
+> **Operator guide:** for how users enrol, how MFA is required for privileged
+> accounts, admin reset, and the **break-glass recovery command**, see
+> [Multi-Factor Authentication](mfa.md). This section covers the security model.
+
 ### Local accounts only — the SSO split
 
 TOTP applies to **local password logins** (the `/api/auth/token/` path). **SSO

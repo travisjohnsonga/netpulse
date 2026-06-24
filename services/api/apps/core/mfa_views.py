@@ -19,6 +19,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from . import mfa
 from .audit import log_event
@@ -67,7 +68,15 @@ class MFASetupView(APIView):
     enrollee has no JWT yet; the user is resolved from the JWT or the enrollment
     token."""
 
-    authentication_classes = APIView.authentication_classes  # default (JWT/session)
+    # JWT-only (no SessionAuthentication): the voluntary path carries a Bearer
+    # JWT, the forced-enrollment path carries the X-MFA-Enrollment-Token header.
+    # Including SessionAuthentication would enforce CSRF for any anonymous request
+    # that arrives with an authenticated session cookie — breaking forced
+    # enrollment (no Bearer, no CSRF token). The login token endpoints avoid this
+    # the same way (SimpleJWT TokenViewBase runs no authenticators). The
+    # enrollment-token gating in _resolve_enrolling_user is unchanged, so this
+    # removes CSRF, NOT the auth gate.
+    authentication_classes = [JWTAuthentication]
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -99,6 +108,9 @@ class MFAConfirmView(APIView):
     MFA, and return one-time recovery codes (shown ONCE). On the forced-enrollment
     path it also issues the real JWT pair so the user is logged in."""
 
+    # JWT-only — see MFASetupView (no SessionAuthentication/CSRF; the enrollment
+    # token gate in _resolve_enrolling_user is preserved).
+    authentication_classes = [JWTAuthentication]
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -181,6 +193,10 @@ class MFATokenView(APIView):
     second factor. Redeems a challenge token for the real JWT pair. Throttled on
     the same ``auth`` scope as the password endpoint (counts toward lockout)."""
 
+    # No authenticators — purely pre-JWT, exactly like the SimpleJWT token
+    # endpoints (TokenViewBase). Avoids SessionAuthentication/CSRF; the
+    # challenge_token is validated in the view below.
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth"
