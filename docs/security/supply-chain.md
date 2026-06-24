@@ -47,12 +47,20 @@ pre-commit hook (`.pre-commit-config.yaml`) and is asserted in the test suite
   or carries an inline `# nosec <id> — <justification>` (e.g. `B310` `urlopen`
   guarded by `net_safety.validate_outbound_url`; `B501` `verify=False` on
   internal-only OpenSearch; `B601` paramiko `exec_command` with a constant
-  command). `B507` (paramiko `AutoAddPolicy`) is `--skip`-ped at the gate and
-  **delegated to CodeQL's `py/paramiko-missing-host-key-validation`**, which
-  tracks every instance and where the two device-automation instances are
-  reviewed/dismissed as accepted — this also avoids a bandit↔CodeQL conflict
-  (an inline `# nosec` would edit the flagged line and re-open the dismissed
-  CodeQL alert). The grandfathering baseline has been removed, so the
+  command). `B507` (paramiko `AutoAddPolicy` — missing SSH host-key validation)
+  is `--skip`-ped at the gate as an **explicit accepted risk**: spane collects
+  config from multi-vendor network devices over SSH whose host keys are not
+  pre-provisioned (maintaining per-device `known_hosts` across a discovery-driven
+  multi-vendor fleet is operationally infeasible), and connections target
+  operator-curated inventory devices over the trusted, access-controlled
+  management network. The residual first-connection-MITM risk is accepted because
+  that plane is segmented, device credentials are per-device from OpenBao, and
+  this matches standard network-automation tooling (netmiko/Ansible default to
+  auto-add). It is reviewed/tracked by CodeQL's
+  `py/paramiko-missing-host-key-validation` (both instances dismissed there) and
+  `--skip`-ped rather than inline-`# nosec`-suppressed so the edit doesn't
+  re-open that dismissed CodeQL alert. The grandfathering baseline has been
+  removed, so the
   suppressions are explicit in code and any **new** medium+ finding fails the
   build. Low-severity findings (try/except/pass handlers, `"password"`-substring
   string constants that are field names not secrets, parameterized shell-free

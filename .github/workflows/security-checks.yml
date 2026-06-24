@@ -61,13 +61,25 @@ jobs:
       # The grandfathering baseline is removed, so the suppressions are explicit
       # in code, not hidden in a file, and any NEW medium+ finding fails the build.
       #
-      # --skip B507 (paramiko AutoAddPolicy): deliberately delegated to CodeQL's
-      # py/paramiko-missing-host-key-validation, which tracks every instance and
-      # where the two device-automation instances (compliance + arp_mac
-      # collectors) are reviewed/dismissed as accepted. Skipping it in bandit
-      # avoids duplicate coverage AND the bandit↔CodeQL conflict where adding an
-      # inline `# nosec` would edit the flagged line and re-open the dismissed
-      # CodeQL alert.
+      # --skip B507 (paramiko AutoAddPolicy: missing SSH host-key validation) is
+      # an explicit ACCEPTED RISK, not a silenced warning:
+      #   * spane collects config from multi-vendor network devices (switch/
+      #     router/firewall) over SSH. Their host keys are NOT pre-provisioned
+      #     into a managed known_hosts — distributing/maintaining per-device keys
+      #     across a discovery-driven, multi-vendor fleet is operationally
+      #     infeasible, and connections target operator-curated inventory devices
+      #     reachable only over the trusted, access-controlled management network.
+      #   * Residual risk = a first-connection MITM on the management plane. It is
+      #     accepted because that plane is trusted/segmented, device credentials
+      #     are per-device from OpenBao (not broadly reused), and this matches
+      #     standard network-automation tooling (netmiko/Ansible default to
+      #     auto-add). Pre-seeding host keys for every device/vendor is not viable
+      #     for the platform's model.
+      #   * The risk is reviewed/tracked by CodeQL
+      #     (py/paramiko-missing-host-key-validation, both instances dismissed
+      #     there). It is `--skip`-ped in bandit rather than inline-`# nosec`'d so
+      #     the suppression edit doesn't re-fingerprint and re-open that dismissed
+      #     CodeQL alert.
       #
       # Low-severity findings (try/except/pass best-effort handlers, "password"-
       # substring string constants that are field names not secrets, parameterized
