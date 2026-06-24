@@ -7,7 +7,8 @@ reviewer.
 
 ## Workflows in the repository
 
-Four workflows live in `.github/workflows/`.
+Three workflows live in `.github/workflows/`, plus CodeQL via GitHub default
+setup (below).
 
 ### `api-tests.yml` — the test gate
 
@@ -56,20 +57,20 @@ pre-commit hook (`.pre-commit-config.yaml`) and is asserted in the test suite
 Builds the Go monitoring-agent binaries. It carries least-privilege
 `permissions` and is not a security-scanning job.
 
-### `codeql.yml` — advanced CodeQL (gated on a manual switch)
+### CodeQL (GitHub default setup)
 
-CodeQL runs over **`actions`, `go`, `javascript-typescript`, and `python`**.
-Today that runs via GitHub **default setup** (configured in repo settings, no
-workflow file). `codeql.yml` adds an in-repo, version-controlled *advanced*
-configuration over the same four languages, so the scan config becomes reviewable
-and diffable.
+CodeQL static analysis runs via GitHub **default setup** — configured in the
+repository's **Settings → Code security**, not as an in-repo workflow file. It
+analyzes **`actions`, `go`, `javascript-typescript`, and `python`** (verifiable
+via the `code-scanning/default-setup` API) on pushes, pull requests, and a weekly
+schedule; results surface as the `CodeQL` / `Analyze (<language>)` checks and in
+the repository's code-scanning alerts.
 
-Advanced setup is **mutually exclusive** with default setup — GitHub will not
-process advanced results while default setup is enabled. The workflow is
-therefore armed only on push-to-`main`, a weekly schedule, and manual dispatch
-(**not** `pull_request`), and must not be activated until CodeQL default setup is
-turned off in **Settings → Code security**. Until that switch is flipped, default
-setup remains the live scanner and `codeql.yml` stays inert.
+An in-repo *advanced* CodeQL workflow was considered but intentionally **not**
+adopted: advanced setup is mutually exclusive with default setup (GitHub won't
+process advanced results while default setup is enabled), so committing one would
+require disabling default setup first and then maintaining the workflow by hand.
+Default setup gives the same four-language coverage with no config to maintain.
 
 ## Dependency updates (Dependabot)
 
