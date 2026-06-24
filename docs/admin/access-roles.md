@@ -7,8 +7,9 @@ to using RBAC day to day — creating roles, assigning them, and understanding t
 guardrails.
 
 > For the *why* and the security-model details (deny-by-default enforcement, the
-> permission classes, the drift-guard test), see the **Security → Authorization
-> (RBAC)** page. This page focuses on operating it.
+> permission classes, the drift-guard test), see
+> [Security → Authorization (RBAC)](../security/authorization.md). This page
+> focuses on operating it.
 
 You manage all of this under **Settings → Access Roles** (`/settings/access-roles`).
 The screen — and the underlying API — require the `rbac:manage` capability, which
@@ -115,5 +116,6 @@ None of the above relies on the UI hiding buttons. Authorization is
 **deny-by-default** in the API: every endpoint declares the capability it
 requires, and an endpoint that declares none is denied. A user (or an API token)
 calling an endpoint they lack the capability for gets a `403`, regardless of how
-the request was made. See **Security → Authorization (RBAC)** for the
+the request was made. See
+[Security → Authorization (RBAC)](../security/authorization.md) for the
 enforcement details.

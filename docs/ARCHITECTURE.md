@@ -547,8 +547,9 @@ a forgotten check fails closed rather than leaking access.
 - The legacy single `role` field is retained for back-compat, but authorization
   is resolved from the user's assigned RBAC role.
 
-For the full security model see the **Security → Authorization (RBAC)** page; for
-the operator guide to creating and assigning roles, see
+For the full security model see
+[Security → Authorization (RBAC)](security/authorization.md); for the operator
+guide to creating and assigning roles, see
 [Admin → Access Roles](admin/access-roles.md).
 
 ### Credential Storage Pattern

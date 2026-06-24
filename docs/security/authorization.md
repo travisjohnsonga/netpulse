@@ -4,7 +4,8 @@ spane's authorization model is capability-based and deny-by-default. Every API
 endpoint is gated on a named capability; roles are sets of capabilities; and an
 endpoint that forgets to declare a capability is denied rather than silently
 opened. This page describes the model as implemented; for the operator-facing
-"how do I create a role and assign it" guide, see **Admin → Access Roles**.
+"how do I create a role and assign it" guide, see
+[Admin → Access Roles](../admin/access-roles.md).
 
 ## Deny-by-default
 
