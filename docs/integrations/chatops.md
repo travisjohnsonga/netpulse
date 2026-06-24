@@ -302,6 +302,7 @@ The parser recognises these out of the box (many phrasings each):
 | Intent | Examples |
 |---|---|
 | Device status | `status of core-sw-01`, `is core-sw-01 up?`, `how's core-sw-01` |
+| Device list | `down devices`, `up devices` (reachable), `all devices`, `devices at site DC1`, `which devices are down` |
 | Site status | `status of site DC1`, `site DC1 status` |
 | Active alerts | `any alerts?`, `what's firing` |
 | CVEs | `cves on edge-rtr-2`, `vulnerabilities on edge-rtr-2` |

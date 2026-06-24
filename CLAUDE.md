@@ -14,12 +14,15 @@ Guidance for Claude Code working in this repo. These instructions override defau
 > **Naming:** the product was renamed from **NetPulse** to **spane** (lowercase
 > brand, tagline "unified infrastructure visibility", domain spane.app). Only
 > display/brand strings changed — technical identifiers intentionally keep the
-> legacy `netpulse` form: DB table names (`netpulse_*`), OpenBao paths
-> (`netpulse/...`), Docker image/container names (`netpulse-*`), systemd units
-> (`netpulse.service`, `netpulse-agent.service`), the `netpulse-net` bridge,
-> `./netpulse.sh`, Python class names (`NetPulseUser`), and the GitHub repo
-> (`travisjohnsonga/netpulse`). Agent binaries stay `netpulse-agent` until the
-> next CI build (then `spane-agent-*`).
+> legacy `netpulse` form: OpenBao paths (`netpulse/...`), Docker image/container
+> names (`netpulse-*`), systemd units (`netpulse.service`,
+> `netpulse-agent.service`), the `netpulse-net` bridge, `./netpulse.sh`, Python
+> class names (`NetPulseUser`), and the GitHub repo (`travisjohnsonga/netpulse`).
+> Agent binaries stay `netpulse-agent` until the next CI build (then
+> `spane-agent-*`). **DB table names are NOT `netpulse_*`** — no model overrides
+> `db_table`, so tables follow Django's default `<app_label>_<model>` convention
+> (`core_netpulseuser`, `devices_device`, `alerts_alertevent`, …). The legacy
+> name survives in the `NetPulseUser` model *class*, not its table.
 
 spane — push-first, open-source infrastructure-visibility platform: gRPC/gNMI streaming telemetry,
 config compliance, CVE intel, lifecycle, log anomaly detection, unified risk scoring.
