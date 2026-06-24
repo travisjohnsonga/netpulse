@@ -111,7 +111,7 @@ def _openbao_healthy() -> bool:
     addr = getattr(dj_settings, "OPENBAO_ADDR", "") or os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
     try:
         url = validate_outbound_url(f"{addr.rstrip('/')}/v1/sys/health", block_metadata=False)
-        with urllib.request.urlopen(url, timeout=2.0) as resp:
+        with urllib.request.urlopen(url, timeout=2.0) as resp:  # nosec B310 — scheme allowlisted (http/https) by validate_outbound_url() on the line above
             return resp.status == 200
     except urllib.error.HTTPError as exc:
         # 429 = unsealed standby (still usable); anything else (501 uninit,
@@ -214,7 +214,7 @@ def _http_probe(url: str, timeout: float = 2.0):
     start = time.monotonic()
     try:
         url = validate_outbound_url(url, block_metadata=False)
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310 — scheme allowlisted (http/https) by validate_outbound_url() on the line above
             return resp.status < 500, round((time.monotonic() - start) * 1000, 1)
     except urllib.error.HTTPError as exc:
         return exc.code < 500, round((time.monotonic() - start) * 1000, 1)
@@ -232,7 +232,7 @@ def _openbao_probe(timeout: float = 2.0):
     start = time.monotonic()
     try:
         url = validate_outbound_url(f"{addr.rstrip('/')}/v1/sys/health", block_metadata=False)
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310 — scheme allowlisted (http/https) by validate_outbound_url() on the line above
             return resp.status == 200, round((time.monotonic() - start) * 1000, 1)
     except urllib.error.HTTPError as exc:
         # 429 = unsealed standby (still usable).

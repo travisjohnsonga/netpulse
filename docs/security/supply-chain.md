@@ -24,8 +24,8 @@ This is the gate that must be green before merge.
 
 ### `security-checks.yml` — exception-exposure guard + Python security scan
 
-Two jobs, path-filtered to `services/api/**`, the guard script, the bandit
-baseline, and the workflow file (push to `main` and pull requests):
+Two jobs, path-filtered to `services/api/**`, the guard script, and the workflow
+file (push to `main` and pull requests):
 
 **`exception-exposure` (CWE-209).** Runs `scripts/check_exception_exposure.py`,
 an AST-based guard that flags any `Response(...)` / `JsonResponse(...)` /
@@ -42,15 +42,18 @@ pre-commit hook (`.pre-commit-config.yaml`) and is asserted in the test suite
 - **`pip-audit` — BLOCKING.** Audits `services/api/requirements.txt` for known
   CVEs. The backend dependency set is clean today, so a newly-disclosed CVE in a
   pinned dependency fails the build and gets triaged rather than ignored.
-- **`bandit` — REPORT-ONLY (baselined).** Static security lint over
-  `services/api/apps`, run against a committed baseline
-  (`.bandit-baseline.json`). The existing findings (6 High / 5 Medium / 51 Low
-  at the time the job was added — predominantly `verify=False` in the internal
-  `run_health_checks` probe, the SSRF-guarded NetBox `urlopen`, and cert-parse
-  `try/except`) are grandfathered by the baseline, so the step passes today and
-  surfaces only **new** findings. It is `continue-on-error` (non-blocking) until
-  the baseline is triaged; dropping that flag turns it into a hard ratchet on
-  regressions.
+- **`bandit` — BLOCKING (medium+ severity).** Static security lint over
+  `services/api/apps`. Every High/Medium finding has been triaged: each is
+  fixed or carries an inline `# nosec <id> — <justification>` (e.g. `B310`
+  `urlopen` guarded by `net_safety.validate_outbound_url`; `B501` `verify=False`
+  on internal-only OpenSearch; `B507`/`B601` device-automation paramiko with a
+  constant command). The grandfathering baseline has been removed, so the
+  suppressions are explicit in code and any **new** medium+ finding fails the
+  build. Low-severity findings (try/except/pass handlers, `"password"`-substring
+  string constants that are field names not secrets, parameterized shell-free
+  subprocess) are surfaced by a full `bandit -r services/api/apps` scan but
+  excluded from the gate by the severity threshold as low-risk / false-positive
+  heavy.
 
 ### `build-agent.yml`
 
@@ -86,9 +89,9 @@ updates grouped per ecosystem and nothing auto-merged:
 
 ## What is NOT (yet) enforced in CI
 
-- **`bandit` is report-only**, not blocking — the existing findings in
-  `services/api/apps` need triage (justify with `# nosec` or fix) before the
-  baseline can become a hard gate.
+- **Low-severity `bandit` findings do not gate.** The blocking gate is medium+
+  severity; the 51 Low findings are surfaced by a full scan but excluded as
+  low-risk / false-positive heavy (see the `bandit` job above).
 - **No `safety`, `trivy`, `docker scout`, or `gitleaks`/`trufflehog` step** runs
   in CI. These remain release-gate tools in the pre-production security-audit
   checklist (see the "Pre-Release / Production Checklist" in `CLAUDE.md`), not

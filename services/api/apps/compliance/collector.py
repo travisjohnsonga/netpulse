@@ -311,13 +311,13 @@ def _aos_cx_ssh_exec(device, profile, creds: dict, command: str,
     port = (profile.ssh_port if profile else 22) or 22
 
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 — multi-vendor network-device automation: targets are operator-curated inventory devices (device_host), host keys are not centrally pre-provisioned
     try:
         ssh.connect(
             host, port=port, username=username, password=password,
             timeout=connect_timeout, look_for_keys=False, allow_agent=False,
         )
-        _stdin, stdout, _stderr = ssh.exec_command(command, timeout=exec_timeout)
+        _stdin, stdout, _stderr = ssh.exec_command(command, timeout=exec_timeout)  # nosec B601 — `command` is an internal constant ("show running-config"/"show startup-config"), never user input, and runs on the remote device's SSH server, not a local shell
         out = stdout.read().decode("utf-8", errors="replace")
         if not out.strip():
             raise ValueError("empty config returned")
