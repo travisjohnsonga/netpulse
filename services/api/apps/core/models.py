@@ -320,6 +320,13 @@ class AuditLog(models.Model):
         # ChatOps
         CHATOPS_QUERY = "chatops_query", "ChatOps Query"
         CHATOPS_DENIED = "chatops_denied", "ChatOps Query Denied"
+        # Multi-factor auth (TOTP)
+        MFA_ENABLED = "mfa_enabled", "MFA Enabled"
+        MFA_DISABLED = "mfa_disabled", "MFA Disabled"
+        MFA_FAILED = "mfa_failed", "MFA Verification Failed"
+        MFA_RESET_BY_ADMIN = "mfa_reset_by_admin", "MFA Reset by Admin"
+        MFA_ENROLLMENT_FORCED = "mfa_enrollment_forced", "MFA Enrollment Forced"
+        MFA_ENROLLMENT_COMPLETED = "mfa_enrollment_completed", "MFA Enrollment Completed"
 
     event_type = models.CharField(max_length=64, choices=EventType.choices, db_index=True)
 
@@ -359,3 +366,125 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.created_at} {self.username or 'system'} {self.event_type}"
+
+
+class MFADevice(TimestampedModel):
+    """A user's TOTP authenticator (RFC 6238), one per user.
+
+    The TOTP secret is a credential: in OpenBao-configured deployments it lives
+    in OpenBao at ``netpulse/mfa/{user_id}`` and ``secret_encrypted`` stays empty;
+    otherwise ``secret_encrypted`` holds a Fernet-encrypted copy. Never plaintext
+    in the DB, never returned by the API, never logged. Recovery codes are stored
+    hashed (PBKDF2) and are single-use. See apps.core.mfa.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_device")
+    mfa_enabled = models.BooleanField(default=False)
+    # Fernet-encrypted TOTP secret — only populated when OpenBao is unconfigured
+    # (dev/test). In production the secret is in OpenBao and this stays blank.
+    secret_encrypted = models.TextField(blank=True, default="")
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    # TOTP time-step of the last accepted code — replay guard (a code can't be
+    # reused within its validity window).
+    last_step = models.BigIntegerField(null=True, blank=True)
+    # [{"hash": <pbkdf2>, "used_at": <iso|None>}] — hashed, single-use.
+    recovery_codes = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"MFADevice<{self.user_id} enabled={self.mfa_enabled}>"
+
+    def _vault_path(self) -> str:
+        return f"netpulse/mfa/{self.user_id}"
+
+    # ── secret (OpenBao-primary, encrypted-DB fallback) ────────────────────
+    def set_secret(self, plaintext: str) -> None:
+        from apps.credentials import vault
+
+        from .mfa import encrypt_secret
+
+        if vault.vault_enabled():
+            vault.write_secret(self._vault_path(), {"totp_secret": plaintext})
+            self.secret_encrypted = ""
+        else:
+            self.secret_encrypted = encrypt_secret(plaintext)
+
+    def get_secret(self) -> str:
+        if self.secret_encrypted:
+            from .mfa import decrypt_secret
+
+            try:
+                return decrypt_secret(self.secret_encrypted)
+            except Exception:
+                return ""
+        from apps.credentials import vault
+
+        if vault.vault_enabled():
+            return vault.read_secret(self._vault_path()).get("totp_secret", "")
+        return ""
+
+    def clear(self) -> None:
+        """Reset to no-MFA and remove the secret from OpenBao (break-glass /
+        admin reset / user-disable). Caller saves."""
+        from apps.credentials import vault
+
+        self.mfa_enabled = False
+        self.secret_encrypted = ""
+        self.confirmed_at = None
+        self.last_step = None
+        self.recovery_codes = []
+        try:
+            if vault.vault_enabled():
+                vault.delete_secret(self._vault_path())
+        except Exception:
+            pass
+
+    # ── verification ───────────────────────────────────────────────────────
+    def verify_totp(self, code: str, *, record: bool = True, for_time=None) -> bool:
+        """Verify a TOTP code with skew window + replay guard.
+
+        When ``record`` (the default, used at the login second factor and on
+        disable), a valid code's time-step is remembered and any step ``<=`` it is
+        rejected as a replay; mutates ``last_step`` so the caller must save. The
+        confirm step passes ``record=False`` so it doesn't consume the step the
+        user will immediately log in with.
+        """
+        from . import mfa as mfamod
+
+        secret = self.get_secret()
+        if not secret:
+            return False
+        step = mfamod.matching_step(secret, code, for_time)
+        if step is None:
+            return False
+        if record:
+            if self.last_step is not None and step <= self.last_step:
+                return False  # replay of an already-consumed step
+            self.last_step = step
+        return True
+
+    def verify_recovery(self, code: str) -> bool:
+        """Consume a single-use recovery code. Mutates ``recovery_codes``; caller
+        saves."""
+        from django.utils import timezone
+
+        from . import mfa as mfamod
+
+        for entry in self.recovery_codes:
+            if entry.get("used_at"):
+                continue
+            if mfamod.verify_recovery_code(code, entry.get("hash", "")):
+                entry["used_at"] = timezone.now().isoformat()
+                return True
+        return False
+
+    def set_recovery_codes(self, plaintext_codes: list[str]) -> None:
+        from . import mfa as mfamod
+
+        self.recovery_codes = [
+            {"hash": mfamod.hash_recovery_code(c), "used_at": None} for c in plaintext_codes
+        ]
+
+    @property
+    def recovery_codes_remaining(self) -> int:
+        return sum(1 for e in self.recovery_codes if not e.get("used_at"))

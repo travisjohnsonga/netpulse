@@ -59,6 +59,13 @@ defusedxml~=0.7        # XXE/entity-expansion-safe XML parsing (apps.devices run
 requests~=2.32       # AOS-CX REST API client (apps.devices.aos_cx_client)
 Jinja2~=3.1
 
+# TOTP multi-factor auth (RFC 6238) for local password accounts (apps.core.mfa).
+# pyotp = the standard, audited TOTP lib; qrcode renders the provisioning QR as
+# an SVG data-URI (no Pillow needed). cryptography (Fernet, secret-at-rest) is
+# already present transitively via paramiko/hvac.
+pyotp~=2.9
+qrcode~=8.0
+
 # PDF evidence packages (apps.frameworks regulatory reports) — pure-Python, no system libs
 reportlab~=4.2
 
