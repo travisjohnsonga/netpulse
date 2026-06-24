@@ -1,2 +1,2 @@
 nats-py~=2.7
-redis~=5.0
+redis~=8.0
