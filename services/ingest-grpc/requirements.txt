@@ -1,4 +1,4 @@
-grpcio~=1.65
+grpcio~=1.81
 grpcio-tools~=1.65
 protobuf~=5.27
 nats-py~=2.7
