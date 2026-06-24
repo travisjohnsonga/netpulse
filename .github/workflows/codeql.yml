@@ -1,0 +1,62 @@
+name: CodeQL
+
+# Advanced (in-repo, version-controlled) CodeQL configuration.
+#
+# ⚠️ CONFLICTS WITH CODEQL "DEFAULT SETUP".
+# This repository currently runs CodeQL via *default setup* (configured in
+# Settings → Code security, no workflow file). GitHub will NOT process results
+# from this advanced workflow while default setup is enabled — the two are
+# mutually exclusive. Before this workflow does anything useful:
+#   1. Disable CodeQL default setup in Settings → Code security & analysis
+#      (Code scanning → "CodeQL analysis" → Default → switch off / to Advanced).
+#   2. THEN merge / run this workflow.
+# Do not merge ahead of step 1 or the main-branch run will error on upload.
+#
+# Triggers are deliberately scoped to push-to-main + weekly + manual so this
+# file does NOT run (and cannot conflict) on the pull request that introduces it.
+# Default setup keeps covering PRs until you switch. After switching, add
+# `pull_request: { branches: [main] }` here to restore PR-time scanning.
+#
+# Languages match what default setup analyzes today (verified via the
+# code-scanning/default-setup API): actions, go, javascript-typescript, python.
+# `build-mode: none` uses CodeQL's buildless extraction for every language, so no
+# Go/Node/Python toolchain or dependency install is required. The default query
+# suite mirrors default setup's `query_suite: default`.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '24 5 * * 1'   # Mondays 05:24 UTC (off-the-hour to avoid contention)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload SARIF to code scanning
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, go, javascript-typescript, python]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
