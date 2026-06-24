@@ -1,2 +1,2 @@
 nats-py~=2.7
-influxdb-client~=1.43
+influxdb-client~=1.50
