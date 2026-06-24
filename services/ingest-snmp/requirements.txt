@@ -3,7 +3,7 @@ pysnmp-lextudio>=4.4
 pyasn1>=0.6
 
 # Messaging
-nats-py~=2.7
+nats-py~=2.15
 
 # Secrets (OpenBao / HashiCorp Vault compatible)
 hvac~=2.1
