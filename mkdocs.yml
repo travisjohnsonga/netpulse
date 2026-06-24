@@ -17,6 +17,9 @@ nav:
   - Setup:
     - Deployment: setup/deployment.md
     - NAT Configuration: setup/nat.md
+  - Admin:
+    - Access Roles: admin/access-roles.md
+    - Backup & Restore: admin/backup.md
   - Agent:
     - Overview: agents/overview.md
     - Installation: agents/installation.md

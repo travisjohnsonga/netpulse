@@ -528,6 +528,29 @@ All components are open source with permissive licenses. Zero licensing landmine
 - HTTPS required for OAuth2 callbacks (already enforced by the frontend proxy).
 - Redirect URIs validated to prevent open redirects.
 
+### Authorization (RBAC)
+
+Authorization is **capability-based and deny-by-default** — not a fixed
+admin/engineer/viewer hierarchy. Access is expressed as a catalog of fine-grained
+`domain:action` **capabilities** (e.g. `device:edit`, `config:push`,
+`rbac:manage`); a **role** is a set of capabilities, and every API endpoint
+declares the capability it requires. An endpoint that declares none is denied, so
+a forgotten check fails closed rather than leaking access.
+
+- The capability catalog and seeded roles live in code
+  (`apps/core/capabilities.py`); the default DRF permission class is
+  `DenyByDefault` (`apps/core/permissions.py`).
+- Five **system roles** are seeded — `superadmin` (immutable), `admin`,
+  `engineer`, `api`, `viewer` — and operators can define **custom roles** with
+  any subset of capabilities, subject to an anti-escalation rule (you cannot
+  grant a capability you do not hold).
+- The legacy single `role` field is retained for back-compat, but authorization
+  is resolved from the user's assigned RBAC role.
+
+For the full security model see the **Security → Authorization (RBAC)** page; for
+the operator guide to creating and assigning roles, see
+[Admin → Access Roles](admin/access-roles.md).
+
 ### Credential Storage Pattern
 ```
 PostgreSQL (devices table):
@@ -1166,10 +1189,8 @@ No need to open a dashboard for quick health checks.
 ### Example Interaction
 Engineer: "@netpulse status of router-a"
 spane: 🟡 Router-A (WAN Edge | Datacenter-1)
-├── Uptime: 47 days
-├── CPU: 34% (normal)
-├── WAN Interface: 78% ⚠️ (trending to capacity)
-├── BGP Sessions: 3/3 up ✅
+├── Status: reachable
+├── CPU: 34% · Memory: 51%
 ├── CVE Exposure: 2 medium, 0 critical
 ├── Risk Score: 42/100 (moderate)
 
@@ -1177,12 +1198,18 @@ spane: 🟡 Router-A (WAN Edge | Datacenter-1)
 Microsoft Teams, Slack, Google Chat, Discord, Mattermost
 
 ### Query Types
-- Device/site status and health
-- Active alerts and incidents  
-- CVE exposure queries
-- EOL/lifecycle status
-- Capacity and bandwidth queries
-- Action commands (with approval workflow)
+The built-in intents (see the [operator guide](integrations/chatops.md#built-in-commands)
+for exact phrasings):
+- Device status and health
+- Device list (down / up / all, optionally scoped to a site)
+- Site status
+- Active alerts
+- CVE exposure
+- EOL / lifecycle status
+- Help
+
+Action commands (config push from chat, with an approval workflow) are **planned**
+— the current built-in intents are read-only queries.
 
 ### Architecture
 Thin chatops-service sits on top of Django API:
@@ -1190,7 +1217,8 @@ Thin chatops-service sits on top of Django API:
 - Intent parser maps natural language → API calls
 - Response formatter per platform
 - No business logic — pure translation layer
-- Optional Claude API integration for richer NLP
+- Optional NLP fallback for unmatched messages — self-hosted (Ollama) or a
+  hosted API (e.g. Anthropic Claude); off by default (`nlp_provider`)
 
 ### Proactive Notifications
 Push alerts to designated channels without being asked:
