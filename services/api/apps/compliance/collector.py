@@ -317,7 +317,7 @@ def _aos_cx_ssh_exec(device, profile, creds: dict, command: str,
             host, port=port, username=username, password=password,
             timeout=connect_timeout, look_for_keys=False, allow_agent=False,
         )
-        _stdin, stdout, _stderr = ssh.exec_command(command, timeout=exec_timeout)
+        _stdin, stdout, _stderr = ssh.exec_command(command, timeout=exec_timeout)  # nosec B601 — `command` is an internal constant ("show running-config"/"show startup-config"), never user input, and runs on the remote device's SSH server, not a local shell
         out = stdout.read().decode("utf-8", errors="replace")
         if not out.strip():
             raise ValueError("empty config returned")

@@ -344,7 +344,7 @@ class HealthCheckRunner:
         base = f"{scheme}://{host}:{port}"
         auth = (user, pw) if pw else None
         try:
-            h = requests.get(f"{base}/_cluster/health", auth=auth, timeout=5, verify=False)
+            h = requests.get(f"{base}/_cluster/health", auth=auth, timeout=5, verify=False)  # nosec B501 — OpenSearch is internal-only on the netpulse-net bridge with a self-signed cert; this is a local diagnostic probe, no secrets cross an untrusted network
             status = h.json().get("status")
             ok_health = status in ("green", "yellow")
             out = [ok(cat, "Reachable"),
@@ -354,12 +354,12 @@ class HealthCheckRunner:
             return [fail(cat, "Reachable", "HTTP 200", str(exc), "docker compose restart opensearch")]
         idx = "netpulse-healthcheck"
         try:
-            requests.put(f"{base}/{idx}/_doc/1", json={"v": "ok"}, auth=auth, timeout=5, verify=False)
-            requests.post(f"{base}/{idx}/_refresh", auth=auth, timeout=5, verify=False)
-            s = requests.get(f"{base}/{idx}/_doc/1", auth=auth, timeout=5, verify=False)
+            requests.put(f"{base}/{idx}/_doc/1", json={"v": "ok"}, auth=auth, timeout=5, verify=False)  # nosec B501 — internal-only OpenSearch over self-signed TLS (see _check_opensearch)
+            requests.post(f"{base}/{idx}/_refresh", auth=auth, timeout=5, verify=False)  # nosec B501 — internal-only OpenSearch over self-signed TLS
+            s = requests.get(f"{base}/{idx}/_doc/1", auth=auth, timeout=5, verify=False)  # nosec B501 — internal-only OpenSearch over self-signed TLS
             out.append(ok(cat, "Index + search") if s.status_code == 200 else
                        warn(cat, "Index + search", f"HTTP {s.status_code}"))
-            requests.delete(f"{base}/{idx}", auth=auth, timeout=5, verify=False)
+            requests.delete(f"{base}/{idx}", auth=auth, timeout=5, verify=False)  # nosec B501 — internal-only OpenSearch over self-signed TLS
         except Exception as exc:
             out.append(warn(cat, "Index + search", str(exc)))
         return out

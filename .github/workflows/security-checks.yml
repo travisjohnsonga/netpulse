@@ -4,7 +4,8 @@ name: Security checks
 #  - exception-exposure: dependency-free AST guard (also in the pytest suite
 #    tests/test_security.py::TestNoExceptionExposure and the pre-commit hook).
 #  - python-security-scan: pip-audit (dependency CVEs, BLOCKING) + bandit (static
-#    security lint, REPORT-ONLY against a committed baseline).
+#    security lint, BLOCKING at medium+ severity — every High/Medium finding is
+#    fixed or carries an inline justified `# nosec`).
 
 on:
   push:
@@ -12,13 +13,11 @@ on:
     paths:
       - 'services/api/**'
       - 'scripts/check_exception_exposure.py'
-      - '.bandit-baseline.json'
       - '.github/workflows/security-checks.yml'
   pull_request:
     paths:
       - 'services/api/**'
       - 'scripts/check_exception_exposure.py'
-      - '.bandit-baseline.json'
       - '.github/workflows/security-checks.yml'
 
 permissions:
@@ -54,13 +53,38 @@ jobs:
       - name: pip-audit (services/api dependencies)
         run: pip-audit -r services/api/requirements.txt --progress-spinner off
 
-      # REPORT-ONLY: services/api/apps currently has bandit findings (6 High /
-      # 5 Medium / 51 Low when this job was added — predominantly verify=False in
-      # the internal run_health_checks probe, the SSRF-guarded NetBox urlopen,
-      # and cert-parse try/except). They are grandfathered by .bandit-baseline.json,
-      # so this step passes today and surfaces only NEW findings; continue-on-error
-      # keeps it non-blocking until the baseline is triaged (then drop
-      # continue-on-error to make it a hard ratchet on regressions).
-      - name: bandit (services/api/apps, baselined, report-only)
-        continue-on-error: true
-        run: bandit -r services/api/apps -b .bandit-baseline.json
+      # BLOCKING at medium+ severity. Every High/Medium finding in
+      # services/api/apps has been triaged: each is either fixed or carries an
+      # inline `# nosec <id> — <justification>` (B310 urlopen guarded by
+      # net_safety.validate_outbound_url; B501 verify=False on internal-only
+      # OpenSearch; B601 paramiko exec_command with a constant command).
+      # The grandfathering baseline is removed, so the suppressions are explicit
+      # in code, not hidden in a file, and any NEW medium+ finding fails the build.
+      #
+      # --skip B507 (paramiko AutoAddPolicy: missing SSH host-key validation) is
+      # an explicit ACCEPTED RISK, not a silenced warning:
+      #   * spane collects config from multi-vendor network devices (switch/
+      #     router/firewall) over SSH. Their host keys are NOT pre-provisioned
+      #     into a managed known_hosts — distributing/maintaining per-device keys
+      #     across a discovery-driven, multi-vendor fleet is operationally
+      #     infeasible, and connections target operator-curated inventory devices
+      #     reachable only over the trusted, access-controlled management network.
+      #   * Residual risk = a first-connection MITM on the management plane. It is
+      #     accepted because that plane is trusted/segmented, device credentials
+      #     are per-device from OpenBao (not broadly reused), and this matches
+      #     standard network-automation tooling (netmiko/Ansible default to
+      #     auto-add). Pre-seeding host keys for every device/vendor is not viable
+      #     for the platform's model.
+      #   * The risk is reviewed/tracked by CodeQL
+      #     (py/paramiko-missing-host-key-validation, both instances dismissed
+      #     there). It is `--skip`-ped in bandit rather than inline-`# nosec`'d so
+      #     the suppression edit doesn't re-fingerprint and re-open that dismissed
+      #     CodeQL alert.
+      #
+      # Low-severity findings (try/except/pass best-effort handlers, "password"-
+      # substring string constants that are field names not secrets, parameterized
+      # shell-free subprocess) are surfaced by a full `bandit -r services/api/apps`
+      # scan but excluded from the gate by the severity threshold as
+      # low-risk / false-positive-heavy.
+      - name: bandit (services/api/apps, blocking, medium+)
+        run: bandit -r services/api/apps --severity-level medium --skip B507
