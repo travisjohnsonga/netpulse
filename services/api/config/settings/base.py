@@ -374,6 +374,22 @@ MFA_REQUIRED_FOR_CAPABILITIES = [
 MFA_REQUIRED_FOR_ALL_LOCAL = os.environ.get(
     "MFA_REQUIRED_FOR_ALL_LOCAL", "false").lower() == "true"
 
+# ── Compliance framework scope ────────────────────────────────────────────────
+# Which regulatory frameworks THIS environment is actually subject to. Frameworks
+# outside this scope are excluded from EVERY compliance surface (API, /compliance
+# page, TV/NOC screen, fleet-coverage averages, "N frameworks" counts, and PDF
+# evidence) so a framework you aren't subject to can never read as failing/partial/
+# non-compliant to a compliance/audit/management viewer. Comma-separated framework
+# keys (see apps.frameworks.models.RegulatoryFramework.Key:
+# sox, iso27001, nist_csf, pci_dss, hipaa, cis). UNSET/empty = ALL frameworks
+# apply (back-compat — you opt INTO scoping). Operator-controlled here (env), not a
+# web toggle, so compliance scope can't be changed casually from the UI; restart
+# to apply. See apps.frameworks.scope.
+APPLICABLE_COMPLIANCE_FRAMEWORKS = [
+    k.strip().lower() for k in os.environ.get(
+        "APPLICABLE_COMPLIANCE_FRAMEWORKS", "").split(",") if k.strip()
+]
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
