@@ -17,6 +17,7 @@ nav:
   - Security:
     - Overview: security/overview.md
     - Authentication: security/authentication.md
+    - Multi-Factor Authentication: security/mfa.md
     - Authorization (RBAC): security/authorization.md
     - Secrets Management: security/secrets.md
     - Transport & Hardening: security/transport-and-hardening.md

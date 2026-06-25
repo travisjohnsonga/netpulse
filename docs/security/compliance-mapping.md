@@ -12,9 +12,9 @@ it here.
     Every row is **Met / Partial / Gap** based on what the code actually does,
     verified against the source — not aspiration. A control spane does not fully
     satisfy is marked **Partial** or **Gap**, with the specific shortfall named in
-    the row. The platform-level gaps already documented in this section (no MFA,
-    no JWT refresh-token revocation, no Content-Security-Policy, npm-only
-    Dependabot, etc.) appear here against the controls they affect.
+    the row. The platform-level gaps already documented in this section (no JWT
+    refresh-token revocation, no Content-Security-Policy, etc.) appear here
+    against the controls they affect.
 
 **Scope.** This maps the spane *platform's own* security posture (its ISMS
 controls), not spane's product features that help customers meet controls.
@@ -34,9 +34,9 @@ controls), not spane's product features that help customers meet controls.
 | **A.5.14** Information transfer | **Partial** | TLS 1.3 at the edge; mutual TLS for agent ingestion; secure/`SameSite` cookies; credentials only ever move via OpenBao. **Accepted-risk gap:** SSH to managed devices does not validate host keys (paramiko `AutoAddPolicy`) — a first-connection MITM exposure, accepted because host keys aren't pre-provisioned across a multi-vendor fleet and the management plane is trusted/segmented with per-device OpenBao creds (see [Supply Chain](supply-chain.md) for the full rationale). | `services/frontend/nginx.conf:27` (`ssl_protocols TLSv1.3`); `config/settings/production.py` cookie flags; SSH host-key risk in `apps/compliance/collector.py` (CodeQL `py/paramiko-missing-host-key-validation`); [Transport & Hardening](transport-and-hardening.md); agent mTLS in [Agent → Security](../agents/security.md). |
 | **A.5.15** Access control | **Met** | Capability-based RBAC; deny-by-default permission class; 5 system roles + custom roles. | `apps/core/capabilities.py` (`ALL_CAPABILITIES`, 54 caps); `apps/core/permissions.py:135` (`DenyByDefault`); `tests/test_rbac_capabilities.py`; [Authorization](authorization.md). |
 | **A.5.18** Access rights (provisioning / review / revocation) | **Partial** | Roles assigned/changed via API + UI with anti-escalation; revocation by role change/deactivate; SSO new users default to `viewer`. **Gap:** no periodic access recertification/review workflow. | `apps/core/rbac_views.py`; `apps/core/views.py` (`UserViewSet.assign_rbac_role`); UI `/settings/access-roles`; [Admin → Access Roles](../admin/access-roles.md). |
-| **A.8.2** Privileged access rights | **Partial** | Privileged actions gated by `rbac:manage`; `superadmin` role immutable + non-deletable; last-admin lockout guard; anti-escalation. **Gap:** no MFA on privileged accounts, no just-in-time elevation or privileged-session recording (see A.8.5). | `apps/core/models.py` (`RBACRole.save/delete` guards); `apps/core/rbac_views.py`; `apps/core/views.py` (last-admin guards). |
+| **A.8.2** Privileged access rights | **Partial** | Privileged actions gated by `rbac:manage`; `superadmin` role immutable + non-deletable; last-admin lockout guard; anti-escalation; **MFA is required for privileged local accounts** (`MFA_REQUIRED_FOR_CAPABILITIES`, forced enrollment — see [Multi-Factor Authentication](mfa.md)). **Gap:** no just-in-time elevation or privileged-session recording. | `apps/core/models.py` (`RBACRole.save/delete` guards); `apps/core/rbac_views.py`; `apps/core/views.py` (last-admin guards); `apps/core/mfa.py`. |
 | **A.8.3** Information access restriction | **Met** | Every endpoint declares a required capability (`HasCapability`); `DenyByDefault` fails closed; secret fields are write-only and never returned. | `apps/core/permissions.py:112` (`HasCapability`); `apps/credentials/serializers.py` (`write_only`); [Authorization](authorization.md), [Secrets](secrets.md). |
-| **A.8.5** Secure authentication | **Partial** | JWT (SimpleJWT, HS256); Django password validators + complexity rules + forced first-login change; SSO (Google/Azure/Okta/GitHub) minting the same JWT. **Gap:** no MFA; refresh tokens are not rotated and there is no blacklist/revocation (`ROTATE_REFRESH_TOKENS=False`, 7-day refresh validity). | `config/settings/base.py:348-350` (`SIMPLE_JWT`), `AUTH_PASSWORD_VALIDATORS`; `apps/sso/`; [Authentication](authentication.md). |
+| **A.8.5** Secure authentication | **Partial** | JWT (SimpleJWT, HS256); Django password validators + complexity rules + forced first-login change; SSO (Google/Azure/Okta/GitHub) minting the same JWT; **TOTP MFA for local accounts** (RFC 6238; required for privileged accounts — see [Multi-Factor Authentication](mfa.md)). **Gap:** refresh tokens are not rotated and there is no blacklist/revocation (`ROTATE_REFRESH_TOKENS=False`, 7-day refresh validity). | `config/settings/base.py:348-350` (`SIMPLE_JWT`), `AUTH_PASSWORD_VALIDATORS`; `apps/sso/`; `apps/core/mfa.py`; [Authentication](authentication.md). |
 | **A.8.8** Management of technical vulnerabilities | **Partial** | Dependabot (weekly) covers npm, backend `pip` (api + each ingest/stream service), and GitHub Actions; `pip-audit` blocks known-CVE backend dependencies in CI; `bandit` (medium+) blocks new SAST findings; CodeQL static analysis runs via GitHub default setup (python/JavaScript-TypeScript/go/actions). **Gap:** `pip-audit` blocks `services/api` only (ingest-service deps are Dependabot-tracked but not CI-blocked); no container-image scanning (trivy/docker scout) or secret scanning (gitleaks). | `.github/dependabot.yml`; `.github/workflows/security-checks.yml` (`python-security-scan`); CodeQL default setup; [Supply Chain](supply-chain.md). |
 | **A.8.9** Configuration management | **Partial** | Production settings module hardening (HSTS, SSL redirect, secure cookies, `nosniff`, proxy-SSL header); device config templating + drift detection; `ALLOW_CONFIG_PUSH` defaults false. **Gap:** no Content-Security-Policy; `CSRF_COOKIE_HTTPONLY` and an explicit Django `X_FRAME_OPTIONS` are not set (nginx sets `X-Frame-Options`/HSTS). | `config/settings/production.py`; `apps/config_templates/`; [Transport & Hardening](transport-and-hardening.md). |
 | **A.8.15** Logging | **Met** | `AuditLog` (~46 event types, indexed); `log_event` captures actor/IP/user-agent/target; sensitive metadata keys redacted; configurable retention + scheduled purge. | `apps/core/models.py:256` (`AuditLog`); `apps/core/audit.py` (`log_event`, `scrub_sensitive`); `tests/test_audit.py`; [Audit Logging](audit-logging.md). |
@@ -60,9 +60,9 @@ honest, granular shortfalls are the **measures that are entirely absent**, which
 sit *inside* the Partial controls and are listed plainly here so a reviewer can
 see them without reading every row:
 
-- **Multi-factor authentication** — not implemented anywhere (A.8.5 / A.8.2).
 - **JWT refresh-token revocation/blacklist** — none; a refresh token is valid for
-  its full 7-day life (A.8.5).
+  its full 7-day life (A.8.5). (TOTP MFA *is* now implemented — see
+  [Multi-Factor Authentication](mfa.md).)
 - **SSH device host-key validation** — not performed; an explicit accepted risk
   (A.5.14).
 - **Real-time monitoring/alerting on the platform's own audit trail** — only
@@ -103,7 +103,8 @@ final administrator. Role/permission changes are audit-logged.
 - **Evidence:** `apps/core/capabilities.py`, `apps/core/permissions.py`,
   `apps/core/rbac_views.py` (`_check_escalation`), `tests/test_rbac_capabilities.py`,
   AuditLog `user_role_changed` events.
-- **Caveat:** no MFA on privileged accounts (see ISO A.8.2 / A.8.5).
+- **Note:** MFA is required for privileged local accounts (see ISO A.8.2 / A.8.5
+  and [Multi-Factor Authentication](mfa.md)).
 
 ### (b) Change management
 

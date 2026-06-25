@@ -14,8 +14,8 @@ not fully satisfied are shown as **Partial** or **Roadmap**, not inflated.
 | Domain | Status | Summary |
 |--------|--------|---------|
 | Access control & authorization | **Strong** | Capability-based RBAC, deny-by-default enforcement, anti-escalation guardrail (can't grant what you don't hold). |
-| Authentication | **Partial** | JWT + SSO + forced first-login change; **no MFA, no token revocation/blacklist**. |
-| Privileged access | **Partial** | Immutable superadmin, last-admin lockout guard; **no MFA / just-in-time elevation**. |
+| Authentication | **Partial** | JWT + SSO + forced first-login change + **TOTP MFA** (local accounts); **no token revocation/blacklist**. |
+| Privileged access | **Partial** | Immutable superadmin, last-admin lockout guard, **required MFA for privileged accounts**; no just-in-time elevation. |
 | Cryptography & secrets | **Strong** | OpenBao for all secrets with a fail-closed least-privilege AppRole; TLS 1.3; per-agent PKI. |
 | Transport & config hardening | **Partial** | TLS 1.3, HSTS, secure cookies, `nosniff`; **no Content-Security-Policy / some headers unset**; **SSH-to-device host keys not validated** (accepted risk). |
 | Logging & audit | **Strong** | Indexed `AuditLog`, sensitive-value redaction, configurable retention + purge. |
@@ -33,14 +33,13 @@ These are the honest top-level shortfalls. Each maps to a Partial control in the
 [detailed mapping](compliance-mapping.md), so the list doubles as a
 framework-anchored hardening backlog:
 
-1. **Multi-factor authentication** — not implemented (auth + privileged access; ISO A.8.5 / A.8.2).
-2. **JWT refresh-token revocation/blacklist** — none; refresh tokens stay valid for 7 days (A.8.5).
-3. **SSH device host-key validation** — not performed; accepted risk (first-connection MITM on the trusted management network) (A.5.14).
-4. **Content-Security-Policy and some Django security headers** (`CSRF_COOKIE_HTTPONLY`, explicit `X_FRAME_OPTIONS`) — not set; nginx supplies `X-Frame-Options` + HSTS (A.8.9).
-5. **Container-image and secret scanning** (trivy / gitleaks) — not in CI; ingest-service deps are Dependabot-tracked but not `pip-audit`-blocked (A.8.8 / A.8.25).
-6. **Periodic access recertification / review workflow** — not implemented (A.5.18).
-7. **Real-time monitoring/alerting on the platform's own audit trail** — report-based only (A.8.16).
-8. **Privileged-session recording / just-in-time elevation** — not implemented (A.8.2).
+1. **JWT refresh-token revocation/blacklist** — none; refresh tokens stay valid for 7 days (A.8.5). *(TOTP MFA is now implemented — see [Multi-Factor Authentication](mfa.md).)*
+2. **SSH device host-key validation** — not performed; accepted risk (first-connection MITM on the trusted management network) (A.5.14).
+3. **Content-Security-Policy and some Django security headers** (`CSRF_COOKIE_HTTPONLY`, explicit `X_FRAME_OPTIONS`) — not set; nginx supplies `X-Frame-Options` + HSTS (A.8.9).
+4. **Container-image and secret scanning** (trivy / gitleaks) — not in CI; ingest-service deps are Dependabot-tracked but not `pip-audit`-blocked (A.8.8 / A.8.25).
+5. **Periodic access recertification / review workflow** — not implemented (A.5.18).
+6. **Real-time monitoring/alerting on the platform's own audit trail** — report-based only (A.8.16).
+7. **Privileged-session recording / just-in-time elevation** — not implemented (A.8.2).
 
 ## SOX-aligned ITGCs
 
