@@ -9,6 +9,11 @@ with evidence pointers for an auditor, is in the
 Every status below reflects what the code actually does today — controls that are
 not fully satisfied are shown as **Partial** or **Roadmap**, not inflated.
 
+> Which frameworks an environment is *subject to* is an operator decision. Scope
+> the visible frameworks to the ones that apply with
+> [`APPLICABLE_COMPLIANCE_FRAMEWORKS`](../compliance/applicable-frameworks.md) so
+> a framework you aren't subject to never reads as failing.
+
 ## Control domains at a glance
 
 | Domain | Status | Summary |

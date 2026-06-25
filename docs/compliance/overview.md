@@ -71,7 +71,10 @@ already collects onto common framework controls and generates a **PDF evidence
 package** for auditors.
 
 Frameworks: **SOX (ITGC)**, **ISO/IEC 27001**, **NIST CSF 2.0**, **PCI-DSS 4.0**,
-**HIPAA Security Rule**, **CIS Controls v8**.
+**HIPAA Security Rule**, **CIS Controls v8**. Scope these to the frameworks your
+environment is actually subject to — see
+[Applicable Frameworks](applicable-frameworks.md) — so out-of-scope frameworks
+never read as failing to a compliance/audit viewer.
 
 Each control is mapped to an evidence collector that inspects live data (asset
 inventory, config compliance, backups, change audit, running/startup, CVEs, OS

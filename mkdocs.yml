@@ -43,6 +43,7 @@ nav:
     - FortiOS: platforms/fortios.md
   - Compliance:
     - Overview: compliance/overview.md
+    - Applicable Frameworks (scope): compliance/applicable-frameworks.md
     - Interface & Role Rules: compliance/interface-rules.md
   - Reports: reports.md
   - Metrics & Alerting: metrics-and-alerting.md

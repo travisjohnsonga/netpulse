@@ -8,6 +8,11 @@ It builds on the [Security](overview.md) section — each row cites the relevant
 detail page and the code that implements the control, rather than re-explaining
 it here.
 
+Scope the frameworks an environment is held to with
+[`APPLICABLE_COMPLIANCE_FRAMEWORKS`](../compliance/applicable-frameworks.md);
+frameworks outside that scope are excluded from the live `/compliance` surfaces
+and evidence exports so they never read as failing.
+
 !!! warning "Honesty rule"
     Every row is **Met / Partial / Gap** based on what the code actually does,
     verified against the source — not aspiration. A control spane does not fully
