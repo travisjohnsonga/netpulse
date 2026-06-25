@@ -13,16 +13,16 @@ It writes the login-success / login-failed audit records.
 """
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from . import mfa
 from .audit import log_event
+from .client_ip import TrustedProxyScopedRateThrottle
 from .models import AuditLog
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyScopedRateThrottle]
     throttle_scope = "auth"
 
     def post(self, request, *args, **kwargs):
@@ -76,5 +76,5 @@ class ThrottledTokenObtainPairView(TokenObtainPairView):
 
 
 class ThrottledTokenRefreshView(TokenRefreshView):
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyScopedRateThrottle]
     throttle_scope = "auth"

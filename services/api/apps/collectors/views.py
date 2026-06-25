@@ -20,8 +20,8 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 
+from apps.core.client_ip import TrustedProxyScopedRateThrottle, get_client_ip
 from apps.core.permissions import CapabilityViewSetMixin
 from apps.devices.serializers import DeviceListSerializer
 
@@ -64,7 +64,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     def get_throttles(self):
         # Brute-force guard on the unauthenticated bootstrap endpoints.
         if self.action in ("enroll", "heartbeat"):
-            t = ScopedRateThrottle()
+            t = TrustedProxyScopedRateThrottle()
             t.scope = "auth"
             return [t]
         return super().get_throttles()
@@ -118,10 +118,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                 setattr(candidate, field, str(request.data[field])[:255])
         if isinstance(request.data.get("capabilities"), dict):
             candidate.capabilities = request.data["capabilities"]
-        candidate.remote_ip = (
-            request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-            or request.META.get("REMOTE_ADDR")
-        )
+        candidate.remote_ip = get_client_ip(request)
         candidate.save()
 
         # mTLS cert — best-effort; collector is cert-pending if PKI isn't up yet.
@@ -155,10 +152,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
             collector.version = str(request.data["version"])[:50]
         if isinstance(request.data.get("capabilities"), dict):
             collector.capabilities = request.data["capabilities"]
-        collector.remote_ip = (
-            request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-            or request.META.get("REMOTE_ADDR")
-        )
+        collector.remote_ip = get_client_ip(request)
         collector.save(update_fields=[
             "last_seen_at", "status", "version", "capabilities", "remote_ip", "updated_at",
         ])

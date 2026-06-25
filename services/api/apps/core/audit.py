@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+from .client_ip import get_client_ip
+
 logger = logging.getLogger(__name__)
 
 # Metadata keys whose values are credentials and must never be persisted in
@@ -123,13 +125,13 @@ def describe_changes(name: str, changes: list[dict]) -> str:
 
 
 def client_ip(request) -> str | None:
-    """Best client IP from a request, honouring X-Forwarded-For (first hop)."""
-    if not request:
-        return None
-    fwd = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if fwd:
-        return fwd.split(",")[0].strip() or None
-    return request.META.get("REMOTE_ADDR") or None
+    """Best client IP from a request — spoof-resistant, honouring NUM_PROXIES.
+
+    Delegates to the single shared derivation so the IP stamped into audit logs /
+    failed-login records is the same trusted hop the throttle keys on (see
+    ``apps.core.client_ip``). A forged leading X-Forwarded-For entry is ignored.
+    """
+    return get_client_ip(request)
 
 
 def log_event(
