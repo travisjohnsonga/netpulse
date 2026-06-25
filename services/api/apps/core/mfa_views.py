@@ -17,12 +17,12 @@ from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from . import mfa
 from .audit import log_event
+from .client_ip import TrustedProxyScopedRateThrottle
 from .models import AuditLog, MFADevice
 from .serializers import NetPulseTokenObtainPairSerializer
 
@@ -198,7 +198,7 @@ class MFATokenView(APIView):
     # challenge_token is validated in the view below.
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [TrustedProxyScopedRateThrottle]
     throttle_scope = "auth"
 
     def post(self, request):
