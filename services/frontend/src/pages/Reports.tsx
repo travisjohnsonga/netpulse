@@ -51,7 +51,7 @@ export default function Reports() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Reports</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400">Generate on-demand reports or schedule recurring email delivery.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Generate &amp; download on-demand reports, or schedule recurring delivery (email or store-only).</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -493,19 +493,23 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
   const [hour, setHour] = useState(8)
   const [dayOfWeek, setDayOfWeek] = useState(0)
   const [fmt, setFmt] = useState(def.formats[0])
+  const [delivery, setDelivery] = useState<'email' | 'store_only' | 'both'>('email')
   const [recipients, setRecipients] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  const emailNeeded = delivery === 'email' || delivery === 'both'
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['report-schedules', def.endpoint] })
 
   const save = async () => {
     const list = recipients.split(',').map((s) => s.trim()).filter(Boolean)
-    if (list.length === 0) { setErr('Add at least one recipient email.'); return }
+    if (emailNeeded && list.length === 0) { setErr('Add at least one recipient email.'); return }
     setBusy(true); setErr(null)
     try {
       await createReportSchedule(def.endpoint, {
-        frequency, hour, day_of_week: dayOfWeek, fmt, recipients: list,
+        frequency, hour, day_of_week: dayOfWeek, fmt, delivery,
+        recipients: emailNeeded ? list : [],
       })
       refresh(); onDone()
     } catch {
@@ -547,9 +551,23 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Email recipients (comma-separated)</label>
-          <input className={inputCls} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="admin@company.com, noc@company.com" />
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Delivery</label>
+          <select className={inputCls} value={delivery}
+            onChange={(e) => setDelivery(e.target.value as 'email' | 'store_only' | 'both')}>
+            <option value="email">Email</option>
+            <option value="store_only">Store only (download from history)</option>
+            <option value="both">Email + Store</option>
+          </select>
+          {delivery === 'store_only' && (
+            <p className="text-xs text-gray-400 mt-1">Generated and saved to Recent Reports — no email sent.</p>
+          )}
         </div>
+        {emailNeeded && (
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Email recipients (comma-separated)</label>
+            <input className={inputCls} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="admin@company.com, noc@company.com" />
+          </div>
+        )}
         {err && <p className="text-xs text-red-600">{err}</p>}
         <button onClick={save} disabled={busy} className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {busy ? 'Saving…' : 'Save Schedule'}
@@ -562,7 +580,11 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
               {schedQ.data!.map((s: ReportScheduleRow) => (
                 <li key={s.id} className="flex items-center justify-between text-sm">
                   <span className="text-gray-700 dark:text-gray-300">
-                    {s.frequency} @ {String(s.hour).padStart(2, '0')}:00 · {s.fmt.toUpperCase()} → {s.recipients.join(', ')}
+                    {s.frequency} @ {String(s.hour).padStart(2, '0')}:00 · {s.fmt.toUpperCase()}
+                    {' → '}
+                    {s.delivery === 'store_only'
+                      ? 'Store only'
+                      : `${s.delivery === 'both' ? 'Store + email ' : 'Email '}${s.recipients.join(', ')}`}
                   </span>
                   <button onClick={() => remove(s.id)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>
                 </li>
