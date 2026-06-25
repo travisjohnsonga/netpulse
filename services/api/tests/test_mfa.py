@@ -272,3 +272,70 @@ def test_disable_requires_valid_code(django_user_model):
     assert r.status_code == 200 and r.data["mfa_enabled"] is False
     assert MFADevice.objects.get(user=user).mfa_enabled is False
     assert AuditLog.objects.filter(event_type="mfa_disabled", user=user).exists()
+
+
+# ── CSRF / session-auth isolation on the pre-JWT MFA endpoints (the fix) ──────
+def test_pre_jwt_mfa_endpoints_drop_session_authentication():
+    """setup/confirm/token-mfa must not run SessionAuthentication — it would
+    enforce CSRF for any request that arrives with an authenticated session
+    cookie, breaking header-token / pre-JWT auth (the forced-enrollment bug)."""
+    from rest_framework.authentication import SessionAuthentication
+    from apps.core.mfa_views import MFAConfirmView, MFASetupView, MFATokenView
+    for view in (MFASetupView, MFAConfirmView, MFATokenView):
+        assert SessionAuthentication not in view.authentication_classes
+
+
+def test_forced_enrollment_works_with_session_present_and_csrf_enforced(django_user_model):
+    """Reproduces the bug condition: an authenticated session cookie is present and
+    CSRF is enforced, but the request carries ONLY the enrollment token (no Bearer,
+    no CSRF token). Before the fix SessionAuthentication enforced CSRF → 403; now
+    the session is ignored and the enrollment token authorizes setup/confirm."""
+    bystander = _make_user(django_user_model, "bystander", role="viewer")  # holds a live session
+    user = _make_user(django_user_model, "wadmin", role="admin")           # privileged → forced
+    enr = APIClient().post("/api/auth/token/", {"username": "wadmin", "password": PW},
+                           format="json").data["enrollment_token"]
+
+    csrf = APIClient(enforce_csrf_checks=True)
+    csrf.force_login(bystander)  # authenticated session cookie, NO CSRF token, NO Bearer
+    setup = csrf.post("/api/auth/mfa/setup/", {}, format="json", HTTP_X_MFA_ENROLLMENT_TOKEN=enr)
+    assert setup.status_code == 200, setup.data
+    confirm = csrf.post("/api/auth/mfa/confirm/",
+                        {"code": _current_code(setup.data["secret"]), "enrollment_token": enr}, format="json")
+    assert confirm.status_code == 200, confirm.data
+    assert "tokens" in confirm.data
+    assert MFADevice.objects.get(user=user).mfa_enabled is True
+    # the bystander's session never became the acting user
+    assert MFADevice.objects.filter(user=bystander, mfa_enabled=True).count() == 0
+
+
+def test_challenge_redemption_works_with_session_and_csrf_enforced(django_user_model):
+    user = _make_user(django_user_model, "wuser")
+    secret, _ = _enroll(user)
+    ch = APIClient().post("/api/auth/token/", {"username": "wuser", "password": PW},
+                          format="json").data["challenge_token"]
+    csrf = APIClient(enforce_csrf_checks=True)
+    csrf.force_login(_make_user(django_user_model, "bystander2", role="viewer"))
+    r = csrf.post("/api/auth/token/mfa/", {"challenge_token": ch, "code": _current_code(secret)}, format="json")
+    assert r.status_code == 200 and "access" in r.data
+
+
+def test_setup_still_rejects_without_enrollment_token_under_csrf(django_user_model):
+    """Removing SessionAuth removed CSRF, NOT the token gate: with only a session
+    (no JWT, no enrollment token) the endpoint still denies."""
+    csrf = APIClient(enforce_csrf_checks=True)
+    csrf.force_login(_make_user(django_user_model, "bystander3", role="viewer"))
+    assert csrf.post("/api/auth/mfa/setup/", {}, format="json").status_code in (401, 403)
+    assert csrf.post("/api/auth/mfa/setup/", {}, format="json",
+                     HTTP_X_MFA_ENROLLMENT_TOKEN="garbage").status_code in (401, 403)
+
+
+def test_voluntary_enroll_works_under_csrf_with_jwt(django_user_model):
+    """The logged-in (Bearer JWT) path is unaffected — JWTAuthentication wins, no CSRF."""
+    from rest_framework_simplejwt.tokens import RefreshToken
+    user = _make_user(django_user_model, "voluser")
+    c = APIClient(enforce_csrf_checks=True)
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(user).access_token}")
+    s = c.post("/api/auth/mfa/setup/", {}, format="json")
+    assert s.status_code == 200, s.data
+    r = c.post("/api/auth/mfa/confirm/", {"code": _current_code(s.data["secret"])}, format="json")
+    assert r.status_code == 200 and r.data["mfa_enabled"] is True
