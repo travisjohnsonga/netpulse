@@ -11,6 +11,17 @@ from apps.frameworks.models import FrameworkControl, RegulatoryFramework
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _unscoped_by_default(settings):
+    """Pin the applicable-frameworks scope to UNSET (= all frameworks apply) for
+    every test in this module, so the suite is deterministic regardless of the
+    host's ambient APPLICABLE_COMPLIANCE_FRAMEWORKS (e.g. a lab scoped to
+    ``sox,iso27001`` would otherwise break the "unset = all 6" baseline tests).
+    Scoping tests override this explicitly via override_settings / scoped_sox_iso.
+    """
+    settings.APPLICABLE_COMPLIANCE_FRAMEWORKS = []
+
+
 @pytest.fixture
 def seeded():
     from django.core.management import call_command
