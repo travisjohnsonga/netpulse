@@ -22,8 +22,15 @@ func CollectDisk() ([]DiskStat, error) {
 		if drives&(1<<uint(i)) == 0 {
 			continue
 		}
-		drive := string(rune('A'+i)) + `:\`
-		drivePtr, err := syscall.UTF16PtrFromString(drive)
+		// root ("C:\") is required by the Win32 calls; the EMITTED mount is "C:"
+		// (no trailing backslash). A trailing "\" in an InfluxDB tag value escapes
+		// the line-protocol delimiter on write, mangling "C:\" → "C: " (trailing
+		// space). Emitting "C:" stores cleanly and matches what operators type in
+		// exclude_mounts. (normalizeMount strips trailing slashes anyway, so
+		// include/exclude matching is unaffected.)
+		root := string(rune('A'+i)) + `:\`
+		mount := string(rune('A'+i)) + ":"
+		drivePtr, err := syscall.UTF16PtrFromString(root)
 		if err != nil {
 			continue
 		}
@@ -39,7 +46,7 @@ func CollectDisk() ([]DiskStat, error) {
 		}
 		used := totalBytes - totalFree
 		stats = append(stats, DiskStat{
-			Mount: drive, Device: drive,
+			Mount: mount, Device: mount,
 			TotalBytes: totalBytes, UsedBytes: used, FreeBytes: totalFree,
 			UsagePct: float64(used) / float64(totalBytes) * 100,
 		})
