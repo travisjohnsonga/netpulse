@@ -45,6 +45,21 @@ def install_script(request):
     return HttpResponse(body, content_type="text/plain; charset=utf-8")
 
 
+def install_script_ps1(request):
+    """Serve agent/scripts/install.ps1 as plain text for the Windows installer.
+
+    The Windows enrollment one-liner fetches this with `curl.exe` and runs it via
+    PowerShell. Parallel to install_script; served as text/plain so curl saves the
+    real script (not a download prompt)."""
+    path = os.path.join(settings.AGENT_DIR, "scripts", "install.ps1")
+    try:
+        with open(path, "rb") as fh:
+            body = fh.read()
+    except OSError as exc:
+        raise Http404("install script not available") from exc
+    return HttpResponse(body, content_type="text/plain; charset=utf-8")
+
+
 def download_binary(request, platform):
     """Serve a prebuilt agent binary from AGENT_DIR/dist for the given platform."""
     entry = _BINARIES.get(platform)
