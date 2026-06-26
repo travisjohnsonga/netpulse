@@ -4,7 +4,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenVerifyView
 
-from apps.agents.download_views import download_binary, install_script
+from apps.agents.download_views import download_binary, install_script, install_script_ps1
 from apps.core.throttled_auth import ThrottledTokenObtainPairView, ThrottledTokenRefreshView
 from apps.core.views import (
     AuditRetentionView, HostnameDisplayView, LldpSettingsView, SystemSettingsView,
@@ -74,6 +74,7 @@ urlpatterns = [
 
     # ── NetPulse Agent install script + binary downloads (public, top-level) ──
     path("agent/install", install_script, name="agent-install"),
+    path("agent/install.ps1", install_script_ps1, name="agent-install-ps1"),
     path("agent/download/<str:platform>", download_binary, name="agent-download"),
 
     # ── OpenAPI ───────────────────────────────────────────────────────────────
