@@ -65,7 +65,7 @@ func (a *Agent) Run() error {
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 
-	a.applyLogConfig() // start security-log forwarding from the persisted config
+	a.applyLogConfig()  // start security-log forwarding from the persisted config
 	a.collect(hostname) // prime collectors + first sample
 	a.maybeReschedule(ticker, &interval)
 	for {
@@ -128,8 +128,13 @@ func (a *Agent) collect(hostname string) {
 			metrics["services"] = names
 		}
 	}
+	// os_name/os_version/kernel are ADDITIONAL display detail; runtime.GOOS stays
+	// the os_family the agent + server branch on. Sent on every push so an
+	// in-place OS upgrade self-corrects (the server refreshes from this).
+	osInfo := collector.CollectOSInfo()
 	metrics["system"] = map[string]interface{}{
 		"hostname": hostname, "os": runtime.GOOS, "arch": runtime.GOARCH,
+		"os_name": osInfo.Name, "os_version": osInfo.Version, "kernel": osInfo.Kernel,
 		"go_version": runtime.Version(),
 	}
 

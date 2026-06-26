@@ -149,7 +149,15 @@ class Agent(TimestampedModel):
         "devices.Device", null=True, blank=True,
         on_delete=models.SET_NULL, related_name="agent",
     )
+    # os is the os_family (the agent's runtime.GOOS: "linux"/"windows") — the
+    # code branches on it (role checks, config paths). os_name/os_version/
+    # os_kernel are ADDITIONAL human-facing detail collected from the host
+    # (/etc/os-release PRETTY_NAME, Windows ProductName, uname -r). All blank for
+    # agents predating OS-detail, so the serializer/UI fall back to os.
     os = models.CharField(max_length=64, blank=True)
+    os_name = models.CharField(max_length=128, blank=True)
+    os_version = models.CharField(max_length=64, blank=True)
+    os_kernel = models.CharField(max_length=128, blank=True)
     arch = models.CharField(max_length=32, blank=True)
     version = models.CharField(max_length=32, blank=True)
     cert_serial = models.CharField(max_length=128, blank=True, db_index=True)

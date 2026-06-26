@@ -258,7 +258,7 @@ export default function Agents() {
               {agents.map((a) => (
                 <tr key={a.id} className="text-gray-700 dark:text-gray-300">
                   <td className="px-3 py-2 font-medium">{a.hostname}</td>
-                  <td className="px-3 py-2">{a.os} {a.arch}</td>
+                  <td className="px-3 py-2">{a.os_name ? `${a.os_name} · ${a.arch}` : `${a.os} ${a.arch}`}</td>
                   <td className="px-3 py-2">{a.version || '—'}</td>
                   <td className="px-3 py-2">{a.role_types.join(', ') || '—'}</td>
                   <td className="px-3 py-2"><span className={statusDot(a.status)} />{a.status}</td>

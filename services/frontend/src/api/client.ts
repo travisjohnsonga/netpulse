@@ -1413,6 +1413,9 @@ export interface Agent {
   device_id: number | null
   site_name: string | null
   os: string
+  os_name?: string
+  os_version?: string
+  os_kernel?: string
   arch: string
   version: string
   cert_serial: string
@@ -1489,7 +1492,9 @@ export interface Server {
   id: string
   hostname: string
   os: string
+  os_name?: string
   os_version: string
+  os_kernel?: string
   arch: string
   status: string
   last_seen: string | null

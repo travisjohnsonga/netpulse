@@ -116,7 +116,7 @@ export default function ServerDetail() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{server.hostname}</h1>
           <div className="text-sm text-gray-500 dark:text-gray-400 mt-1 flex flex-wrap gap-x-4">
-            <span>{server.os_version || server.os || 'Unknown OS'}</span>
+            <span>{server.os_name || server.os || 'Unknown OS'}</span>
             <span>Arch: {server.arch || '—'}</span>
             <span>Agent {fmtVersion(server.agent_version)}</span>
           </div>
@@ -279,7 +279,11 @@ function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: ()
   // Hostname is self-reported by the agent at enrollment (and re-asserted on every
   // re-enrollment), so it's read-only here — editing it would just be overwritten.
   const rows: [string, string][] = [
-    ['OS', server.os_version || server.os || '—'],
+    // OS shows the detected distro/product (os_name); falls back to the os_family
+    // for agents predating OS-detail. Version + Kernel only shown when reported.
+    ['OS', server.os_name || server.os || '—'],
+    ...(server.os_version ? [['OS version', server.os_version] as [string, string]] : []),
+    ...(server.os_kernel ? [['Kernel', server.os_kernel] as [string, string]] : []),
     ['Arch', server.arch || '—'],
     ['Agent ID', server.id], ['Agent version', fmtVersion(server.agent_version)],
     ['Cert expires', server.cert_expires_at ? new Date(server.cert_expires_at).toLocaleDateString() : '—'],
