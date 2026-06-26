@@ -17,6 +17,24 @@ type CPUStat struct {
 	Usage  float64 `json:"usage_pct"`
 }
 
+// AggregateCPUCore is the Core name the server treats as the whole-host CPU
+// aggregate (vs. a per-core entry) — the chart and Overview stat key off it (see
+// the server's metrics_read.py: r.core == "cpu"). Linux uses it directly (the
+// /proc/stat "cpu" line); Windows maps its "_Total" WMI row to it.
+const AggregateCPUCore = "cpu"
+
+// normalizeCPUCore maps a platform CPU identifier to the cross-platform Core
+// name. Win32_PerfFormattedData_PerfOS_Processor returns "_Total" for the
+// aggregate row; renaming it to the aggregate key makes Windows emit the same
+// shape as Linux (one aggregate + N per-core entries) so the aggregate feeds the
+// chart/Overview and isn't drawn as a spurious per-core bar.
+func normalizeCPUCore(name string) string {
+	if name == "_Total" {
+		return AggregateCPUCore
+	}
+	return name
+}
+
 type MemoryStat struct {
 	TotalBytes     uint64  `json:"total_bytes"`
 	UsedBytes      uint64  `json:"used_bytes"`
