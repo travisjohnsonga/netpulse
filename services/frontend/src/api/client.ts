@@ -1600,6 +1600,25 @@ export async function changeServerSite(id: string, siteId: number | null): Promi
   return data
 }
 
+// Agent desired-config (Stage A/B). The agent pulls this on its next ~30s
+// check-in and applies it — edits are NOT instant.
+export interface AgentDesiredConfig {
+  collection: Record<string, boolean>
+  interval_seconds: number
+  disk: { exclude_mounts: string[]; include_mounts: string[] }
+}
+export async function fetchServerConfig(id: string): Promise<AgentDesiredConfig> {
+  const { data } = await api.get<AgentDesiredConfig>(`/servers/${id}/config/`)
+  return data
+}
+// PATCH is gated by agent:edit + audit-logged server-side (403 without the cap).
+export async function updateServerConfig(
+  id: string, patch: Partial<AgentDesiredConfig>,
+): Promise<AgentDesiredConfig> {
+  const { data } = await api.patch<AgentDesiredConfig>(`/servers/${id}/config/`, patch)
+  return data
+}
+
 export async function fetchAgentTokens(): Promise<AgentToken[]> {
   const { data } = await api.get<AgentToken[] | Paginated<AgentToken>>('/agents/tokens/')
   return unwrap(data)

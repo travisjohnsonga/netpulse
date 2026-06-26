@@ -34,6 +34,24 @@ func normalizeMount(m string) string {
 	return m
 }
 
+// Windows GetDriveType return values (winbase.h). Defined here (not importing
+// x/sys/windows) so the skip policy is testable on any platform.
+const (
+	driveRemovable = 2 // USB / floppy
+	driveFixed     = 3 // hard disk — kept
+	driveRemote    = 4 // network/mapped drive — kept by default
+	driveCDROM     = 5 // optical / DVD / mounted ISO
+)
+
+// skipWindowsDriveType reports whether a GetDriveType result is removable or
+// optical media (DVD/ISO/USB) — inherently noisy (a full, read-only disc reports
+// 100% forever) and not worth monitoring by default. DRIVE_FIXED and DRIVE_REMOTE
+// (network drives) are kept. Auto-skip runs BEFORE the manual exclude_mounts
+// filter, so an operator never has to exclude a DVD by hand.
+func skipWindowsDriveType(dt uint32) bool {
+	return dt == driveRemovable || dt == driveCDROM
+}
+
 func normalizeSet(items []string) map[string]bool {
 	out := make(map[string]bool, len(items))
 	for _, it := range items {
