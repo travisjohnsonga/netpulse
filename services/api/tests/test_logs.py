@@ -14,7 +14,7 @@ def _fake_response():
                     "timestamp": "2026-05-29T22:15:00", "hostname": "router-a",
                     "severity_name": "warning", "facility_name": "local0",
                     "message": "BGP: Neighbor down", "app_name": "BGP", "proc_id": None,
-                    "source_ip": "172.18.0.1", "raw": "<134>..."}},
+                    "source_ip": "172.18.0.1", "source": "router-a", "raw": "<134>..."}},
                 {"_id": "b", "_source": {
                     "timestamp": "2026-05-29T22:14:00", "hostname": "router-a",
                     "severity_name": "info", "facility_name": "local0",
@@ -44,6 +44,9 @@ class TestLogQuery:
         assert r0["hostname"] == "router-a" and r0["severity"] == "warning"
         assert r0["severity_label"] == "Warning" and r0["facility"] == "local0"
         assert r0["program"] == "BGP" and r0["source_ip"] == "172.18.0.1"
+        # `source` is surfaced so the UI can distinguish device syslog (source =
+        # device identifier) from agent-forwarded logs (source = auth/service/…).
+        assert r0["source"] == "router-a"
         assert body["summary"]["by_severity"]["warning"] == 1
         assert body["summary"]["by_severity"]["info"] == 1
         assert body["summary"]["by_severity"]["critical"] == 0
