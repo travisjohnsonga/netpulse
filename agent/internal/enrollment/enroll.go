@@ -116,9 +116,14 @@ func Enroll(serverURL, token, configPath, version string, insecure bool) error {
 	if interval == 0 {
 		interval = 30
 	}
-	serverOut := result.ServerURL
+	// Prefer the operator's --server flag: the agent just completed a successful
+	// HTTPS enrollment against it, so it's a known-good address. The server's
+	// self-reported server_url can be wrong for remote agents (the server can't
+	// know how each client reaches it). Fall back to the server value only if
+	// the flag was somehow empty (it can't be — Enroll() requires it above).
+	serverOut := serverURL
 	if serverOut == "" {
-		serverOut = serverURL
+		serverOut = result.ServerURL
 	}
 	cfg := config.Config{
 		ServerURL: serverOut, AgentID: result.AgentID,

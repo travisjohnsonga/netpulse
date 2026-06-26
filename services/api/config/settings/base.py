@@ -222,6 +222,12 @@ SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 # AGENT_DIR to a mounted volume populated with the CI artifacts.
 AGENT_DIR = os.environ.get("AGENT_DIR", str(BASE_DIR.parent.parent / "agent"))
 
+# Optional explicit public base URL agents should use (e.g. https://spane.example.com).
+# When unset, the enrollment/download responses derive it from the request Host
+# header (how the agent actually reached the server). Set this only for split-DNS
+# / published-hostname setups where the Host header isn't the reachable address.
+AGENT_SERVER_URL = os.environ.get("AGENT_SERVER_URL", "")
+
 # Agent PKI CA cert, written by setup_agent_pki onto the shared ssl-certs volume
 # so the nginx (frontend) container can use it as ssl_client_certificate to
 # verify agent mTLS connections. Defaults under SSL_DIR (shared with nginx).
