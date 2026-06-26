@@ -62,6 +62,61 @@ per-agent "update available" indicator are the natural follow-ups.
 
 ---
 
+## Agent auto-update — *Arc · gated (post-evaluation, strict security controls)*
+
+**The idea.** Agents update themselves to a newer released version automatically,
+over the existing **pull channel** (the ~30s metrics check-in already used for
+desired-config delivery). It builds naturally on the version-tracking foundation
+(agents report their version; the server knows the latest release) and the
+"agents needing update" fleet view above — visibility precedes update.
+
+**Why deferred — the critical considerations:**
+
+- **This is the highest-RCE-risk feature in the product.** By definition it's a
+  mechanism to make many remote, privileged (LocalSystem/root) machines download
+  and execute new code automatically. If the update channel is compromised
+  (server, release, or delivery path), an attacker could push malicious code to
+  the **entire fleet at once** — turning the monitoring fleet into a botnet. The
+  *security* of the update mechanism **is** the feature; the download-and-run part
+  is trivial by comparison.
+- **Non-negotiable — cryptographic binary verification.** The agent MUST verify a
+  **signature** on the downloaded binary against a **pinned public key** (baked
+  into the agent / its trust chain) **before executing it**. Code signing
+  (cosign/sigstore, or an Ed25519 signature over the binary hash) is the gold
+  standard; at minimum, checksum verification over the authenticated mTLS channel.
+  An auto-updater that runs unverified binaries is a remote-code-execution
+  feature, not a convenience.
+- **Staged / opt-in rollout.** Operator-controlled, not auto-pull-on-every-release:
+  canary a few agents, verify healthy, then roll to the fleet. A bad release must
+  not break the whole fleet simultaneously.
+- **Rollback safety.** If the new binary fails to start/enroll/report within N
+  seconds, the agent must fall back to the previous version. Keep the prior binary
+  and health-check before committing — bricking an agent with no recovery is worse
+  than no auto-update, because the agent *is* the remote-access path (a dead agent
+  can't be remotely fixed).
+- **OS-specific swap mechanics.** A process replacing its own running binary:
+  Windows can't overwrite a running `.exe` (download new → stop the service via the
+  SCM → swap → restart); Linux is similar (replace file → restart via systemd).
+  Atomic swap (temp → verify → rename), coordinated with the service supervisor.
+- **Privilege.** The agent runs as LocalSystem/root (to manage services), so an
+  auto-updater at that privilege fetching and executing code is a high-value
+  target — the signature check is what keeps that privilege from being weaponized.
+- **Eval timing.** Adding a self-updating RCE mechanism right before a security
+  review is poor timing. Build it **post-eval**, and build it so the signing /
+  staging / rollback make it a *strength* to demonstrate (a signed, staged,
+  rollback-safe updater) rather than a risk to explain away.
+
+**First step (already on this roadmap).** The "agents needing update" view —
+fleet version *visibility* (compare each agent's reported version to the latest
+release, flag stale ones) precedes fleet auto-*update*. The pull-config channel
+(in progress) is the delivery substrate both would use.
+
+**Scope.** A real feature with serious security design: signing infrastructure +
+verification, staged-rollout control, atomic per-OS self-swap, rollback-on-failure
+health-gating. Comparable to or larger than the Windows agent arc.
+
+---
+
 ## MCP server (agent-accessible tools) — *Design pass*
 
 **The idea.** Expose spane's capabilities — down devices, open CVEs, compliance
