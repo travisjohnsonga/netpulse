@@ -21,8 +21,8 @@ not fully satisfied are shown as **Partial** or **Roadmap**, not inflated.
 | Access control & authorization | **Strong** | Capability-based RBAC, deny-by-default enforcement, anti-escalation guardrail (can't grant what you don't hold). |
 | Authentication | **Partial** | JWT + SSO + forced first-login change + **TOTP MFA** (local accounts); **no token revocation/blacklist**. |
 | Privileged access | **Partial** | Immutable superadmin, last-admin lockout guard, **required MFA for privileged accounts**; no just-in-time elevation. |
-| Cryptography & secrets | **Strong** | OpenBao for all secrets with a fail-closed least-privilege AppRole; TLS 1.3; per-agent PKI. |
-| Transport & config hardening | **Partial** | TLS 1.3, HSTS, secure cookies, `nosniff`; **no Content-Security-Policy / some headers unset**; **SSH-to-device host keys not validated** (accepted risk). |
+| Cryptography & secrets | **Strong** | OpenBao for all secrets with a fail-closed least-privilege AppRole; TLS 1.2/1.3 (Mozilla-intermediate, 1.2 floor); per-agent PKI. |
+| Transport & config hardening | **Partial** | TLS 1.2/1.3, HSTS, secure cookies, `nosniff`; **no Content-Security-Policy / some headers unset**; **SSH-to-device host keys not validated** (accepted risk). |
 | Logging & audit | **Strong** | Indexed `AuditLog`, sensitive-value redaction, configurable retention + purge. |
 | Monitoring | **Partial** | Report-based surfacing of platform access events; **no real-time alerting/SIEM** on the audit trail. |
 | Secure coding | **Strong** | SSRF, XXE, SSTI, CSV-injection, and arg-injection guards, each test- or code-verified. |

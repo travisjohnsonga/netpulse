@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { fetchSites, type Site, type SiteType } from '../api/client'
 import EmptyState from '../components/EmptyState'
 import SiteFormModal from '../components/SiteFormModal'
-import SiteDeviceStatus from '../components/SiteDeviceStatus'
+import SiteDeviceStatus, { SiteServerStatus, SiteCheckStatus } from '../components/SiteDeviceStatus'
 
 const TYPE_BADGE: Record<SiteType, string> = {
   datacenter: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
@@ -91,6 +91,8 @@ function TableView({ sites, onOpen, onEdit }: { sites: Site[]; onOpen: (id: numb
             <th className="px-5 py-3 font-medium">Type</th>
             <th className="px-5 py-3 font-medium">City</th>
             <th className="px-5 py-3 font-medium">Devices</th>
+            <th className="px-5 py-3 font-medium">Servers</th>
+            <th className="px-5 py-3 font-medium">Service Checks</th>
             <th className="px-5 py-3 font-medium">Parent</th>
             <th className="px-5 py-3 font-medium text-right">Actions</th>
           </tr>
@@ -102,6 +104,8 @@ function TableView({ sites, onOpen, onEdit }: { sites: Site[]; onOpen: (id: numb
               <td className="px-5 py-3"><TypeBadge t={s.site_type} /></td>
               <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{s.city || '—'}</td>
               <td className="px-5 py-3"><SiteDeviceStatus site={s} /></td>
+              <td className="px-5 py-3"><SiteServerStatus site={s} /></td>
+              <td className="px-5 py-3"><SiteCheckStatus site={s} /></td>
               <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{s.parent_site_name || '—'}</td>
               <td className="px-5 py-3 text-right">
                 <button
@@ -141,7 +145,24 @@ function TreeView({ sites, onOpen, onEdit }: { sites: Site[]; onOpen: (id: numbe
           {depth > 0 && <span className="text-gray-300 dark:text-gray-600">└</span>}
           <span className="font-medium text-gray-800 dark:text-gray-100">{s.name}</span>
           <TypeBadge t={s.site_type} />
-          <SiteDeviceStatus site={s} className="ml-auto" />
+          <div className="ml-auto flex items-center gap-4">
+            <span className="inline-flex items-center gap-1" title="Devices">
+              <span className="text-[10px] uppercase tracking-wide text-gray-400">Dev</span>
+              <SiteDeviceStatus site={s} />
+            </span>
+            {s.server_count > 0 && (
+              <span className="inline-flex items-center gap-1" title="Servers">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400">Srv</span>
+                <SiteServerStatus site={s} />
+              </span>
+            )}
+            {s.check_count > 0 && (
+              <span className="inline-flex items-center gap-1" title="Service Checks">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400">Chk</span>
+                <SiteCheckStatus site={s} />
+              </span>
+            )}
+          </div>
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(s) }}
             className="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-sm font-medium opacity-0 group-hover:opacity-100"

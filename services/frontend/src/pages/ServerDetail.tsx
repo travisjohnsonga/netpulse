@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
+import TimeRangeSelector, { RANGE_LABEL, type TimeRange } from '../components/TimeRangeSelector'
 import {
   fetchServer, fetchServerMetricHistory, fetchServerRoleAssignments,
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
@@ -62,12 +63,12 @@ function LineChart({ history, fields, height = 260 }: { history?: MetricHistory;
   return <ReactECharts option={option} style={{ height }} opts={{ renderer: 'svg' }} notMerge />
 }
 
-function useHistory(id: string, metric: string, active: boolean) {
+function useHistory(id: string, metric: string, active: boolean, range: TimeRange) {
   const [data, setData] = useState<MetricHistory>()
   useEffect(() => {
     if (!active) return
-    fetchServerMetricHistory(id, metric, '1h').then(setData).catch(() => setData(undefined))
-  }, [id, metric, active])
+    fetchServerMetricHistory(id, metric, range).then(setData).catch(() => setData(undefined))
+  }, [id, metric, active, range])
   return data
 }
 
@@ -75,6 +76,7 @@ export default function ServerDetail() {
   const { id = '' } = useParams()
   const [server, setServer] = useState<ServerDetailT>()
   const [tab, setTab] = useState<Tab>('Overview')
+  const [range, setRange] = useState<TimeRange>('1h')
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
@@ -82,10 +84,11 @@ export default function ServerDetail() {
   }, [id])
   useEffect(() => { load() }, [load])
 
-  const cpuHist = useHistory(id, 'cpu', tab === 'CPU' || tab === 'Overview')
-  const memHist = useHistory(id, 'memory', tab === 'Memory')
-  const diskHist = useHistory(id, 'disk', tab === 'Disk')
-  const netHist = useHistory(id, 'network', tab === 'Network')
+  // One range drives every chart on the page (matches the device telemetry side).
+  const cpuHist = useHistory(id, 'cpu', tab === 'CPU' || tab === 'Overview', range)
+  const memHist = useHistory(id, 'memory', tab === 'Memory', range)
+  const diskHist = useHistory(id, 'disk', tab === 'Disk', range)
+  const netHist = useHistory(id, 'network', tab === 'Network', range)
 
   if (error) return <div className="p-6 text-red-600">{error}</div>
   if (!server) return <div className="p-6 text-gray-500">Loading…</div>
@@ -109,11 +112,13 @@ export default function ServerDetail() {
             <span>Agent v{server.agent_version || '—'}</span>
           </div>
         </div>
-        <div className="text-right text-sm">
+        <div className="flex flex-col items-end gap-2 text-sm">
           <span className={`px-2 py-0.5 rounded-full text-xs ${online ? 'text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900/40' : 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/40'}`}>
             {online ? '✅ Online' : '🔴 Offline'}
           </span>
-          <div className="text-gray-500 dark:text-gray-400 mt-1">Last seen: {timeAgo(server.last_seen)}</div>
+          <div className="text-gray-500 dark:text-gray-400">Last seen: {timeAgo(server.last_seen)}</div>
+          {/* One range controls every chart on the page. */}
+          <TimeRangeSelector value={range} onChange={setRange} />
         </div>
       </div>
 
@@ -140,7 +145,7 @@ export default function ServerDetail() {
             </div>
           </div>
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">CPU — last hour</div>
+            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">CPU — {RANGE_LABEL[range]}</div>
             <LineChart history={cpuHist} fields={['usage_pct']} height={200} />
           </div>
           <div className="grid md:grid-cols-2 gap-4">
@@ -178,7 +183,7 @@ export default function ServerDetail() {
       {tab === 'Memory' && (
         <div className="space-y-5">
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Memory usage — last hour</div>
+            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Memory usage — {RANGE_LABEL[range]}</div>
             <LineChart history={memHist} fields={['usage_pct']} />
           </div>
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -209,7 +214,7 @@ export default function ServerDetail() {
             </table>
           </div>
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Disk utilization — last hour</div>
+            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Disk utilization — {RANGE_LABEL[range]}</div>
             <LineChart history={diskHist} fields={['usage_pct']} />
           </div>
         </div>
@@ -234,7 +239,7 @@ export default function ServerDetail() {
             </table>
           </div>
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Throughput — last hour</div>
+            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Throughput — {RANGE_LABEL[range]}</div>
             <LineChart history={netHist} fields={['rx_bps', 'tx_bps']} />
           </div>
         </div>

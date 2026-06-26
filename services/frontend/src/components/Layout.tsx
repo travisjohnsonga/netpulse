@@ -78,7 +78,7 @@ const navEntries: NavEntry[] = [
   },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true, requiredCapability: 'alert:view' },
   { label: 'Logs', href: '/logs', icon: '🧾', requiredCapability: 'log:view' },
-  { label: 'Checks', href: '/checks', icon: '✓', requiredCapability: 'check:view' },
+  { label: 'Service Checks', href: '/checks', icon: '✓', requiredCapability: 'check:view' },
   { label: 'CVE', href: '/cve', icon: '🛡', divider: true, requiredCapability: 'cve:view' },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅', requiredCapability: 'lifecycle:view' },
   { label: 'Compliance', href: '/compliance', icon: '📋', requiredCapability: 'compliance:view' },

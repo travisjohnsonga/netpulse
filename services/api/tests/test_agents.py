@@ -418,3 +418,47 @@ class TestServerSiteAssignment:
         agent = Agent.objects.create(hostname="srv-nodev", status=Agent.Status.ACTIVE)
         resp = auth_client.post(f"/api/servers/{agent.id}/site/", {"site_id": dest.id}, format="json")
         assert resp.status_code == 400, resp.content
+
+
+# ── Agent version refresh from metrics payload (API-side; agent unchanged) ────
+
+class TestAgentVersionRefresh:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _agent(self, version="1.0.0"):
+        return Agent.objects.create(hostname="srv-ver", cert_serial="ab:cd:ef:01", version=version)
+
+    def test_metrics_updates_version(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.0.0")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"version": "1.2.3", "metrics": {}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.version == "1.2.3"
+
+    def test_metrics_omitting_version_keeps_existing(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.2.3")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"metrics": {}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.version == "1.2.3"  # not blanked
+
+    def test_metrics_empty_version_doesnt_blank(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.2.3")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"version": "  ", "metrics": {}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.version == "1.2.3"
+
+    def test_updated_version_surfaces_via_serializer(self, api_client, auth_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.0.0")
+        api_client.post(f"/api/agents/{a.id}/metrics/",
+                        {"version": "2.0.0", "metrics": {}}, format="json", **self._HDR)
+        body = auth_client.get(f"/api/servers/{a.id}/").json()
+        assert body["agent_version"] == "2.0.0"

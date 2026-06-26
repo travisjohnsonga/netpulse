@@ -117,14 +117,49 @@ function StatCard({ label, value, tone }: { label: string; value: React.ReactNod
   )
 }
 
+function StatSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">{title}</div>
+      {children}
+    </div>
+  )
+}
+
 function DeviceStats({ site }: { site: Site }) {
   return (
-    <div className={clsx('grid gap-4', site.devices_unknown > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3')}>
-      <StatCard label="Total Devices" value={site.device_count} />
-      <StatCard label="Online" value={<span>↑ {site.devices_up}</span>} tone="up" />
-      <StatCard label="Offline" value={<span>↓ {site.devices_down}</span>} tone="down" />
-      {site.devices_unknown > 0 && <StatCard label="Unknown" value={<span>? {site.devices_unknown}</span>} tone="unknown" />}
-    </div>
+    <StatSection title="Devices">
+      <div className={clsx('grid gap-4', site.devices_unknown > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3')}>
+        <StatCard label="Total Devices" value={site.device_count} />
+        <StatCard label="Online" value={<span>↑ {site.devices_up}</span>} tone="up" />
+        <StatCard label="Offline" value={<span>↓ {site.devices_down}</span>} tone="down" />
+        {site.devices_unknown > 0 && <StatCard label="Unknown" value={<span>? {site.devices_unknown}</span>} tone="unknown" />}
+      </div>
+    </StatSection>
+  )
+}
+
+function ServerStats({ site }: { site: Site }) {
+  return (
+    <StatSection title="Servers">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+        <StatCard label="Total Servers" value={site.server_count} />
+        <StatCard label="Online" value={<span>↑ {site.servers_up}</span>} tone="up" />
+        <StatCard label="Offline" value={<span>↓ {site.servers_down}</span>} tone="down" />
+      </div>
+    </StatSection>
+  )
+}
+
+function CheckStats({ site }: { site: Site }) {
+  return (
+    <StatSection title="Service Checks">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+        <StatCard label="Total Checks" value={site.check_count} />
+        <StatCard label="Passing" value={<span>↑ {site.checks_up}</span>} tone="up" />
+        <StatCard label="Failing" value={<span>↓ {site.checks_down}</span>} tone="down" />
+      </div>
+    </StatSection>
   )
 }
 
@@ -133,6 +168,8 @@ function Overview({ site }: { site: Site }) {
   return (
     <div className="space-y-4">
     <DeviceStats site={site} />
+    <ServerStats site={site} />
+    <CheckStats site={site} />
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Location</h3>
