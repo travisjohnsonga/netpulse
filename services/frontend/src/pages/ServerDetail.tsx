@@ -6,13 +6,14 @@ import TimeRangeSelector, { RANGE_LABEL, type TimeRange } from '../components/Ti
 import {
   fetchServer, fetchServerMetricHistory, fetchServerRoleAssignments,
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
-  changeServerSite, fetchSites,
+  changeServerSite, fetchSites, fetchServerConfig, updateServerConfig,
   type ServerDetail as ServerDetailT, type MetricHistory,
   type AssignedRole, type DetectedRole, type ServerRole, type Site,
+  type AgentDesiredConfig,
 } from '../api/client'
 import { useCapabilities } from '../store/authStore'
 
-const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Logs', 'Alerts'] as const
+const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
 
 function fmtBytes(n?: number | null): string {
@@ -261,6 +262,7 @@ export default function ServerDetail() {
 
       {tab === 'Services' && <ServicesTab server={server} />}
       {tab === 'Roles' && <RolesTab id={id} os={server.os} />}
+      {tab === 'Config' && <ConfigTab id={id} os={server.os} />}
 
       {tab === 'Logs' && (
         <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6 text-sm text-gray-500">
@@ -506,6 +508,175 @@ function RolesTab({ id, os }: { id: string; os: string }) {
         })}
         {!assigned.length && <div className="text-sm text-gray-500 col-span-full">No roles assigned. Use “Assign Role” or “Auto-detect”.</div>}
       </div>
+    </div>
+  )
+}
+
+// Collection-toggle labels (keys come from the server's effective config, which
+// covers the server-managed toggles — not "processes", which isn't pull-managed).
+const COLLECTION_LABELS: Record<string, string> = {
+  cpu: 'CPU', memory: 'Memory', disk: 'Disk', network: 'Network', services: 'Services',
+}
+
+function ConfigTab({ id, os }: { id: string; os: string }) {
+  const canEdit = useCapabilities().includes('agent:edit')
+  const [cfg, setCfg] = useState<AgentDesiredConfig | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  // 'idle' | 'pending' (saved, awaiting agent check-in) | 'applied'
+  const [saveState, setSaveState] = useState<'idle' | 'pending' | 'applied'>('idle')
+  const [newMount, setNewMount] = useState('')
+  const [mountList, setMountList] = useState<'exclude_mounts' | 'include_mounts'>('exclude_mounts')
+
+  const load = useCallback(() => {
+    fetchServerConfig(id).then(setCfg).catch(() => setError('Failed to load config.'))
+  }, [id])
+  useEffect(() => { load() }, [load])
+
+  // After a save, poll the server's last_seen; once it advances past the save
+  // time the agent has checked in and pulled the change → "applied".
+  useEffect(() => {
+    if (saveState !== 'pending') return
+    const savedAt = Date.now()
+    const t = setInterval(async () => {
+      try {
+        const s = await fetchServer(id)
+        if (s.last_seen && new Date(s.last_seen).getTime() > savedAt) {
+          setSaveState('applied')
+          clearInterval(t)
+        }
+      } catch { /* keep polling */ }
+    }, 8000)
+    return () => clearInterval(t)
+  }, [saveState, id])
+
+  if (error) return <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6 text-sm text-red-600">{error}</div>
+  if (!cfg) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+
+  const intervalValid = cfg.interval_seconds >= 10 && cfg.interval_seconds <= 3600
+
+  const save = async () => {
+    if (!intervalValid) return
+    setSaving(true); setError(null)
+    try {
+      const updated = await updateServerConfig(id, {
+        collection: cfg.collection,
+        interval_seconds: cfg.interval_seconds,
+        disk: cfg.disk,
+      })
+      setCfg(updated)
+      setSaveState('pending')
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      setError(status === 403 ? 'You lack the agent:edit capability to change config.'
+        : status === 400 ? 'The server rejected the config (check the interval / values).'
+        : 'Failed to save config.')
+    } finally { setSaving(false) }
+  }
+
+  const setToggle = (k: string, v: boolean) => {
+    setCfg({ ...cfg, collection: { ...cfg.collection, [k]: v } }); setSaveState('idle')
+  }
+  const addMount = () => {
+    const m = newMount.trim()
+    if (!m) return
+    if (!cfg.disk[mountList].includes(m)) {
+      setCfg({ ...cfg, disk: { ...cfg.disk, [mountList]: [...cfg.disk[mountList], m] } })
+      setSaveState('idle')
+    }
+    setNewMount('')
+  }
+  const removeMount = (list: 'exclude_mounts' | 'include_mounts', m: string) => {
+    setCfg({ ...cfg, disk: { ...cfg.disk, [list]: cfg.disk[list].filter((x) => x !== m) } })
+    setSaveState('idle')
+  }
+
+  const mountHint = os === 'windows' ? 'e.g. D: (drive letter)' : 'e.g. /var or /mnt/data'
+  const card = 'bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4'
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      {!canEdit && (
+        <div className="text-xs px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border dark:border-gray-700">
+          Read-only — editing the agent config requires the <code>agent:edit</code> capability.
+        </div>
+      )}
+      {saveState !== 'idle' && (
+        <div className={`text-sm px-3 py-2 rounded-lg border ${saveState === 'applied'
+          ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
+          : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'}`}>
+          {saveState === 'applied'
+            ? '✅ Applied — the agent has checked in since your change.'
+            : '⏳ Saved — applies on the agent’s next check-in (~30s). Config is pull-based, not instant.'}
+        </div>
+      )}
+
+      {/* Collection toggles */}
+      <div className={card}>
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Collection</div>
+        <div className="space-y-2">
+          {Object.keys(cfg.collection).map((k) => (
+            <label key={k} className="flex items-center justify-between text-sm">
+              <span className="text-gray-700 dark:text-gray-300">{COLLECTION_LABELS[k] ?? k}</span>
+              <input type="checkbox" checked={cfg.collection[k]} disabled={!canEdit}
+                onChange={(e) => setToggle(k, e.target.checked)} className="h-4 w-4 disabled:opacity-50" />
+            </label>
+          ))}
+        </div>
+        <label className="flex items-center justify-between text-sm mt-4">
+          <span className="text-gray-700 dark:text-gray-300">Interval (seconds) <span className="text-gray-400">10–3600</span></span>
+          <input type="number" min={10} max={3600} value={cfg.interval_seconds} disabled={!canEdit}
+            onChange={(e) => { setCfg({ ...cfg, interval_seconds: Number(e.target.value) }); setSaveState('idle') }}
+            className={`w-24 px-2 py-1 text-sm border rounded dark:bg-gray-900 dark:border-gray-600 disabled:opacity-50 ${intervalValid ? '' : 'border-red-500'}`} />
+        </label>
+        {!intervalValid && <div className="text-xs text-red-600 mt-1 text-right">Interval must be 10–3600 seconds.</div>}
+      </div>
+
+      {/* Disk monitoring */}
+      <div className={card}>
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Disk monitoring</div>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          Removable/optical media is skipped automatically. Exclude drops a drive; include (if any) limits to listed drives. {mountHint}.
+        </p>
+        {(['exclude_mounts', 'include_mounts'] as const).map((list) => (
+          <div key={list} className="mb-3">
+            <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              {list === 'exclude_mounts' ? 'Exclude' : 'Include (empty = all)'}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {cfg.disk[list].length === 0 && <span className="text-xs text-gray-400">none</span>}
+              {cfg.disk[list].map((m) => (
+                <span key={m} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-mono">
+                  {m}
+                  {canEdit && <button onClick={() => removeMount(list, m)} className="text-red-600 hover:text-red-800">×</button>}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        {canEdit && (
+          <div className="flex items-center gap-2 mt-2">
+            <select value={mountList} onChange={(e) => setMountList(e.target.value as 'exclude_mounts' | 'include_mounts')}
+              className="px-2 py-1 text-xs border rounded dark:bg-gray-900 dark:border-gray-600">
+              <option value="exclude_mounts">Exclude</option>
+              <option value="include_mounts">Include</option>
+            </select>
+            <input value={newMount} onChange={(e) => setNewMount(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addMount()} placeholder={mountHint}
+              className="flex-1 px-2 py-1 text-xs border rounded dark:bg-gray-900 dark:border-gray-600 font-mono" />
+            <button onClick={addMount} className="px-2 py-1 text-xs border rounded dark:border-gray-600 dark:text-gray-300">Add</button>
+          </div>
+        )}
+      </div>
+
+      {canEdit && (
+        <div className="flex justify-end">
+          <button onClick={save} disabled={saving || !intervalValid}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save config'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
