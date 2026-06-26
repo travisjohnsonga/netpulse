@@ -16,7 +16,21 @@ from apps.core.permissions import CapabilityViewSetMixin
 from .detection import auto_detect_roles
 from .metrics_read import detail_metrics, metric_history
 from .models import Agent, AgentRole, ServerRole
-from .serializers import AssignedRoleSerializer, ServerSerializer
+from .serializers import AgentConfigSerializer, AssignedRoleSerializer, ServerSerializer
+
+
+def _merge_config(stored: dict, patch: dict) -> dict:
+    """Merge a validated (partial) config PATCH onto the stored desired_config.
+    Sections not present in the patch are left untouched; within a section the
+    provided keys override."""
+    out = dict(stored or {})
+    if "collection" in patch:
+        out["collection"] = {**(out.get("collection") or {}), **patch["collection"]}
+    if "interval_seconds" in patch:
+        out["interval_seconds"] = patch["interval_seconds"]
+    if "disk" in patch:
+        out["disk"] = {**(out.get("disk") or {}), **patch["disk"]}
+    return out
 
 
 class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
@@ -126,6 +140,35 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
                           "new_site": new_site.name if new_site else None},
             )
         return Response(self.get_serializer(server).data)
+
+    @action(detail=True, methods=["get", "patch"], url_path="config")
+    def config(self, request, pk=None):
+        """View (GET) or edit (PATCH) the agent's DESIRED config — collection
+        toggles, interval, and monitored-drive include/exclude. The agent pulls
+        it on its next metrics check-in (~30s) and applies it then, so a PATCH is
+        NOT instant (the UI shows a "pending, applies on next check-in" state).
+        GET is gated by agent:view, PATCH by agent:edit (CapabilityViewSetMixin);
+        changes are audit-logged."""
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+
+        server = self.get_object()
+        if request.method == "GET":
+            return Response(server.effective_config())
+
+        ser = AgentConfigSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        before = server.effective_config()
+        server.desired_config = _merge_config(server.desired_config or {}, ser.validated_data)
+        server.save(update_fields=["desired_config", "updated_at"])
+        after = server.effective_config()
+        if after != before:
+            log_event(
+                AuditLog.EventType.AGENT_CONFIG_CHANGED, request=request, target=server,
+                description=f"Agent config changed for {server.hostname}",
+                metadata={"before": before, "after": after},
+            )
+        return Response(after)
 
     @action(detail=True, methods=["delete"], url_path=r"roles/(?P<role_id>[^/.]+)")
     def remove_role(self, request, pk=None, role_id=None):

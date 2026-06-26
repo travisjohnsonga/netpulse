@@ -302,6 +302,9 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                 # Turn role checks on as soon as at least one role is assigned.
                 "role_checks_enabled": bool(assigned_roles),
             },
+            # Operator-set DESIRED config the agent applies on this cycle (pull
+            # delivery — Stage B teaches the agent to read + apply this).
+            "desired_config": agent.effective_config(),
         })
 
     @extend_schema(request=None, responses=None)
