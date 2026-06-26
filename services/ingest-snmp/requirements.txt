@@ -1,6 +1,6 @@
 # SNMP protocol stack (pysnmp fork maintained by Lextudio)
 pysnmp-lextudio>=4.4
-pyasn1>=0.6
+pyasn1>=0.6.3
 
 # Messaging
 nats-py~=2.7
