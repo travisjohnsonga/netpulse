@@ -541,3 +541,19 @@ class TestEnrollServerUrl:
         assert resp.status_code == 201, resp.content
         url = resp.json()["server_url"]
         assert url and "localhost" not in url  # request-derived, reachable
+
+
+# ── Cache-Control: no-store on secret-bearing responses ───────────────────────
+
+class TestNoStoreHeaders:
+    def test_token_generation_is_no_store(self, auth_client):
+        resp = auth_client.post("/api/agents/tokens/",
+                                {"description": "x", "max_uses": 1}, format="json")
+        assert resp.status_code == 201, resp.content
+        assert resp.get("Cache-Control") == "no-store"
+
+    def test_enroll_response_is_no_store(self, api_client, fake_pki):
+        t = _token(max_uses=1)
+        resp = _enroll(api_client, t.token, hostname="nostore-host")
+        assert resp.status_code == 201, resp.content
+        assert resp.get("Cache-Control") == "no-store"

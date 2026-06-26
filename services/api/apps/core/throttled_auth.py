@@ -18,10 +18,11 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from . import mfa
 from .audit import log_event
 from .client_ip import TrustedProxyScopedRateThrottle
+from .http import NoStoreResponseMixin
 from .models import AuditLog
 
 
-class ThrottledTokenObtainPairView(TokenObtainPairView):
+class ThrottledTokenObtainPairView(NoStoreResponseMixin, TokenObtainPairView):
     throttle_classes = [TrustedProxyScopedRateThrottle]
     throttle_scope = "auth"
 
@@ -75,6 +76,6 @@ class ThrottledTokenObtainPairView(TokenObtainPairView):
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
-class ThrottledTokenRefreshView(TokenRefreshView):
+class ThrottledTokenRefreshView(NoStoreResponseMixin, TokenRefreshView):
     throttle_classes = [TrustedProxyScopedRateThrottle]
     throttle_scope = "auth"
