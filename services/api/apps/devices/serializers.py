@@ -63,6 +63,13 @@ class SiteSerializer(serializers.ModelSerializer):
     devices_up = serializers.SerializerMethodField()
     devices_down = serializers.SerializerMethodField()
     devices_unknown = serializers.SerializerMethodField()
+    # Server (agent) + service-check up/down counts, mirroring the device counts.
+    server_count = serializers.SerializerMethodField()
+    servers_up = serializers.SerializerMethodField()
+    servers_down = serializers.SerializerMethodField()
+    check_count = serializers.SerializerMethodField()
+    checks_up = serializers.SerializerMethodField()
+    checks_down = serializers.SerializerMethodField()
     parent_site_name = serializers.CharField(source="parent_site.name", read_only=True, default=None)
 
     class Meta:
@@ -88,6 +95,64 @@ class SiteSerializer(serializers.ModelSerializer):
     def get_devices_unknown(self, obj):
         val = getattr(obj, "devices_unknown", None)
         return val if val is not None else obj.devices.filter(is_reachable__isnull=True).count()
+
+    # --- Servers (agents link to a site via their Device: Agent.device → site) ---
+    def get_server_count(self, obj):
+        val = getattr(obj, "server_count", None)
+        if val is not None:
+            return val
+        from apps.agents.models import Agent
+        return Device.objects.filter(
+            site=obj, agent__status__in=[Agent.Status.ACTIVE, Agent.Status.INACTIVE]).count()
+
+    def get_servers_up(self, obj):
+        val = getattr(obj, "servers_up", None)
+        if val is not None:
+            return val
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.agents.models import AGENT_ONLINE_SECONDS, Agent
+        cutoff = timezone.now() - timedelta(seconds=AGENT_ONLINE_SECONDS)
+        return Device.objects.filter(
+            site=obj, agent__status=Agent.Status.ACTIVE, agent__last_seen__gte=cutoff).count()
+
+    def get_servers_down(self, obj):
+        val = getattr(obj, "servers_down", None)
+        if val is not None:
+            return val
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.agents.models import AGENT_ONLINE_SECONDS, Agent
+        cutoff = timezone.now() - timedelta(seconds=AGENT_ONLINE_SECONDS)
+        return Device.objects.filter(
+            site=obj, agent__status__in=[Agent.Status.ACTIVE, Agent.Status.INACTIVE]
+        ).filter(
+            models.Q(agent__status=Agent.Status.INACTIVE)
+            | models.Q(agent__last_seen__isnull=True)
+            | models.Q(agent__last_seen__lt=cutoff)
+        ).count()
+
+    # --- Service checks (linked to the site directly via ServiceCheck.site) ---
+    def get_check_count(self, obj):
+        val = getattr(obj, "check_count", None)
+        return val if val is not None else obj.service_checks.filter(is_active=True).count()
+
+    def get_checks_up(self, obj):
+        val = getattr(obj, "checks_up", None)
+        if val is not None:
+            return val
+        from apps.checks.models import ServiceCheck
+        return obj.service_checks.filter(
+            is_active=True, current_status=ServiceCheck.Status.UP).count()
+
+    def get_checks_down(self, obj):
+        val = getattr(obj, "checks_down", None)
+        if val is not None:
+            return val
+        from apps.checks.models import ServiceCheck
+        return obj.service_checks.filter(
+            is_active=True,
+            current_status__in=[ServiceCheck.Status.DOWN, ServiceCheck.Status.DEGRADED]).count()
 
 
 class DeviceGroupSerializer(serializers.ModelSerializer):

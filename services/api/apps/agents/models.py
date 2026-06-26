@@ -18,6 +18,11 @@ from django.db import models
 
 from apps.core.models import TimestampedModel
 
+# An agent is "online" when it last checked in within this window (and is ACTIVE).
+# 5 minutes matches the Servers page (OFFLINE_MS); cf. collectors'
+# HEARTBEAT_HEALTHY_SECONDS for the equivalent collector concept.
+AGENT_ONLINE_SECONDS = 300
+
 
 def _generate_token() -> str:
     return secrets.token_urlsafe(32)
@@ -159,6 +164,15 @@ class Agent(TimestampedModel):
     @property
     def is_anonymous(self) -> bool:
         return False
+
+    @property
+    def is_online(self) -> bool:
+        """True when the agent is ACTIVE and checked in within AGENT_ONLINE_SECONDS.
+        Mirrors Collector.is_healthy and the Servers page's online logic."""
+        if self.status != self.Status.ACTIVE or not self.last_seen:
+            return False
+        from django.utils import timezone
+        return (timezone.now() - self.last_seen).total_seconds() < AGENT_ONLINE_SECONDS
 
 
 class AgentRole(TimestampedModel):
