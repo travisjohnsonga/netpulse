@@ -51,9 +51,13 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   const linuxCmd = created
     ? `curl -fsSL${selfSigned ? ' -k' : ''} ${serverUrl}/agent/install | sudo bash -s -- --server ${serverUrl} --token ${created.token}${selfSigned ? ' --insecure' : ''}`
     : ''
+  // Use curl.exe (built into Win10/Server2019+), NOT Invoke-WebRequest: on stock
+  // PowerShell 5.1 IWR (.NET HttpWebRequest) can't speak HTTP/2 and fails against
+  // the HTTP/2 nginx front door. `curl` in PS 5.1 is an ALIAS for IWR, so we call
+  // curl.exe explicitly. -f fails on an HTTP error (so a 404 page isn't saved as
+  // the script), -L follows redirects, -k handles a self-signed cert.
   const windowsCmd = created
-    ? `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n`
-      + `Invoke-WebRequest -Uri "${serverUrl}/agent/install.ps1" -OutFile "$env:TEMP\\install.ps1"\n`
+    ? `curl.exe -fL${selfSigned ? ' -k' : ''} -o "$env:TEMP\\install.ps1" "${serverUrl}/agent/install.ps1"\n`
       + `powershell -ExecutionPolicy Bypass -File "$env:TEMP\\install.ps1" `
       + `-Server "${serverUrl}" -Token "${created.token}"${selfSigned ? ' -Insecure' : ''}`
     : ''
