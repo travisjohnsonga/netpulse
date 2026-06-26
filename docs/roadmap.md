@@ -22,10 +22,21 @@ in flight lives in the code and the README "Current State", not here.
 
 **The gap.** An agent currently shows a green **Online** badge based purely on
 heartbeat liveness (`status == active` and `last_seen` within 5 minutes). That can
-be true while its actual **metrics pushes are failing** — observed in the lab:
-`netmagic` showed *Online* for ~2 days while every metrics `POST` returned 502
-during rebuilds. A monitoring tool should never read "fine" when it isn't
-actually collecting.
+be true while the host is actually **asleep, down, shut down, or unreachable** and
+delivering nothing — the badge reads *Online* off a **stale `last_seen`**. The
+cleanest real example: the lab **host sleeps after ~4h of inactivity** (a
+cost-saving artifact); the agent goes silent, but the badge can still read
+*Online*. A monitoring tool should never read "fine" when it isn't actually
+collecting.
+
+The Degraded/Offline states need to distinguish the underlying causes:
+
+- **Host unreachable / asleep / shut down → the heartbeat itself goes stale**
+  (the agent isn't checking in at all — likely *down*).
+- **Host up but ingest failing → heartbeat fresh, ingest stale** (the agent is
+  checking in but its metrics pushes aren't landing — *up but not collecting*).
+  This is the 502-during-rebuild case: every metrics `POST` returned 502 while
+  `last_seen` kept refreshing, so the badge stayed green for ~2 days.
 
 **The idea.** Add a **DEGRADED / WARNING** state shown when the heartbeat is
 fresh but the **last successful metrics push is stale**. Track the last
@@ -41,6 +52,34 @@ capability — higher priority than everything below. It builds on existing fiel
 `collection_interval`; ensure the metrics handler records success vs failure
 distinctly (today it stamps `last_seen` on receipt); keep the Servers-page
 `isOnline` logic and the backend site-count logic in agreement.
+
+**Watchdog / alerting (the action layer).** Beyond *showing* Degraded/Offline,
+fire an **alert** when an agent stops reporting for a **configurable** threshold
+(no successful metrics ingest for X minutes). The badge makes the truth visible;
+the watchdog notifies without someone watching the badge.
+
+- **Configurable threshold.** A global default plus per-agent / per-site override
+  (a critical server warrants a tighter window than a lab box). Relate the default
+  to `collection_interval` (N missed intervals).
+- **Default for PRODUCTION always-on hosts.** A real server silent for even a few
+  minutes is a genuine incident (crash, network loss, OOM, shutdown) — never
+  benign. Do **not** tune the global default lenient to accommodate the lab's
+  4h-idle sleep (a cost-saving artifact that doesn't exist in production); treat
+  the lab as the exception (a longer threshold / suppressed alerts on the lab
+  agent). In production every "agent went silent" is signal.
+- **Reuse the existing alerting plumbing** (the platform already has Alerts) so an
+  agent-silence alert flows through the same notification path, not a parallel one.
+- **One staleness signal, two consumers.** Built on the SAME signal as the
+  Degraded-state work (last-successful-ingest timestamp vs now) — display and alert
+  are two consumers of one staleness signal, so build them together.
+- **Distinguish conditions / severities.** Heartbeat stale = likely down
+  (critical) vs heartbeat fresh + ingest stale = up-but-not-collecting (warning).
+- **Avoid alert storms.** Debounce / dedupe (one alert per agent-down event) and
+  auto-resolve when reporting resumes.
+
+So the entry covers the full loop: detect staleness → show the honest state
+(Online / Degraded / Offline) → alert at a configurable threshold → auto-resolve
+on recovery.
 
 ---
 
@@ -151,6 +190,50 @@ tension already handled for devices with `ip_locked`).
 `Device` model (an agentless server has no `Agent` row); decide how roles and
 the online/degraded/offline state apply without a heartbeat; reuse the existing
 SNMP collection stack rather than building a parallel one.
+
+---
+
+## Service checks from servers (agent as a check vantage point) — *Design pass*
+
+**The idea.** Today a ServiceCheck runs from one or more **collectors**
+(apps/checks: the `ServiceCheckCollector` through-table already models
+multi-vantage-point execution — which collectors run a check, with resolution +
+result aggregation). Let a check ALSO run **from an enrolled server/agent**,
+making the agent an additional check vantage point.
+
+**Why it's useful.** A collector probes from the network's vantage point (can the
+collector reach port 443 on host X). Running the same check FROM a server tests
+reachability from that server's vantage point — "can app-server-A actually reach
+the database on db-server-B," "can this host reach an external dependency." That
+catches host-local / east-west connectivity issues a central collector can't see
+(firewall rules, routing, local DNS, per-host egress). It turns the agent fleet
+into a distributed mesh of vantage points — closer to how the service is actually
+experienced.
+
+**Why deferred.** Needs a design pass:
+
+- The agent does metrics + role-checks + (in progress) log-forwarding, all
+  **OUTBOUND** POSTs. Agent-run checks mean the agent executes a probe
+  (TCP/HTTP/port) against a target and POSTs the result — a new capability. Keep
+  it outbound-only: run locally, POST the result, no inbound trigger
+  (small-attack-surface model).
+- **SECURITY.** A server-run check is an outbound connection to an
+  operator-specified target — constrain it (don't turn the agent into an arbitrary
+  network-probe / SSRF tool): allowlist / validate targets, RBAC-gate who can
+  assign agent-run checks, audit. Mirror the `additional_paths` allowlist
+  discipline from log-forwarding (validate both server- and agent-side).
+- **Reuse the existing ServiceCheck model + multi-vantage aggregation** — extend
+  "vantage point" from {collectors} to {collectors, agents} (a `ServiceCheckAgent`
+  analog to the `ServiceCheckCollector` through-table) rather than a parallel
+  system.
+- **Config-driven** via the agent desired-config pull (dogfoods the config
+  system): the agent learns which checks to run from its config.
+- **Result aggregation.** A check from N collectors + M agents needs sensible
+  multi-vantage rollup (extend the existing collector aggregation).
+
+**Relationship to other work.** Builds on the agent config-pull (delivery of
+which-checks-to-run) and mirrors the log-forwarding security discipline (target
+allowlist, both-sides validation, audit).
 
 ---
 
