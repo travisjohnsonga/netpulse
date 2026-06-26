@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from .models import GeneratedReport, ReportSchedule, ReportType
+from .schedule_tz import local_to_utc, utc_to_local
 
 
 class GeneratedReportSerializer(serializers.ModelSerializer):
@@ -26,12 +27,30 @@ class ReportScheduleSerializer(serializers.ModelSerializer):
             "id", "report_type", "report_type_display", "frequency", "hour",
             "day_of_week", "day_of_month", "fmt", "delivery", "delivery_display",
             "recipients", "parameters", "enabled", "last_run", "last_status",
+            "timezone",
         ]
-        read_only_fields = ["last_run", "last_status"]
+        read_only_fields = ["last_run", "last_status", "timezone"]
+
+    # ── Timezone boundary (see apps.reports.schedule_tz) ──────────────────────
+    # hour/day_* are stored in UTC; the user enters/sees them in their own tz.
+    timezone = serializers.SerializerMethodField()
+
+    def _tz_name(self) -> str:
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            from apps.core.models import UserPreferences
+            return UserPreferences.for_user(user).timezone or "UTC"
+        return "UTC"
+
+    def get_timezone(self, obj) -> str:
+        """The tz the output hour/day fields are expressed in (the requester's)."""
+        return self._tz_name()
 
     def validate(self, attrs):
         """Recipients are required only when email delivery is selected; a
-        store-only schedule emails nobody and needs no recipients."""
+        store-only schedule emails nobody and needs no recipients. Then convert
+        the user-local hour/day fields to the UTC values actually stored."""
         delivery = attrs.get("delivery") or getattr(
             self.instance, "delivery", None) or ReportSchedule.Delivery.EMAIL
         # On PATCH, fall back to the stored recipients when not being changed.
@@ -43,7 +62,28 @@ class ReportScheduleSerializer(serializers.ModelSerializer):
         if delivery in (ReportSchedule.Delivery.EMAIL, ReportSchedule.Delivery.BOTH) and not recipients:
             raise serializers.ValidationError(
                 {"recipients": "At least one recipient is required when email delivery is selected."})
+
+        # Convert the submitted local time → UTC for storage. Only when the time
+        # is part of this write (create always sends hour; PATCH may omit it and
+        # leave the stored UTC value untouched).
+        if "hour" in attrs:
+            dow = attrs.get("day_of_week", getattr(self.instance, "day_of_week", 0))
+            dom = attrs.get("day_of_month", getattr(self.instance, "day_of_month", 1))
+            h, w, m = local_to_utc(attrs["hour"], dow, dom, self._tz_name())
+            attrs["hour"] = h
+            attrs["day_of_week"] = w
+            attrs["day_of_month"] = m
         return attrs
+
+    def to_representation(self, instance):
+        """Convert the stored UTC hour/day fields back to the requester's tz."""
+        data = super().to_representation(instance)
+        h, w, m = utc_to_local(
+            instance.hour, instance.day_of_week, instance.day_of_month, self._tz_name())
+        data["hour"] = h
+        data["day_of_week"] = w
+        data["day_of_month"] = m
+        return data
 
 
 class ComplianceSummaryRequestSerializer(serializers.Serializer):

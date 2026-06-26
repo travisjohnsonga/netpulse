@@ -6,6 +6,7 @@ import {
   fetchReportSchedules, createReportSchedule, deleteReportSchedule,
   type GeneratedReportRow, type ReportScheduleRow,
 } from '../api/client'
+import { usePreferencesStore } from '../store/preferencesStore'
 
 type Endpoint = 'compliance-summary' | 'daily-ops'
 
@@ -488,6 +489,9 @@ function GenerateModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
 
 function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () => void; onDone: () => void }) {
   const qc = useQueryClient()
+  // Hour is entered/shown in the user's own timezone; the backend stores it as
+  // UTC and converts at the boundary (see apps.reports.schedule_tz).
+  const userTz = usePreferencesStore((s) => s.prefs?.timezone) || 'UTC'
   const schedQ = useQuery({ queryKey: ['report-schedules', def.endpoint], queryFn: () => fetchReportSchedules(def.endpoint) })
   const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily')
   const [hour, setHour] = useState(8)
@@ -530,7 +534,7 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Hour (UTC)</label>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Hour ({userTz})</label>
             <select className={inputCls} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
               {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
             </select>
@@ -580,7 +584,7 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
               {schedQ.data!.map((s: ReportScheduleRow) => (
                 <li key={s.id} className="flex items-center justify-between text-sm">
                   <span className="text-gray-700 dark:text-gray-300">
-                    {s.frequency} @ {String(s.hour).padStart(2, '0')}:00 · {s.fmt.toUpperCase()}
+                    {s.frequency} @ {String(s.hour).padStart(2, '0')}:00 {s.timezone ?? userTz} · {s.fmt.toUpperCase()}
                     {' → '}
                     {s.delivery === 'store_only'
                       ? 'Store only'
