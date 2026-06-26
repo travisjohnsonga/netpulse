@@ -76,6 +76,22 @@ type MetricsResponse struct {
 		Services          bool `json:"services"`
 		RoleChecksEnabled bool `json:"role_checks_enabled"`
 	} `json:"collection_config"`
+	// DesiredConfig is the operator-set config the agent should apply this cycle
+	// (collection toggles, interval, disk filter). Pointer so an older server
+	// that omits it (nil) is a no-op rather than applying a zero config.
+	DesiredConfig *DesiredConfig `json:"desired_config"`
+}
+
+// DesiredConfig mirrors the server's effective_config() shape exactly (see
+// apps/agents). Collection is a map so absent keys leave the running value
+// untouched.
+type DesiredConfig struct {
+	Collection      map[string]bool `json:"collection"`
+	IntervalSeconds int             `json:"interval_seconds"`
+	Disk            struct {
+		ExcludeMounts []string `json:"exclude_mounts"`
+		IncludeMounts []string `json:"include_mounts"`
+	} `json:"disk"`
 }
 
 // post sends payload to the agent endpoint at path. When out is non-nil the JSON
@@ -120,4 +136,6 @@ func (c *Client) SendMetrics(payload interface{}) (*MetricsResponse, error) {
 	return &r, nil
 }
 
-func (c *Client) SendRoleChecks(payload interface{}) error { return c.post("role-checks/", payload, nil) }
+func (c *Client) SendRoleChecks(payload interface{}) error {
+	return c.post("role-checks/", payload, nil)
+}

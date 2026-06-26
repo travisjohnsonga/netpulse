@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"runtime"
 )
 
@@ -16,6 +17,14 @@ type Collection struct {
 	Network   bool `json:"network"`
 	Processes bool `json:"processes"`
 	Services  bool `json:"services"`
+}
+
+// DiskFilter selects which mounts/drives the disk collector reports. Empty
+// IncludeMounts = no include-filter (report all); ExcludeMounts always wins.
+// See collector.FilterDisks for the matching/normalization rule.
+type DiskFilter struct {
+	ExcludeMounts []string `json:"exclude_mounts"`
+	IncludeMounts []string `json:"include_mounts"`
 }
 
 type RoleChecks struct {
@@ -40,6 +49,7 @@ type Config struct {
 	APIKey string `json:"api_key,omitempty"`
 
 	Collection Collection `json:"collection"`
+	Disk       DiskFilter `json:"disk"`
 	RoleChecks RoleChecks `json:"role_checks"`
 
 	Log struct {
@@ -80,12 +90,33 @@ func Load(path string) (*Config, error) {
 }
 
 // Save writes cfg back to path as indented JSON (0600 — the file may hold an
-// API key). Used when the agent applies server-pushed config changes (e.g.
-// auto-enabling role checks for newly assigned roles).
+// API key). The write is ATOMIC: data goes to a temp file in the same directory
+// which is then renamed over path, so a crash mid-write can never leave a
+// truncated/corrupt config on a monitored host. Used when the agent applies
+// server-pushed config changes (roles, collection toggles, interval, disk
+// filters). os.Rename replaces the target atomically on Linux and Windows
+// (Go uses MoveFileEx with REPLACE_EXISTING on Windows).
 func Save(path string, cfg *Config) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds; cleans up on failure
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

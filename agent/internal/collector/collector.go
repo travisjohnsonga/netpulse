@@ -5,7 +5,73 @@
 // CPUCollector/NetworkCollector Collect methods).
 package collector
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// normalizeMount canonicalizes a mount/drive identifier so an operator's list
+// entry matches what the collector emits as DiskStat.Mount across OSes:
+//   - trailing path separators are stripped ("/var/"→"/var", "D:\\"→"D:"),
+//     but a bare root ("/" or "\\") is preserved as "/";
+//   - a two-char Windows drive ("d:") is upper-cased ("D:") — Windows drive
+//     letters are case-insensitive. Linux paths keep their case (case-sensitive).
+//
+// So "D:", "D:\\" and "d:" all match the Windows collector's "D:\\".
+func normalizeMount(m string) string {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return ""
+	}
+	trimmed := strings.TrimRight(m, `/\`)
+	if trimmed == "" {
+		return "/" // a bare root mount
+	}
+	m = trimmed
+	if len(m) == 2 && m[1] == ':' { // drive letter, e.g. "C:"
+		m = strings.ToUpper(m)
+	}
+	return m
+}
+
+func normalizeSet(items []string) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, it := range items {
+		if n := normalizeMount(it); n != "" {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// FilterDisks applies an operator's include/exclude mount filter to collected
+// disk stats. Rules (cross-OS, via normalizeMount):
+//   - empty include AND empty exclude → all disks (the default; must NOT regress
+//     to "monitor nothing");
+//   - non-empty include → only listed mounts;
+//   - exclude drops a mount and takes PRECEDENCE over include.
+//
+// The OS collectors are unchanged; this runs on their output so Linux and
+// Windows share one filtering rule.
+func FilterDisks(stats []DiskStat, include, exclude []string) []DiskStat {
+	inc := normalizeSet(include)
+	exc := normalizeSet(exclude)
+	if len(inc) == 0 && len(exc) == 0 {
+		return stats
+	}
+	out := make([]DiskStat, 0, len(stats))
+	for _, d := range stats {
+		n := normalizeMount(d.Mount)
+		if exc[n] {
+			continue
+		}
+		if len(inc) > 0 && !inc[n] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
 
 type CPUStat struct {
 	Core   string  `json:"core"`
