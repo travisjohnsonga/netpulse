@@ -249,6 +249,14 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                     names.append(s["name"])
             agent.reported_services = names
             update_fields.append("reported_services")
+        # Keep the stored version in sync with the CURRENTLY RUNNING agent — the
+        # agent reports its build in every payload (top-level "version"), and
+        # upgrades happen after enrollment. Only update on a non-empty value so a
+        # payload that omits it never blanks a good stored version.
+        reported_version = (payload.get("version") or "").strip()
+        if reported_version and reported_version != agent.version:
+            agent.version = reported_version
+            update_fields.append("version")
         agent.last_seen = timezone.now()
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE
