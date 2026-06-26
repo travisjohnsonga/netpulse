@@ -78,6 +78,8 @@ export interface HealthStatus {
   db?: boolean
   collector_ip?: string
   ssl_cert_days_remaining?: number | null
+  // Authoritative server wall-clock (UTC, ISO 8601); anchors the footer clock.
+  server_time?: string
 }
 
 export interface InfraServiceHealth {
