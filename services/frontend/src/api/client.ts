@@ -1968,7 +1968,7 @@ export interface ReportScheduleRow {
   id: number
   report_type: ReportTypeKey
   report_type_display: string
-  frequency: 'daily' | 'weekly' | 'monthly'
+  frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly'
   hour: number
   day_of_week: number
   day_of_month: number

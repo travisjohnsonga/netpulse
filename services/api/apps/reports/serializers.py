@@ -47,6 +47,17 @@ class ReportScheduleSerializer(serializers.ModelSerializer):
         """The tz the output hour/day fields are expressed in (the requester's)."""
         return self._tz_name()
 
+    def validate_day_of_week(self, value):
+        if not 0 <= value <= 6:
+            raise serializers.ValidationError("Day of week must be 0 (Mon) … 6 (Sun).")
+        return value
+
+    def validate_day_of_month(self, value):
+        # Capped at 28 so monthly/quarterly schedules never skip a short month.
+        if not 1 <= value <= 28:
+            raise serializers.ValidationError("Day of month must be 1–28.")
+        return value
+
     def validate(self, attrs):
         """Recipients are required only when email delivery is selected; a
         store-only schedule emails nobody and needs no recipients. Then convert
@@ -62,6 +73,21 @@ class ReportScheduleSerializer(serializers.ModelSerializer):
         if delivery in (ReportSchedule.Delivery.EMAIL, ReportSchedule.Delivery.BOTH) and not recipients:
             raise serializers.ValidationError(
                 {"recipients": "At least one recipient is required when email delivery is selected."})
+
+        # The cadence day field must be provided for the frequencies that use it:
+        # weekly needs day_of_week; monthly/quarterly need day_of_month. (Daily
+        # ignores both.) Checked on the SUBMITTED values, before tz conversion.
+        frequency = attrs.get("frequency") or getattr(
+            self.instance, "frequency", None) or ReportSchedule.Frequency.DAILY
+        F = ReportSchedule.Frequency
+        has_dow = "day_of_week" in attrs or getattr(self.instance, "day_of_week", None) is not None
+        has_dom = "day_of_month" in attrs or getattr(self.instance, "day_of_month", None) is not None
+        if frequency == F.WEEKLY and not has_dow:
+            raise serializers.ValidationError(
+                {"day_of_week": "Day of week is required for a weekly schedule (0=Mon … 6=Sun)."})
+        if frequency in (F.MONTHLY, F.QUARTERLY) and not has_dom:
+            raise serializers.ValidationError(
+                {"day_of_month": f"Day of month is required for a {frequency} schedule (1–28)."})
 
         # Convert the submitted local time → UTC for storage. Only when the time
         # is part of this write (create always sends hour; PATCH may omit it and

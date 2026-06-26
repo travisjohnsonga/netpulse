@@ -603,6 +603,65 @@ class TestScheduleTimezone:
         assert _is_due(sched, not_at_19_utc) is False
 
 
+# ── Schedule frequency UI support (weekly/monthly/quarterly) ──────────────────
+
+class TestScheduleFrequencyValidation:
+    """The serializer accepts every Frequency the backend supports and requires
+    the matching cadence-day field (UI exposes daily/weekly/monthly/quarterly)."""
+
+    def _post(self, auth_client, **body):
+        body.setdefault("fmt", "pdf")
+        body.setdefault("delivery", "store_only")
+        body.setdefault("recipients", [])
+        return auth_client.post("/api/reports/compliance-summary/schedule/", body, format="json")
+
+    def test_weekly_with_day_of_week_accepted(self, auth_client):
+        resp = self._post(auth_client, frequency="weekly", hour=8, day_of_week=2)
+        assert resp.status_code == 201
+        sched = ReportSchedule.objects.latest("id")
+        assert sched.frequency == "weekly" and sched.day_of_week == 2
+
+    def test_monthly_with_day_of_month_accepted(self, auth_client):
+        resp = self._post(auth_client, frequency="monthly", hour=8, day_of_month=15)
+        assert resp.status_code == 201
+        sched = ReportSchedule.objects.latest("id")
+        assert sched.frequency == "monthly" and sched.day_of_month == 15
+
+    def test_quarterly_with_day_of_month_accepted(self, auth_client):
+        resp = self._post(auth_client, frequency="quarterly", hour=8, day_of_month=1)
+        assert resp.status_code == 201
+        assert ReportSchedule.objects.latest("id").frequency == "quarterly"
+
+    def test_weekly_without_day_of_week_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="weekly", hour=8)
+        assert resp.status_code == 400 and "day_of_week" in resp.json()
+
+    def test_monthly_without_day_of_month_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="monthly", hour=8)
+        assert resp.status_code == 400 and "day_of_month" in resp.json()
+
+    def test_day_of_month_out_of_range_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="monthly", hour=8, day_of_month=31)
+        assert resp.status_code == 400 and "day_of_month" in resp.json()
+
+    def test_day_of_week_out_of_range_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="weekly", hour=8, day_of_week=9)
+        assert resp.status_code == 400 and "day_of_week" in resp.json()
+
+    def test_daily_needs_no_day_field(self, auth_client):
+        resp = self._post(auth_client, frequency="daily", hour=8)
+        assert resp.status_code == 201
+
+    def test_quarterly_fires_only_in_quarter_months(self, fleet):
+        """Backend cadence sanity: quarterly fires on day_of_month in Jan/Apr/Jul/Oct."""
+        from datetime import datetime
+        from apps.reports.tasks import _is_due
+        sched = ReportSchedule(report_type=ReportType.DAILY_OPS, frequency="quarterly",
+                               hour=8, day_of_month=1)
+        assert _is_due(sched, timezone.make_aware(datetime(2026, 7, 1, 8, 1))) is True   # Jul
+        assert _is_due(sched, timezone.make_aware(datetime(2026, 8, 1, 8, 1))) is False  # Aug
+
+
 # ── Report delivery: store-only schedules + ad-hoc download (no email) ─────────
 
 class TestDeliveryModes:
