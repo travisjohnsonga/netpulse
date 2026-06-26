@@ -4,4 +4,4 @@ protobuf~=5.27
 nats-py~=2.7
 
 # Valkey — gNMI liveness heartbeat for SNMP adaptive polling
-redis~=5.0
+redis~=8.0
