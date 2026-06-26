@@ -69,6 +69,15 @@ func main() {
 		log.Fatalf("Failed to create agent: %v", err)
 	}
 
+	// runAgent is build-tagged: on Windows it runs under the SCM when launched
+	// as a service (else foreground); on Linux it always runs foreground.
+	runAgent(a)
+}
+
+// runForeground runs the agent loop in the foreground until SIGINT/SIGTERM —
+// the interactive path (and the systemd path on Linux, which runs us in the
+// foreground). Shared by both the Windows interactive branch and Linux.
+func runForeground(a *agent.Agent) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
