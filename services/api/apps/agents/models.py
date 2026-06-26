@@ -23,6 +23,16 @@ from apps.core.models import TimestampedModel
 # HEARTBEAT_HEALTHY_SECONDS for the equivalent collector concept.
 AGENT_ONLINE_SECONDS = 300
 
+# Defaults for the operator-editable, agent-pulled desired config. effective_config()
+# merges an agent's sparse desired_config over these so every key is always present.
+# disk.exclude_mounts / include_mounts let an operator drop volumes (e.g. a
+# recovery partition) from collection; exclude wins over include.
+DEFAULT_AGENT_CONFIG = {
+    "collection": {"cpu": True, "memory": True, "disk": True, "network": True, "services": False},
+    "interval_seconds": 30,
+    "disk": {"exclude_mounts": [], "include_mounts": []},
+}
+
 
 def _generate_token() -> str:
     return secrets.token_urlsafe(32)
@@ -139,6 +149,27 @@ class Agent(TimestampedModel):
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     collection_interval = models.IntegerField(default=30, help_text="seconds")
+    # Operator-set DESIRED config the agent pulls on its next check-in (the
+    # metrics-push response carries it; the agent applies + rewrites its local
+    # config.json). Stored sparse — effective_config() merges it over the
+    # defaults so the agent/UI always see a complete config. Pull model only:
+    # there is no inbound channel to the agent.
+    desired_config = models.JSONField(default=dict, blank=True)
+
+    def effective_config(self) -> dict:
+        """The desired config merged over DEFAULT_AGENT_CONFIG, so callers always
+        get every key. interval falls back to the legacy collection_interval."""
+        cfg = self.desired_config or {}
+        disk = cfg.get("disk") or {}
+        return {
+            "collection": {**DEFAULT_AGENT_CONFIG["collection"], **(cfg.get("collection") or {})},
+            "interval_seconds": cfg.get("interval_seconds") or self.collection_interval
+            or DEFAULT_AGENT_CONFIG["interval_seconds"],
+            "disk": {
+                "exclude_mounts": list(disk.get("exclude_mounts") or []),
+                "include_mounts": list(disk.get("include_mounts") or []),
+            },
+        }
 
     def save(self, *args, **kwargs):
         # Keep the normalized serial in lockstep with cert_serial so the

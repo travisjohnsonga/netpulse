@@ -557,3 +557,61 @@ class TestNoStoreHeaders:
         resp = _enroll(api_client, t.token, hostname="nostore-host")
         assert resp.status_code == 201, resp.content
         assert resp.get("Cache-Control") == "no-store"
+
+
+# ── Stage A: desired-config view/edit + pull delivery via metrics response ────
+
+class TestAgentDesiredConfig:
+    def test_get_returns_effective_defaults(self, auth_client):
+        a = Agent.objects.create(hostname="cfg-1", status=Agent.Status.ACTIVE)
+        resp = auth_client.get(f"/api/servers/{a.id}/config/")
+        assert resp.status_code == 200, resp.content
+        cfg = resp.json()
+        assert cfg["collection"]["cpu"] is True
+        assert cfg["interval_seconds"] == 30
+        assert cfg["disk"] == {"exclude_mounts": [], "include_mounts": []}
+
+    def test_patch_requires_agent_edit(self, viewer_client):
+        a = Agent.objects.create(hostname="cfg-2", status=Agent.Status.ACTIVE)
+        resp = viewer_client.patch(f"/api/servers/{a.id}/config/",
+                                   {"interval_seconds": 60}, format="json")
+        assert resp.status_code == 403, resp.content
+
+    def test_patch_persists_and_audits(self, auth_client):
+        from apps.core.models import AuditLog
+        a = Agent.objects.create(hostname="cfg-3", status=Agent.Status.ACTIVE)
+        resp = auth_client.patch(
+            f"/api/servers/{a.id}/config/",
+            {"collection": {"network": False}, "interval_seconds": 120,
+             "disk": {"exclude_mounts": ["D:"]}}, format="json")
+        assert resp.status_code == 200, resp.content
+        cfg = resp.json()
+        assert cfg["collection"]["network"] is False
+        assert cfg["collection"]["cpu"] is True  # untouched keys keep defaults
+        assert cfg["interval_seconds"] == 120
+        assert cfg["disk"]["exclude_mounts"] == ["D:"]
+        a.refresh_from_db()
+        assert a.desired_config["disk"]["exclude_mounts"] == ["D:"]
+        assert AuditLog.objects.filter(
+            event_type=AuditLog.EventType.AGENT_CONFIG_CHANGED).exists()
+
+    def test_patch_rejects_bad_input(self, auth_client):
+        a = Agent.objects.create(hostname="cfg-4", status=Agent.Status.ACTIVE)
+        # interval below the floor
+        assert auth_client.patch(f"/api/servers/{a.id}/config/",
+                                 {"interval_seconds": 1}, format="json").status_code == 400
+        # unknown collection key
+        assert auth_client.patch(f"/api/servers/{a.id}/config/",
+                                 {"collection": {"bogus": True}}, format="json").status_code == 400
+
+    def test_metrics_response_carries_desired_config(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="cfg-5", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE,
+                                 desired_config={"disk": {"exclude_mounts": ["D:"]}})
+        hdr = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json", **hdr)
+        assert r.status_code == 200, r.content
+        dc = r.json()["desired_config"]
+        assert dc["disk"]["exclude_mounts"] == ["D:"]
+        assert dc["collection"]["cpu"] is True  # merged with defaults

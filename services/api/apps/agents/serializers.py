@@ -1,6 +1,32 @@
 from rest_framework import serializers
 
-from .models import Agent, AgentEnrollmentToken, AgentRole, AgentRoleStatus, ServerRole
+from .models import (
+    DEFAULT_AGENT_CONFIG, Agent, AgentEnrollmentToken, AgentRole, AgentRoleStatus,
+    ServerRole,
+)
+
+
+class _DiskConfigSerializer(serializers.Serializer):
+    exclude_mounts = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False)
+    include_mounts = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False)
+
+
+class AgentConfigSerializer(serializers.Serializer):
+    """Validates a (partial) desired-config PATCH. Unknown collection keys are
+    rejected so a typo can't silently disable nothing."""
+    collection = serializers.DictField(child=serializers.BooleanField(), required=False)
+    interval_seconds = serializers.IntegerField(min_value=10, max_value=3600, required=False)
+    disk = _DiskConfigSerializer(required=False)
+
+    def validate_collection(self, value):
+        allowed = set(DEFAULT_AGENT_CONFIG["collection"])
+        unknown = set(value) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f"Unknown collection keys: {sorted(unknown)}. Allowed: {sorted(allowed)}.")
+        return value
 
 
 class ServerRoleSerializer(serializers.ModelSerializer):
