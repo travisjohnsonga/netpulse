@@ -509,6 +509,100 @@ class TestScheduling:
         assert GeneratedReport.objects.filter(source="scheduled").count() == 1
 
 
+# ── Schedule timezone conversion (stored UTC, entered/shown in user's tz) ──────
+
+class TestScheduleTimezone:
+    """hour/day_* are stored UTC and the scheduler compares UTC; conversion to/from
+    the user's tz happens only at the API boundary (mirrors temperature_unit)."""
+
+    def _set_tz(self, user, tz):
+        from apps.core.models import UserPreferences
+        prefs = UserPreferences.for_user(user)
+        prefs.timezone = tz
+        prefs.save(update_fields=["timezone"])
+
+    # ── pure helper (deterministic, DST-explicit) ──────────────────────────────
+    def test_helper_local_to_utc_dst_aware(self):
+        import datetime as dt
+        from apps.reports.schedule_tz import local_to_utc
+        # Chicago is UTC-6 in winter (CST) and UTC-5 in summer (CDT): 19:00 local
+        # maps to DIFFERENT UTC hours, proving the IANA offset (not a fixed -6).
+        h_winter, _, _ = local_to_utc(19, 0, 15, "America/Chicago", ref_date=dt.date(2026, 1, 15))
+        h_summer, _, _ = local_to_utc(19, 0, 15, "America/Chicago", ref_date=dt.date(2026, 7, 15))
+        assert h_winter == 1   # 19 + 6
+        assert h_summer == 0   # 19 + 5
+        assert h_winter != h_summer
+
+    def test_helper_day_rollover_weekly(self):
+        import datetime as dt
+        from apps.reports.schedule_tz import local_to_utc
+        # 19:00 Mon CDT = 00:00 Tue UTC → hour 0, day_of_week Mon(0)→Tue(1).
+        h, dow, dom = local_to_utc(19, 0, 15, "America/Chicago", ref_date=dt.date(2026, 7, 15))
+        assert h == 0 and dow == 1 and dom == 16
+
+    def test_helper_utc_user_passthrough(self):
+        from apps.reports.schedule_tz import local_to_utc, utc_to_local
+        assert local_to_utc(19, 3, 10, "UTC") == (19, 3, 10)
+        assert utc_to_local(19, 3, 10, "UTC") == (19, 3, 10)
+
+    def test_helper_roundtrip(self):
+        import datetime as dt
+        from apps.reports.schedule_tz import local_to_utc, utc_to_local
+        ref = dt.date(2026, 7, 15)
+        u = local_to_utc(19, 2, 14, "America/Chicago", ref_date=ref)
+        back = utc_to_local(*u, "America/Chicago", ref_date=ref)
+        assert back == (19, 2, 14)
+
+    def test_invalid_tz_falls_back_to_utc(self):
+        from apps.reports.schedule_tz import local_to_utc
+        assert local_to_utc(19, 0, 1, "Not/AZone") == (19, 0, 1)
+
+    # ── API boundary ───────────────────────────────────────────────────────────
+    def test_create_stores_utc_reads_back_local(self, auth_client, user):
+        self._set_tz(user, "America/Chicago")
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 19, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 201
+        sched = ReportSchedule.objects.latest("id")
+        # Stored hour is UTC (converted away from the entered local 19).
+        assert sched.hour != 19
+        from apps.reports.schedule_tz import local_to_utc
+        assert sched.hour == local_to_utc(19, 0, 1, "America/Chicago")[0]
+        # Read back in the user's tz → the 19 they intended, labeled with their tz.
+        body = auth_client.get("/api/reports/compliance-summary/schedule/").json()
+        assert body[0]["hour"] == 19
+        assert body[0]["timezone"] == "America/Chicago"
+
+    def test_utc_user_unaffected(self, auth_client, user):
+        self._set_tz(user, "UTC")
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 19, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 201
+        assert ReportSchedule.objects.latest("id").hour == 19   # 19 stays 19
+        body = auth_client.get("/api/reports/compliance-summary/schedule/").json()
+        assert body[0]["hour"] == 19 and body[0]["timezone"] == "UTC"
+
+    def test_scheduler_fires_on_stored_utc_hour(self, fleet, auth_client, user):
+        """End-to-end: a Chicago 19:00 schedule fires when UTC now == its stored
+        UTC hour, NOT at 19:00 UTC — proving the scheduler core stays UTC."""
+        from datetime import datetime
+        from apps.reports.tasks import _is_due
+        self._set_tz(user, "America/Chicago")
+        auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 19, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        sched = ReportSchedule.objects.latest("id")
+        fires_at = timezone.make_aware(datetime(2026, 7, 1, sched.hour, 1))
+        not_at_19_utc = timezone.make_aware(datetime(2026, 7, 1, 19, 1))
+        assert _is_due(sched, fires_at) is True
+        assert _is_due(sched, not_at_19_utc) is False
+
+
 # ── Report delivery: store-only schedules + ad-hoc download (no email) ─────────
 
 class TestDeliveryModes:

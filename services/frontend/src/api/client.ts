@@ -1976,6 +1976,9 @@ export interface ReportScheduleRow {
   delivery: 'email' | 'store_only' | 'both'
   delivery_display?: string
   recipients: string[]
+  // IANA tz the hour/day_of_week/day_of_month fields are expressed in (the
+  // requester's UserPreferences.timezone). The backend stores them in UTC.
+  timezone?: string
   parameters: Record<string, unknown>
   enabled: boolean
   last_run: string | null
