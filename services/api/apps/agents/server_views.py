@@ -79,6 +79,44 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
         assignments = server.assigned_roles.select_related("role").all()
         return Response(AssignedRoleSerializer(assignments, many=True).data)
 
+    @action(detail=True, methods=["post"], url_path="site")
+    def change_site(self, request, pk=None):
+        """Reassign the server to a different site (or unassign with site_id null).
+        The site lives on the linked Device; gated by agent:edit and audit-logged.
+        Used for servers that move sites or were enrolled with the wrong/blank
+        site (the common case is set at enrollment via the token's site)."""
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        from apps.devices.models import Site
+
+        server = self.get_object()
+        device = server.device
+        if device is None:
+            return Response(
+                {"detail": "This server has no linked device, so it can't be assigned to a site."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        site_id = request.data.get("site_id", None)
+        new_site = None
+        if site_id not in (None, "", 0, "0"):
+            new_site = Site.objects.filter(pk=site_id).first()
+            if new_site is None:
+                return Response({"detail": "site_id not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_site = device.site
+        if (old_site.id if old_site else None) != (new_site.id if new_site else None):
+            device.site = new_site
+            device.save(update_fields=["site"])
+            log_event(
+                AuditLog.EventType.AGENT_SITE_CHANGED, request=request, target=server,
+                description=(f"Server {server.hostname} site changed: "
+                             f"{old_site.name if old_site else '—'} → "
+                             f"{new_site.name if new_site else '—'}"),
+                metadata={"old_site": old_site.name if old_site else None,
+                          "new_site": new_site.name if new_site else None},
+            )
+        return Response(self.get_serializer(server).data)
+
     @action(detail=True, methods=["delete"], url_path=r"roles/(?P<role_id>[^/.]+)")
     def remove_role(self, request, pk=None, role_id=None):
         """Unassign a role from the server."""

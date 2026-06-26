@@ -1586,6 +1586,13 @@ export async function detectServerRoles(id: string): Promise<DetectedRole[]> {
   return data.detected
 }
 
+// Reassign a server to a different site (siteId null = unassign). The site lives
+// on the linked device; gated by agent:edit and audit-logged server-side.
+export async function changeServerSite(id: string, siteId: number | null): Promise<ServerDetail> {
+  const { data } = await api.post<ServerDetail>(`/servers/${id}/site/`, { site_id: siteId })
+  return data
+}
+
 export async function fetchAgentTokens(): Promise<AgentToken[]> {
   const { data } = await api.get<AgentToken[] | Paginated<AgentToken>>('/agents/tokens/')
   return unwrap(data)

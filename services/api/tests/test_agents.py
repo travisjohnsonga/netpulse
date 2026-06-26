@@ -357,3 +357,64 @@ class TestBuildPoints:
     def test_drops_empty_and_nonnumeric(self):
         pts = build_points(1, "h", {"memory": {"total_bytes": "n/a"}, "cpu": []})
         assert pts == []  # non-numeric dropped → empty fields → no point
+
+
+# ── Site assignment at enrollment + reassignment on the server detail ─────────
+
+class TestServerSiteAssignment:
+    def test_enroll_assigns_device_site_from_token(self, api_client, fake_pki):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="DC-enroll")
+        t = _token(max_uses=1, site=site)
+        resp = _enroll(api_client, t.token, hostname="srv-a")
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.device is not None and agent.device.site_id == site.id
+
+    def test_enroll_without_site_leaves_device_unassigned(self, api_client, fake_pki):
+        t = _token(max_uses=1)  # no site
+        resp = _enroll(api_client, t.token, hostname="srv-b")
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.device is not None and agent.device.site_id is None
+
+    def test_change_site_reassigns_and_audits(self, api_client, auth_client, fake_pki):
+        from apps.core.models import AuditLog
+        from apps.devices.models import Site
+        dest = Site.objects.create(name="DC-dest")
+        t = _token(max_uses=1)
+        agent_id = _enroll(api_client, t.token, hostname="srv-c").json()["agent_id"]
+
+        resp = auth_client.post(f"/api/servers/{agent_id}/site/", {"site_id": dest.id}, format="json")
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["site"]["id"] == dest.id
+        agent = Agent.objects.get(id=agent_id)
+        assert agent.device.site_id == dest.id
+        assert AuditLog.objects.filter(
+            event_type=AuditLog.EventType.AGENT_SITE_CHANGED).exists()
+
+    def test_change_site_unassign_with_null(self, api_client, auth_client, fake_pki):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="DC-start")
+        t = _token(max_uses=1, site=site)
+        agent_id = _enroll(api_client, t.token, hostname="srv-d").json()["agent_id"]
+
+        resp = auth_client.post(f"/api/servers/{agent_id}/site/", {"site_id": None}, format="json")
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["site"] is None
+        assert Agent.objects.get(id=agent_id).device.site_id is None
+
+    def test_change_site_requires_capability(self, api_client, viewer_client, fake_pki):
+        from apps.devices.models import Site
+        dest = Site.objects.create(name="DC-noauth")
+        t = _token(max_uses=1)
+        agent_id = _enroll(api_client, t.token, hostname="srv-e").json()["agent_id"]
+        resp = viewer_client.post(f"/api/servers/{agent_id}/site/", {"site_id": dest.id}, format="json")
+        assert resp.status_code == 403, resp.content
+
+    def test_change_site_no_linked_device_is_400(self, auth_client):
+        from apps.devices.models import Site
+        dest = Site.objects.create(name="DC-nodev")
+        agent = Agent.objects.create(hostname="srv-nodev", status=Agent.Status.ACTIVE)
+        resp = auth_client.post(f"/api/servers/{agent.id}/site/", {"site_id": dest.id}, format="json")
+        assert resp.status_code == 400, resp.content
