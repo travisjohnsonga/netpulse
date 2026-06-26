@@ -13,6 +13,7 @@ func CollectDisk() ([]DiskStat, error) {
 	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
 	getDiskFreeSpaceEx := kernel32.NewProc("GetDiskFreeSpaceExW")
 	getLogicalDrives := kernel32.NewProc("GetLogicalDrives")
+	getDriveType := kernel32.NewProc("GetDriveTypeW")
 
 	ret, _, _ := getLogicalDrives.Call()
 	drives := uint32(ret)
@@ -25,6 +26,13 @@ func CollectDisk() ([]DiskStat, error) {
 		drive := string(rune('A'+i)) + `:\`
 		drivePtr, err := syscall.UTF16PtrFromString(drive)
 		if err != nil {
+			continue
+		}
+		// Auto-skip removable/optical media (USB, DVD, mounted ISO) by default —
+		// a full read-only disc reports 100% forever and is pure noise. Fixed and
+		// network drives are kept; the manual exclude_mounts filter runs after.
+		dt, _, _ := getDriveType.Call(uintptr(unsafe.Pointer(drivePtr)))
+		if skipWindowsDriveType(uint32(dt)) {
 			continue
 		}
 		var freeAvail, totalBytes, totalFree uint64
