@@ -61,6 +61,16 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
       + `powershell -ExecutionPolicy Bypass -File "$env:TEMP\\install.ps1" `
       + `-Server "${serverUrl}" -Token "${created.token}"${selfSigned ? ' -Insecure' : ''}`
     : ''
+  // Update commands — no token (update is for already-enrolled hosts). They pull
+  // the updater from the server and run it; it verifies the new binary before
+  // swapping, backs up, and auto-rolls-back if the service doesn't restart. Same
+  // self-signed (-k / -Insecure) handling as install. (install.sh/.ps1 also leave
+  // a persistent local copy, so an enrolled host can just run that with no args.)
+  const linuxUpdateCmd = `curl -fsSL${selfSigned ? ' -k' : ''} ${serverUrl}/agent/update | sudo bash -s -- --server ${serverUrl}${selfSigned ? ' --insecure' : ''}`
+  const windowsUpdateCmd =
+    `curl.exe -fL${selfSigned ? ' -k' : ''} -o "$env:TEMP\\update.ps1" "${serverUrl}/agent/update.ps1"\n`
+    + `powershell -ExecutionPolicy Bypass -File "$env:TEMP\\update.ps1" `
+    + `-Server "${serverUrl}"${selfSigned ? ' -Insecure' : ''}`
   // 'any' = "Both" → show both blocks.
   const showLinux = targetOs === 'linux' || targetOs === 'any'
   const showWindows = targetOs === 'windows' || targetOs === 'any'
@@ -151,6 +161,12 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                   <button onClick={() => copy(linuxCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Supports linux/amd64, linux/arm64 — auto-detected during install.</p>
+                <p className="mt-2 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Linux update command:</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg break-all">{linuxUpdateCmd}</code>
+                  <button onClick={() => copy(linuxUpdateCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Already-enrolled hosts can instead run <code>sudo /usr/local/bin/netpulse-agent-update.sh</code> (no args). Verifies, backs up, and auto-rolls-back.</p>
               </div>
             )}
             {showWindows && (
@@ -161,6 +177,12 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                   <button onClick={() => copy(windowsCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Supports windows/amd64 — run PowerShell as Administrator.</p>
+                <p className="mt-2 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Windows update command (PowerShell):</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg whitespace-pre-wrap break-all">{windowsUpdateCmd}</code>
+                  <button onClick={() => copy(windowsUpdateCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Already-enrolled hosts can instead run <code>&amp; 'C:\Program Files\NetPulse\Update-Agent.ps1'</code> (no args, elevated).</p>
               </div>
             )}
             <div className="flex justify-end pt-2">

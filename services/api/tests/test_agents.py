@@ -335,6 +335,35 @@ class TestAgentManagement:
         assert "windows-amd64" in body["platforms"] and "install_linux" in body
 
 
+# ── Update-script serve routes (public, top-level /agent/update[.ps1]) ────────────
+
+class TestUpdateScriptServe:
+    def _seed(self, settings, tmp_path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "update-agent.sh").write_text("#!/usr/bin/env bash\necho linux-updater\n")
+        (scripts / "Update-Agent.ps1").write_text("# windows updater\nWrite-Host hi\n")
+        settings.AGENT_DIR = str(tmp_path)
+
+    def test_serves_linux_updater_as_text(self, api_client, settings, tmp_path):
+        self._seed(settings, tmp_path)
+        resp = api_client.get("/agent/update")  # public, no auth
+        assert resp.status_code == 200
+        assert resp["Content-Type"].startswith("text/plain")
+        assert b"linux-updater" in resp.getvalue()
+
+    def test_serves_windows_updater_as_text(self, api_client, settings, tmp_path):
+        self._seed(settings, tmp_path)
+        resp = api_client.get("/agent/update.ps1")  # public, no auth
+        assert resp.status_code == 200
+        assert resp["Content-Type"].startswith("text/plain")
+        assert b"windows updater" in resp.getvalue()
+
+    def test_missing_script_is_404(self, api_client, settings, tmp_path):
+        settings.AGENT_DIR = str(tmp_path)  # no scripts/ dir → file absent
+        assert api_client.get("/agent/update").status_code == 404
+
+
 # ── Metric point building (pure) ────────────────────────────────────────────────
 
 class TestBuildPoints:

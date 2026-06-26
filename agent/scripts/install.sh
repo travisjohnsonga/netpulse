@@ -90,4 +90,18 @@ chown -R netpulse-agent:netpulse-agent "$CONFIG_DIR"
   --install-service \
   --config "$CONFIG_PATH"
 
+# Leave a persistent updater so the host can be updated later with a single
+# no-arg command (it reads server_url from config.json). SECURITY: it lands in
+# ${INSTALL_DIR} (root-owned, root-write-only) — NOT /tmp — because it runs
+# elevated and swaps the agent binary; a user-writable copy would be a privesc
+# vector. Best-effort: a fetch failure doesn't fail the install.
+UPDATE_PATH="${INSTALL_DIR}/netpulse-agent-update.sh"
+if curl "${CURL_OPTS[@]}" -o "$UPDATE_PATH" "${SERVER_URL}/agent/update"; then
+  chmod 0755 "$UPDATE_PATH"
+  echo "   Update later with: sudo ${UPDATE_PATH}"
+else
+  rm -f "$UPDATE_PATH"
+  echo "   (could not fetch the updater; re-pull later from ${SERVER_URL}/agent/update)" >&2
+fi
+
 echo "✅ NetPulse Agent installed. Status: systemctl status netpulse-agent"

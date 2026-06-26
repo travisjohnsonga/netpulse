@@ -60,6 +60,36 @@ def install_script_ps1(request):
     return HttpResponse(body, content_type="text/plain; charset=utf-8")
 
 
+def update_script(request):
+    """Serve agent/scripts/update-agent.sh as plain text for the Linux updater.
+
+    Parallel to install_script: the update one-paste fetches this with curl and
+    pipes it to bash; install.sh also pulls it at install time to leave a
+    persistent root-owned copy on the host. Served as text/plain."""
+    path = os.path.join(settings.AGENT_DIR, "scripts", "update-agent.sh")
+    try:
+        with open(path, "rb") as fh:
+            body = fh.read()
+    except OSError as exc:
+        raise Http404("update script not available") from exc
+    return HttpResponse(body, content_type="text/plain; charset=utf-8")
+
+
+def update_script_ps1(request):
+    """Serve agent/scripts/Update-Agent.ps1 as plain text for the Windows updater.
+
+    Parallel to install_script_ps1: fetched with curl.exe and run via PowerShell;
+    install.ps1 also pulls it at install time to leave a persistent copy in the
+    protected install dir. Served as text/plain so curl saves the real script."""
+    path = os.path.join(settings.AGENT_DIR, "scripts", "Update-Agent.ps1")
+    try:
+        with open(path, "rb") as fh:
+            body = fh.read()
+    except OSError as exc:
+        raise Http404("update script not available") from exc
+    return HttpResponse(body, content_type="text/plain; charset=utf-8")
+
+
 def download_binary(request, platform):
     """Serve a prebuilt agent binary from AGENT_DIR/dist for the given platform."""
     entry = _BINARIES.get(platform)
