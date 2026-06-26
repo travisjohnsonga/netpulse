@@ -615,3 +615,67 @@ class TestAgentDesiredConfig:
         dc = r.json()["desired_config"]
         assert dc["disk"]["exclude_mounts"] == ["D:"]
         assert dc["collection"]["cpu"] is True  # merged with defaults
+
+
+# ── Stage 1 log forwarding: relay endpoint + allowlist (security profile) ──────
+
+class TestLogForwarding:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def test_logs_endpoint_relays_to_publisher(self, api_client, monkeypatch):
+        captured = {}
+
+        def fake_publish(source, host, lines):
+            captured.update(source=source, host=host, lines=list(lines))
+            return len(list(lines))
+        monkeypatch.setattr("apps.agents.log_publish.publish_log_lines", fake_publish)
+        a = Agent.objects.create(hostname="loghost", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE)
+        r = api_client.post(
+            f"/api/agents/{a.id}/logs/",
+            {"source": "auth", "lines": ["sshd[1]: Failed password for root from 10.0.0.9",
+                                         "sudo: pam_unix session opened"]},
+            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        assert r.json()["published"] == 2
+        assert captured["source"] == "auth" and captured["host"] == "loghost"
+        assert len(captured["lines"]) == 2
+
+    def test_logs_endpoint_rejects_unknown_source(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.log_publish.publish_log_lines", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="loghost2", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE)
+        r = api_client.post(f"/api/agents/{a.id}/logs/",
+                            {"source": "/etc/passwd", "lines": ["x"]}, format="json", **self._HDR)
+        assert r.status_code == 400, r.content
+
+    def test_logs_endpoint_requires_mtls(self, api_client):
+        a = Agent.objects.create(hostname="loghost3", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE)
+        # No mTLS headers → 403 (same gate as metrics).
+        assert api_client.post(f"/api/agents/{a.id}/logs/",
+                               {"source": "auth", "lines": ["x"]}, format="json").status_code == 403
+
+    def test_config_default_security_profile_on(self, auth_client):
+        a = Agent.objects.create(hostname="loghost4", status=Agent.Status.ACTIVE)
+        cfg = auth_client.get(f"/api/servers/{a.id}/config/").json()
+        assert cfg["logs"]["security_profile"] is True
+        assert cfg["logs"]["additional_paths"] == []
+
+    def test_config_allowlist_rejects_bad_path(self, auth_client):
+        a = Agent.objects.create(hostname="loghost5", status=Agent.Status.ACTIVE)
+        for bad in ("/etc/shadow", "/root/.ssh/id_rsa", "/var/log/../etc/passwd",
+                    "/var/log/server.key", "/home/u/app.log"):
+            r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                                  {"logs": {"additional_paths": [bad]}}, format="json")
+            assert r.status_code == 400, f"{bad} should be rejected, got {r.status_code}"
+
+    def test_config_allowlist_accepts_var_log(self, auth_client):
+        a = Agent.objects.create(hostname="loghost6", status=Agent.Status.ACTIVE)
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"logs": {"security_profile": False,
+                                        "additional_paths": ["/var/log/myapp/app.log"]}},
+                              format="json")
+        assert r.status_code == 200, r.content
+        assert r.json()["logs"]["additional_paths"] == ["/var/log/myapp/app.log"]
+        assert r.json()["logs"]["security_profile"] is False

@@ -97,7 +97,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     PUBLIC_ACTIONS = ("enroll", "ca_certificate")
     # mTLS-authed ingestion: authenticated by the nginx-verified client-cert
     # serial via AgentCertAuthentication (request.user is the Agent).
-    CERT_ACTIONS = ("metrics", "role_checks")
+    CERT_ACTIONS = ("metrics", "role_checks", "logs")
 
     def _resolved_action(self):
         # get_authenticators() runs inside initialize_request(), BEFORE
@@ -332,6 +332,30 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         agent.last_seen = now
         agent.save(update_fields=["last_seen", "updated_at"])
         return Response({"accepted": True, "roles": len(results)})
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="logs")
+    def logs(self, request, pk=None):
+        """Relay raw log lines the agent tailed (security profile: auth/service/
+        kernel, + allowlisted additional_paths) onto NATS netpulse.logs.<source>.
+        <host>, where the existing stream-processor → OpenSearch → Logs UI pipeline
+        ingests them. mTLS cert authed (request.user is the Agent). The agent ships
+        RAW lines only — all parsing is server-side (Stage 2)."""
+        from .log_publish import ALLOWED_LOG_SOURCES, publish_log_lines
+
+        agent = request.user
+        payload = request.data or {}
+        source = str(payload.get("source", "")).strip().lower()
+        if source not in ALLOWED_LOG_SOURCES:
+            return Response({"detail": f"source must be one of {sorted(ALLOWED_LOG_SOURCES)}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        lines = payload.get("lines") or []
+        if not isinstance(lines, list):
+            return Response({"detail": "lines must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+        published = publish_log_lines(source, agent.hostname, lines[:1000])  # cap per request
+        agent.last_seen = timezone.now()
+        agent.save(update_fields=["last_seen", "updated_at"])
+        return Response({"accepted": True, "published": published, "source": source})
 
     @extend_schema(responses=None)
     @action(detail=True, methods=["get"])

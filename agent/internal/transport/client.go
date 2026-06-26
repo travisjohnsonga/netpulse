@@ -92,6 +92,10 @@ type DesiredConfig struct {
 		ExcludeMounts []string `json:"exclude_mounts"`
 		IncludeMounts []string `json:"include_mounts"`
 	} `json:"disk"`
+	Logs struct {
+		SecurityProfile bool     `json:"security_profile"`
+		AdditionalPaths []string `json:"additional_paths"`
+	} `json:"logs"`
 }
 
 // post sends payload to the agent endpoint at path. When out is non-nil the JSON
@@ -138,4 +142,11 @@ func (c *Client) SendMetrics(payload interface{}) (*MetricsResponse, error) {
 
 func (c *Client) SendRoleChecks(payload interface{}) error {
 	return c.post("role-checks/", payload, nil)
+}
+
+// SendLogs ships a batch of RAW log lines for a source (auth/service/kernel/
+// custom) to the server, which relays them to NATS for the log pipeline. No
+// local parsing — raw lines only.
+func (c *Client) SendLogs(source string, lines []string) error {
+	return c.post("logs/", map[string]interface{}{"source": source, "lines": lines}, nil)
 }

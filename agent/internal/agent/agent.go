@@ -12,6 +12,7 @@ import (
 	"github.com/travisjohnsonga/netpulse/agent/internal/collector"
 	"github.com/travisjohnsonga/netpulse/agent/internal/config"
 	"github.com/travisjohnsonga/netpulse/agent/internal/enrollment"
+	"github.com/travisjohnsonga/netpulse/agent/internal/logforward"
 	"github.com/travisjohnsonga/netpulse/agent/internal/transport"
 )
 
@@ -22,6 +23,7 @@ type Agent struct {
 	client  *transport.Client
 	cpu     *collector.CPUCollector
 	network *collector.NetworkCollector
+	logfwd  *logforward.Forwarder
 	ctx     context.Context
 	cancel  context.CancelFunc
 }
@@ -44,8 +46,16 @@ func New(cfg *config.Config, cfgPath, version string) (*Agent, error) {
 		cfg: cfg, cfgPath: cfgPath, version: version, client: client,
 		cpu:     collector.NewCPUCollector(),
 		network: collector.NewNetworkCollector(),
+		logfwd:  logforward.New(client),
 		ctx:     ctx, cancel: cancel,
 	}, nil
+}
+
+// applyLogConfig (re)starts log forwarding from the current config — the security
+// profile (auth/service/kernel) plus allowlisted additional paths. Safe to call
+// repeatedly; the forwarder reconciles its active set.
+func (a *Agent) applyLogConfig() {
+	a.logfwd.Apply(a.cfg.Logs.SecurityProfile, a.cfg.Logs.AdditionalPaths)
 }
 
 func (a *Agent) Run() error {
@@ -55,6 +65,7 @@ func (a *Agent) Run() error {
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 
+	a.applyLogConfig() // start security-log forwarding from the persisted config
 	a.collect(hostname) // prime collectors + first sample
 	a.maybeReschedule(ticker, &interval)
 	for {
@@ -173,9 +184,11 @@ func (a *Agent) applyServerConfig(resp *transport.MetricsResponse) {
 			log.Printf("persist server config update: %v", err)
 			return
 		}
-		log.Printf("applied server config: interval=%ds collection=%+v disk(excl=%v incl=%v) role_checks.enabled=%v",
+		a.applyLogConfig() // reconcile log forwarding with the new config
+		log.Printf("applied server config: interval=%ds collection=%+v disk(excl=%v incl=%v) logs(profile=%v add=%v) role_checks.enabled=%v",
 			a.cfg.Collection.Interval, a.cfg.Collection,
-			a.cfg.Disk.ExcludeMounts, a.cfg.Disk.IncludeMounts, a.cfg.RoleChecks.Enabled)
+			a.cfg.Disk.ExcludeMounts, a.cfg.Disk.IncludeMounts,
+			a.cfg.Logs.SecurityProfile, a.cfg.Logs.AdditionalPaths, a.cfg.RoleChecks.Enabled)
 	}
 }
 
@@ -229,6 +242,15 @@ func applyDesiredConfig(cfg *config.Config, dc *transport.DesiredConfig) bool {
 		cfg.Disk.IncludeMounts = append([]string(nil), dc.Disk.IncludeMounts...)
 		changed = true
 	}
+
+	if dc.Logs.SecurityProfile != cfg.Logs.SecurityProfile {
+		cfg.Logs.SecurityProfile = dc.Logs.SecurityProfile
+		changed = true
+	}
+	if !equalStrings(cfg.Logs.AdditionalPaths, dc.Logs.AdditionalPaths) {
+		cfg.Logs.AdditionalPaths = append([]string(nil), dc.Logs.AdditionalPaths...)
+		changed = true
+	}
 	return changed
 }
 
@@ -279,7 +301,10 @@ func (a *Agent) runRoleChecks(hostname string) {
 	}
 }
 
-func (a *Agent) Stop() { a.cancel() }
+func (a *Agent) Stop() {
+	a.logfwd.Stop()
+	a.cancel()
+}
 
 // Enroll runs first-time enrollment (delegates to the enrollment package).
 // insecure skips server-cert verification (dev / self-signed servers).
