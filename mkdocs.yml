@@ -56,6 +56,7 @@ nav:
     - Wireless Monitoring: integrations/wireless.md
     - NetBox: integrations/netbox.md
     - Email / SMTP: integrations/email.md
+  - Roadmap: roadmap.md
   - Testing: TESTING_PLAN.md
 
 markdown_extensions:
