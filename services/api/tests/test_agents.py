@@ -464,6 +464,52 @@ class TestAgentVersionRefresh:
         assert body["agent_version"] == "2.0.0"
 
 
+# ── Servers list filtered by site (?site=) for the site-detail Servers tab ────
+
+class TestServerSiteFilter:
+    def _server_in_site(self, site, host, ip):
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname=host, ip_address=ip,
+                                    platform=Device.Platform.IOS_XE, site=site)
+        return Agent.objects.create(hostname=host, device=dev, status=Agent.Status.ACTIVE)
+
+    @staticmethod
+    def _rows(resp):
+        body = resp.json()
+        return body["results"] if isinstance(body, dict) else body
+
+    def test_servers_filtered_by_site(self, auth_client):
+        from apps.devices.models import Site
+        s1 = Site.objects.create(name="SF-1")
+        s2 = Site.objects.create(name="SF-2")
+        self._server_in_site(s1, "srv-a", "10.0.0.1")
+        self._server_in_site(s1, "srv-b", "10.0.0.2")
+        self._server_in_site(s2, "srv-c", "10.0.0.3")
+        Agent.objects.create(hostname="srv-nodev", status=Agent.Status.ACTIVE)  # no device → no site
+
+        resp = auth_client.get(f"/api/servers/?site={s1.pk}")
+        assert resp.status_code == 200, resp.content
+        hosts = {r["hostname"] for r in self._rows(resp)}
+        assert hosts == {"srv-a", "srv-b"}
+
+    def test_empty_site_returns_empty_not_error(self, auth_client):
+        from apps.devices.models import Site
+        s = Site.objects.create(name="SF-empty")
+        resp = auth_client.get(f"/api/servers/?site={s.pk}")
+        assert resp.status_code == 200, resp.content
+        assert self._rows(resp) == []
+
+    def test_no_site_param_lists_all(self, auth_client):
+        from apps.devices.models import Site
+        s1 = Site.objects.create(name="SF-all")
+        self._server_in_site(s1, "srv-x", "10.0.1.1")
+        Agent.objects.create(hostname="srv-y", status=Agent.Status.ACTIVE)
+        resp = auth_client.get("/api/servers/")
+        assert resp.status_code == 200, resp.content
+        hosts = {r["hostname"] for r in self._rows(resp)}
+        assert {"srv-x", "srv-y"}.issubset(hosts)
+
+
 # ── Enrollment server_url: echo the request host, never localhost ─────────────
 
 class TestEnrollServerUrl:
