@@ -29,6 +29,16 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
                 .prefetch_related("assigned_roles__role"))
     serializer_class = ServerSerializer
 
+    def get_queryset(self):
+        """Optionally scope the list to one site (?site=<id>). Servers link to a
+        site via their device (Agent.device → Device.site), so this filters on
+        device__site — matching how the site server-counts are computed."""
+        qs = super().get_queryset()
+        site = self.request.query_params.get("site")
+        if site:
+            qs = qs.filter(device__site_id=site)
+        return qs
+
     def retrieve(self, request, *args, **kwargs):
         """Full server detail: list fields + current per-core/mount/iface metrics
         + the 5 most recent alerts for the linked device."""

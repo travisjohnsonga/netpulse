@@ -1532,6 +1532,13 @@ export async function fetchServers(): Promise<Server[]> {
   return unwrap(data)
 }
 
+// Servers located at a site (Agent.device → Device.site); mirrors the site
+// server-count logic on the backend (?site=<id> filters on device__site).
+export async function fetchSiteServers(siteId: number): Promise<Server[]> {
+  const { data } = await api.get<Server[] | Paginated<Server>>('/servers/', { params: { site: String(siteId) } })
+  return unwrap(data)
+}
+
 export async function fetchServer(id: string): Promise<ServerDetail> {
   const { data } = await api.get<ServerDetail>(`/servers/${id}/`)
   return data

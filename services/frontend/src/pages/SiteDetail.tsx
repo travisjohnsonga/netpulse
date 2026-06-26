@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchSite, fetchSiteDevices, saveSite, fetchSites, fetchDevices, setDeviceSite,
-  fetchCollectors, type Site, type Device, type Collector,
+  fetchCollectors, fetchSiteServers, fetchChecks,
+  type Site, type Device, type Collector, type Server, type ServiceCheck,
 } from '../api/client'
 import SiteFormModal from '../components/SiteFormModal'
 import DeviceLink from '../components/DeviceLink'
@@ -21,7 +22,7 @@ const STATUS_COLORS: Record<string, string> = {
   maintenance: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
   decommissioned: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 }
-const TABS = ['Overview', 'Devices', 'Availability', 'WAN Circuits'] as const
+const TABS = ['Overview', 'Devices', 'Servers', 'Service Checks', 'Availability', 'WAN Circuits'] as const
 
 export default function SiteDetail() {
   const { id } = useParams<{ id: string }>()
@@ -93,6 +94,8 @@ export default function SiteDetail() {
 
       {tab === 'Overview' && <Overview site={site} />}
       {tab === 'Devices' && <Devices siteId={site.id} onOpen={(d) => navigate(`/devices/${d}`)} onChanged={load} />}
+      {tab === 'Servers' && <Servers siteId={site.id} onOpen={(id) => navigate(`/servers/${id}`)} />}
+      {tab === 'Service Checks' && <ServiceChecks siteId={site.id} onOpen={() => navigate('/checks')} />}
       {tab === 'Availability' && <Placeholder text="Site-level uptime summary appears once availability records are computed." icon="📈" />}
       {tab === 'WAN Circuits' && <SiteCircuits siteId={site.id} />}
     </div>
@@ -310,6 +313,132 @@ function Devices({ siteId, onOpen, onChanged }: { siteId: number; onOpen: (id: n
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// "Online" mirrors the site server-count logic: ACTIVE + a heartbeat within 5
+// minutes (keep in lockstep with servers_up/down so the tab matches the summary).
+const SERVER_OFFLINE_MS = 5 * 60 * 1000
+function serverOnline(s: Server): boolean {
+  return s.status === 'active' && !!s.last_seen &&
+    Date.now() - new Date(s.last_seen).getTime() < SERVER_OFFLINE_MS
+}
+function timeAgo(iso: string | null): string {
+  if (!iso) return 'never'
+  const s = (Date.now() - new Date(iso).getTime()) / 1000
+  if (s < 60) return `${Math.floor(s)}s ago`
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
+
+function Servers({ siteId, onOpen }: { siteId: number; onOpen: (id: string) => void }) {
+  const [servers, setServers] = useState<Server[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    fetchSiteServers(siteId)
+      .then(setServers)
+      .catch(() => setServers([]))
+      .finally(() => setLoading(false))
+  }, [siteId])
+
+  if (loading) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+  if (servers.length === 0) {
+    return <Placeholder text="No servers at this site. Servers appear here when an agent is enrolled to this site or reassigned from a server's detail page." icon="🖥️" />
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+            <th className="px-5 py-3 font-medium">Hostname</th>
+            <th className="px-5 py-3 font-medium">OS</th>
+            <th className="px-5 py-3 font-medium">Status</th>
+            <th className="px-5 py-3 font-medium">Last seen</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+          {servers.map((s) => {
+            const online = serverOnline(s)
+            return (
+              <tr key={s.id} onClick={() => onOpen(s.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">{s.hostname}</td>
+                <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{s.os_version || s.os || '—'}</td>
+                <td className="px-5 py-3">
+                  <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium',
+                    online ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400')}>
+                    {online ? '↑ Online' : '↓ Offline'}
+                  </span>
+                </td>
+                <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{timeAgo(s.last_seen)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+const CHECK_STATUS_COLORS: Record<string, string> = {
+  up: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  down: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  degraded: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  unknown: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+}
+
+function ServiceChecks({ siteId, onOpen }: { siteId: number; onOpen: () => void }) {
+  const [checks, setChecks] = useState<ServiceCheck[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    fetchChecks({ site: String(siteId) })
+      .then(setChecks)
+      .catch(() => setChecks([]))
+      .finally(() => setLoading(false))
+  }, [siteId])
+
+  if (loading) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+  if (checks.length === 0) {
+    return <Placeholder text="No service checks target this site." icon="✓" />
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+            <th className="px-5 py-3 font-medium">Name</th>
+            <th className="px-5 py-3 font-medium">Type</th>
+            <th className="px-5 py-3 font-medium">Target</th>
+            <th className="px-5 py-3 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+          {checks.map((c) => (
+            <tr key={c.id} onClick={onOpen} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+              <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">
+                {c.name}
+                {!c.is_active && <span className="ml-2 text-xs text-gray-400">(paused)</span>}
+              </td>
+              <td className="px-5 py-3 text-gray-600 dark:text-gray-400 uppercase">{c.check_type}</td>
+              <td className="px-5 py-3 text-gray-600 dark:text-gray-400 font-mono text-xs">{c.host}{c.effective_port ? `:${c.effective_port}` : ''}</td>
+              <td className="px-5 py-3">
+                <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize',
+                  CHECK_STATUS_COLORS[c.current_status] ?? CHECK_STATUS_COLORS.unknown)}>
+                  {c.current_status}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
