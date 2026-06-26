@@ -1973,6 +1973,8 @@ export interface ReportScheduleRow {
   day_of_week: number
   day_of_month: number
   fmt: string
+  delivery: 'email' | 'store_only' | 'both'
+  delivery_display?: string
   recipients: string[]
   parameters: Record<string, unknown>
   enabled: boolean

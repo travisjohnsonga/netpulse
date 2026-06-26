@@ -18,15 +18,32 @@ class GeneratedReportSerializer(serializers.ModelSerializer):
 
 class ReportScheduleSerializer(serializers.ModelSerializer):
     report_type_display = serializers.CharField(source="get_report_type_display", read_only=True)
+    delivery_display = serializers.CharField(source="get_delivery_display", read_only=True)
 
     class Meta:
         model = ReportSchedule
         fields = [
             "id", "report_type", "report_type_display", "frequency", "hour",
-            "day_of_week", "day_of_month", "fmt", "recipients", "parameters",
-            "enabled", "last_run", "last_status",
+            "day_of_week", "day_of_month", "fmt", "delivery", "delivery_display",
+            "recipients", "parameters", "enabled", "last_run", "last_status",
         ]
         read_only_fields = ["last_run", "last_status"]
+
+    def validate(self, attrs):
+        """Recipients are required only when email delivery is selected; a
+        store-only schedule emails nobody and needs no recipients."""
+        delivery = attrs.get("delivery") or getattr(
+            self.instance, "delivery", None) or ReportSchedule.Delivery.EMAIL
+        # On PATCH, fall back to the stored recipients when not being changed.
+        if "recipients" in attrs:
+            recipients = attrs["recipients"]
+        else:
+            recipients = getattr(self.instance, "recipients", None) or []
+        recipients = [r for r in (recipients or []) if r]
+        if delivery in (ReportSchedule.Delivery.EMAIL, ReportSchedule.Delivery.BOTH) and not recipients:
+            raise serializers.ValidationError(
+                {"recipients": "At least one recipient is required when email delivery is selected."})
+        return attrs
 
 
 class ComplianceSummaryRequestSerializer(serializers.Serializer):

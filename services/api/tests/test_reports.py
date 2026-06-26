@@ -509,6 +509,104 @@ class TestScheduling:
         assert GeneratedReport.objects.filter(source="scheduled").count() == 1
 
 
+# ── Report delivery: store-only schedules + ad-hoc download (no email) ─────────
+
+class TestDeliveryModes:
+    """Email is one delivery option; a report can be generated + stored without it."""
+
+    def _due_now(self):
+        from datetime import datetime
+        return timezone.make_aware(datetime(2026, 6, 14, 8, 1))
+
+    def test_store_only_schedule_stores_and_sends_no_email(self, fleet, monkeypatch):
+        from apps.reports import tasks
+        calls = []
+        monkeypatch.setattr(tasks, "email_report",
+                            lambda *a, **k: calls.append((a, k)) or True)
+        sched = ReportSchedule.objects.create(
+            report_type=ReportType.COMPLIANCE_SUMMARY, frequency="daily", hour=8,
+            fmt="pdf", delivery=ReportSchedule.Delivery.STORE_ONLY, recipients=[])
+        fired = tasks.run_due_schedules(now=self._due_now())
+        assert fired == 1
+        # A downloadable artifact was produced...
+        stored = GeneratedReport.objects.filter(source="scheduled")
+        assert stored.count() == 1 and stored.first().file_path
+        # ...and NO email was sent.
+        assert calls == []
+        sched.refresh_from_db()
+        assert "no email" in sched.last_status
+
+    def test_email_schedule_still_emails_backcompat(self, fleet, monkeypatch):
+        from apps.reports import tasks
+        calls = []
+        monkeypatch.setattr(tasks, "email_report",
+                            lambda recipients, **k: calls.append(recipients) or True)
+        # Created without `delivery` → defaults to EMAIL (existing-schedule behavior).
+        ReportSchedule.objects.create(
+            report_type=ReportType.COMPLIANCE_SUMMARY, frequency="daily", hour=8,
+            fmt="pdf", recipients=["admin@example.com"])
+        fired = tasks.run_due_schedules(now=self._due_now())
+        assert fired == 1
+        assert calls == [["admin@example.com"]]  # email attempted with recipients
+
+    def test_both_delivery_stores_and_emails(self, fleet, monkeypatch):
+        from apps.reports import tasks
+        calls = []
+        monkeypatch.setattr(tasks, "email_report",
+                            lambda recipients, **k: calls.append(recipients) or True)
+        ReportSchedule.objects.create(
+            report_type=ReportType.COMPLIANCE_SUMMARY, frequency="daily", hour=8,
+            fmt="pdf", delivery=ReportSchedule.Delivery.BOTH, recipients=["a@b.com"])
+        tasks.run_due_schedules(now=self._due_now())
+        assert GeneratedReport.objects.filter(source="scheduled").count() == 1
+        assert calls == [["a@b.com"]]
+
+    def test_create_store_only_schedule_without_recipients(self, auth_client):
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 8, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 201
+        assert resp.json()["delivery"] == "store_only"
+
+    def test_create_email_schedule_without_recipients_rejected(self, auth_client):
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 8, "fmt": "pdf",
+            "delivery": "email", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 400
+        assert "recipients" in resp.json()
+
+    def test_both_schedule_without_recipients_rejected(self, auth_client):
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 8, "fmt": "pdf",
+            "delivery": "both", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 400
+
+    def test_ad_hoc_generate_now_downloadable_without_recipients(self, fleet, auth_client):
+        """On-demand generation takes no recipients and yields a downloadable report."""
+        resp = auth_client.post("/api/reports/compliance-summary/",
+                                {"format": "pdf"}, format="json")
+        assert resp.status_code == 200
+        assert resp["Content-Type"] == "application/pdf"
+        # It was also stored as on-demand history and is re-downloadable.
+        report = GeneratedReport.objects.filter(source="on-demand").latest("generated_at")
+        dl = auth_client.get(f"/api/reports/{report.id}/download/")
+        assert dl.status_code == 200
+        assert b"".join(dl.streaming_content)[:5] == b"%PDF-"
+
+    def test_download_endpoint_still_rbac_gated(self, fleet, auth_client, api_client):
+        """Store-only / ad-hoc reports download ONLY through the RBAC-gated endpoint."""
+        auth_client.post("/api/reports/compliance-summary/", {"format": "pdf"}, format="json")
+        report = GeneratedReport.objects.latest("generated_at")
+        # Unauthenticated download is rejected (no anonymous/shareable links).
+        anon = api_client.get(f"/api/reports/{report.id}/download/")
+        assert anon.status_code in (401, 403)
+        # An authenticated holder of report:view can download.
+        assert auth_client.get(f"/api/reports/{report.id}/download/").status_code == 200
+
+
 # ── Reporting periods (weekly/monthly/quarterly) ─────────────────────────────
 
 class TestPeriods:
