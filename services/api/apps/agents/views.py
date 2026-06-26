@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.errors import safe_detail
+from apps.core.http import NoStoreResponseMixin, add_no_store
 from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from . import pki
@@ -70,8 +71,9 @@ class ServerRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-class AgentEnrollmentTokenViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
-    """Create/list/revoke enrollment tokens. Token value shown once on create."""
+class AgentEnrollmentTokenViewSet(NoStoreResponseMixin, CapabilityViewSetMixin, viewsets.ModelViewSet):
+    """Create/list/revoke enrollment tokens. Token value shown once on create.
+    no-store on every response: the create response carries the one-time token."""
     view_capability = "agent:view"
     write_capability = "agent:edit"
 
@@ -206,14 +208,15 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
         ca = issued.get("ca_chain") or []
-        return Response({
+        # no-store: this response carries the signed client certificate.
+        return add_no_store(Response({
             "agent_id": str(agent.id),
             "certificate": issued["certificate"],
             "ca_certificate": "\n".join(ca) if isinstance(ca, list) else ca,
             "collection_interval": agent.collection_interval,
             "server_url": _server_url(request),
             "re_enrolled": not created,
-        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK))
 
     def _link_device(self, agent, request, token):
         from apps.devices.models import Device

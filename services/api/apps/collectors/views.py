@@ -22,6 +22,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.core.client_ip import TrustedProxyScopedRateThrottle, get_client_ip
+from apps.core.http import add_no_store
 from apps.core.permissions import CapabilityViewSetMixin
 from apps.devices.serializers import DeviceListSerializer
 
@@ -85,7 +86,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         data = self.get_serializer(collector).data
         # Returned exactly once — the agent needs it to bootstrap.
         data["enrollment_token"] = token
-        return Response(data, status=status.HTTP_201_CREATED)
+        return add_no_store(Response(data, status=status.HTTP_201_CREATED))
 
     @action(detail=False, methods=["post"])
     def enroll(self, request):
@@ -137,7 +138,8 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                 "issuing_ca": cert["issuing_ca"],
             })
         logger.info("collector %s enrolled (cert_issued=%s)", candidate.id, cert is not None)
-        return Response(body, status=status.HTTP_200_OK)
+        # no-store: carries the one-time API key + the mTLS private key.
+        return add_no_store(Response(body, status=status.HTTP_200_OK))
 
     @action(detail=False, methods=["post"])
     def heartbeat(self, request):
@@ -166,7 +168,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         collector.enrollment_token_hash = auth.hash_secret(token)
         collector.enrolled_at = None
         collector.save(update_fields=["enrollment_token_hash", "enrolled_at", "updated_at"])
-        return Response({"enrollment_token": token})
+        return add_no_store(Response({"enrollment_token": token}))
 
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):

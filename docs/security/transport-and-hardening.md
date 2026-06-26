@@ -84,6 +84,26 @@ the agent install one-liner must be reachable over 1.2. Plus
 `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, and HSTS
 applied to the served frontend.
 
+## Caching policy
+
+A deterministic cache policy serves two ends — correct SPA delivery and keeping
+secrets out of caches (a data-protection control, ISO 27001 A.8.* / A.5.14):
+
+- **SPA shell (`index.html`) — `Cache-Control: no-cache, no-store, must-revalidate`.**
+  The shell references content-hashed asset filenames, so it must never be served
+  stale; this makes a `rebuild-frontend` show up immediately (no hard-refresh).
+- **Hashed assets (`/assets/…`) — `Cache-Control: public, max-age=31536000, immutable`.**
+  Vite emits content-hashed names, so a URL's bytes never change — cache forever;
+  a rebuild changes the hash (referenced by the fresh `index.html`), so clients
+  fetch new assets without re-downloading unchanged ones.
+- **Secret-bearing API responses — `Cache-Control: no-store.`** Applied narrowly
+  (not blanket) to responses that carry credentials/tokens so they're never
+  written to browser/proxy/disk caches: the JWT obtain/refresh + MFA challenge
+  (`apps/core/throttled_auth.py`), agent enrollment-token generation and the
+  enroll response (the signed cert), and collector enrollment/API-key/cert
+  responses (`apps/agents/views.py`, `apps/collectors/views.py`, via
+  `apps/core/http.py:NoStoreResponseMixin`/`add_no_store`).
+
 ## Known gaps
 
 These were verified absent at the time of writing — treat them as future
