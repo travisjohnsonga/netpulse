@@ -29,10 +29,29 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
-def _server_url() -> str:
+def _server_url(request=None) -> str:
+    """Public base URL an agent should use to reach this server.
+
+    Derived from how the agent ACTUALLY reached us — the request Host header,
+    honoring nginx's X-Forwarded-Proto via SECURE_PROXY_SSL_HEADER — so it
+    reflects the operator-supplied address rather than guessing from
+    ALLOWED_HOSTS. An explicit AGENT_SERVER_URL setting overrides it for
+    split-DNS / published-hostname setups. NEVER returns localhost: that is
+    useless to a remote agent (the bug this fixes)."""
+    explicit = (getattr(settings, "AGENT_SERVER_URL", "") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    if request is not None:
+        host = request.get_host()
+        if host:
+            # Always https: agents reach the platform over TLS only (nginx
+            # redirects 80→443 and the mTLS metrics push requires it). The bug
+            # was the host (localhost), not the scheme — echo the real host.
+            return f"https://{host}"
+    # Fallback only when there's no request (e.g. a management command): a real
+    # configured host, never localhost.
     hosts = [h for h in getattr(settings, "ALLOWED_HOSTS", []) if h not in ("*", "localhost", "127.0.0.1")]
-    host = hosts[0] if hosts else "localhost"
-    return f"https://{host}"
+    return f"https://{hosts[0]}" if hosts else ""
 
 
 class ServerRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
@@ -192,7 +211,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
             "certificate": issued["certificate"],
             "ca_certificate": "\n".join(ca) if isinstance(ca, list) else ca,
             "collection_interval": agent.collection_interval,
-            "server_url": _server_url(),
+            "server_url": _server_url(request),
             "re_enrolled": not created,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -333,7 +352,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=["get"])
     def download(self, request):
         """Agent install info + per-platform download paths (binaries served by CI/static)."""
-        base = _server_url()
+        base = _server_url(request)
         platforms = ["linux-amd64", "linux-arm64", "windows-amd64"]
         return Response({
             "platforms": platforms,

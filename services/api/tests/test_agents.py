@@ -462,3 +462,36 @@ class TestAgentVersionRefresh:
                         {"version": "2.0.0", "metrics": {}}, format="json", **self._HDR)
         body = auth_client.get(f"/api/servers/{a.id}/").json()
         assert body["agent_version"] == "2.0.0"
+
+
+# ── Enrollment server_url: echo the request host, never localhost ─────────────
+
+class TestEnrollServerUrl:
+    def test_response_echoes_request_host_not_localhost(self, api_client, fake_pki, settings):
+        settings.AGENT_SERVER_URL = ""  # request-derived path
+        settings.ALLOWED_HOSTS = ["netpulse.example.com", "testserver", "localhost", "127.0.0.1"]
+        t = _token(max_uses=1)
+        resp = api_client.post(
+            "/api/agents/enroll/",
+            {"enrollment_token": t.token, "hostname": "win-1", "os": "windows",
+             "arch": "amd64", "version": "1.0.0", "csr": CSR},
+            format="json", secure=True, HTTP_HOST="netpulse.example.com")
+        assert resp.status_code == 201, resp.content
+        url = resp.json()["server_url"]
+        assert url == "https://netpulse.example.com", url
+        assert "localhost" not in url
+
+    def test_explicit_setting_overrides_request_host(self, api_client, fake_pki, settings):
+        settings.AGENT_SERVER_URL = "https://pinned.example.com"
+        t = _token(max_uses=1)
+        resp = _enroll(api_client, t.token, hostname="win-2")
+        assert resp.status_code == 201, resp.content
+        assert resp.json()["server_url"] == "https://pinned.example.com"
+
+    def test_colocated_enroll_still_works(self, api_client, fake_pki, settings):
+        settings.AGENT_SERVER_URL = ""
+        t = _token(max_uses=1)
+        resp = _enroll(api_client, t.token, hostname="win-3")  # default Host=testserver
+        assert resp.status_code == 201, resp.content
+        url = resp.json()["server_url"]
+        assert url and "localhost" not in url  # request-derived, reachable
