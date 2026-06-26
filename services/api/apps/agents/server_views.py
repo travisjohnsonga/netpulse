@@ -30,6 +30,8 @@ def _merge_config(stored: dict, patch: dict) -> dict:
         out["interval_seconds"] = patch["interval_seconds"]
     if "disk" in patch:
         out["disk"] = {**(out.get("disk") or {}), **patch["disk"]}
+    if "logs" in patch:
+        out["logs"] = {**(out.get("logs") or {}), **patch["logs"]}
     return out
 
 

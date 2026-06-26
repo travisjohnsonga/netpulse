@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
 from .models import (
-    DEFAULT_AGENT_CONFIG, Agent, AgentEnrollmentToken, AgentRole, AgentRoleStatus,
-    ServerRole,
+    DEFAULT_AGENT_CONFIG, LOG_PATH_ALLOWLIST_ROOT, Agent, AgentEnrollmentToken,
+    AgentRole, AgentRoleStatus, ServerRole, is_allowed_log_path,
 )
 
 
@@ -13,12 +13,30 @@ class _DiskConfigSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=255), required=False)
 
 
+class _LogsConfigSerializer(serializers.Serializer):
+    security_profile = serializers.BooleanField(required=False)
+    additional_paths = serializers.ListField(
+        child=serializers.CharField(max_length=512), required=False)
+
+    def validate_additional_paths(self, value):
+        # Allowlist guardrail: the agent runs as root, so an operator-added path
+        # must stay under /var/log/ and never name a secret — reject otherwise
+        # (mirrored agent-side as defense in depth).
+        bad = [p for p in value if not is_allowed_log_path(p)]
+        if bad:
+            raise serializers.ValidationError(
+                f"Log paths must be under {LOG_PATH_ALLOWLIST_ROOT} and contain no "
+                f"secret/traversal names. Rejected: {bad}")
+        return value
+
+
 class AgentConfigSerializer(serializers.Serializer):
     """Validates a (partial) desired-config PATCH. Unknown collection keys are
-    rejected so a typo can't silently disable nothing."""
+    rejected so a typo can't silently disable nothing; log paths are allowlisted."""
     collection = serializers.DictField(child=serializers.BooleanField(), required=False)
     interval_seconds = serializers.IntegerField(min_value=10, max_value=3600, required=False)
     disk = _DiskConfigSerializer(required=False)
+    logs = _LogsConfigSerializer(required=False)
 
     def validate_collection(self, value):
         allowed = set(DEFAULT_AGENT_CONFIG["collection"])

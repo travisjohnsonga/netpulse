@@ -31,7 +31,32 @@ DEFAULT_AGENT_CONFIG = {
     "collection": {"cpu": True, "memory": True, "disk": True, "network": True, "services": False},
     "interval_seconds": 30,
     "disk": {"exclude_mounts": [], "include_mounts": []},
+    # Log forwarding (Stage 1 = curated SECURITY PROFILE, default-on for Linux:
+    # auth/service/kernel logs). additional_paths is an operator escape hatch,
+    # constrained to the LOG_PATH_ALLOWLIST_ROOT (see serializers/agent — enforced
+    # both sides). The agent tails + ships raw lines; all parsing is server-side.
+    "logs": {"security_profile": True, "additional_paths": []},
 }
+
+# additional_paths must live under this root (a root agent reading arbitrary
+# files would be a file-exfiltration hole). Enforced server-side (serializer) AND
+# agent-side (refuse out-of-allowlist even if a bad config arrives).
+LOG_PATH_ALLOWLIST_ROOT = "/var/log/"
+# Substrings that are rejected even under the allowlist root (defense in depth).
+LOG_PATH_DENY_SUBSTRINGS = ("..", "key", "secret", "shadow", "/.ssh/", "private")
+
+
+def is_allowed_log_path(path: str) -> bool:
+    """True if an operator-supplied log path is safe to tail: an absolute path
+    under LOG_PATH_ALLOWLIST_ROOT, with no traversal or secret-bearing names.
+    The same rule is enforced agent-side (defense in depth)."""
+    if not isinstance(path, str) or not path:
+        return False
+    p = path.strip()
+    low = p.lower()
+    if any(s in low for s in LOG_PATH_DENY_SUBSTRINGS):
+        return False
+    return p.startswith(LOG_PATH_ALLOWLIST_ROOT)
 
 
 def _generate_token() -> str:
@@ -161,6 +186,7 @@ class Agent(TimestampedModel):
         get every key. interval falls back to the legacy collection_interval."""
         cfg = self.desired_config or {}
         disk = cfg.get("disk") or {}
+        logs = cfg.get("logs") or {}
         return {
             "collection": {**DEFAULT_AGENT_CONFIG["collection"], **(cfg.get("collection") or {})},
             "interval_seconds": cfg.get("interval_seconds") or self.collection_interval
@@ -168,6 +194,11 @@ class Agent(TimestampedModel):
             "disk": {
                 "exclude_mounts": list(disk.get("exclude_mounts") or []),
                 "include_mounts": list(disk.get("include_mounts") or []),
+            },
+            "logs": {
+                "security_profile": logs.get("security_profile",
+                                            DEFAULT_AGENT_CONFIG["logs"]["security_profile"]),
+                "additional_paths": list(logs.get("additional_paths") or []),
             },
         }
 

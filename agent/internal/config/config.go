@@ -27,6 +27,15 @@ type DiskFilter struct {
 	IncludeMounts []string `json:"include_mounts"`
 }
 
+// LogForwarding controls security-log forwarding (Stage 1). SecurityProfile (on
+// by default for Linux) tails auth/service/kernel logs; AdditionalPaths is an
+// operator escape hatch constrained to the /var/log allowlist (enforced
+// agent-side in logforward, mirroring the server serializer).
+type LogForwarding struct {
+	SecurityProfile bool     `json:"security_profile"`
+	AdditionalPaths []string `json:"additional_paths"`
+}
+
 type RoleChecks struct {
 	Enabled       bool                `json:"enabled"`
 	Roles         []string            `json:"roles"`
@@ -48,9 +57,10 @@ type Config struct {
 	// client cert is present (e.g. before PKI is set up). mTLS is preferred.
 	APIKey string `json:"api_key,omitempty"`
 
-	Collection Collection `json:"collection"`
-	Disk       DiskFilter `json:"disk"`
-	RoleChecks RoleChecks `json:"role_checks"`
+	Collection Collection    `json:"collection"`
+	Disk       DiskFilter    `json:"disk"`
+	Logs       LogForwarding `json:"logs"`
+	RoleChecks RoleChecks    `json:"role_checks"`
 
 	Log struct {
 		Level  string `json:"level"`
