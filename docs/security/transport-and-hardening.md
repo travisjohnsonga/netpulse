@@ -66,7 +66,9 @@ explicitly for the static SPA (below).
 `services/frontend/nginx.conf` terminates TLS for the SPA and proxies the API:
 
 ```nginx
-ssl_protocols       TLSv1.3;
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:...:DHE-RSA-AES256-GCM-SHA384;
+ssl_prefer_server_ciphers off;
 ...
 add_header X-Content-Type-Options nosniff always;
 add_header X-Frame-Options DENY always;
@@ -74,8 +76,13 @@ add_header Referrer-Policy strict-origin-when-cross-origin always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 ```
 
-So the edge is **TLS 1.3 only**, with `X-Content-Type-Options`, `X-Frame-Options:
-DENY`, `Referrer-Policy`, and HSTS applied to the served frontend.
+So the edge is **TLS 1.2 and 1.3, with the Mozilla "intermediate" cipher suites
+(strong ECDHE GCM + CHACHA20) and a TLS 1.2 floor** — TLS 1.0/1.1/SSLv3 stay
+disabled. TLS 1.2 is kept intentionally for client compatibility: stock Windows
+Server PowerShell 5.1 (.NET Framework / Schannel) cannot negotiate TLS 1.3, so
+the agent install one-liner must be reachable over 1.2. Plus
+`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, and HSTS
+applied to the served frontend.
 
 ## Known gaps
 
