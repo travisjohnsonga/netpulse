@@ -22,6 +22,14 @@ function fmtBytes(n?: number | null): string {
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
   return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${u[i]}`
 }
+// Display a version with exactly one leading "v" for numeric versions
+// (git describe yields "v1.0.0", so "Agent v{version}" would double it to
+// "vv1.0.0"). Non-numeric versions like "dev" are shown as-is.
+function fmtVersion(v?: string | null): string {
+  if (!v) return '—'
+  const bare = v.replace(/^v+/, '')
+  return /^\d/.test(bare) ? `v${bare}` : v
+}
 function timeAgo(iso: string | null): string {
   if (!iso) return 'never'
   const s = (Date.now() - new Date(iso).getTime()) / 1000
@@ -109,7 +117,7 @@ export default function ServerDetail() {
           <div className="text-sm text-gray-500 dark:text-gray-400 mt-1 flex flex-wrap gap-x-4">
             <span>{server.os_version || server.os || 'Unknown OS'}</span>
             <span>Arch: {server.arch || '—'}</span>
-            <span>Agent v{server.agent_version || '—'}</span>
+            <span>Agent {fmtVersion(server.agent_version)}</span>
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 text-sm">
@@ -271,7 +279,7 @@ function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: ()
   const rows: [string, string][] = [
     ['OS', server.os_version || server.os || '—'],
     ['Arch', server.arch || '—'],
-    ['Agent ID', server.id], ['Agent version', server.agent_version || '—'],
+    ['Agent ID', server.id], ['Agent version', fmtVersion(server.agent_version)],
     ['Cert expires', server.cert_expires_at ? new Date(server.cert_expires_at).toLocaleDateString() : '—'],
     ['Collection interval', `${server.collection_interval}s`],
   ]
