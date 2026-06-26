@@ -35,6 +35,7 @@ nav:
   - Agent:
     - Overview: agents/overview.md
     - Installation: agents/installation.md
+    - Updating: agents/updating.md
     - Configuration: agents/configuration.md
     - Security: agents/security.md
   - Platforms:

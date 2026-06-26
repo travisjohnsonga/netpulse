@@ -47,5 +47,22 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Service install failed!"; exit 1 }
 # --install-service already starts the service; this is a harmless no-op if it's
 # already running, and a clear failure if registration didn't take.
 Start-Service -Name "NetPulseAgent" -ErrorAction SilentlyContinue
+
+# Leave a persistent updater so the host can be updated later with a single
+# no-arg command (it reads server_url from config.json). SECURITY: it lands in
+# $InstallDir (Program Files, admin-write-only) — NOT $env:TEMP — because it runs
+# elevated and swaps the agent binary; a user-writable copy would be a privesc
+# vector. Best-effort: a fetch failure doesn't fail the install.
+$UpdateScriptPath = Join-Path $InstallDir "Update-Agent.ps1"
+$UpdUrl = "$Server/agent/update.ps1"
+$UpdArgs = @("-fL", "-o", $UpdateScriptPath, $UpdUrl)
+if ($Insecure) { $UpdArgs = @("-k") + $UpdArgs }
+& curl.exe @UpdArgs
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "Update later with (elevated PowerShell): & '$UpdateScriptPath'"
+} else {
+    Write-Warning "Could not fetch the updater; re-pull later from $UpdUrl"
+}
+
 Write-Host "NetPulse Agent installed." -ForegroundColor Green
 Get-Service -Name "NetPulseAgent" | Select-Object Name, Status, StartType
