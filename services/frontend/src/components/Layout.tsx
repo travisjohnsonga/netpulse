@@ -9,6 +9,7 @@ import { usePreferencesStore } from '../store/preferencesStore'
 import { useSite, useSiteStore } from '../store/siteStore'
 import ErrorBoundary from './ErrorBoundary'
 import VersionBadge from './VersionBadge'
+import ServerClock from './ServerClock'
 import HeaderSearch from './HeaderSearch'
 import SiteSelector from './SiteSelector'
 import LogoMark from './LogoMark'
@@ -301,6 +302,9 @@ export default function Layout({ children }: Props) {
               </span>
             </span>
             <VersionBadge />
+          </div>
+          <div className="mt-1.5 flex justify-center">
+            <ServerClock />
           </div>
         </div>
       </aside>

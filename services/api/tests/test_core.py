@@ -30,6 +30,17 @@ class TestHealth:
         assert "setup_complete" in data
         assert data["openbao"] == "healthy"
 
+    def test_health_includes_server_time(self, api_client):
+        """server_time anchors the UI footer clock — must be a parseable UTC ISO."""
+        import datetime
+        data = api_client.get("/api/health/").json()
+        assert "server_time" in data
+        parsed = datetime.datetime.fromisoformat(data["server_time"])
+        assert parsed.tzinfo is not None  # tz-aware (UTC)
+        # Within a minute of now (sanity that it's the live server clock).
+        now = datetime.datetime.now(datetime.timezone.utc)
+        assert abs((now - parsed).total_seconds()) < 60
+
 
 class TestSetupStatus:
     def test_no_auth_required(self, api_client, monkeypatch):

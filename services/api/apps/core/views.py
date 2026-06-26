@@ -99,6 +99,10 @@ def health(request):
             "openbao": "healthy" if _openbao_healthy() else "unavailable",
             "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
             "ssl_cert_days_remaining": _ssl_cert_days_remaining(),
+            # Authoritative server wall-clock (UTC, ISO 8601) — anchors the UI
+            # footer clock so it shows true server time even if the browser clock
+            # is wrong. TIME_ZONE=UTC, so this is the server's UTC now.
+            "server_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         },
         status=200 if db_ok else 503,
     )
