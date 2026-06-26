@@ -317,6 +317,7 @@ class AuditLog(models.Model):
         # Agents
         AGENT_ENROLLED = "agent_enrolled", "Agent Enrolled"
         AGENT_REVOKED = "agent_revoked", "Agent Revoked"
+        AGENT_SITE_CHANGED = "agent_site_changed", "Agent Site Changed"
         # ChatOps
         CHATOPS_QUERY = "chatops_query", "ChatOps Query"
         CHATOPS_DENIED = "chatops_denied", "ChatOps Query Denied"

@@ -6,9 +6,11 @@ import TimeRangeSelector, { RANGE_LABEL, type TimeRange } from '../components/Ti
 import {
   fetchServer, fetchServerMetricHistory, fetchServerRoleAssignments,
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
+  changeServerSite, fetchSites,
   type ServerDetail as ServerDetailT, type MetricHistory,
-  type AssignedRole, type DetectedRole, type ServerRole,
+  type AssignedRole, type DetectedRole, type ServerRole, type Site,
 } from '../api/client'
+import { useCapabilities } from '../store/authStore'
 
 const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
@@ -147,7 +149,7 @@ export default function ServerDetail() {
             <LineChart history={cpuHist} fields={['usage_pct']} height={200} />
           </div>
           <div className="grid md:grid-cols-2 gap-4">
-            <InfoPanel server={server} />
+            <InfoPanel server={server} onChanged={load} />
             <AlertsPanel server={server} />
           </div>
         </div>
@@ -263,10 +265,12 @@ export default function ServerDetail() {
   )
 }
 
-function InfoPanel({ server }: { server: ServerDetailT }) {
+function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: () => void }) {
+  // Hostname is self-reported by the agent at enrollment (and re-asserted on every
+  // re-enrollment), so it's read-only here — editing it would just be overwritten.
   const rows: [string, string][] = [
-    ['Hostname', server.hostname], ['OS', server.os_version || server.os || '—'],
-    ['Arch', server.arch || '—'], ['Site', server.site?.name ?? '—'],
+    ['OS', server.os_version || server.os || '—'],
+    ['Arch', server.arch || '—'],
     ['Agent ID', server.id], ['Agent version', server.agent_version || '—'],
     ['Cert expires', server.cert_expires_at ? new Date(server.cert_expires_at).toLocaleDateString() : '—'],
     ['Collection interval', `${server.collection_interval}s`],
@@ -275,6 +279,11 @@ function InfoPanel({ server }: { server: ServerDetailT }) {
     <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
       <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">System Information</div>
       <dl className="text-sm space-y-1.5">
+        <div className="flex justify-between gap-4">
+          <dt className="text-gray-500 dark:text-gray-400">Hostname <span className="text-[10px] text-gray-400">(reported by agent)</span></dt>
+          <dd className="text-gray-900 dark:text-gray-100 font-medium truncate max-w-[60%]" title={server.hostname}>{server.hostname}</dd>
+        </div>
+        <SiteRow server={server} onChanged={onChanged} />
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-4">
             <dt className="text-gray-500 dark:text-gray-400">{k}</dt>
@@ -282,6 +291,60 @@ function InfoPanel({ server }: { server: ServerDetailT }) {
           </div>
         ))}
       </dl>
+    </div>
+  )
+}
+
+// Site row with an inline, capability-gated reassignment control (agent:edit).
+// The site lives on the linked device; the change is audit-logged server-side.
+function SiteRow({ server, onChanged }: { server: ServerDetailT; onChanged: () => void }) {
+  const caps = useCapabilities()
+  const canEdit = caps.includes('agent:edit')
+  const [editing, setEditing] = useState(false)
+  const [sites, setSites] = useState<Site[]>([])
+  const [pick, setPick] = useState<number | ''>(server.site?.id ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (editing && sites.length === 0) fetchSites().then(setSites).catch(() => {})
+  }, [editing, sites.length])
+
+  const save = async () => {
+    setBusy(true); setError(null)
+    try {
+      await changeServerSite(server.id, pick === '' ? null : pick)
+      setEditing(false)
+      onChanged()
+    } catch { setError('Failed to change site.') } finally { setBusy(false) }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1.5 py-1">
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 dark:text-gray-400">Site</span>
+          <select value={pick} onChange={(e) => setPick(e.target.value === '' ? '' : Number(e.target.value))}
+            className="flex-1 px-2 py-1 text-sm border rounded dark:bg-gray-900 dark:border-gray-600">
+            <option value="">Unassigned</option>
+            {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button onClick={save} disabled={busy} className="px-2 py-1 text-xs bg-blue-600 text-white rounded disabled:opacity-50">Save</button>
+          <button onClick={() => { setEditing(false); setPick(server.site?.id ?? '') }} className="px-2 py-1 text-xs border rounded dark:border-gray-600 dark:text-gray-300">Cancel</button>
+        </div>
+        {error && <span className="text-xs text-red-600">{error}</span>}
+      </div>
+    )
+  }
+  return (
+    <div className="flex justify-between gap-4 items-center">
+      <dt className="text-gray-500 dark:text-gray-400">Site</dt>
+      <dd className="text-gray-900 dark:text-gray-100 font-medium truncate max-w-[60%] flex items-center gap-2">
+        <span title={server.site?.name ?? ''}>{server.site?.name ?? '—'}</span>
+        {canEdit && (
+          <button onClick={() => setEditing(true)} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">Change</button>
+        )}
+      </dd>
     </div>
   )
 }

@@ -3,8 +3,8 @@ import clsx from 'clsx'
 import { SectionHeader } from '../Settings'
 import {
   fetchAgents, revokeAgent, fetchAgentTokens, createAgentToken, deleteAgentToken,
-  fetchServerRoles, deleteServerRole,
-  type Agent, type AgentToken, type ServerRole, type TargetOS,
+  fetchServerRoles, deleteServerRole, fetchSites,
+  type Agent, type AgentToken, type ServerRole, type TargetOS, type Site,
 } from '../../api/client'
 
 const EXPIRY_OPTS = [
@@ -21,17 +21,26 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   const [maxUses, setMaxUses] = useState(1)
   const [expiryHours, setExpiryHours] = useState(168)
   const [targetOs, setTargetOs] = useState<TargetOS>('linux')
+  const [siteId, setSiteId] = useState<number | ''>('')
+  const [sites, setSites] = useState<Site[]>([])
   const [created, setCreated] = useState<AgentToken | null>(null)
   const [selfSigned, setSelfSigned] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Agents enrolled with this token inherit this site (optional — leave blank to
+  // enroll unassigned and set the site later on the server's detail page).
+  useEffect(() => { fetchSites().then(setSites).catch(() => {}) }, [])
 
   const generate = async () => {
     setBusy(true); setError(null)
     try {
       const expires_at = expiryHours
         ? new Date(Date.now() + expiryHours * 3600_000).toISOString() : null
-      setCreated(await createAgentToken({ description, max_uses: maxUses, expires_at, target_os: targetOs }))
+      setCreated(await createAgentToken({
+        description, max_uses: maxUses, expires_at, target_os: targetOs,
+        site: siteId === '' ? null : siteId,
+      }))
       onCreated()
     } catch { setError('Failed to generate token.') } finally { setBusy(false) }
   }
@@ -96,6 +105,17 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                 ))}
               </div>
             </div>
+            <label className="block text-sm">
+              <span className="text-gray-700 dark:text-gray-300">Site <span className="text-gray-400">(optional)</span></span>
+              <select className="mt-1 w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600"
+                value={siteId} onChange={(e) => setSiteId(e.target.value === '' ? '' : Number(e.target.value))}>
+                <option value="">Unassigned — set later</option>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                Agents enrolled with this token are assigned to this site automatically.
+              </span>
+            </label>
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg dark:border-gray-600 dark:text-gray-300">Cancel</button>
               <button onClick={generate} disabled={busy} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50">
