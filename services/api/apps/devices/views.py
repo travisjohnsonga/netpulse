@@ -85,6 +85,50 @@ class SiteViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     search_fields = ["name", "city", "address"]
     ordering_fields = ["name", "site_type", "created_at"]
 
+    def get_queryset(self):
+        """Layer the server (agent) + service-check up/down counts onto the base
+        device-count annotations. Servers link to a site via their Device
+        (Agent.device → Device.site); service checks link to the site directly.
+        Each Count is distinct so the multi-relation join doesn't inflate them.
+        The "up" cutoff for servers is time-dependent, so this can't live on the
+        class-level queryset."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.agents.models import AGENT_ONLINE_SECONDS, Agent
+        from apps.checks.models import ServiceCheck
+
+        cutoff = timezone.now() - timedelta(seconds=AGENT_ONLINE_SECONDS)
+        not_revoked = Q(devices__agent__status__in=[Agent.Status.ACTIVE, Agent.Status.INACTIVE])
+        online = Q(devices__agent__status=Agent.Status.ACTIVE, devices__agent__last_seen__gte=cutoff)
+        # Offline = non-revoked but not online: inactive, or active with a stale /
+        # never-set last_seen. Spelled out (rather than ~online) to avoid SQL
+        # three-valued-logic dropping NULL-last_seen agents from both buckets.
+        offline = not_revoked & (
+            Q(devices__agent__status=Agent.Status.INACTIVE)
+            | Q(devices__agent__last_seen__isnull=True)
+            | Q(devices__agent__last_seen__lt=cutoff)
+        )
+        check_active = Q(service_checks__is_active=True)
+        return super().get_queryset().annotate(
+            server_count=Count("devices__agent", filter=not_revoked, distinct=True),
+            servers_up=Count("devices__agent", filter=online, distinct=True),
+            servers_down=Count("devices__agent", filter=offline, distinct=True),
+            check_count=Count("service_checks", filter=check_active, distinct=True),
+            checks_up=Count(
+                "service_checks",
+                filter=check_active & Q(service_checks__current_status=ServiceCheck.Status.UP),
+                distinct=True,
+            ),
+            checks_down=Count(
+                "service_checks",
+                filter=check_active & Q(service_checks__current_status__in=[
+                    ServiceCheck.Status.DOWN, ServiceCheck.Status.DEGRADED]),
+                distinct=True,
+            ),
+        )
+
     _AUDIT_LABELS = {
         "name": "Name", "site_type": "Type", "description": "Description",
         "location": "Location", "address": "Address", "city": "City",

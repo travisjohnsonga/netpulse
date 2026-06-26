@@ -2798,11 +2798,17 @@ export interface Site {
   devices_up: number
   devices_down: number
   devices_unknown: number
+  server_count: number
+  servers_up: number
+  servers_down: number
+  check_count: number
+  checks_up: number
+  checks_down: number
   created_at: string
   updated_at: string
 }
 
-export type SitePayload = Partial<Omit<Site, 'id' | 'slug' | 'parent_site_name' | 'device_count' | 'devices_up' | 'devices_down' | 'devices_unknown' | 'created_at' | 'updated_at'>> & { name: string }
+export type SitePayload = Partial<Omit<Site, 'id' | 'slug' | 'parent_site_name' | 'device_count' | 'devices_up' | 'devices_down' | 'devices_unknown' | 'server_count' | 'servers_up' | 'servers_down' | 'check_count' | 'checks_up' | 'checks_down' | 'created_at' | 'updated_at'>> & { name: string }
 
 export async function fetchSites(): Promise<Site[]> {
   const { data } = await api.get<Site[] | Paginated<Site>>('/sites/')
