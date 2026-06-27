@@ -71,7 +71,7 @@ qrcode~=8.0
 reportlab~=4.2
 
 # WSGI server + static files
-gunicorn~=23.0   # >=23.0 fixes CVE-2024-6827 (Transfer-Encoding request smuggling)
+gunicorn~=26.0   # >=23.0 fixes CVE-2024-6827 (Transfer-Encoding request smuggling)
 whitenoise[brotli]~=6.7
 
 # Testing
