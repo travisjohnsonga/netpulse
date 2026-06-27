@@ -175,6 +175,10 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         if created:
             agent = Agent(hostname=data["hostname"], collection_interval=30)
         agent.os = data["os"]
+        # OS-detail (additive; "" for older agents that don't send it).
+        agent.os_name = data.get("os_name", "")
+        agent.os_version = data.get("os_version", "")
+        agent.os_kernel = data.get("kernel", "")
         agent.arch = data["arch"]
         agent.version = data["version"]
         agent.enrollment_token = token
@@ -279,6 +283,21 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         if reported_version and reported_version != agent.version:
             agent.version = reported_version
             update_fields.append("version")
+        # Refresh OS-detail from the push (metrics["system"]) so an in-place OS
+        # upgrade self-corrects — set-once-at-enrollment would go stale (same
+        # reasoning as version + the hostname-doesn't-auto-refresh finding). Only
+        # overwrite on a non-empty value so a payload omitting it (older agent)
+        # never blanks good data.
+        system = metrics.get("system") or {}
+        for model_field, payload_key in (
+            ("os_name", "os_name"), ("os_version", "os_version"),
+            ("os_kernel", "kernel"),
+        ):
+            val = system.get(payload_key)
+            val = val.strip() if isinstance(val, str) else ""
+            if val and val != getattr(agent, model_field):
+                setattr(agent, model_field, val)
+                update_fields.append(model_field)
         agent.last_seen = timezone.now()
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE

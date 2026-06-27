@@ -165,7 +165,7 @@ export default function Servers() {
                 <tr key={s.id} onClick={() => nav(`/servers/${s.id}`)}
                   className="border-b dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer">
                   <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100">{s.hostname}</td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{s.os_version || s.os || '—'}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{s.os_name || s.os || '—'}</td>
                   <td className="px-3 py-2"><Bar pct={m.cpu_pct} /></td>
                   <td className="px-3 py-2"><Bar pct={m.memory_pct} /></td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-300">

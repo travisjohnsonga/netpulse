@@ -68,7 +68,8 @@ class AgentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Agent
         fields = (
-            "id", "hostname", "device_id", "site_name", "os", "arch", "version",
+            "id", "hostname", "device_id", "site_name", "os", "os_name",
+            "os_version", "os_kernel", "arch", "version",
             "cert_serial", "cert_expires_at", "status", "collection_interval",
             "role_types", "last_seen", "created_at",
         )
@@ -90,14 +91,19 @@ class ServerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Agent
         fields = (
-            "id", "hostname", "os", "os_version", "arch", "status", "last_seen",
+            "id", "hostname", "os", "os_name", "os_version", "os_kernel", "arch",
+            "status", "last_seen",
             "agent_version", "cert_expires_at", "collection_interval",
             "device_id", "site", "roles", "latest_metrics", "created_at",
         )
         read_only_fields = fields
 
     def get_os_version(self, obj) -> str:
-        return getattr(getattr(obj, "device", None), "os_version", "") or ""
+        # Prefer the AGENT's own reported OS version (OS-detail); fall back to the
+        # linked Device's firmware field (blank for agent-created devices), then "".
+        return (obj.os_version
+                or getattr(getattr(obj, "device", None), "os_version", "")
+                or "")
 
     def get_site(self, obj):
         site = getattr(getattr(obj, "device", None), "site", None)
@@ -172,6 +178,10 @@ class EnrollRequestSerializer(serializers.Serializer):
     enrollment_token = serializers.CharField()
     hostname = serializers.CharField(max_length=255)
     os = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    # OS-detail (additive; older agents omit these → default "").
+    os_name = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
+    os_version = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    kernel = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
     arch = serializers.CharField(max_length=32, required=False, allow_blank=True, default="")
     version = serializers.CharField(max_length=32, required=False, allow_blank=True, default="")
     csr = serializers.CharField()

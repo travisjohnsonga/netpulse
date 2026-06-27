@@ -116,6 +116,25 @@ class TestEnroll:
         t.refresh_from_db()
         assert t.use_count == 1 and t.is_active is False
 
+    def test_enroll_stores_os_detail(self, api_client, fake_pki):
+        t = _token()
+        resp = _enroll(api_client, t.token, hostname="ubu-01",
+                       os_name="Ubuntu 22.04.3 LTS", os_version="22.04", kernel="6.8.0-31")
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.os == "linux"          # os_family unchanged
+        assert agent.os_name == "Ubuntu 22.04.3 LTS"
+        assert agent.os_version == "22.04"
+        assert agent.os_kernel == "6.8.0-31"
+
+    def test_enroll_old_agent_without_os_detail(self, api_client, fake_pki):
+        # Backward-compat: a pre-OS-detail agent omits os_name/os_version/kernel.
+        t = _token()
+        resp = _enroll(api_client, t.token, hostname="old-01")  # no os_* extras
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.os == "linux" and agent.os_name == "" and agent.os_version == ""
+
     def test_enroll_invalid_token_403(self, api_client, fake_pki):
         assert _enroll(api_client, "nope").status_code == 403
 
@@ -316,6 +335,63 @@ class TestServersApi:
 
     def test_servers_require_auth(self, api_client):
         assert api_client.get("/api/servers/").status_code == 401
+
+
+# ── OS-detail: refresh-on-push + serializer exposure + backward-compat ────────────
+
+class TestOSDetail:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _agent(self, **kw):
+        return Agent.objects.create(hostname="srv-os", cert_serial="ab:cd:ef:01", **kw)
+
+    def test_metrics_refreshes_os_detail(self, api_client, monkeypatch):
+        # An in-place OS upgrade self-corrects: the push carries metrics.system.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(os="linux", os_name="Ubuntu 20.04.6 LTS", os_version="20.04")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"system": {
+            "os": "linux", "os_name": "Ubuntu 22.04.3 LTS", "os_version": "22.04",
+            "kernel": "6.8.0-31"}}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.os_name == "Ubuntu 22.04.3 LTS" and a.os_version == "22.04"
+        assert a.os_kernel == "6.8.0-31"
+
+    def test_metrics_without_system_keeps_os_detail(self, api_client, monkeypatch):
+        # Older agent (no system block / no os_name) must not blank good data.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(os="linux", os_name="Ubuntu 22.04.3 LTS", os_version="22.04")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}},
+                            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.os_name == "Ubuntu 22.04.3 LTS"  # not blanked
+
+    def test_agent_serializer_exposes_os_detail(self, auth_client):
+        Agent.objects.create(hostname="ser-os", cert_serial="s1",
+                             os="linux", os_name="AlmaLinux 9.4", os_version="9.4")
+        rows = auth_client.get("/api/agents/").json()
+        rows = rows.get("results", rows)
+        row = next(a for a in rows if a["hostname"] == "ser-os")
+        assert row["os"] == "linux" and row["os_name"] == "AlmaLinux 9.4"
+        assert row["os_version"] == "9.4"
+
+    def test_server_serializer_prefers_agent_os(self, auth_client):
+        # ServerSerializer.os_version prefers the agent's own value (not Device).
+        Agent.objects.create(hostname="srv-detail", cert_serial="s2",
+                             os="linux", os_name="Debian 12", os_version="12")
+        servers = auth_client.get("/api/servers/").json()
+        servers = servers.get("results", servers)
+        row = next(s for s in servers if s["hostname"] == "srv-detail")
+        assert row["os_name"] == "Debian 12" and row["os_version"] == "12"
+
+    def test_old_agent_serializes_with_blank_os_detail(self, auth_client):
+        # Pre-OS-detail agent: os_name/os_version blank, os still present → UI falls back.
+        Agent.objects.create(hostname="legacy-os", cert_serial="s3", os="linux")
+        rows = auth_client.get("/api/agents/").json()
+        rows = rows.get("results", rows)
+        row = next(a for a in rows if a["hostname"] == "legacy-os")
+        assert row["os"] == "linux" and row["os_name"] == "" and row["os_version"] == ""
 
 
 # ── Agent management ────────────────────────────────────────────────────────────

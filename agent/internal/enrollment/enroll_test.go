@@ -15,7 +15,9 @@ import (
 // remote agent). Enrollment must persist the operator's --server flag instead —
 // the agent just enrolled against it, so it's demonstrably reachable.
 func TestEnrollPrefersServerFlagOverResponse(t *testing.T) {
+	var gotReq map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotReq)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"agent_id":            "abc123",
@@ -44,5 +46,16 @@ func TestEnrollPrefersServerFlagOverResponse(t *testing.T) {
 	if cfg.ServerURL != srv.URL {
 		t.Fatalf("server_url = %q, want the --server flag %q (not the server's self-reported value)",
 			cfg.ServerURL, srv.URL)
+	}
+
+	// The enroll request must carry the OS-detail fields (os_family + the new
+	// display fields). os_name is non-empty on the Linux CI host (/etc/os-release).
+	for _, k := range []string{"os", "os_name", "os_version", "kernel"} {
+		if _, ok := gotReq[k]; !ok {
+			t.Errorf("enroll request missing %q field", k)
+		}
+	}
+	if gotReq["os"] == "" {
+		t.Errorf("enroll request os_family is empty")
 	}
 }
