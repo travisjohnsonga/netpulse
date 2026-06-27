@@ -41,6 +41,35 @@ param(
   [string]$ConfigDir  = "C:\ProgramData\NetPulse"
 )
 
+# ---- version parsing (defined first so tests can dot-source just these) ----
+function Get-VersionFromText([string]$text) {
+  # The agent prints "<timestamp> netpulse-agent vX.Y.Z" (to STDERR). Match the
+  # version token specifically so the timestamp prefix and stderr framing can't
+  # interfere - more robust than taking the "last whitespace token".
+  if ($text -match 'netpulse-agent\s+(v?\d+\.\d+\.\d+\S*)') { return $Matches[1] }
+  return "(unreadable)"
+}
+
+function Get-AgentVersion([string]$exe) {
+  if (-not (Test-Path $exe)) { return "(none)" }
+  # The agent writes --version to STDERR. On PS5.1, `2>&1` wraps stderr lines as
+  # ErrorRecords (not strings); coerce each with ToString(), and use a
+  # function-local ErrorActionPreference='Continue' so the merged error stream
+  # doesn't become a terminating error - which previously dropped a perfectly
+  # good binary into the catch -> "(unreadable)", so the script refused EVERY swap.
+  $ErrorActionPreference = 'Continue'
+  try {
+    $out = (& $exe --version 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+  } catch {
+    return "(unreadable)"
+  }
+  return Get-VersionFromText $out
+}
+
+# When dot-sourced (tests), define the functions above and stop here - don't run
+# the installer body (elevation check, downloads, service swap).
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 $ErrorActionPreference = "Stop"
 $ServiceName = "NetPulseAgent"
 $BinPath     = Join-Path $InstallDir "netpulse-agent.exe"
@@ -77,12 +106,6 @@ if (-not $Server -and -not $Binary -and (Test-Path $ConfigPath)) {
 if (-not $Server -and -not $Binary) {
   Write-Error "No -Server, no -Binary, and no server_url in ${ConfigPath}.`n  .\Update-Agent.ps1`n  .\Update-Agent.ps1 -Server https://<server> [-Insecure]`n  .\Update-Agent.ps1 -Binary C:\path\to\netpulse-agent-windows-amd64.exe"
   exit 1
-}
-
-function Get-AgentVersion([string]$exe) {
-  if (-not (Test-Path $exe)) { return "(none)" }
-  try { (& $exe --version 2>&1 | Select-Object -Last 1) -replace '.*\s(\S+)$', '$1' }
-  catch { "(unreadable)" }
 }
 
 # ---- current version ----
