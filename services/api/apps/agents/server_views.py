@@ -16,7 +16,10 @@ from apps.core.permissions import CapabilityViewSetMixin
 from .detection import auto_detect_roles
 from .metrics_read import detail_metrics, metric_history
 from .models import Agent, AgentRole, ServerRole
-from .serializers import AgentConfigSerializer, AssignedRoleSerializer, ServerSerializer
+from .serializers import (
+    AgentConfigSerializer, AgentLivenessSerializer, AssignedRoleSerializer,
+    ServerSerializer,
+)
 
 
 def _merge_config(stored: dict, patch: dict) -> dict:
@@ -171,6 +174,34 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
                 metadata={"before": before, "after": after},
             )
         return Response(after)
+
+    @action(detail=True, methods=["patch"], url_path="liveness")
+    def liveness(self, request, pk=None):
+        """Per-agent liveness-alert config: offline_threshold_seconds (null =
+        global AGENT_OFFLINE_SECONDS) and liveness_alerts_enabled (False
+        suppresses the offline alert + resolves any open one — for a host that
+        legitimately sleeps, e.g. the lab). Gated by agent:edit; audit-logged."""
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+
+        server = self.get_object()
+        ser = AgentLivenessSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+        changed = []
+        if "offline_threshold_seconds" in data:
+            server.offline_threshold_seconds = data["offline_threshold_seconds"]
+            changed.append("offline_threshold_seconds")
+        if "liveness_alerts_enabled" in data:
+            server.liveness_alerts_enabled = data["liveness_alerts_enabled"]
+            changed.append("liveness_alerts_enabled")
+        if changed:
+            server.save(update_fields=changed + ["updated_at"])
+            log_event(
+                AuditLog.EventType.AGENT_CONFIG_CHANGED, request=request, target=server,
+                description=f"Agent liveness config changed for {server.hostname}",
+                metadata={k: getattr(server, k) for k in changed})
+        return Response(self.get_serializer(server).data)
 
     @action(detail=True, methods=["delete"], url_path=r"roles/(?P<role_id>[^/.]+)")
     def remove_role(self, request, pk=None, role_id=None):

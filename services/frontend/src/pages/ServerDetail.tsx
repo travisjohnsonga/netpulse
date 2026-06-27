@@ -6,7 +6,7 @@ import TimeRangeSelector, { RANGE_LABEL, type TimeRange } from '../components/Ti
 import {
   fetchServer, fetchServerMetricHistory, fetchServerRoleAssignments,
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
-  changeServerSite, fetchSites, fetchServerConfig, updateServerConfig,
+  changeServerSite, fetchSites, fetchServerConfig, updateServerConfig, updateServerLiveness,
   type ServerDetail as ServerDetailT, type MetricHistory,
   type AssignedRole, type DetectedRole, type ServerRole, type Site,
   type AgentDesiredConfig,
@@ -104,8 +104,12 @@ export default function ServerDetail() {
 
   const dm = server.detail_metrics
   const m = server.latest_metrics
-  const online = server.status === 'active' && !!server.last_seen &&
-    Date.now() - new Date(server.last_seen).getTime() < 5 * 60 * 1000
+  // Prefer the server's authoritative is_online (same threshold the liveness
+  // alert uses); fall back to a client-side window for older API responses.
+  const online = typeof server.is_online === 'boolean'
+    ? server.is_online
+    : (server.status === 'active' && !!server.last_seen &&
+       Date.now() - new Date(server.last_seen).getTime() < 5 * 60 * 1000)
 
   return (
     <div className="p-6">
@@ -298,6 +302,7 @@ function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: ()
           <dd className="text-gray-900 dark:text-gray-100 font-medium truncate max-w-[60%]" title={server.hostname}>{server.hostname}</dd>
         </div>
         <SiteRow server={server} onChanged={onChanged} />
+        <LivenessRow server={server} onChanged={onChanged} />
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-4">
             <dt className="text-gray-500 dark:text-gray-400">{k}</dt>
@@ -305,6 +310,43 @@ function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: ()
           </div>
         ))}
       </dl>
+    </div>
+  )
+}
+
+// Liveness-alert row: shows whether the offline alert is enabled + the effective
+// threshold, with a capability-gated enable/disable toggle (agent:edit). Disable
+// is the escape hatch for a host that legitimately sleeps (the lab) so it doesn't
+// alert-storm. Audit-logged server-side.
+function LivenessRow({ server, onChanged }: { server: ServerDetailT; onChanged: () => void }) {
+  const caps = useCapabilities()
+  const canEdit = caps.includes('agent:edit')
+  const [busy, setBusy] = useState(false)
+  const enabled = server.liveness_alerts_enabled !== false
+  const thr = server.offline_threshold_seconds ? `${server.offline_threshold_seconds}s` : 'default'
+
+  const toggle = async () => {
+    setBusy(true)
+    try {
+      await updateServerLiveness(server.id, { liveness_alerts_enabled: !enabled })
+      onChanged()
+    } catch { /* surfaced elsewhere */ } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="flex justify-between gap-4 items-center">
+      <dt className="text-gray-500 dark:text-gray-400">Offline alert</dt>
+      <dd className="text-gray-900 dark:text-gray-100 font-medium flex items-center gap-2">
+        <span className={enabled ? '' : 'text-gray-400'}>
+          {enabled ? `Enabled · offline > ${thr}` : 'Disabled'}
+        </span>
+        {canEdit && (
+          <button onClick={toggle} disabled={busy}
+            className="text-xs px-2 py-0.5 border rounded dark:border-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50">
+            {enabled ? 'Disable' : 'Enable'}
+          </button>
+        )}
+      </dd>
     </div>
   )
 }

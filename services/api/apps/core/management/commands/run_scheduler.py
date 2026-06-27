@@ -65,6 +65,9 @@ COMPLIANCE_RUN_INTERVAL_S = int(os.environ.get("COMPLIANCE_RUN_INTERVAL_S", str(
 ENVIRONMENT_POLL_INTERVAL_S = int(os.environ.get("ENVIRONMENT_POLL_INTERVAL_S", str(5 * 60)))
 # WAN circuit utilization + contract-expiry checks.
 CIRCUIT_CHECK_INTERVAL_S = int(os.environ.get("CIRCUIT_CHECK_INTERVAL_S", str(15 * 60)))
+# Agent liveness: check often (default 60s) so an offline host is flagged within
+# ~1 tick of crossing its threshold (default AGENT_OFFLINE_SECONDS=300).
+AGENT_LIVENESS_CHECK_INTERVAL_S = int(os.environ.get("AGENT_LIVENESS_CHECK_INTERVAL_S", "60"))
 DEFAULT_TICK_S = 300
 
 
@@ -111,6 +114,7 @@ class Command(BaseCommand):
             ["compliance_run", COMPLIANCE_RUN_INTERVAL_S, self._run_due_compliance, False, None],
             ["environment_poll", ENVIRONMENT_POLL_INTERVAL_S, self._poll_environment, False, None],
             ["circuit_checks", CIRCUIT_CHECK_INTERVAL_S, self._check_circuits, False, None],
+            ["agent_liveness", AGENT_LIVENESS_CHECK_INTERVAL_S, self._check_agent_liveness, True, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -327,3 +331,13 @@ class Command(BaseCommand):
         if res.get("contract_alerts") or res.get("util_alerts"):
             logger.info("scheduler: WAN circuits — %d contract, %d utilization alert(s)",
                         res["contract_alerts"], res["util_alerts"])
+
+    def _check_agent_liveness(self):
+        # Fire/resolve "agent offline" alerts for agents that stopped reporting
+        # (debounced; auto-resolves on recovery). Agents are outbound reporters,
+        # so they're not in the device reachability loop — this is their liveness.
+        from apps.agents.liveness import reconcile_agent_liveness
+        res = reconcile_agent_liveness()
+        if res.get("fired") or res.get("resolved"):
+            logger.info("scheduler: agent liveness — %d offline alert(s) fired, %d resolved",
+                        res["fired"], res["resolved"])
