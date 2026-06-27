@@ -43,7 +43,7 @@ jobs:
       run:
         working-directory: services/api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Match the api image base (services/api/Dockerfile: FROM python:3.13-slim).
       - uses: actions/setup-python@v5
