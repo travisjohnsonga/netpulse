@@ -497,6 +497,20 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Password storage — set EXPLICITLY (don't rely on Django's silent default).
+# Argon2id (memory-hard, the modern OWASP-recommended standard) is FIRST, so new
+# and changed passwords hash with Argon2; the PBKDF2/Scrypt entries remain so
+# any password hashed under Django's prior default (PBKDF2-SHA256) still verifies
+# and is transparently upgraded to Argon2 on the user's next login — no reset
+# needed. Requires argon2-cffi (in requirements.txt). The test settings override
+# this with the fast MD5 hasher (test-only speed; never reaches production).
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
+
 # ── SSO / Single Sign-On (social-auth-app-django) ─────────────────────────────
 # Local username/password stays as a fallback (ModelBackend) so an IdP outage
 # can never lock everyone out. Provider client_id/secret are resolved per-request
