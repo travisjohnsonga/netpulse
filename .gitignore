@@ -106,3 +106,6 @@ mibs/vendor/**/*.mib
 mibs/vendor/**/*.txt
 # Keep the per-vendor READMEs (download instructions) tracked.
 !mibs/vendor/*/README.md
+
+# Claude Code session/worktree artifacts
+.claude/
