@@ -149,14 +149,20 @@ class TestEnroll:
         t = _token()
         assert _enroll(api_client, t.token).status_code == 502
 
-    def test_second_agent_same_ip_enrolls_without_device(self, api_client, fake_pki):
+    def test_second_agent_same_ip_still_gets_a_device(self, api_client, fake_pki):
+        # Agents behind one shared source IP (e.g. through nginx) must EACH get a
+        # linked Device — the second falls back to a unique synthetic ULA instead
+        # of being left device-less (which blocked site-assign).
         t = _token(max_uses=0)
         _enroll(api_client, t.token, hostname="host-a")
         resp = _enroll(api_client, t.token, hostname="host-b")
         assert resp.status_code == 201
-        # IP already owned by host-a → host-b enrolls but gets no auto device.
-        assert Agent.objects.get(hostname="host-b").device is None
-        assert Device.objects.filter(hostname="host-b").count() == 0
+        b = Agent.objects.get(hostname="host-b")
+        assert b.device is not None
+        assert Device.objects.filter(hostname="host-b").count() == 1
+        # host-a kept the real IP; host-b got a distinct (synthetic) one.
+        a = Agent.objects.get(hostname="host-a")
+        assert a.device.ip_address != b.device.ip_address
 
     def test_reenroll_same_host_reuses_agent(self, api_client, fake_pki, monkeypatch):
         # Re-running the installer on an already-enrolled host updates the same
@@ -394,6 +400,59 @@ class TestOSDetail:
         assert row["os"] == "linux" and row["os_name"] == "" and row["os_version"] == ""
 
 
+# ── Device linking: every active agent gets a Device (self-heal + on-demand) ──────
+
+class TestAgentDeviceLink:
+    def test_ensure_agent_device_creates_when_missing(self):
+        from apps.agents.device_link import ensure_agent_device
+        from apps.devices.models import Device
+        a = Agent.objects.create(hostname="orphan-1", cert_serial="o1")
+        assert a.device_id is None
+        dev = ensure_agent_device(a)  # no request → synthetic placeholder IP
+        assert dev is not None
+        a.refresh_from_db()
+        assert a.device_id == dev.id
+        assert Device.objects.filter(hostname="orphan-1").count() == 1
+
+    def test_ensure_is_idempotent(self):
+        from apps.agents.device_link import ensure_agent_device
+        a = Agent.objects.create(hostname="orphan-2", cert_serial="o2")
+        d1 = ensure_agent_device(a)
+        d2 = ensure_agent_device(a)
+        assert d1.id == d2.id  # already linked → no duplicate
+
+    def test_placeholder_ip_unique_and_valid(self):
+        import ipaddress
+        from apps.agents.device_link import placeholder_ip
+        a = Agent.objects.create(hostname="ph-a", cert_serial="pa")
+        b = Agent.objects.create(hostname="ph-b", cert_serial="pb")
+        ip_a, ip_b = placeholder_ip(a), placeholder_ip(b)
+        assert ipaddress.ip_address(ip_a).version == 6  # valid IPv6
+        assert ip_a != ip_b                              # unique per agent
+
+    def test_metrics_self_heals_device_less_agent(self, api_client, monkeypatch):
+        # A device-less agent (enrolled behind a shared-IP proxy before the fix)
+        # gets a Device created on its next metrics check-in.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="heal-1", cert_serial="ab:cd:ef:01")
+        assert a.device_id is None
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json",
+                            HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.device_id is not None
+
+    def test_change_site_autocreates_device_instead_of_400(self, auth_client):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="HQ-link")
+        a = Agent.objects.create(hostname="nodev-1", cert_serial="nd1")
+        assert a.device_id is None
+        r = auth_client.post(f"/api/servers/{a.id}/site/", {"site_id": site.id}, format="json")
+        assert r.status_code == 200, r.content  # was 400 "no linked device"
+        a.refresh_from_db()
+        assert a.device_id is not None and a.device.site_id == site.id
+
+
 # ── Agent liveness alerting (offline detection via the existing alert plumbing) ───
 
 class TestAgentLiveness:
@@ -621,12 +680,16 @@ class TestServerSiteAssignment:
         resp = viewer_client.post(f"/api/servers/{agent_id}/site/", {"site_id": dest.id}, format="json")
         assert resp.status_code == 403, resp.content
 
-    def test_change_site_no_linked_device_is_400(self, auth_client):
+    def test_change_site_autocreates_device_when_missing(self, auth_client):
+        # A device-less agent used to 400 here; now site-assign creates/links a
+        # Device on demand and succeeds (see TestAgentDeviceLink for detail).
         from apps.devices.models import Site
         dest = Site.objects.create(name="DC-nodev")
         agent = Agent.objects.create(hostname="srv-nodev", status=Agent.Status.ACTIVE)
         resp = auth_client.post(f"/api/servers/{agent.id}/site/", {"site_id": dest.id}, format="json")
-        assert resp.status_code == 400, resp.content
+        assert resp.status_code == 200, resp.content
+        agent.refresh_from_db()
+        assert agent.device_id is not None and agent.device.site_id == dest.id
 
 
 # ── Agent version refresh from metrics payload (API-side; agent unchanged) ────

@@ -223,33 +223,10 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK))
 
     def _link_device(self, agent, request, token):
-        from apps.devices.models import Device
-        ip = request.META.get("REMOTE_ADDR") or None
-        device = Device.objects.filter(hostname=agent.hostname).first()
-        if device is None:
-            # ip_address is required+unique; only create when we have a usable IP
-            # that isn't already owned (agents behind one NAT share a source IP —
-            # the agent still enrolls, just without an auto-created device row).
-            if not ip or Device.objects.filter(ip_address=ip).exists():
-                return
-            device = Device.objects.create(
-                hostname=agent.hostname, ip_address=ip, management_ip=ip,
-                platform=Device.Platform.OTHER, status=Device.Status.ACTIVE,
-                site=token.site, notes="Monitored by spane Agent",
-            )
-        elif token.site_id and not device.site_id:
-            device.site = token.site
-            device.save(update_fields=["site"])
-        if agent.device_id == device.id:
-            return
-        # device.agent is a OneToOne — transfer it off any prior agent (e.g. a
-        # revoked enrollment for this host) so the re-enrolling agent can claim it.
-        prior = Agent.objects.filter(device=device).exclude(pk=agent.pk).first()
-        if prior:
-            prior.device = None
-            prior.save(update_fields=["device", "updated_at"])
-        agent.device = device
-        agent.save(update_fields=["device", "updated_at"])
+        # Always link a Device (real client IP, else a unique synthetic ULA) so an
+        # enrolled agent is never device-less — even behind a shared-IP proxy/NAT.
+        from .device_link import ensure_agent_device
+        ensure_agent_device(agent, request=request, site=token.site)
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
@@ -260,6 +237,14 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         agent = request.user
         payload = request.data or {}
         metrics = payload.get("metrics") or {}
+        # Self-heal a device-less agent (e.g. one enrolled behind a shared-IP
+        # proxy before this fix) on its next check-in — best-effort.
+        if agent.device_id is None:
+            try:
+                from .device_link import ensure_agent_device
+                ensure_agent_device(agent, request=request)
+            except Exception as exc:  # never break ingestion over a link failure
+                logger.warning("device auto-link failed for agent %s: %s", agent.id, exc)
         device_id = agent.device_id or agent.id
         written = write_agent_metrics(device_id, agent.hostname, metrics, ts=payload.get("timestamp"))
         update_fields = ["last_seen", "status", "updated_at"]
