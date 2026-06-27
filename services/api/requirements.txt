@@ -44,7 +44,7 @@ argon2-cffi~=23.1  # Argon2id password hashing (PASSWORD_HASHERS[0]); user login
 # SSO / Single Sign-On (OAuth2). >=5.9 declares Django 6.0 support (Framework ::
 # Django :: 6.0); 5.4.x predates it. Pulls social-auth-core (<5.0,>=4.8.3).
 social-auth-app-django~=5.9
-python-jose~=3.3       # JWT/JWS ID-token validation for SSO
+python-jose~=3.5       # JWT/JWS ID-token validation for SSO
 PyNaCl~=1.5            # Ed25519 verification for Discord interaction webhooks (apps.core.chatops)
 
 # Device access (config collection / interface discovery) — imported lazily
