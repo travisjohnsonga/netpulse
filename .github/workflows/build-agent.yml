@@ -30,7 +30,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # Full history + tags so build.sh's `git describe --tags` resolves the
         # version. The default shallow checkout (depth 1, no tags) made describe
         # fall back to a bare commit hash, so CI-built binaries reported e.g.
