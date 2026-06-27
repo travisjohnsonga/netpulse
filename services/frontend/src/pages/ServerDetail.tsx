@@ -55,19 +55,61 @@ function MetricCard({ label, pct, sub }: { label: string; pct: number | null; su
   )
 }
 
+// Build an ECharts [ms, value|null][] series that BREAKS across data gaps. The
+// backend returns sparse points (aggregateWindow createEmpty:false → no points
+// while a host is down), so we detect time gaps and insert a null so the line
+// breaks instead of drawing a (possibly overshooting) spline across the gap.
+// A gap = consecutive samples more than gapFactor× the typical interval apart
+// (the typical interval = the median delta, robust to the gap itself).
+export function withGaps(
+  times: number[],
+  valueAt: (t: number) => number | null,
+  gapFactor = 2.5,
+): [number, number | null][] {
+  if (!times.length) return []
+  const deltas: number[] = []
+  for (let i = 1; i < times.length; i++) deltas.push(times[i] - times[i - 1])
+  const sorted = [...deltas].sort((a, b) => a - b)
+  const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0
+  const threshold = median > 0 ? median * gapFactor : Infinity
+  const out: [number, number | null][] = []
+  for (let i = 0; i < times.length; i++) {
+    if (i > 0 && times[i] - times[i - 1] > threshold) {
+      out.push([times[i - 1] + median, null]) // null in the gap → line breaks here
+    }
+    out.push([times[i], valueAt(times[i])])
+  }
+  return out
+}
+
 function LineChart({ history, fields, height = 260 }: { history?: MetricHistory; fields: string[]; height?: number }) {
   const series = history?.series ?? []
   if (!series.length) return <div className="text-sm text-gray-500 py-10 text-center">No time-series data yet.</div>
-  const times = [...new Set(series.map((r) => r.t as string))].sort()
+  const byTime = new Map<number, Record<string, unknown>>()
+  for (const r of series) byTime.set(new Date(r.t as string).getTime(), r)
+  const times = [...byTime.keys()].sort((a, b) => a - b)
   const option: EChartsOption = {
     tooltip: { trigger: 'axis' },
     legend: { type: 'scroll', bottom: 0, textStyle: { color: '#9ca3af' } },
     grid: { left: 48, right: 16, top: 16, bottom: 36 },
-    xAxis: { type: 'category', data: times.map((t) => new Date(t).toLocaleTimeString()), axisLabel: { color: '#9ca3af' } },
-    yAxis: { type: 'value', axisLabel: { color: '#9ca3af' } },
+    // Time axis so a gap is spatially honest (downtime = a visible empty span,
+    // not evenly-spaced categories that hide the gap's duration).
+    xAxis: {
+      type: 'time',
+      axisLabel: { color: '#9ca3af', formatter: (v: number) => new Date(v).toLocaleTimeString() },
+    },
+    // Server metrics (cpu/mem/disk %, load, network bps) are never negative; min:0
+    // makes a sub-zero artifact impossible even if a future smooth is re-enabled.
+    yAxis: { type: 'value', min: 0, axisLabel: { color: '#9ca3af' } },
     series: fields.map((f) => ({
-      name: f, type: 'line', smooth: true, showSymbol: false, areaStyle: { opacity: 0.08 },
-      data: times.map((t) => { const row = series.find((r) => r.t === t); return row ? (row[f] as number ?? null) : null }),
+      // smooth:false → straight segments (no spline overshoot, honest for
+      // monitoring data); connectNulls:false → the inserted gap nulls break the line.
+      name: f, type: 'line', smooth: false, showSymbol: false, connectNulls: false,
+      areaStyle: { opacity: 0.08 },
+      data: withGaps(times, (t) => {
+        const v = byTime.get(t)?.[f]
+        return typeof v === 'number' ? v : null
+      }),
     })),
   }
   return <ReactECharts option={option} style={{ height }} opts={{ renderer: 'svg' }} notMerge />
