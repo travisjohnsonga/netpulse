@@ -98,10 +98,25 @@ case "$(uname -m)" in
   *) echo "ERROR: unsupported arch $(uname -m)" >&2; exit 1 ;;
 esac
 
+# Extract the agent's version from `<bin> --version`. The agent logs a
+# timestamped line to STDERR ("<ts> netpulse-agent vX.Y.Z"), so match the
+# "netpulse-agent vX.Y.Z" token specifically (robust to the timestamp prefix +
+# stderr framing) rather than blindly taking the last field. Echoes the version,
+# "(unreadable)" if it ran but printed no recognizable version, or "(none)" if
+# the binary didn't run.
+agent_version() {
+  local bin="$1" out ver
+  out="$("$bin" --version 2>&1)" || { echo "(none)"; return; }
+  ver="$(printf '%s\n' "$out" \
+    | grep -oE 'netpulse-agent[[:space:]]+v?[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*' \
+    | head -1 | awk '{print $NF}')"
+  [[ -n "$ver" ]] && echo "$ver" || echo "(unreadable)"
+}
+
 # ---- current version (for before/after comparison) ----
 CURRENT_VER="(none installed)"
 if [[ -x "$BIN_PATH" ]]; then
-  CURRENT_VER="$("$BIN_PATH" --version 2>&1 | awk '{print $NF}')"
+  CURRENT_VER="$(agent_version "$BIN_PATH")"
 fi
 echo "Current installed version: ${CURRENT_VER}"
 
@@ -126,8 +141,9 @@ fi
 chmod +x "$TMP_BIN"
 
 # ---- VERIFY the new binary BEFORE touching the running one ----
-if ! NEW_VER="$("$TMP_BIN" --version 2>&1 | awk '{print $NF}')"; then
-  echo "ERROR: the downloaded/provided binary won't run (--version failed). Aborting — running agent untouched." >&2
+NEW_VER="$(agent_version "$TMP_BIN")"
+if [[ "$NEW_VER" == "(none)" || "$NEW_VER" == "(unreadable)" ]]; then
+  echo "ERROR: the downloaded/provided binary won't run or reports no version. Aborting — running agent untouched." >&2
   exit 1
 fi
 echo "New binary version:        ${NEW_VER}"
@@ -155,7 +171,7 @@ systemctl start "$SERVICE"
 sleep 2
 
 if systemctl is-active --quiet "$SERVICE"; then
-  RUNNING_VER="$("$BIN_PATH" --version 2>&1 | awk '{print $NF}')"
+  RUNNING_VER="$(agent_version "$BIN_PATH")"
   echo ""
   echo "✅ Update complete. ${SERVICE} is active, reporting version: ${RUNNING_VER}"
   echo "   (was ${CURRENT_VER} → now ${RUNNING_VER})"
