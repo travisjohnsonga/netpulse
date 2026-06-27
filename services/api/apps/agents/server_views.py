@@ -121,9 +121,14 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
         server = self.get_object()
         device = server.device
         if device is None:
-            return Response(
-                {"detail": "This server has no linked device, so it can't be assigned to a site."},
-                status=status.HTTP_400_BAD_REQUEST)
+            # A device-less agent (e.g. enrolled behind a shared-IP proxy) used to
+            # 400 here. Create/link its Device on demand so site-assign just works.
+            from .device_link import ensure_agent_device
+            device = ensure_agent_device(server, request=request)
+            if device is None:
+                return Response(
+                    {"detail": "Could not create a device for this server."},
+                    status=status.HTTP_400_BAD_REQUEST)
 
         site_id = request.data.get("site_id", None)
         new_site = None

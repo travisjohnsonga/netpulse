@@ -12,6 +12,7 @@ import {
   type AgentDesiredConfig,
 } from '../api/client'
 import { useCapabilities } from '../store/authStore'
+import { parseApiErrors } from '../api/errors'
 
 const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
@@ -372,7 +373,11 @@ function SiteRow({ server, onChanged }: { server: ServerDetailT; onChanged: () =
       await changeServerSite(server.id, pick === '' ? null : pick)
       setEditing(false)
       onChanged()
-    } catch { setError('Failed to change site.') } finally { setBusy(false) }
+    } catch (e) {
+      // Surface the ACTUAL server error (e.g. the response `detail`) instead of a
+      // generic message, so the operator sees the real reason.
+      setError(parseApiErrors(e, 'Failed to change site.'))
+    } finally { setBusy(false) }
   }
 
   if (editing) {
