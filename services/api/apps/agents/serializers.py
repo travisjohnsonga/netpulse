@@ -47,6 +47,15 @@ class AgentConfigSerializer(serializers.Serializer):
         return value
 
 
+class AgentLivenessSerializer(serializers.Serializer):
+    """Writable per-agent liveness-alert config (PATCH /api/servers/{id}/liveness/).
+    offline_threshold_seconds=null → use the global default; liveness_alerts_enabled
+    =False suppresses the offline alert for a host that legitimately sleeps."""
+    offline_threshold_seconds = serializers.IntegerField(
+        min_value=30, max_value=86400, required=False, allow_null=True)
+    liveness_alerts_enabled = serializers.BooleanField(required=False)
+
+
 class ServerRoleSerializer(serializers.ModelSerializer):
     agent_count = serializers.IntegerField(source="agents.count", read_only=True)
 
@@ -64,6 +73,9 @@ class AgentSerializer(serializers.ModelSerializer):
     device_id = serializers.IntegerField(source="device.id", read_only=True, default=None)
     site_name = serializers.CharField(source="device.site.name", read_only=True, default=None)
     role_types = serializers.SerializerMethodField()
+    # Authoritative online state (same threshold the liveness alert uses) so the
+    # UI badge agrees with alerting instead of computing its own window.
+    is_online = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Agent
@@ -71,7 +83,8 @@ class AgentSerializer(serializers.ModelSerializer):
             "id", "hostname", "device_id", "site_name", "os", "os_name",
             "os_version", "os_kernel", "arch", "version",
             "cert_serial", "cert_expires_at", "status", "collection_interval",
-            "role_types", "last_seen", "created_at",
+            "role_types", "last_seen", "is_online",
+            "offline_threshold_seconds", "liveness_alerts_enabled", "created_at",
         )
         read_only_fields = fields
 
@@ -87,12 +100,14 @@ class ServerSerializer(serializers.ModelSerializer):
     site = serializers.SerializerMethodField()
     roles = serializers.SerializerMethodField()
     latest_metrics = serializers.SerializerMethodField()
+    is_online = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Agent
         fields = (
             "id", "hostname", "os", "os_name", "os_version", "os_kernel", "arch",
-            "status", "last_seen",
+            "status", "last_seen", "is_online",
+            "offline_threshold_seconds", "liveness_alerts_enabled",
             "agent_version", "cert_expires_at", "collection_interval",
             "device_id", "site", "roles", "latest_metrics", "created_at",
         )

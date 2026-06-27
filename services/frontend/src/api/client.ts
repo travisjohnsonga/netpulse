@@ -1424,6 +1424,9 @@ export interface Agent {
   collection_interval: number
   role_types: string[]
   last_seen: string | null
+  is_online?: boolean
+  offline_threshold_seconds?: number | null
+  liveness_alerts_enabled?: boolean
   created_at: string
 }
 
@@ -1498,6 +1501,11 @@ export interface Server {
   arch: string
   status: string
   last_seen: string | null
+  // Authoritative online state (server-computed with the same threshold the
+  // liveness alert uses). Prefer this over a client-side last_seen window.
+  is_online?: boolean
+  offline_threshold_seconds?: number | null
+  liveness_alerts_enabled?: boolean
   agent_version: string
   cert_expires_at: string | null
   collection_interval: number
@@ -1612,6 +1620,17 @@ export interface AgentDesiredConfig {
   interval_seconds: number
   disk: { exclude_mounts: string[]; include_mounts: string[] }
 }
+// Per-agent liveness-alert config (PATCH; gated by agent:edit + audit-logged).
+// offline_threshold_seconds=null → global default; liveness_alerts_enabled=false
+// suppresses the offline alert for a host that legitimately sleeps.
+export async function updateServerLiveness(
+  id: string,
+  patch: { offline_threshold_seconds?: number | null; liveness_alerts_enabled?: boolean },
+): Promise<ServerDetail> {
+  const { data } = await api.patch<ServerDetail>(`/servers/${id}/liveness/`, patch)
+  return data
+}
+
 export async function fetchServerConfig(id: string): Promise<AgentDesiredConfig> {
   const { data } = await api.get<AgentDesiredConfig>(`/servers/${id}/config/`)
   return data

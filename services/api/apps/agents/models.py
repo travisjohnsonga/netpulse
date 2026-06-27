@@ -10,6 +10,7 @@ ports / custom checks a role-tagged agent should monitor.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import uuid
 
@@ -18,10 +19,15 @@ from django.db import models
 
 from apps.core.models import TimestampedModel
 
-# An agent is "online" when it last checked in within this window (and is ACTIVE).
-# 5 minutes matches the Servers page (OFFLINE_MS); cf. collectors'
-# HEARTBEAT_HEALTHY_SECONDS for the equivalent collector concept.
-AGENT_ONLINE_SECONDS = 300
+# An agent is "offline" when it hasn't checked in within this window (and is
+# ACTIVE). Default 5 min = 10 missed 30s intervals — clearly down, not a blip.
+# Configurable globally (env AGENT_OFFLINE_SECONDS) and overridable per-agent via
+# Agent.offline_threshold_seconds. The SAME threshold drives both the online
+# badge (is_online) and the liveness alert, so they never disagree. 5 minutes
+# also matches the Servers page (OFFLINE_MS).
+AGENT_OFFLINE_SECONDS = int(os.environ.get("AGENT_OFFLINE_SECONDS", "300"))
+# Back-compat alias (older imports referenced AGENT_ONLINE_SECONDS).
+AGENT_ONLINE_SECONDS = AGENT_OFFLINE_SECONDS
 
 # Defaults for the operator-editable, agent-pulled desired config. effective_config()
 # merges an agent's sparse desired_config over these so every key is always present.
@@ -180,6 +186,13 @@ class Agent(TimestampedModel):
     # used by role auto-detection. Populated only when the agent collects services.
     reported_services = models.JSONField(default=list, blank=True)
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Liveness alerting (see apps/agents/liveness.py). offline_threshold_seconds
+    # overrides the global AGENT_OFFLINE_SECONDS for THIS agent (null = global) —
+    # tighten for a critical host. liveness_alerts_enabled=False suppresses the
+    # offline alert entirely (e.g. a lab box that legitimately sleeps when idle,
+    # so the napping host doesn't alert-storm).
+    offline_threshold_seconds = models.PositiveIntegerField(null=True, blank=True)
+    liveness_alerts_enabled = models.BooleanField(default=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     collection_interval = models.IntegerField(default=30, help_text="seconds")
     # Operator-set DESIRED config the agent pulls on its next check-in (the
@@ -235,14 +248,20 @@ class Agent(TimestampedModel):
     def is_anonymous(self) -> bool:
         return False
 
+    def offline_after_seconds(self) -> int:
+        """Effective offline threshold for this agent: the per-agent override if
+        set, else the global AGENT_OFFLINE_SECONDS. Used by BOTH the online badge
+        (is_online) and the liveness alert so they stay consistent."""
+        return self.offline_threshold_seconds or AGENT_OFFLINE_SECONDS
+
     @property
     def is_online(self) -> bool:
-        """True when the agent is ACTIVE and checked in within AGENT_ONLINE_SECONDS.
-        Mirrors Collector.is_healthy and the Servers page's online logic."""
+        """True when the agent is ACTIVE and checked in within its effective
+        offline threshold. Mirrors Collector.is_healthy and the Servers page."""
         if self.status != self.Status.ACTIVE or not self.last_seen:
             return False
         from django.utils import timezone
-        return (timezone.now() - self.last_seen).total_seconds() < AGENT_ONLINE_SECONDS
+        return (timezone.now() - self.last_seen).total_seconds() < self.offline_after_seconds()
 
 
 class AgentRole(TimestampedModel):

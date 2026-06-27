@@ -394,6 +394,110 @@ class TestOSDetail:
         assert row["os"] == "linux" and row["os_name"] == "" and row["os_version"] == ""
 
 
+# ── Agent liveness alerting (offline detection via the existing alert plumbing) ───
+
+class TestAgentLiveness:
+    def _agent(self, secs_ago=None, **kw):
+        from django.utils import timezone
+        from datetime import timedelta
+        last = None if secs_ago is None else timezone.now() - timedelta(seconds=secs_ago)
+        return Agent.objects.create(hostname="srv-live", cert_serial="lv1",
+                                    last_seen=last, **kw)
+
+    def _fire_count(self):
+        from apps.alerts.models import AlertEvent
+        return AlertEvent.objects.filter(state=AlertEvent.State.FIRING,
+                                         labels__alert_type="agent_offline").count()
+
+    def test_stale_agent_fires_offline_alert(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        self._agent(secs_ago=600)  # > 300s default
+        res = reconcile_agent_liveness()
+        assert res["fired"] == 1
+        ev = AlertEvent.objects.get(labels__alert_type="agent_offline")
+        # Reuses the existing AlertEvent/AlertRule plumbing (not a parallel system).
+        assert ev.state == AlertEvent.State.FIRING
+        assert ev.rule.name == "Agent Offline"
+        assert ev.labels["source"] == "agent_liveness"
+        assert ev.labels["hostname"] == "srv-live"
+
+    def test_fresh_agent_does_not_fire(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        self._agent(secs_ago=30)  # well within 300s
+        assert reconcile_agent_liveness()["fired"] == 0
+        assert self._fire_count() == 0
+
+    def test_auto_resolves_when_agent_reports_again(self):
+        from django.utils import timezone
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        a = self._agent(secs_ago=600)
+        reconcile_agent_liveness()
+        assert self._fire_count() == 1
+        a.last_seen = timezone.now()      # agent resumes reporting
+        a.save(update_fields=["last_seen"])
+        res = reconcile_agent_liveness()
+        assert res["resolved"] == 1 and self._fire_count() == 0
+        ev = AlertEvent.objects.get(labels__alert_type="agent_offline")
+        assert ev.state == AlertEvent.State.RESOLVED and ev.resolved_at is not None
+
+    def test_debounce_no_duplicate_while_down(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        self._agent(secs_ago=600)
+        reconcile_agent_liveness()
+        reconcile_agent_liveness()  # still down → must NOT re-fire
+        reconcile_agent_liveness()
+        assert AlertEvent.objects.filter(labels__alert_type="agent_offline").count() == 1
+        assert self._fire_count() == 1
+
+    def test_threshold_is_configurable_per_agent(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        # 120s silent: fires under a tight 60s per-agent override...
+        self._agent(secs_ago=120, offline_threshold_seconds=60)
+        assert reconcile_agent_liveness()["fired"] == 1
+
+    def test_default_threshold_not_tripped_by_short_blip(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        # ...but 120s silent does NOT fire under the 300s global default.
+        self._agent(secs_ago=120)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_suppressed_agent_does_not_fire_and_resolves(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        a = self._agent(secs_ago=600)
+        reconcile_agent_liveness()
+        assert self._fire_count() == 1
+        a.liveness_alerts_enabled = False  # e.g. the napping lab box
+        a.save(update_fields=["liveness_alerts_enabled"])
+        res = reconcile_agent_liveness()
+        assert res["resolved"] == 1 and self._fire_count() == 0
+        # A suppressed agent never fires in the first place either.
+        Agent.objects.filter(id=a.id).update(liveness_alerts_enabled=False)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_revoked_agent_ignored(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        self._agent(secs_ago=600, status=Agent.Status.REVOKED)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_never_reported_new_agent_has_grace(self):
+        # last_seen=None but freshly created → grace (uses created_at), no alert.
+        from apps.agents.liveness import reconcile_agent_liveness
+        self._agent(secs_ago=None)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_liveness_patch_action_sets_override(self, auth_client):
+        a = self._agent(secs_ago=30)
+        r = auth_client.patch(f"/api/servers/{a.id}/liveness/",
+                              {"offline_threshold_seconds": 120, "liveness_alerts_enabled": False},
+                              format="json")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.offline_threshold_seconds == 120 and a.liveness_alerts_enabled is False
+
+
 # ── Agent management ────────────────────────────────────────────────────────────
 
 class TestAgentManagement:

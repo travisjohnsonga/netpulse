@@ -20,6 +20,20 @@ in flight lives in the code and the README "Current State", not here.
 
 ## Agent health: distinguish "online" from "reporting" — *Near-term · highest priority*
 
+> **Status — Stage 1 BUILT (`feature/agent-liveness-alerting`).** The **heartbeat-stale
+> / host-down alert** (the observed gap: the Windows VM was off for hours with no
+> alert) is implemented: a `run_scheduler` task (`agent_liveness`, every 60s)
+> fires an **"Agent Offline"** `AlertEvent` through the existing alerts plumbing
+> when `now - last_seen` exceeds the agent's threshold, debounced (one alert per
+> down event) and **auto-resolving** on recovery. Threshold is `AGENT_OFFLINE_SECONDS`
+> (default 300s = 10 missed 30s intervals), overridable per-agent
+> (`Agent.offline_threshold_seconds`) with `liveness_alerts_enabled=False` to
+> suppress the napping lab box. The SAME threshold drives the online badge
+> (`Agent.is_online` → serializer `is_online`), so badge and alert agree.
+> **Still roadmap:** the DEGRADED state (heartbeat fresh **but metrics-ingest
+> stale** — the 502-during-rebuild case) needs a distinct last-successful-ingest
+> timestamp; that's the Stage 2 below.
+
 **The gap.** An agent currently shows a green **Online** badge based purely on
 heartbeat liveness (`status == active` and `last_seen` within 5 minutes). That can
 be true while the host is actually **asleep, down, shut down, or unreachable** and

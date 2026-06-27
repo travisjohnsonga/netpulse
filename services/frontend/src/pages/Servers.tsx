@@ -16,6 +16,10 @@ function timeAgo(iso: string | null): string {
 }
 
 function isOnline(s: Server): boolean {
+  // Prefer the server's authoritative is_online (same threshold the liveness
+  // alert uses) so the badge agrees with alerting; fall back to a client-side
+  // window for older API responses.
+  if (typeof s.is_online === 'boolean') return s.is_online
   return s.status === 'active' && !!s.last_seen &&
     Date.now() - new Date(s.last_seen).getTime() < OFFLINE_MS
 }
