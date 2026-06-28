@@ -307,7 +307,7 @@ export default function ServerDetail() {
         </div>
       )}
 
-      {tab === 'Services' && <ServicesTab server={server} onTab={setTab} />}
+      {tab === 'Services' && <ServicesTab server={server} onTab={setTab} onChanged={load} />}
       {tab === 'Roles' && <RolesTab id={id} os={server.os} />}
       {tab === 'Config' && <ConfigTab id={id} os={server.os} />}
 
@@ -474,11 +474,11 @@ function AlertsPanel({ server }: { server: ServerDetailT }) {
   )
 }
 
-function ServicesTab({ server, onTab }: { server: ServerDetailT; onTab: (t: Tab) => void }) {
-  // The GENERAL running-services list (the 'services' collection toggle's data,
-  // Agent.reported_services) — "what's running" visibility, role-independent.
-  // (Role-specific service/port CHECKS live on the Roles tab; service stability
-  // monitoring is a separate planned feature.)
+function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTab: (t: Tab) => void; onChanged: () => void }) {
+  // Two distinct sections: WATCHED services (stability — health + alerts) on top,
+  // and the GENERAL running-services list (the 'services' toggle's data,
+  // Agent.reported_services — "what's running" visibility) below.
+  // (Role-specific service/port CHECKS live on the Roles tab.)
   const [q, setQ] = useState('')
   const services = server.reported_services ?? []
   const collected = server.services_collected === true
@@ -535,13 +535,102 @@ function ServicesTab({ server, onTab }: { server: ServerDetailT; onTab: (t: Tab)
   }
 
   return (
+    <div className="space-y-5">
+      <WatchedServicesSection server={server} onChanged={onChanged} />
+      <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6">
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">All running services</div>
+        {body}
+        {/* (c) always present: role-specific CHECKS live on the Roles tab. */}
+        <p className="mt-4 text-xs text-gray-400">
+          Looking for role-specific service &amp; port <em>checks</em> (pass/fail)? Those are on the{' '}
+          <LinkBtn to="Roles" label="Roles" /> tab.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// Stability monitoring: operator-chosen watched services + their health (up/down,
+// last change, restarts/24h) + add/remove. Role-independent; alerts fire on
+// down/flap server-side. Edits write desired_config.stability.services (applied
+// on the agent's next check-in), gated by agent:edit.
+function WatchedServicesSection({ server, onChanged }: { server: ServerDetailT; onChanged: () => void }) {
+  const canEdit = useCapabilities().includes('agent:edit')
+  const ws = server.watched_services
+  const configured = ws?.configured ?? []
+  const byName = new Map((ws?.statuses ?? []).map((s) => [s.name, s]))
+  const [add, setAdd] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const save = async (services: string[]) => {
+    setBusy(true); setErr(null)
+    try {
+      await updateServerConfig(server.id, { stability: { services } })
+      setAdd('')
+      onChanged()
+    } catch (e) { setErr(parseApiErrors(e, 'Failed to update watched services.')) }
+    finally { setBusy(false) }
+  }
+  const addOne = () => {
+    const name = add.trim()
+    if (name && !configured.includes(name)) save([...configured, name])
+  }
+  const removeOne = (name: string) => save(configured.filter((s) => s !== name))
+
+  return (
     <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6">
-      {body}
-      {/* (c) always present: role-specific CHECKS live on the Roles tab. */}
-      <p className="mt-4 text-xs text-gray-400">
-        Looking for role-specific service &amp; port <em>checks</em> (pass/fail)? Those are on the{' '}
-        <LinkBtn to="Roles" label="Roles" /> tab.
-      </p>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Watched services</div>
+        <span className="text-xs text-gray-400">stability — alerts on down/restart</span>
+      </div>
+      {err && <div className="mb-2 text-xs text-red-600">{err}</div>}
+
+      {configured.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+          No services watched yet. Add one (e.g. <code>docker</code>, <code>sshd</code>) to alert
+          when it stops or restarts repeatedly — no role required.
+        </p>
+      ) : (
+        <ul className="divide-y dark:divide-gray-700 mb-3">
+          {configured.map((name) => {
+            const st = byName.get(name)
+            const up = st?.running === true
+            const pending = !st || !st.collected_at
+            return (
+              <li key={name} className="flex items-center gap-3 py-2 text-sm">
+                <span className={`h-2 w-2 rounded-full shrink-0 ${pending ? 'bg-gray-300 dark:bg-gray-600' : up ? 'bg-green-500' : 'bg-red-500'}`} />
+                <span className="font-medium text-gray-900 dark:text-gray-100 w-40 truncate" title={name}>{name}</span>
+                <span className={`text-xs ${pending ? 'text-gray-400' : up ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {pending ? 'pending check-in' : up ? 'up' : `down${st?.down_since ? ` since ${timeAgo(st.down_since)}` : ''}`}
+                </span>
+                {st?.state && !pending && <span className="text-xs text-gray-400">({st.state})</span>}
+                {!!st?.restarts_24h && <span className="text-xs text-amber-600 dark:text-amber-400">↻ {st.restarts_24h} restart{st.restarts_24h === 1 ? '' : 's'}/24h</span>}
+                {st?.last_change_at && !pending && <span className="text-xs text-gray-400 ml-auto">changed {timeAgo(st.last_change_at)}</span>}
+                {canEdit && (
+                  <button onClick={() => removeOne(name)} disabled={busy}
+                    className={`text-xs text-gray-400 hover:text-red-600 ${st?.last_change_at && !pending ? 'ml-2' : 'ml-auto'} disabled:opacity-50`}
+                    title="Stop watching">✗</button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {canEdit ? (
+        <div className="flex items-center gap-2">
+          <input value={add} onChange={(e) => setAdd(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') addOne() }}
+            placeholder="service name (e.g. docker)"
+            className="px-3 py-1.5 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600 flex-1 max-w-xs" />
+          <button onClick={addOne} disabled={busy || !add.trim()}
+            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50">Watch</button>
+          <span className="text-xs text-gray-400">applies on next check-in (~30s)</span>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400">Requires the agent:edit capability to change.</p>
+      )}
     </div>
   )
 }

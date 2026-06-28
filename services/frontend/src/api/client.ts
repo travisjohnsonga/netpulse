@@ -1533,9 +1533,20 @@ export interface ServerAlert {
   id: number; name: string; severity: string; state: string; summary: string; created_at: string
 }
 
+export interface WatchedServiceStatus {
+  name: string
+  running: boolean
+  state: string
+  last_change_at: string | null
+  down_since: string | null
+  restarts_24h: number
+  collected_at: string | null
+}
 export interface ServerDetail extends Server {
   detail_metrics: ServerDetailMetrics
   recent_alerts: ServerAlert[]
+  // Service stability: the configured watch list + per-service health.
+  watched_services?: { configured: string[]; statuses: WatchedServiceStatus[] }
 }
 
 export interface MetricHistory {
@@ -1623,6 +1634,7 @@ export interface AgentDesiredConfig {
   collection: Record<string, boolean>
   interval_seconds: number
   disk: { exclude_mounts: string[]; include_mounts: string[] }
+  stability?: { services: string[] }
 }
 // Per-agent liveness-alert config (PATCH; gated by agent:edit + audit-logged).
 // offline_threshold_seconds=null → global default; liveness_alerts_enabled=false

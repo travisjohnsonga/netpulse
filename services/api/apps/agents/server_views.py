@@ -35,6 +35,8 @@ def _merge_config(stored: dict, patch: dict) -> dict:
         out["disk"] = {**(out.get("disk") or {}), **patch["disk"]}
     if "logs" in patch:
         out["logs"] = {**(out.get("logs") or {}), **patch["logs"]}
+    if "stability" in patch:
+        out["stability"] = {**(out.get("stability") or {}), **patch["stability"]}
     return out
 
 
@@ -66,7 +68,35 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
         device_id = str(server.device_id or server.id)
         data["detail_metrics"] = detail_metrics(device_id)
         data["recent_alerts"] = self._recent_alerts(server)
+        data["watched_services"] = self._watched_services(server)
         return Response(data)
+
+    @staticmethod
+    def _watched_services(server) -> dict:
+        """Stability view: the configured watch list + each watched service's
+        current health (up/down, last change, down-since, 24h restarts)."""
+        import datetime as _dt
+        from django.utils import timezone
+        configured = (server.effective_config().get("stability", {}) or {}).get("services", [])
+        now = timezone.now()
+
+        def restarts_24h(rs):
+            cutoff = now - _dt.timedelta(hours=24)
+            n = 0
+            for t in rs or []:
+                try:
+                    if _dt.datetime.fromisoformat(t) >= cutoff:
+                        n += 1
+                except (ValueError, TypeError):
+                    continue
+            return n
+
+        rows = [{
+            "name": ws.name, "running": ws.running, "state": ws.state,
+            "last_change_at": ws.last_change_at, "down_since": ws.down_since,
+            "restarts_24h": restarts_24h(ws.restarts), "collected_at": ws.collected_at,
+        } for ws in server.watched_services.all()]
+        return {"configured": configured, "statuses": rows}
 
     @action(detail=True, methods=["get"], url_path="metrics/history")
     def metrics_history(self, request, pk=None):

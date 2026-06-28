@@ -96,6 +96,9 @@ type DesiredConfig struct {
 		SecurityProfile bool     `json:"security_profile"`
 		AdditionalPaths []string `json:"additional_paths"`
 	} `json:"logs"`
+	Stability struct {
+		Services []string `json:"services"`
+	} `json:"stability"`
 }
 
 // post sends payload to the agent endpoint at path. When out is non-nil the JSON

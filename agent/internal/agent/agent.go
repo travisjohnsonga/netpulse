@@ -128,6 +128,14 @@ func (a *Agent) collect(hostname string) {
 			metrics["services"] = names
 		}
 	}
+	// Service stability (role-INDEPENDENT): rich state for the operator's watched
+	// services, via the EXISTING CollectServices(). The server tracks transitions
+	// + alerts on down/flap. Independent of the Collection.Services toggle.
+	if len(a.cfg.Stability.Services) > 0 {
+		if svc, err := collector.CollectServices(a.cfg.Stability.Services); err == nil && len(svc) > 0 {
+			metrics["watched_services"] = svc
+		}
+	}
 	// os_name/os_version/kernel are ADDITIONAL display detail; runtime.GOOS stays
 	// the os_family the agent + server branch on. Sent on every push so an
 	// in-place OS upgrade self-corrects (the server refreshes from this).
@@ -254,6 +262,10 @@ func applyDesiredConfig(cfg *config.Config, dc *transport.DesiredConfig) bool {
 	}
 	if !equalStrings(cfg.Logs.AdditionalPaths, dc.Logs.AdditionalPaths) {
 		cfg.Logs.AdditionalPaths = append([]string(nil), dc.Logs.AdditionalPaths...)
+		changed = true
+	}
+	if !equalStrings(cfg.Stability.Services, dc.Stability.Services) {
+		cfg.Stability.Services = append([]string(nil), dc.Stability.Services...)
 		changed = true
 	}
 	return changed

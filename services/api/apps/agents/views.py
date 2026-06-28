@@ -287,6 +287,15 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE
         agent.save(update_fields=update_fields)
+        # Service-stability: track watched-service transitions + fire/resolve
+        # down/flap alerts (role-independent). Best-effort — never break ingestion.
+        watched = metrics.get("watched_services")
+        if isinstance(watched, list):
+            try:
+                from .stability import reconcile_watched_services
+                reconcile_watched_services(agent, watched)
+            except Exception as exc:
+                logger.warning("watched-service reconcile failed for agent %s: %s", agent.id, exc)
         # Push the server-authoritative role assignments back in the response so
         # the agent can auto-enable role checks without a manual config edit.
         # de-dup while preserving assignment order.

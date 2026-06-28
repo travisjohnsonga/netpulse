@@ -11,6 +11,7 @@ ports / custom checks a role-tagged agent should monitor.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import uuid
 
@@ -42,7 +43,26 @@ DEFAULT_AGENT_CONFIG = {
     # constrained to the LOG_PATH_ALLOWLIST_ROOT (see serializers/agent — enforced
     # both sides). The agent tails + ships raw lines; all parsing is server-side.
     "logs": {"security_profile": True, "additional_paths": []},
+    # Service stability monitoring (role-INDEPENDENT): operator-chosen services to
+    # watch for up/down + restart/flap. The agent runs the EXISTING rich
+    # CollectServices() over this list and reports state every check-in; the
+    # server tracks transitions + alerts. Names are validated/capped (below).
+    "stability": {"services": []},
 }
+
+# Watched service-name guardrail: a safe charset (passed to `systemctl show <unit>`
+# as an exec arg, not shell — but validated as defense in depth) and a cap so a
+# bad/large config can't blow up the agent's per-check-in work.
+STABILITY_SERVICE_RE = re.compile(r"^[A-Za-z0-9._@:+-]+$")
+STABILITY_MAX_SERVICES = 50
+# Flap detection: N restarts within the window → "flapping".
+STABILITY_FLAP_WINDOW_S = 600
+STABILITY_FLAP_THRESHOLD = 3
+
+
+def is_valid_service_name(name: str) -> bool:
+    name = (name or "").strip()
+    return bool(name) and len(name) <= 128 and bool(STABILITY_SERVICE_RE.match(name))
 
 # additional_paths must live under this root (a root agent reading arbitrary
 # files would be a file-exfiltration hole). Enforced server-side (serializer) AND
@@ -208,6 +228,7 @@ class Agent(TimestampedModel):
         cfg = self.desired_config or {}
         disk = cfg.get("disk") or {}
         logs = cfg.get("logs") or {}
+        stability = cfg.get("stability") or {}
         return {
             "collection": {**DEFAULT_AGENT_CONFIG["collection"], **(cfg.get("collection") or {})},
             "interval_seconds": cfg.get("interval_seconds") or self.collection_interval
@@ -221,6 +242,7 @@ class Agent(TimestampedModel):
                                             DEFAULT_AGENT_CONFIG["logs"]["security_profile"]),
                 "additional_paths": list(logs.get("additional_paths") or []),
             },
+            "stability": {"services": list(stability.get("services") or [])},
         }
 
     def save(self, *args, **kwargs):
@@ -301,3 +323,27 @@ class AgentRoleStatus(TimestampedModel):
 
     def __str__(self):
         return f"{self.agent_id}/{self.role_type}"
+
+
+class WatchedServiceStatus(TimestampedModel):
+    """Stability state for one operator-watched service on one agent (role-
+    INDEPENDENT). Updated each check-in from the agent's rich ServiceStat; tracks
+    transitions (down/restart) so down + flap alerts can debounce/auto-resolve.
+    `restarts` holds recent restart timestamps (ISO, trimmed to 24h) — the source
+    for the 24h restart count and the flap-window check."""
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="watched_services")
+    name = models.CharField(max_length=128)
+    running = models.BooleanField(default=False)
+    state = models.CharField(max_length=32, blank=True)   # active/inactive/not_found/…
+    last_change_at = models.DateTimeField(null=True, blank=True)  # last running flip
+    down_since = models.DateTimeField(null=True, blank=True)      # set on →stopped
+    restarts = models.JSONField(default=list)                     # recent restart ISO ts (≤24h)
+    collected_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        unique_together = [("agent", "name")]
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.agent_id}/{self.name}"
