@@ -686,14 +686,16 @@ class TestRichServiceDetail:
         monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
         a = Agent.objects.create(hostname="srv-rich", cert_serial="ab:cd:ef:01")
         r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"services": [
-            {"name": "nginx", "running": True, "state": "active", "start_type": "enabled"},
+            {"name": "spooler", "display_name": "Print Spooler", "running": True,
+             "state": "active", "start_type": "enabled"},
             {"name": "cron", "running": True, "state": "active", "start_type": "static"}]}},
             format="json", **self._HDR)
         assert r.status_code == 200, r.content
         a.refresh_from_db()
         rich = self._rich(a)
-        nginx = next(s for s in rich if s["name"] == "nginx")
-        assert nginx["state"] == "active" and nginx["start_type"] == "enabled" and nginx["running"]
+        sp = next(s for s in rich if s["name"] == "spooler")
+        assert sp["state"] == "active" and sp["start_type"] == "enabled" and sp["running"]
+        assert sp["display_name"] == "Print Spooler"  # friendly name flows through
 
     def test_names_only_agent_normalized(self, api_client, monkeypatch):
         # Backward-compat: an older agent sends bare name strings.
@@ -712,7 +714,8 @@ class TestRichServiceDetail:
         a = Agent.objects.create(hostname="srv-stale", cert_serial="s",
                                  reported_services=["docker"])
         rich = self._rich(a)
-        assert rich == [{"name": "docker", "running": True, "state": "", "start_type": ""}]
+        assert rich == [{"name": "docker", "display_name": "", "running": True,
+                         "state": "", "start_type": ""}]
 
     def test_auto_detect_handles_rich_dicts(self):
         from apps.agents.detection import auto_detect_roles

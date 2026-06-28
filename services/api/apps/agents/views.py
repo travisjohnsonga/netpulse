@@ -262,6 +262,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                 elif isinstance(s, dict) and s.get("name"):
                     norm.append({
                         "name": str(s["name"])[:128],
+                        "display_name": str(s.get("display_name", ""))[:255],
                         "running": bool(s.get("running", True)),
                         "state": str(s.get("state", ""))[:32],
                         "start_type": str(s.get("start_type", ""))[:32],

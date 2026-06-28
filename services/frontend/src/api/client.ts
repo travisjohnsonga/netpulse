@@ -1493,6 +1493,7 @@ export interface ServerLatestMetrics {
 
 export interface ReportedService {
   name: string
+  display_name: string
   running: boolean
   state: string
   start_type: string
@@ -1542,6 +1543,7 @@ export interface ServerAlert {
 
 export interface WatchedServiceStatus {
   name: string
+  display_name?: string
   running: boolean
   state: string
   last_change_at: string | null

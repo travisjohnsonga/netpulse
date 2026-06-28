@@ -149,10 +149,12 @@ class ServerSerializer(serializers.ModelSerializer):
         out = []
         for s in (obj.reported_services or []):
             if isinstance(s, dict) and s.get("name"):
-                out.append({"name": s["name"], "running": bool(s.get("running", True)),
+                out.append({"name": s["name"], "display_name": s.get("display_name", ""),
+                            "running": bool(s.get("running", True)),
                             "state": s.get("state", ""), "start_type": s.get("start_type", "")})
             elif isinstance(s, str) and s:  # stale names-only data
-                out.append({"name": s, "running": True, "state": "", "start_type": ""})
+                out.append({"name": s, "display_name": "", "running": True,
+                            "state": "", "start_type": ""})
         return out
 
     def get_os_version(self, obj) -> str:
