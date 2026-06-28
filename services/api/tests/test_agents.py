@@ -492,6 +492,21 @@ class TestAgentLiveness:
         return AlertEvent.objects.filter(state=AlertEvent.State.FIRING,
                                          labels__alert_type="agent_offline").count()
 
+    def test_offline_alert_links_device_id(self):
+        # Regression: agent-offline must carry labels.device_id for device-scoped
+        # views (same fix as stability).
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        from apps.devices.models import Device
+        a = self._agent(secs_ago=600)
+        d = Device.objects.create(hostname="srv-live", ip_address="10.4.5.6",
+                                  platform=Device.Platform.OTHER, status=Device.Status.ACTIVE)
+        a.device = d
+        a.save(update_fields=["device"])
+        reconcile_agent_liveness()
+        ev = AlertEvent.objects.get(labels__alert_type="agent_offline")
+        assert ev.labels.get("device_id") == d.id
+
     def test_stale_agent_fires_offline_alert(self):
         from apps.agents.liveness import reconcile_agent_liveness
         from apps.alerts.models import AlertEvent
@@ -594,6 +609,20 @@ class TestServiceStability:
         return AlertEvent.objects.filter(
             state=AlertEvent.State.FIRING, labels__alert_type=alert_type,
             labels__agent_id=str(agent.id), labels__service=service).first()
+
+    def test_down_alert_links_device_id(self):
+        # Regression: the alert must carry labels.device_id so it shows in the
+        # Device column / server Recent Alerts (labels__device_id queries).
+        from apps.agents.stability import reconcile_watched_services
+        from apps.devices.models import Device
+        a = self._agent()
+        d = Device.objects.create(hostname="srv-stab", ip_address="10.1.2.3",
+                                  platform=Device.Platform.OTHER, status=Device.Status.ACTIVE)
+        a.device = d
+        a.save(update_fields=["device"])
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        ev = self._open(a, "service_down", "docker")
+        assert ev is not None and ev.labels.get("device_id") == d.id
 
     # --- config validation (charset + cap), via the audited /config/ PATCH ---
     def test_config_accepts_valid_watched_services(self, auth_client):

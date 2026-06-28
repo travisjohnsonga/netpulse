@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 _RULE_NAME = "Agent Offline"
 
 
+def _device_label(agent):
+    # device_id links the alert to its server (Device column / Recent Alerts /
+    # device-scoped views) — not just by hostname in the title.
+    return {"device_id": agent.device_id} if agent.device_id else {}
+
+
 def _offline_rule():
     from apps.alerts.models import AlertRule
     rule, _ = AlertRule.objects.get_or_create(
@@ -89,7 +95,7 @@ def reconcile_agent_liveness() -> dict:
                     labels={
                         "source": "agent_liveness", "alert_type": "agent_offline",
                         "agent_id": str(agent.id), "severity": "critical",
-                        "hostname": agent.hostname,
+                        "hostname": agent.hostname, **_device_label(agent),
                     },
                     annotations={
                         "title": f"Agent offline: {agent.hostname}",
