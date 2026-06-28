@@ -18,9 +18,10 @@ type PortCheck struct {
 
 // RoleCheck is the per-role result the agent reports.
 type RoleCheck struct {
-	Role     string        `json:"role"`
-	Services []ServiceStat `json:"services"`
-	Ports    []PortCheck   `json:"ports"`
+	Role       string             `json:"role"`
+	Services   []ServiceStat      `json:"services"`
+	Ports      []PortCheck        `json:"ports"`
+	Functional []FunctionalResult `json:"functional,omitempty"`
 }
 
 // CheckPort dials host:port and reports reachability + connect latency. UDP has
@@ -50,7 +51,7 @@ type RoleSpec struct {
 // RunRoleChecks probes each role's services (per-OS) and ports against
 // localhost, plus any extra services supplied in config. Returns one RoleCheck
 // per spec.
-func RunRoleChecks(specs []RoleSpec, extraServices []string) []RoleCheck {
+func RunRoleChecks(specs []RoleSpec, extraServices []string, funcURLs map[string][]string) []RoleCheck {
 	out := make([]RoleCheck, 0, len(specs))
 	for _, spec := range specs {
 		want := spec.LinuxService
@@ -66,7 +67,10 @@ func RunRoleChecks(specs []RoleSpec, extraServices []string) []RoleCheck {
 			p.Open, p.LatencyMs = open, latency
 			ports = append(ports, p)
 		}
-		out = append(out, RoleCheck{Role: spec.Role, Services: svc, Ports: ports})
+		// Functional health (Stage 1: web HTTP+cert) for roles with a registered
+		// checker; URLs from config or derived from the role's ports.
+		functional := RunFunctional(spec.Role, spec, funcURLs[spec.Role])
+		out = append(out, RoleCheck{Role: spec.Role, Services: svc, Ports: ports, Functional: functional})
 	}
 	return out
 }

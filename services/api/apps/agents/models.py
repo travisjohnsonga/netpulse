@@ -48,7 +48,31 @@ DEFAULT_AGENT_CONFIG = {
     # CollectServices() over this list and reports state every check-in; the
     # server tracks transitions + alerts. Names are validated/capped (below).
     "stability": {"services": []},
+    # Functional health checks (Stage 1: web). Per-role URL lists the agent GETs
+    # on localhost; empty = derive from the role's open ports. SSRF-constrained to
+    # the host itself (is_allowed_self_url, both sides).
+    "functional": {"web": {"urls": []}},
 }
+
+# Functional-check guardrails.
+FUNCTIONAL_CERT_WARN_DAYS = int(os.environ.get("FUNCTIONAL_CERT_WARN_DAYS", "30"))
+FUNCTIONAL_MAX_URLS = 20
+# SSRF allowlist: a functional-check URL must be http(s) to the HOST ITSELF
+# (loopback). The agent checks its own site; it must never be pointed at an
+# arbitrary internal/external address. Enforced server-side (serializer) AND
+# agent-side (defense in depth, incl. redirect re-validation).
+_SELF_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+
+
+def is_allowed_self_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        u = urlparse((url or "").strip())
+    except (ValueError, TypeError):
+        return False
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return False
+    return u.hostname.lower() in _SELF_HOSTS
 
 # Watched service-name guardrail: a safe charset (passed to `systemctl show <unit>`
 # as an exec arg, not shell — but validated as defense in depth) and a cap so a
@@ -243,6 +267,8 @@ class Agent(TimestampedModel):
                 "additional_paths": list(logs.get("additional_paths") or []),
             },
             "stability": {"services": list(stability.get("services") or [])},
+            "functional": {"web": {"urls": list(
+                ((cfg.get("functional") or {}).get("web") or {}).get("urls") or [])}},
         }
 
     def save(self, *args, **kwargs):
@@ -315,6 +341,10 @@ class AgentRoleStatus(TimestampedModel):
     services = models.JSONField(default=list)
     ports = models.JSONField(default=list)
     custom = models.JSONField(default=list)
+    # Functional health-check results (Stage 1: web HTTP+cert). Per-URL dicts
+    # {url, health, status_code, latency_ms, cert_days_remaining, error}. Distinct
+    # from `custom` (user-defined checks); additive/nullable for backward-compat.
+    functional = models.JSONField(default=list, blank=True)
     collected_at = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimestampedModel.Meta):

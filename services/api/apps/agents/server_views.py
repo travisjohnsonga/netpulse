@@ -37,6 +37,8 @@ def _merge_config(stored: dict, patch: dict) -> dict:
         out["logs"] = {**(out.get("logs") or {}), **patch["logs"]}
     if "stability" in patch:
         out["stability"] = {**(out.get("stability") or {}), **patch["stability"]}
+    if "functional" in patch:
+        out["functional"] = {**(out.get("functional") or {}), **patch["functional"]}
     return out
 
 

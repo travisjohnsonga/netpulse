@@ -49,15 +49,39 @@ class _StabilityConfigSerializer(serializers.Serializer):
         return cleaned
 
 
+class _FunctionalWebSerializer(serializers.Serializer):
+    urls = serializers.ListField(child=serializers.CharField(max_length=512), required=False)
+
+    def validate_urls(self, value):
+        # SSRF guardrail: functional-check URLs must be http(s) to the host itself
+        # (the agent checks its own site). Mirrored agent-side incl. redirects.
+        from .models import FUNCTIONAL_MAX_URLS, is_allowed_self_url
+        cleaned = list(dict.fromkeys(v.strip() for v in value if v and v.strip()))
+        bad = [v for v in cleaned if not is_allowed_self_url(v)]
+        if bad:
+            raise serializers.ValidationError(
+                "Functional-check URLs must be http(s) to the host itself "
+                f"(localhost / 127.0.0.1 / ::1). Rejected: {bad}")
+        if len(cleaned) > FUNCTIONAL_MAX_URLS:
+            raise serializers.ValidationError(f"Too many URLs; max {FUNCTIONAL_MAX_URLS}.")
+        return cleaned
+
+
+class _FunctionalConfigSerializer(serializers.Serializer):
+    web = _FunctionalWebSerializer(required=False)
+
+
 class AgentConfigSerializer(serializers.Serializer):
     """Validates a (partial) desired-config PATCH. Unknown collection keys are
     rejected so a typo can't silently disable nothing; log paths are allowlisted;
-    watched service names are charset-validated + capped."""
+    watched service names are charset-validated + capped; functional-check URLs
+    are SSRF-constrained to the host itself."""
     collection = serializers.DictField(child=serializers.BooleanField(), required=False)
     interval_seconds = serializers.IntegerField(min_value=10, max_value=3600, required=False)
     disk = _DiskConfigSerializer(required=False)
     logs = _LogsConfigSerializer(required=False)
     stability = _StabilityConfigSerializer(required=False)
+    functional = _FunctionalConfigSerializer(required=False)
 
     def validate_collection(self, value):
         allowed = set(DEFAULT_AGENT_CONFIG["collection"])
@@ -210,6 +234,7 @@ class AssignedRoleSerializer(serializers.ModelSerializer):
         return {
             "checks_passed": ok, "checks_total": total,
             "services": services, "ports": ports, "custom": custom,
+            "functional": st.functional or [],
             "collected_at": st.collected_at,
         }
 

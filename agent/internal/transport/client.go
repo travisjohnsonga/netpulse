@@ -99,6 +99,11 @@ type DesiredConfig struct {
 	Stability struct {
 		Services []string `json:"services"`
 	} `json:"stability"`
+	Functional struct {
+		Web struct {
+			URLs []string `json:"urls"`
+		} `json:"web"`
+	} `json:"functional"`
 }
 
 // post sends payload to the agent endpoint at path. When out is non-nil the JSON

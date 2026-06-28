@@ -49,6 +49,14 @@ type Stability struct {
 	Services []string `json:"services"`
 }
 
+// Functional holds per-role functional health-check config (Stage 1: web). URLs
+// are SSRF-constrained to the host itself; empty = derive from the role's ports.
+type Functional struct {
+	Web struct {
+		URLs []string `json:"urls"`
+	} `json:"web"`
+}
+
 type Config struct {
 	ServerURL  string `json:"server_url"`
 	AgentID    string `json:"agent_id"`
@@ -68,6 +76,7 @@ type Config struct {
 	Disk       DiskFilter    `json:"disk"`
 	Logs       LogForwarding `json:"logs"`
 	Stability  Stability     `json:"stability"`
+	Functional Functional    `json:"functional"`
 	RoleChecks RoleChecks    `json:"role_checks"`
 
 	Log struct {
