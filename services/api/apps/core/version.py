@@ -24,11 +24,25 @@ _CACHE_KEY = "version_check_result"
 _CACHE_TTL = 3600  # 1 hour — don't hammer the GitHub API
 
 
-def _current_count() -> int:
-    try:
-        return int(settings.VERSION.rsplit(".", 1)[-1])
-    except (ValueError, AttributeError):
-        return 0
+_APP_TAG_PREFIX = "app-v"
+
+
+def _semver_tuple(s: str) -> tuple:
+    """Parse a version string to a comparable (major, minor, patch) tuple.
+    Tolerates an ``app-v`` prefix and a git-describe / pre-release suffix
+    (``0.5.0-3-gabc123`` → (0,5,0)); unparseable parts → 0."""
+    s = (s or "").strip()
+    if s.startswith(_APP_TAG_PREFIX):
+        s = s[len(_APP_TAG_PREFIX):]
+    s = s.lstrip("v").split("-", 1)[0].split("+", 1)[0]  # drop pre-release / build
+    parts = (s.split(".") + ["0", "0", "0"])[:3]
+    out = []
+    for p in parts:
+        try:
+            out.append(int(p))
+        except ValueError:
+            out.append(0)
+    return tuple(out)
 
 
 @api_view(["GET"])
@@ -48,12 +62,11 @@ def version_check(request):
     base = {
         "current_version": settings.VERSION,
         "current_commit": settings.GIT_COMMIT,
-        "latest_commit": None,
         "latest_version": None,
         "update_available": False,
-        "commits_behind": 0,
+        "commits_behind": 0,  # retained for the badge's response shape (tag-based now)
         "release_notes_url":
-            f"https://github.com/{settings.GITHUB_REPO}/commits/{settings.GITHUB_BRANCH}",
+            f"https://github.com/{settings.GITHUB_REPO}/releases",
     }
     if not settings.VERSION_CHECK_ENABLED:
         return Response({**base, "checked": False})
@@ -75,13 +88,16 @@ def _github_headers() -> dict:
 
 
 def _check_github() -> dict | None:
-    """Latest-commit comparison. dict on success, None on transient failure."""
+    """Compare the running app version to the latest **app-v\\*** tag on GitHub
+    (Option C semver — not a commit count). dict on success, None on transient
+    failure. The app and agent version independently, so we only look at app-v*
+    tags (never the agent's v* tags)."""
     import requests
 
-    repo, branch = settings.GITHUB_REPO, settings.GITHUB_BRANCH
+    repo = settings.GITHUB_REPO
     try:
         r = requests.get(
-            f"https://api.github.com/repos/{repo}/commits/{branch}",
+            f"https://api.github.com/repos/{repo}/tags?per_page=100",
             headers=_github_headers(), timeout=5)
     except Exception as exc:
         logger.warning("version check failed: %s", exc)
@@ -93,29 +109,14 @@ def _check_github() -> dict | None:
         logger.warning("version check: GitHub returned %s", r.status_code)
         return None
 
-    latest = (r.json().get("sha") or "")[:7]
-    current = settings.GIT_COMMIT
-    if not latest or current == "unknown" or latest == current:
-        return {"latest_commit": latest or None, "update_available": False, "commits_behind": 0}
-
-    behind = _commits_behind(repo, current, branch)
+    app_tags = [str(t.get("name", "")) for t in (r.json() or [])
+                if str(t.get("name", "")).startswith(_APP_TAG_PREFIX)]
+    if not app_tags:
+        return {"latest_version": None, "update_available": False, "commits_behind": 0}
+    latest_tag = max(app_tags, key=_semver_tuple)
     return {
-        "latest_commit": latest,
-        "update_available": True,
-        "commits_behind": behind,
-        "latest_version": f"1.0.{_current_count() + behind}" if behind else None,
+        "latest_version": latest_tag[len(_APP_TAG_PREFIX):],
+        "update_available": _semver_tuple(latest_tag) > _semver_tuple(settings.VERSION),
+        "commits_behind": 0,
+        "release_notes_url": f"https://github.com/{repo}/releases/tag/{latest_tag}",
     }
-
-
-def _commits_behind(repo: str, current: str, branch: str) -> int:
-    """How many commits `branch` is ahead of the local commit (0 on failure)."""
-    import requests
-    try:
-        r = requests.get(
-            f"https://api.github.com/repos/{repo}/compare/{current}...{branch}",
-            headers=_github_headers(), timeout=5)
-        if r.status_code == 200:
-            return int(r.json().get("ahead_by", 0))
-    except Exception as exc:
-        logger.debug("compare failed: %s", exc)
-    return 0

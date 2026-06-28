@@ -199,10 +199,12 @@ services:
     build:
       context: ./services/api
       # Version baked into the image; netpulse.sh exports these on rebuild.
+      # SPANE_VERSION = git-describe against app-v* tags (the canonical app
+      # version) so a built image knows its version with no .git inside.
       args:
         GIT_COMMIT: ${GIT_COMMIT:-}
-        GIT_COUNT: ${GIT_COUNT:-}
         BUILT_AT: ${BUILT_AT:-}
+        SPANE_VERSION: ${SPANE_VERSION:-}
     restart: unless-stopped
     # Worker recycling guards against slow fd/memory leaks: each worker is
     # replaced after ~1000 requests (jittered so they don't all recycle at
@@ -217,8 +219,9 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
       SSL_DIR: /app/ssl
-      # Platform version surfaced by /api/health/ (also reads the bind-mounted
-      # /app/VERSION below). Set by scripts/update.sh; empty/dev is ignored.
+      # Explicit, VISIBLE version override (deploy/CI/update-script set it in the
+      # env); empty/dev is ignored → falls back to the git-app-tag-derived
+      # settings.VERSION. No hidden file override anymore.
       SPANE_VERSION: ${SPANE_VERSION:-}
       # Only the api service seeds the initial superuser (idempotent) and
       # initialises/unseals OpenBao. Other api-image services share the
@@ -231,9 +234,6 @@ services:
       # NetPulse's own HTTPS cert/key — the API generates them here; nginx
       # (frontend) reads them from the same volume to serve TLS.
       - ssl-certs:/app/ssl
-      # Platform version marker — read by /api/health/ so the version updates
-      # without an image rebuild (scripts/update.sh refreshes it).
-      - ./VERSION:/app/VERSION:ro
       # OpenBao keys file (.init_keys) — api initialises/unseals and reads the
       # root token from here when OPENBAO_TOKEN is unset.
       - openbao-data:/openbao/data
