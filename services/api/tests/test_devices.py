@@ -126,6 +126,29 @@ class TestAgentDeviceExcludedFromList:
         dev = self._agent_device("srv-02", "10.5.5.5")
         assert auth_client.get(f"/api/devices/{dev.id}/").status_code == 200
 
+    def test_synthetic_hosts_are_valid_ip_literals(self):
+        # REGRESSION GUARD: these go into an ORM `__in` against a
+        # GenericIPAddressField (Postgres `inet`), which adapts each value via
+        # Python's ipaddress module. A non-IP token ("localhost", "[::1]") raised
+        # ValueError at query time on Postgres and 500'd the Devices list — but
+        # SQLite (text columns, no adaptation) didn't catch it. Every entry MUST
+        # parse as a real IP so the list query is DB-portable.
+        import ipaddress
+        from apps.devices.views import _SYNTHETIC_DEVICE_HOSTS
+        for host in _SYNTHETIC_DEVICE_HOSTS:
+            ipaddress.ip_address(host)  # raises ValueError if not a valid IP
+
+    def test_list_returns_200_with_real_and_without_agent_devices(self, auth_client, device):
+        # The actual list endpoint must not 500 (the #136 regression). Real
+        # devices present; agent-backed + synthetic-IP records absent.
+        self._agent_device("agent-host", "10.9.9.9")
+        Device.objects.create(hostname="real-sw", ip_address="192.168.1.2")
+        resp = auth_client.get("/api/devices/")
+        assert resp.status_code == 200
+        hostnames = {r["hostname"] for r in resp.json()["results"]}
+        assert {"core-rtr-01", "real-sw"} <= hostnames
+        assert "agent-host" not in hostnames
+
 
 class TestDeviceEndpoints:
     def test_list_devices(self, auth_client, device):

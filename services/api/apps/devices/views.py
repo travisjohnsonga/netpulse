@@ -270,11 +270,18 @@ class DeviceRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-# Loopback/synthetic IPs. An agent-backed server's Device record is created by
-# the agent self-heal (#118) often with a synthetic 127.0.0.1 — it's an internal
-# linkage artifact, not a real network device. Mirrors run_reachability_monitor's
-# SYNTHETIC_HOSTS and apps.agents.models._SELF_HOSTS.
-_SYNTHETIC_DEVICE_HOSTS = {"127.0.0.1", "::1", "[::1]", "0.0.0.0", "localhost"}
+# Loopback/synthetic IPs an agent-backed Device might carry (#118 self-heal) that
+# mark it as an internal linkage artifact, not a real network device.
+#
+# This list is used in an ORM `__in` against management_ip / ip_address, which are
+# GenericIPAddressField (Postgres `inet`). Django/psycopg adapts each value through
+# Python's `ipaddress` module, so EVERY entry MUST be a valid IP literal — a
+# non-IP token like "localhost" or the bracketed "[::1]" raises
+# `ValueError: '…' does not appear to be an IPv4 or IPv6 address` at query time
+# (only on Postgres; SQLite stores these columns as text and skips adaptation,
+# which is why the SQLite test suite didn't catch it). A device IP column can
+# never actually hold "localhost"/"[::1]" anyway, so only real literals belong here.
+_SYNTHETIC_DEVICE_HOSTS = ["127.0.0.1", "::1", "0.0.0.0"]
 
 
 class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
@@ -326,10 +333,15 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         # Scope to the list view only — retrieve/CRUD still resolve the record
         # for internal references (reachability resolve, server linkage, etc.).
         if self.action == "list":
+            # Exclude agent-backed records (the primary mechanism) + any device
+            # whose effective probe host (management_ip, else ip_address) is a
+            # synthetic loopback. NOTE: only valid IP literals may go in the
+            # `__in` (inet adaptation) and we must NOT compare management_ip to ""
+            # (also rejected by inet adaptation) — management_ip is null when
+            # unset, so isnull is the correct "no override" test.
             synthetic_effective = (
                 Q(management_ip__in=_SYNTHETIC_DEVICE_HOSTS)
-                | ((Q(management_ip__isnull=True) | Q(management_ip=""))
-                   & Q(ip_address__in=_SYNTHETIC_DEVICE_HOSTS))
+                | (Q(management_ip__isnull=True) & Q(ip_address__in=_SYNTHETIC_DEVICE_HOSTS))
             )
             qs = qs.filter(agent__isnull=True).exclude(synthetic_effective)
 
