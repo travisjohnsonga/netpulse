@@ -68,10 +68,13 @@ jobs:
   release:
     # Publish the built binaries as GitHub Release assets so download_views.py
     # can redirect to a public, auth-free URL when local dist/ binaries are
-    # absent. Only on main pushes / tags / manual runs (never on PRs, which
-    # can't write to the repo and shouldn't mutate the release).
+    # absent. ONLY on tag pushes (a real release): the rolling `agent-latest`
+    # must track tagged releases, not every main commit — otherwise a routine
+    # main merge overwrites agent-latest with a `vX.Y.Z-N-gSHA` dev build and the
+    # update scripts (which pull agent-latest) would roll hosts to a dev commit.
+    # (main still BUILDS via the build job above; it just doesn't publish.)
     needs: build
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       # Releases require write access to repo contents.
