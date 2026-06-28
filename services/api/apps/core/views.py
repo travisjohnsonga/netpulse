@@ -125,39 +125,24 @@ def _openbao_healthy() -> bool:
         return False
 
 
-# Bind-mounted from the repo root (docker-compose api volumes); module-level so
-# tests can point it elsewhere.
-_VERSION_FILE = "/app/VERSION"
-
-
 def _netpulse_version() -> str:
-    """Best-effort version string, in priority order:
+    """Canonical version — TWO legible tiers, no hidden file:
 
-    1. ``SPANE_VERSION`` / ``NETPULSE_VERSION`` env (set by the update script /
-       release; ``dev``/empty is ignored).
-    2. the bind-mounted ``/app/VERSION`` file (updates without a rebuild).
-    3. ``settings.VERSION`` — ``1.0.<commit-count>`` computed from the git info
-       baked into the image (also what ``/api/version/`` returns), or a live
-       count in dev checkouts.
-    """
+    1. explicit env override ``SPANE_VERSION``/``NETPULSE_VERSION`` (set in deploy
+       config / CI / the update script — VISIBLE; ``dev``/empty ignored);
+    2. ``settings.VERSION`` — the git **app-tag**-derived version (the real
+       running code).
+
+    The old bind-mounted ``/app/VERSION`` file tier was removed: a file that
+    silently overrides the reported version is action-at-a-distance — for a
+    monitoring/security tool the version must reflect the running code, with the
+    only override being explicit in the deploy env. Every reader (infra-check,
+    /api/version/, the badge, logs) resolves through this one path."""
     for var in ("SPANE_VERSION", "NETPULSE_VERSION"):
         v = os.environ.get(var, "").strip()
         if v and v.lower() != "dev":
             return v
-
-    try:
-        from pathlib import Path
-
-        vf = Path(_VERSION_FILE)
-        if vf.is_file():
-            v = vf.read_text().strip()
-            if v:
-                return v
-    except Exception:
-        pass
-
     from django.conf import settings
-
     return getattr(settings, "VERSION", "") or "unknown"
 
 

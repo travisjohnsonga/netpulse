@@ -3,7 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
+# Scope to the AGENT's own tag prefix (vX.Y.Z) so it never picks up the app's
+# app-v* tags — the app and agent version independently in one repo. (--match
+# 'v[0-9]*' = plain v-number tags only, e.g. v1.5.0, not app-v0.5.0.)
+VERSION="$(git describe --tags --match 'v[0-9]*' --always 2>/dev/null || echo dev)"
 echo "Building NetPulse Agent ${VERSION}..."
 
 # Resolve the windows-only deps (x/sys, wmi) so the windows build links cleanly.

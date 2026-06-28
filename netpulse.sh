@@ -12,8 +12,12 @@ API_SERVICES="api websocket config-manager scheduler alert-engine cve-engine lif
 # Exported so docker-compose's api build.args pick them up on any build below.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
   export GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"
-  export GIT_COUNT="$(git rev-list --count HEAD 2>/dev/null)"
   export BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Canonical app version (Option C): git describe against app-v* tags, app-v
+  # stripped → semver (e.g. 0.5.0, or 0.5.0-3-gSHA for a dev build between tags).
+  # Baked into the image so a built container reports its version with no .git
+  # inside; the host repo has full history+tags so describe never bare-hashes.
+  export SPANE_VERSION="$(git describe --tags --match 'app-v*' --always --dirty 2>/dev/null | sed 's/^app-v//')"
 fi
 
 case "$1" in
@@ -242,11 +246,15 @@ LOGROTATE
     bash "$(dirname "$0")/scripts/update.sh" "${2:-}"
     ;;
   show-version)
-    if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-      VER_FILE="$(cat VERSION 2>/dev/null || echo '')"
-      echo "spane version: ${VER_FILE:+$VER_FILE — }1.0.$(git rev-list --count HEAD) ($(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD))"
+    # Canonical app version: env override else git-describe against app-v* tags
+    # (matches settings.VERSION / _app_version exactly).
+    if [ -n "${SPANE_VERSION:-}" ]; then
+      echo "spane version: ${SPANE_VERSION} (app-tag derived)"
+    elif command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+      APP_VER="$(git describe --tags --match 'app-v*' --always --dirty 2>/dev/null | sed 's/^app-v//')"
+      echo "spane version: ${APP_VER:-0.0.0+$(git rev-parse --short HEAD)} (agent: $(git describe --tags --match 'v[0-9]*' --always 2>/dev/null || echo n/a))"
     else
-      echo "spane version: $(cat VERSION 2>/dev/null || echo unknown)"
+      echo "spane version: unknown"
     fi
     echo ""
     echo "Update history (last 10):"

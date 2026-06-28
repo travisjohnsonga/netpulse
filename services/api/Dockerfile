@@ -46,11 +46,9 @@ RUN mkdir -p /app/media/reports
 # Bake the version (git isn't present in the image). Supplied by the build —
 # see docker-compose api build.args / netpulse.sh; empty in plain builds.
 ARG GIT_COMMIT=""
-ARG GIT_COUNT=""
 ARG BUILT_AT=""
 ARG SPANE_VERSION=""
 ENV NETPULSE_GIT_COMMIT=$GIT_COMMIT \
-    NETPULSE_GIT_COUNT=$GIT_COUNT \
     NETPULSE_BUILT_AT=$BUILT_AT \
     SPANE_VERSION=$SPANE_VERSION
 

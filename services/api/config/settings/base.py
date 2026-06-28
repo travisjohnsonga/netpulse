@@ -260,9 +260,40 @@ def _git(args, default=""):
         return default
 
 GIT_COMMIT = os.environ.get("NETPULSE_GIT_COMMIT") or _git(["rev-parse", "--short", "HEAD"], "unknown")
-_GIT_COUNT = os.environ.get("NETPULSE_GIT_COUNT") or _git(["rev-list", "--count", "HEAD"], "0")
-VERSION = f"1.0.{_GIT_COUNT}"
 BUILT_AT = os.environ.get("NETPULSE_BUILT_AT", "")
+
+
+def _app_version() -> str:
+    """The SINGLE canonical app version — Option C semver from APP tags (not a
+    commit count). The app and agent version independently in one repo, so they
+    use DISTINGUISHABLE tag prefixes that never collide:
+
+        app:   app-vX.Y.Z   (this)
+        agent: vX.Y.Z        (agent/build.sh, scoped to its own prefix)
+
+    Priority:
+      1. SPANE_VERSION baked at build (docker build-arg → ENV; the host build runs
+         `git describe --match 'app-v*'` — see netpulse.sh). The container has no
+         .git, so this is how a built image knows its version.
+      2. a live `git describe` against app tags (dev checkouts on the host).
+      3. ``0.0.0+<short-sha>`` — clearly pre-release, used until the first
+         ``app-v*`` tag exists (so the badge never silently shows a bare hash).
+
+    A released image reports its tag (e.g. ``0.5.0``); a dev build between tags
+    reports ``0.5.0-3-gabc123``. NOTE: the build MUST have full history + tags
+    (fetch-depth: 0, fetch-tags: true) or describe falls back to a bare hash —
+    the agent's #114 bug; don't repeat it in any future image CI.
+    """
+    v = (os.environ.get("SPANE_VERSION") or os.environ.get("NETPULSE_VERSION") or "").strip()
+    if v and v.lower() != "dev":
+        return v.lstrip("v")
+    desc = _git(["describe", "--tags", "--match", "app-v*", "--always", "--dirty"], "")
+    if desc.startswith("app-v"):
+        return desc[len("app-v"):]
+    return f"0.0.0+{GIT_COMMIT}" if GIT_COMMIT and GIT_COMMIT != "unknown" else "0.0.0+unknown"
+
+
+VERSION = _app_version()
 
 # Update-check source. Repo is public, so no token is required; GITHUB_TOKEN is
 # only needed for a private repo. VERSION_CHECK_ENABLED=false disables the check.
