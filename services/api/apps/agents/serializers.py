@@ -101,6 +101,10 @@ class ServerSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
     latest_metrics = serializers.SerializerMethodField()
     is_online = serializers.BooleanField(read_only=True)
+    # General running-services list (Agent.reported_services), populated only when
+    # the 'services' collection toggle is on. services_collected reflects that
+    # toggle so the UI can distinguish "toggle off" from "on, no data yet".
+    services_collected = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
@@ -109,9 +113,13 @@ class ServerSerializer(serializers.ModelSerializer):
             "status", "last_seen", "is_online",
             "offline_threshold_seconds", "liveness_alerts_enabled",
             "agent_version", "cert_expires_at", "collection_interval",
-            "device_id", "site", "roles", "latest_metrics", "created_at",
+            "device_id", "site", "roles", "latest_metrics",
+            "reported_services", "services_collected", "created_at",
         )
         read_only_fields = fields
+
+    def get_services_collected(self, obj) -> bool:
+        return bool(obj.effective_config().get("collection", {}).get("services", False))
 
     def get_os_version(self, obj) -> str:
         # Prefer the AGENT's own reported OS version (OS-detail); fall back to the

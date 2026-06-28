@@ -307,7 +307,7 @@ export default function ServerDetail() {
         </div>
       )}
 
-      {tab === 'Services' && <ServicesTab server={server} />}
+      {tab === 'Services' && <ServicesTab server={server} onTab={setTab} />}
       {tab === 'Roles' && <RolesTab id={id} os={server.os} />}
       {tab === 'Config' && <ConfigTab id={id} os={server.os} />}
 
@@ -474,14 +474,74 @@ function AlertsPanel({ server }: { server: ServerDetailT }) {
   )
 }
 
-function ServicesTab({ server }: { server: ServerDetailT }) {
-  // Services come from the agent's role-check results (per-role). The Roles tab
-  // shows them grouped by role; here we present them flat for a quick scan.
+function ServicesTab({ server, onTab }: { server: ServerDetailT; onTab: (t: Tab) => void }) {
+  // The GENERAL running-services list (the 'services' collection toggle's data,
+  // Agent.reported_services) — "what's running" visibility, role-independent.
+  // (Role-specific service/port CHECKS live on the Roles tab; service stability
+  // monitoring is a separate planned feature.)
+  const [q, setQ] = useState('')
+  const services = server.reported_services ?? []
+  const collected = server.services_collected === true
+  const filtered = q ? services.filter((s) => s.toLowerCase().includes(q.toLowerCase())) : services
+
+  const LinkBtn = ({ to, label }: { to: Tab; label: string }) => (
+    <button onClick={() => onTab(to)} className="text-blue-600 dark:text-blue-400 hover:underline font-medium">{label}</button>
+  )
+
+  let body
+  if (!collected) {
+    // (a) toggle OFF
+    body = (
+      <div className="text-sm text-gray-500 dark:text-gray-400">
+        The <span className="font-medium">Services</span> collection toggle is off, so this host
+        isn't reporting its running services. Enable it on the{' '}
+        <LinkBtn to="Config" label="Config" /> tab to list running services here.
+      </div>
+    )
+  } else if (services.length === 0) {
+    // (b) toggle ON, no data yet
+    body = (
+      <div className="text-sm text-gray-500 dark:text-gray-400">
+        Services collection is on — waiting for the agent's next check-in.
+      </div>
+    )
+  } else {
+    body = (
+      <>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {services.length} running service{services.length === 1 ? '' : 's'}
+          </div>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter services…"
+            className="px-3 py-1.5 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600 w-48" />
+        </div>
+        {filtered.length === 0 ? (
+          <div className="text-sm text-gray-400">No services match “{q}”.</div>
+        ) : (
+          <ul className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-sm">
+            {filtered.map((s) => (
+              <li key={s} className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                <span className="truncate" title={s}>{s}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {q && filtered.length > 0 && (
+          <div className="mt-2 text-xs text-gray-400">{filtered.length} of {services.length} shown</div>
+        )}
+      </>
+    )
+  }
+
   return (
-    <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6 text-sm text-gray-500">
-      Monitored services appear once roles are assigned and the agent reports
-      role checks. See the <span className="font-medium">Roles</span> tab to assign roles
-      ({server.roles.length ? server.roles.join(', ') : 'none assigned yet'}).
+    <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6">
+      {body}
+      {/* (c) always present: role-specific CHECKS live on the Roles tab. */}
+      <p className="mt-4 text-xs text-gray-400">
+        Looking for role-specific service &amp; port <em>checks</em> (pass/fail)? Those are on the{' '}
+        <LinkBtn to="Roles" label="Roles" /> tab.
+      </p>
     </div>
   )
 }

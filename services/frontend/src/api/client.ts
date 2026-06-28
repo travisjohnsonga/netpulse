@@ -1513,6 +1513,10 @@ export interface Server {
   site: { id: number; name: string } | null
   roles: string[]
   latest_metrics: ServerLatestMetrics
+  // General running-services list (the 'services' collection toggle's data);
+  // services_collected = whether that toggle is on.
+  reported_services?: string[]
+  services_collected?: boolean
   created_at: string
 }
 
