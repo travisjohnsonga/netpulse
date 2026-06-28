@@ -55,6 +55,9 @@ export default function Alerts() {
   const [error, setError] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<Severity>('all')
   const [view, setView] = useState<View>('all')
+  // Default landing shows only ACTIONABLE alerts (firing & un-acknowledged);
+  // resolved + acknowledged are hidden until the operator opts in via the toggle.
+  const [actionableOnly, setActionableOnly] = useState(true)
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [timeline, setTimeline] = useState<Record<number, AlertNotificationRecord[]>>({})
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -125,16 +128,24 @@ export default function Alerts() {
     ? alerts.filter((a) => a.device_id != null && siteDeviceIds.has(a.device_id))
     : alerts
 
-  const filtered = severityFilter === 'all'
+  const sevFiltered = severityFilter === 'all'
     ? siteAlerts
     : siteAlerts.filter((a) => sevOf(a) === severityFilter)
+  // Actionable = firing AND un-acknowledged. Default view hides resolved +
+  // acknowledged (noise); the toggle reveals them.
+  const isActionable = (a: Alert) => a.state !== 'resolved' && !a.is_acknowledged
+  const filtered = actionableOnly ? sevFiltered.filter(isActionable) : sevFiltered
+  const actionableCount = siteAlerts.filter(isActionable).length
 
+  // Severity-chip counts reflect the current scope (actionable-only by default,
+  // all states when revealed) — not the full incl-resolved total.
+  const countScope = actionableOnly ? siteAlerts.filter(isActionable) : siteAlerts
   const counts: Record<Severity, number> = {
-    all: siteAlerts.length,
-    critical: siteAlerts.filter((a) => sevOf(a) === 'critical').length,
-    high: siteAlerts.filter((a) => sevOf(a) === 'high').length,
-    medium: siteAlerts.filter((a) => sevOf(a) === 'medium').length,
-    low: siteAlerts.filter((a) => sevOf(a) === 'low').length,
+    all: countScope.length,
+    critical: countScope.filter((a) => sevOf(a) === 'critical').length,
+    high: countScope.filter((a) => sevOf(a) === 'high').length,
+    medium: countScope.filter((a) => sevOf(a) === 'medium').length,
+    low: countScope.filter((a) => sevOf(a) === 'low').length,
   }
 
   // Derived display state: the model only stores firing/resolved; an "acked"
@@ -213,9 +224,9 @@ export default function Alerts() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Alerts</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-          {counts.all > 0
-            ? `${counts.all} alert${counts.all !== 1 ? 's' : ''} — ${counts.critical} critical`
-            : 'No active alerts'}
+          {actionableCount > 0
+            ? `${actionableCount} actionable alert${actionableCount !== 1 ? 's' : ''} (firing, unacknowledged) — ${counts.critical} critical`
+            : 'No actionable alerts — all clear'}
         </p>
       </div>
 
@@ -226,7 +237,17 @@ export default function Alerts() {
         </div>
       )}
 
-      {/* State filter tabs: All / Firing / Acknowledged / Resolved (+counts) */}
+      {/* Default = actionable-only. This toggle reveals resolved + acknowledged
+          AND the state-filter tabs (which only matter once they're shown). */}
+      <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 w-fit cursor-pointer">
+        <input type="checkbox" checked={!actionableOnly}
+               onChange={(e) => setActionableOnly(!e.target.checked)} />
+        Show resolved &amp; acknowledged
+      </label>
+
+      {/* State filter tabs: All / Firing / Acknowledged / Resolved (+counts).
+          Hidden in the default actionable-only view (the toggle above reveals them). */}
+      {!actionableOnly && (
       <div className="flex gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-1 w-fit">
         {VIEW_TABS.map((tab) => {
           const count = stateCounts ? stateCounts[tab.key] : undefined
@@ -248,6 +269,7 @@ export default function Alerts() {
           )
         })}
       </div>
+      )}
 
       {/* Bulk action toolbar — appears when 1+ alerts are selected */}
       {selected.size > 0 && (
