@@ -3,42 +3,17 @@
 from django.db import migrations, models
 
 
-def backfill_device_kind(apps, schema_editor):
-    """One-time classification of EXISTING devices using the legacy heuristic
-    (agent-linked OR synthetic/loopback IP → server). After this runs, the
-    heuristic is never used again — device_kind is set authoritatively at
-    creation. Postgres-safe: agent linkage via the Agent model (not the reverse
-    accessor), and only valid inet literals in the IP filter."""
-    from django.db.models import Q
-
-    Device = apps.get_model("devices", "Device")
-    Agent = apps.get_model("agents", "Agent")
-    SERVER = "server"
-
-    # Agent-backed devices → server.
-    agent_device_ids = list(
-        Agent.objects.exclude(device__isnull=True).values_list("device_id", flat=True)
-    )
-    if agent_device_ids:
-        Device.objects.filter(id__in=agent_device_ids).update(device_kind=SERVER)
-
-    # Synthetic/loopback-IP devices (e.g. an agent link later cleared) → server.
-    # Valid IP literals only (GenericIPAddressField → inet adaptation).
-    synthetic = ["127.0.0.1", "::1", "0.0.0.0"]
-    Device.objects.filter(
-        Q(ip_address__in=synthetic) | Q(management_ip__in=synthetic)
-    ).update(device_kind=SERVER)
-
-
-def noop_reverse(apps, schema_editor):
-    """Reverse is a no-op — the AddField reversal drops the column with its data."""
-
-
 class Migration(migrations.Migration):
+    """Schema-only: add the device_kind column + its index. The one-time backfill
+    is a SEPARATE migration (0032) on purpose — Django defers index creation
+    (db_index=True) to the end of a migration's schema_editor, so running the
+    backfill UPDATEs in the SAME migration leaves pending deferred FK-trigger
+    events and Postgres then refuses `CREATE INDEX ... has pending trigger
+    events`. (SQLite has no such constraint, so the SQLite test suite didn't
+    catch it.) Keeping this migration pure schema lets the index build cleanly."""
 
     dependencies = [
         ('devices', '0030_manualtopologylink'),
-        ('agents', '0001_initial'),
     ]
 
     operations = [
@@ -47,5 +22,4 @@ class Migration(migrations.Migration):
             name='device_kind',
             field=models.CharField(choices=[('network_device', 'Network Device'), ('server', 'Server')], db_index=True, default='network_device', max_length=20),
         ),
-        migrations.RunPython(backfill_device_kind, noop_reverse),
     ]
