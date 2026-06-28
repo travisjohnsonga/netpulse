@@ -4,18 +4,13 @@ import { fetchServers, fetchPingSummary, type Server, type PingSummary } from '.
 import PingSparkline, { pingColor } from '../components/PingSparkline'
 import { useSite } from '../store/siteStore'
 import { INPUT, SELECT } from '../lib/ui'
+import StatusBadge from '../components/StatusBadge'
+import StatCard from '../components/StatCard'
+import { compactAgo } from '../lib/time'
+import { STRIPED_ROW } from '../lib/tableStyles'
 
 // last_seen older than this (ms) with no fresh heartbeat → offline.
 const OFFLINE_MS = 5 * 60 * 1000
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return 'never'
-  const s = (Date.now() - new Date(iso).getTime()) / 1000
-  if (s < 60) return `${Math.floor(s)}s ago`
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
-}
 
 function isOnline(s: Server): boolean {
   // Prefer the server's authoritative is_online (same threshold the liveness
@@ -70,12 +65,6 @@ function Ping({ p }: { p?: PingSummary }) {
   )
 }
 
-const STATE_BADGE: Record<string, string> = {
-  online: 'text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900/40',
-  offline: 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/40',
-  degraded: 'text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40',
-}
-const STATE_LABEL: Record<string, string> = { online: '✅ Online', offline: '🔴 Offline', degraded: '⚠️ Degraded' }
 
 export default function Servers() {
   const nav = useNavigate()
@@ -126,12 +115,7 @@ export default function Servers() {
   }), [siteScoped, search, osFilter, roleFilter, statusFilter])
 
   const online = siteScoped.filter(isOnline).length
-  const avg = (vals: (number | null)[]) => {
-    const nums = vals.filter((v): v is number => v != null)
-    return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null
-  }
-  const cpuAvg = avg(siteScoped.map((s) => s.latest_metrics.cpu_pct))
-  const memAvg = avg(siteScoped.map((s) => s.latest_metrics.memory_pct))
+  const offline = siteScoped.length - online
 
   if (loading) return <div className="p-6 text-gray-500">Loading servers…</div>
 
@@ -154,25 +138,17 @@ export default function Servers() {
     )
   }
 
-  const cards = [
-    { label: 'Total Servers', value: siteScoped.length },
-    { label: 'Online', value: `${online} / ${siteScoped.length - online}` },
-    { label: 'CPU Avg', value: cpuAvg == null ? '—' : `${cpuAvg}%` },
-    { label: 'Mem Avg', value: memAvg == null ? '—' : `${memAvg}%` },
-  ]
-
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Servers</h1>
       {error && <div className="mb-3 text-sm text-red-600">{error}</div>}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        {cards.map((c) => (
-          <div key={c.label} className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-xs text-gray-500 dark:text-gray-400">{c.label}</div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{c.value}</div>
-          </div>
-        ))}
+      {/* Count-based summary (how many are down is the actionable question; a
+          fleet CPU/mem average hides individual hosts in trouble). */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        <StatCard title="Total Servers" value={siteScoped.length} color="blue" />
+        <StatCard title="Up" value={online} color="green" />
+        <StatCard title="Down" value={offline} color="red" />
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -191,7 +167,7 @@ export default function Servers() {
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
             <tr>
-              {['Hostname', 'OS', 'Ping', 'CPU', 'Memory', 'Disk', 'Load', 'Roles', 'Last Seen', 'Status'].map((h) => (
+              {['Hostname', 'OS', 'Ping', 'CPU', 'Memory', 'Disk', 'Load', 'Roles', 'Last Change', 'Status'].map((h) => (
                 <th key={h} className="px-3 py-2 font-medium">{h}</th>
               ))}
             </tr>
@@ -199,10 +175,10 @@ export default function Servers() {
           <tbody>
             {filtered.map((s) => {
               const m = s.latest_metrics
-              const state = serverState(s)
+              const up = isOnline(s)
               return (
                 <tr key={s.id} onClick={() => nav(`/servers/${s.id}`)}
-                  className="border-b dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer">
+                  className={`cursor-pointer ${STRIPED_ROW}`}>
                   <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100">{s.hostname}</td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{s.os_name || s.os || '—'}</td>
                   <td className="px-3 py-2"><Ping p={s.device_id != null ? ping[s.device_id] : undefined} /></td>
@@ -225,10 +201,8 @@ export default function Servers() {
                       )) : <span className="text-xs text-gray-400">—</span>}
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{timeAgo(s.last_seen)}</td>
-                  <td className="px-3 py-2">
-                    <span className={`px-2 py-0.5 text-xs rounded-full ${STATE_BADGE[state]}`}>{STATE_LABEL[state]}</span>
-                  </td>
+                  <td className="px-3 py-2 tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(s.last_seen)}</td>
+                  <td className="px-3 py-2"><StatusBadge up={up} /></td>
                 </tr>
               )
             })}

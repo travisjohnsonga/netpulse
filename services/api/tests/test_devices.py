@@ -92,6 +92,36 @@ class TestDeviceGroupEndpoints:
         assert resp.status_code == 204
 
 
+# ── Device list summary endpoints ─────────────────────────────────────────────
+
+class TestDeviceStatusSummary:
+    """status-summary feeds the count-based Devices cards (Total/Up/Down). Counts
+    the network-device set from the DB (the list is paginated). up = reachable &
+    not unreachable; down = the complement — matching the Up/Down badge."""
+
+    def test_counts_up_down_over_network_devices(self, auth_client, site):
+        Device.objects.create(hostname="up1", ip_address="10.0.0.1", status="active", is_reachable=True)
+        Device.objects.create(hostname="up2", ip_address="10.0.0.2", status="active", is_reachable=True)
+        Device.objects.create(hostname="down1", ip_address="10.0.0.3", status="unreachable", is_reachable=False)
+        # An agent-backed server must NOT be counted (not a network device).
+        Device.objects.create(hostname="srv", ip_address="127.0.0.1", status="active",
+                              device_kind=Device.DeviceKind.SERVER)
+        body = auth_client.get("/api/devices/status-summary/").json()
+        assert body == {"total": 3, "up": 2, "down": 1}
+
+    def test_site_scoped(self, auth_client, site):
+        other = Site.objects.create(name="DC-2")
+        Device.objects.create(hostname="a", ip_address="10.1.0.1", status="active", is_reachable=True, site=site)
+        Device.objects.create(hostname="b", ip_address="10.1.0.2", status="unreachable", is_reachable=False, site=other)
+        body = auth_client.get(f"/api/devices/status-summary/?site={site.pk}").json()
+        assert body == {"total": 1, "up": 1, "down": 0}
+
+    def test_metrics_summary_endpoint_ok(self, auth_client, device):
+        # InfluxDB isn't available in tests → returns an empty list, not a 500.
+        r = auth_client.get("/api/devices/metrics-summary/")
+        assert r.status_code == 200 and isinstance(r.json(), list)
+
+
 # ── Device CRUD ───────────────────────────────────────────────────────────────
 
 class TestServerDevicesExcludedFromList:

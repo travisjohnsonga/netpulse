@@ -570,6 +570,32 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
             cache.set("ping_summary", data, 60)
         return Response(data)
 
+    @action(detail=False, methods=["get"], url_path="status-summary")
+    def status_summary(self, request):
+        """Total / up / down counts for the device-list summary cards. Counts the
+        NETWORK-device set (optionally ?site=) — the list is paginated, so these
+        come from the DB, not the current page. up = reachable & not unreachable;
+        down = the complement (matches the Up/Down badge). Cheap COUNT queries."""
+        qs = Device.objects.filter(device_kind=Device.DeviceKind.NETWORK_DEVICE)
+        site = request.query_params.get("site")
+        if site:
+            qs = qs.filter(site_id=site)
+        total = qs.count()
+        down = qs.filter(Q(status=Device.Status.UNREACHABLE) | Q(is_reachable=False)).count()
+        return Response({"total": total, "up": total - down, "down": down})
+
+    @action(detail=False, methods=["get"], url_path="metrics-summary")
+    def metrics_summary(self, request):
+        """Per-device current CPU% + memory% for the device-list CPU/Mem columns.
+        Cached 60s (shared InfluxDB query, like ping-summary)."""
+        from django.core.cache import cache
+        from . import metrics_influx
+        data = cache.get("device_metrics_summary")
+        if data is None:
+            data = metrics_influx.query_metrics_summary()
+            cache.set("device_metrics_summary", data, 60)
+        return Response(data)
+
     @extend_schema(summary="Apply hostname rules to this device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="apply-rules")
     def apply_rules(self, request, pk=None):

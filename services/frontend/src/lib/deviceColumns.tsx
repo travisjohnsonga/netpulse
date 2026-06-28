@@ -1,21 +1,31 @@
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
-import { type Device, type PingSummary, reachabilityOf, reachabilityReason } from '../api/client'
+import { type Device, type PingSummary } from '../api/client'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
 import RoleBubble from '../components/RoleBubble'
 import VendorLogo from '../components/VendorLogo'
+import StatusBadge from '../components/StatusBadge'
+import { compactAgo } from './time'
 
-const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-700',
-  inactive: 'bg-gray-100 text-gray-600',
-  pending: 'bg-yellow-100 text-yellow-700',
-  unreachable: 'bg-red-100 text-red-700',
+// A device is "up" for the shared Up/Down badge when it's reachable (matches the
+// Servers binary). Unreachable / is_reachable=false → Down.
+function deviceUp(d: Device): boolean {
+  return d.is_reachable !== false && d.status !== 'unreachable'
 }
 
-const REACH_DOT: Record<string, string> = {
-  reachable: 'bg-green-500',
-  degraded: 'bg-yellow-500',
-  unreachable: 'bg-red-500',
+// Inline % bar matching the Servers list CPU/Memory cells; "—" when no value
+// (device down or no SNMP/gNMI metric for it).
+function MetricBar({ pct }: { pct: number | null | undefined }) {
+  if (pct == null) return <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+  const c = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-green-500'
+  return (
+    <span className="inline-flex items-center gap-2 min-w-[6rem]">
+      <span className="flex-1 h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
+        <span className={clsx('block h-full', c)} style={{ width: `${Math.min(100, pct)}%` }} />
+      </span>
+      <span className="text-xs tabular-nums w-9 text-right text-gray-600 dark:text-gray-300">{Math.round(pct)}%</span>
+    </span>
+  )
 }
 
 const GRADE_COLORS: Record<string, string> = {
@@ -40,6 +50,8 @@ export interface ColCtx {
   credNames: Record<number, string>
   // Per-device ping summary, fetched in the background after the list renders.
   ping?: Record<number, PingSummary>
+  // Per-device current CPU%/memory% (InfluxDB telemetry), fetched alongside ping.
+  metrics?: Record<number, { cpu_pct: number | null; memory_pct: number | null }>
 }
 
 export interface DeviceColumn {
@@ -62,16 +74,6 @@ function relTime(iso: string | null): string {
   return `${Math.round(s / 86400)}d ago`
 }
 
-/** Compact downtime since the device went unreachable, e.g. "4m", "2h", "3d". */
-function downtime(iso: string | null | undefined): string | null {
-  if (!iso) return null
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  if (s < 86400) return `${Math.round(s / 3600)}h`
-  return `${Math.round(s / 86400)}d`
-}
-
 const dash = (v: string | null | undefined): ReactNode => (v ? v : <span className="text-gray-300">—</span>)
 
 export const DEVICE_COLUMNS: DeviceColumn[] = [
@@ -84,19 +86,26 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
     ),
   },
   {
+    // Shared Up/Down badge (no duration in the pill — that's the Last Change column).
     key: 'status', label: 'Status', default: true, sortKey: 'status',
+    render: (d) => <StatusBadge up={deviceUp(d)} />,
+  },
+  {
+    // Down → how long down (unreachable_since); Up → how long since last contact
+    // (last_seen). Matches the Servers "Last Change" column.
+    key: 'last_change', label: 'Last Change', default: true, sortKey: 'unreachable_since',
     render: (d) => {
-      const reach = reachabilityOf(d)
-      const down = d.status === 'unreachable' ? downtime(d.unreachable_since) : null
-      return (
-        <span className="inline-flex items-center gap-1.5">
-          <span className={clsx('w-2 h-2 rounded-full', REACH_DOT[reach])} title={reachabilityReason(d)} />
-          <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>
-            {d.status}{down ? ` · ${down}` : ''}
-          </span>
-        </span>
-      )
+      const iso = !deviceUp(d) && d.unreachable_since ? d.unreachable_since : d.last_seen
+      return <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(iso)}</span>
     },
+  },
+  {
+    key: 'cpu', label: 'CPU', default: true,
+    render: (d, ctx) => <MetricBar pct={ctx.metrics?.[d.id]?.cpu_pct} />,
+  },
+  {
+    key: 'memory', label: 'Memory', default: true,
+    render: (d, ctx) => <MetricBar pct={ctx.metrics?.[d.id]?.memory_pct} />,
   },
   { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600">{d.ip_address}</span> },
   {

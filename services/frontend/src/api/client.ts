@@ -1020,6 +1020,27 @@ export async function fetchPingSummary(): Promise<PingSummary[]> {
   return data
 }
 
+// Per-device current CPU% / memory% for the device-list CPU/Mem columns (from
+// InfluxDB telemetry; absent when a device reports none — list renders "—").
+export interface DeviceMetricsSummary {
+  device_id: number
+  cpu_pct: number | null
+  memory_pct: number | null
+}
+export async function fetchDeviceMetricsSummary(): Promise<DeviceMetricsSummary[]> {
+  const { data } = await api.get<DeviceMetricsSummary[]>('/devices/metrics-summary/')
+  return data
+}
+
+// Total/up/down counts for the Devices summary cards (DB counts over the network
+// -device set; the list is paginated so these aren't derivable client-side).
+export interface DeviceStatusSummary { total: number; up: number; down: number }
+export async function fetchDeviceStatusSummary(site?: string): Promise<DeviceStatusSummary> {
+  const { data } = await api.get<DeviceStatusSummary>('/devices/status-summary/',
+    { params: site ? { site } : {} })
+  return data
+}
+
 // ── ARP / MAC tables ──────────────────────────────────────────────────────────
 export interface ArpEntry {
   id: number

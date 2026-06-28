@@ -3,7 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
-import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary, type Device, type DeviceRole, type PingSummary } from '../api/client'
+import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
+  fetchDeviceMetricsSummary, fetchDeviceStatusSummary,
+  type Device, type DeviceRole, type PingSummary, type DeviceMetricsSummary,
+  type DeviceStatusSummary } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useComplianceRunAll } from '../hooks/useComplianceRun'
 import { useSite } from '../store/siteStore'
@@ -12,6 +15,8 @@ import {
 } from '../lib/deviceColumns'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui'
+import { STRIPED_ROW } from '../lib/tableStyles'
+import StatCard from '../components/StatCard'
 
 const PLATFORM_OPTIONS = ['All', 'IOS-XE', 'IOS-XR', 'NX-OS', 'Junos', 'EOS', 'FortiOS', 'Other']
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
@@ -52,6 +57,8 @@ export default function Devices() {
   const [columnKeys, setColumnKeys] = useState<string[]>(loadColumnKeys)
   const [credNames, setCredNames] = useState<Record<number, string>>({})
   const [pingMap, setPingMap] = useState<Record<number, PingSummary>>({})
+  const [metricsMap, setMetricsMap] = useState<Record<number, DeviceMetricsSummary>>({})
+  const [statusSummary, setStatusSummary] = useState<DeviceStatusSummary | null>(null)
   // Bulk selection for "Run Compliance" on the chosen devices.
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const { status: runStatus, start: startRun, starting, isRunning } = useComplianceRunAll()
@@ -74,19 +81,32 @@ export default function Devices() {
   // Reset to the first page whenever the global site filter changes.
   useEffect(() => { setPage(1) }, [selectedSite])
 
-  // Ping sparklines: fetched in the background (doesn't block the list render)
-  // and refreshed on the 60s cache cadence. Failures are non-fatal.
+  // Ping sparklines + CPU/Mem: fetched in the background (don't block the list
+  // render), refreshed on the 60s cache cadence. Failures are non-fatal.
   useEffect(() => {
     let active = true
-    const loadPing = () => {
+    const loadTelemetry = () => {
       fetchPingSummary()
         .then((rows) => { if (active) setPingMap(Object.fromEntries(rows.map((r) => [r.device_id, r]))) })
         .catch(() => {})
+      fetchDeviceMetricsSummary()
+        .then((rows) => { if (active) setMetricsMap(Object.fromEntries(rows.map((r) => [r.device_id, r]))) })
+        .catch(() => {})
     }
-    loadPing()
-    const t = setInterval(loadPing, 60000)
+    loadTelemetry()
+    const t = setInterval(loadTelemetry, 60000)
     return () => { active = false; clearInterval(t) }
   }, [])
+
+  // Summary-card counts (DB totals over the network-device set, site-scoped) —
+  // the list is paginated so these can't be derived from the current page.
+  useEffect(() => {
+    let active = true
+    fetchDeviceStatusSummary(selectedSite || undefined)
+      .then((s) => { if (active) setStatusSummary(s) })
+      .catch(() => { if (active) setStatusSummary(null) })
+    return () => { active = false }
+  }, [selectedSite, total])
 
   // Live reachability updates: patch the matching row when the monitor pushes.
   const { lastMessage } = useWebSocket('/ws/devices/')
@@ -124,7 +144,7 @@ export default function Devices() {
     () => columnKeys.map((k) => DEVICE_COLUMNS.find((c) => c.key === k)).filter(Boolean) as typeof DEVICE_COLUMNS,
     [columnKeys],
   )
-  const colCtx: ColCtx = { credNames, ping: pingMap }
+  const colCtx: ColCtx = { credNames, ping: pingMap, metrics: metricsMap }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -185,6 +205,16 @@ export default function Devices() {
       {error && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">
           {error}
+        </div>
+      )}
+
+      {/* Count-based summary (matches the Servers cards) — how many are down is
+          the actionable number; a fleet CPU/mem average hides hosts in trouble. */}
+      {statusSummary && (
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard title="Total Devices" value={statusSummary.total} color="blue" />
+          <StatCard title="Up" value={statusSummary.up} color="green" />
+          <StatCard title="Down" value={statusSummary.down} color="red" />
         </div>
       )}
 
@@ -323,12 +353,12 @@ export default function Devices() {
                     <th className="px-5 py-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                <tbody>
                   {devices.map((device) => (
                     <tr
                       key={device.id}
                       onClick={() => navigate(`/devices/${device.id}`)}
-                      className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer ${selected.has(device.id) ? 'bg-blue-50/60 dark:bg-blue-900/20' : ''}`}
+                      className={`cursor-pointer ${selected.has(device.id) ? 'bg-blue-50/60 dark:bg-blue-900/20' : STRIPED_ROW}`}
                     >
                       <td className="pl-5 pr-2 py-3" onClick={(e) => e.stopPropagation()}>
                         <input
