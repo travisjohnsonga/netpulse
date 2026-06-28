@@ -313,7 +313,9 @@ export default function ServerDetail() {
 
       {tab === 'Processes' && (
         <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6 text-sm text-gray-500">
-          Process monitoring is optional — enable <code>collection.processes</code> in the agent config to populate this tab.
+          Process monitoring is not yet available. It's planned (per-process CPU /
+          memory + top-by-CPU) — there's no <code>processes</code> collector or toggle yet,
+          so there's nothing to enable.
         </div>
       )}
 
