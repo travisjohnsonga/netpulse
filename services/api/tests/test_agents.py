@@ -282,6 +282,28 @@ class TestServerRoleAssignment:
         assert auth_client.delete(f"/api/servers/{s.id}/roles/{dns.id}/").status_code == 204
         assert auth_client.get(f"/api/servers/{s.id}/roles/").json() == []
 
+    def test_roles_action_returns_per_check_detail(self, auth_client):
+        from apps.agents.models import AgentRole, AgentRoleStatus
+        from django.utils import timezone
+        s = self._server()
+        web = ServerRole.objects.get(role_type="web")
+        AgentRole.objects.create(agent=s, role=web)
+        AgentRoleStatus.objects.create(
+            agent=s, role_type="web",
+            services=[{"name": "nginx", "running": True, "state": "active"},
+                      {"name": "apache2", "running": False, "state": "not_found"}],
+            ports=[{"name": "HTTP", "port": 80, "proto": "tcp", "open": True}],
+            custom=[{"name": "tls-cert-valid", "passed": True}],
+            collected_at=timezone.now())
+        st = next(r for r in auth_client.get(f"/api/servers/{s.id}/roles/").json()
+                  if r["role_type"] == "web")["status"]
+        # X/Y counts services+ports (not custom); per-check detail is present.
+        assert st["checks_passed"] == 2 and st["checks_total"] == 3
+        assert {x["name"]: x["running"] for x in st["services"]} == {"nginx": True, "apache2": False}
+        assert st["ports"][0]["open"] is True and st["ports"][0]["port"] == 80
+        assert st["custom"][0]["name"] == "tls-cert-valid"
+        assert st["collected_at"] is not None
+
     def test_assign_unknown_role_400(self, auth_client):
         s = self._server()
         assert auth_client.post(f"/api/servers/{s.id}/roles/", {"role_id": 999999}, format="json").status_code == 400

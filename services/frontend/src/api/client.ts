@@ -1598,8 +1598,9 @@ export interface AssignedRole {
   assigned_at: string
   status: {
     checks_passed: number; checks_total: number
-    services: { name: string; running?: boolean; state?: string }[]
-    ports: { port: number; proto: string; open: boolean }[]
+    services: { name: string; running?: boolean; state?: string; start_type?: string }[]
+    ports: { name?: string; port: number; proto: string; open: boolean; latency_ms?: number }[]
+    custom?: { name?: string; passed?: boolean; ok?: boolean }[]
     collected_at: string | null
   } | null
 }
