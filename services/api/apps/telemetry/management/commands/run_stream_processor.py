@@ -57,6 +57,13 @@ _BATCH_TIMEOUT = float(os.environ.get("STREAM_PROCESSOR_BATCH_TIMEOUT_SECONDS", 
 # blip can't drop security logs. The delay avoids hot-looping while OpenSearch is
 # down (the message comes back, is re-buffered, and retried on the next flush).
 _REDELIVER_DELAY_S = float(os.environ.get("STREAM_PROCESSOR_REDELIVER_DELAY_SECONDS", "5"))
+# Poison-message guard: a doc that PARSES but OpenSearch keeps rejecting at index
+# time (e.g. a mapping conflict) would NAK→redeliver→reject forever and wedge the
+# consumer. After this many delivery attempts, a PER-ITEM-rejected message is
+# dropped (dead-lettered with a loud log) instead of NAK'd. This cap applies ONLY
+# to per-item rejections — a whole-batch failure (OpenSearch down) is transient
+# and redelivers indefinitely (durable, no loss) so an outage never drops logs.
+_MAX_DELIVER = int(os.environ.get("STREAM_PROCESSOR_MAX_DELIVER", "5"))
 _FLOW_THRESHOLD_MBPS = float(os.environ.get("ANOMALY_FLOW_THRESHOLD_MBPS", "1000"))
 # A single flow record's bytes/duration is only a meaningful throughput over a
 # real time window. NetFlow/IPFIX records with equal first/last-switched
@@ -377,6 +384,16 @@ class Command(BaseCommand):
             # term() unavailable → fall back to ack (still drops it, no redelivery loop).
             await Command._safe_ack(msg)
             logger.debug("stream-processor: term unavailable, acked instead: %s", exc)
+
+    @staticmethod
+    def _deliveries(msg) -> int:
+        """How many times this JetStream message has been delivered (1 on first
+        delivery; increments on each redelivery). Used to cap poison redelivery.
+        Defaults to 1 for core-NATS msgs / missing metadata (no cap effect)."""
+        try:
+            return int(msg.metadata.num_delivered)
+        except Exception:
+            return 1
 
     async def _js_subscribe(self, js, subject: str, stream_name: str, cb, manual_ack: bool = False):
         """
@@ -934,7 +951,9 @@ class Command(BaseCommand):
             n_msg = sum(1 for _i, _d, m in batch if m is not None)
             logger.error("stream-processor: OpenSearch bulk failed — redelivering %d/%d msg(s): %s",
                          n_msg, len(batch), exc)
-            await self._handle_flush_failure(batch)
+            # transient=True: OpenSearch is down → redeliver indefinitely, never
+            # drop (the data is durable in the stream until it can be written).
+            await self._handle_flush_failure(batch, transient=True)
             return
 
         items = response.get("items", [])
@@ -961,23 +980,44 @@ class Command(BaseCommand):
                     first_err = result.get("error")
         logger.warning("stream-processor: OpenSearch bulk partial — %d ok, %d failed (first error: %s)",
                        ok, len(failed), first_err)
-        await self._handle_flush_failure(failed)
+        # transient=False: these are per-item rejections (the doc itself was
+        # refused). A doc OpenSearch keeps refusing is poison and is dropped after
+        # _MAX_DELIVER attempts so it can't wedge the consumer.
+        await self._handle_flush_failure(failed, transient=False)
 
-    async def _handle_flush_failure(self, entries: list[tuple]):
-        """Redeliver/retry a set of failed (index, doc, msg) entries without loss.
+    async def _handle_flush_failure(self, entries: list[tuple], transient: bool):
+        """Redeliver/retry/drop a set of failed (index, doc, msg) entries.
 
         Must be called with _os_buffer_lock held (mutates the buffer).
-        - msg-bearing entries → NAK so JetStream redelivers (re-buffered on
-          redelivery), bounded by the redeliver back-off.
-        - msg-less entries (traps; already auto-acked, can't redeliver) →
-          re-buffer so they retry on the next flush.
+
+        transient=True (whole-batch failure — OpenSearch unreachable):
+          - msg-bearing → NAK so JetStream redelivers (no delivery cap: the
+            outage is transient and the data is durable, so never drop);
+          - msg-less (traps, already auto-acked) → re-buffer for the next flush.
+
+        transient=False (per-item rejection — the doc itself was refused):
+          - msg-bearing → NAK to retry, BUT after _MAX_DELIVER attempts the doc is
+            poison (OpenSearch will keep refusing it) → term() it (dead-letter,
+            loud log) so one bad doc can't NAK-loop forever and wedge the consumer;
+          - msg-less → drop with a loud log (can't redeliver/track deliveries; a
+            re-buffer would loop forever in memory).
         """
         requeue: list[tuple] = []
         for index, doc, msg in entries:
-            if msg is not None:
-                await self._safe_nak(msg)
+            if msg is None:
+                if transient:
+                    requeue.append((index, doc, None))
+                else:
+                    logger.error("stream-processor: DROPPING rejected un-redeliverable doc "
+                                 "(index=%s) — OpenSearch refused it", index)
+                continue
+            if not transient and self._deliveries(msg) >= _MAX_DELIVER:
+                logger.error("stream-processor: DROPPING poison message after %d deliveries — "
+                             "OpenSearch repeatedly rejected it (index=%s)",
+                             self._deliveries(msg), index)
+                await self._safe_term(msg)
             else:
-                requeue.append((index, doc, None))
+                await self._safe_nak(msg)
         if requeue:
             # Prepend so retries go ahead of newly-arrived data.
             self._os_buffer[:0] = requeue

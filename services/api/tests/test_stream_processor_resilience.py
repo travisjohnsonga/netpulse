@@ -9,12 +9,18 @@ NATS/OpenSearch) and assert the ack/nak/term fate.
 import asyncio
 
 
+class _Meta:
+    def __init__(self, num_delivered):
+        self.num_delivered = num_delivered
+
+
 class FakeMsg:
-    def __init__(self, subject="netpulse.logs.auth.host", data=b"{}"):
+    def __init__(self, subject="netpulse.logs.auth.host", data=b"{}", deliveries=1):
         self.subject = subject
         self.data = data
         self.acks = self.naks = self.terms = 0
         self.nak_delay = None
+        self.metadata = _Meta(deliveries)
 
     async def ack(self):
         self.acks += 1
@@ -100,6 +106,38 @@ def test_partial_errors_ack_ok_nak_failed():
     assert (m0.acks, m2.acks) == (1, 1)          # succeeded → acked
     assert (m1.acks, m1.naks) == (0, 1)          # failed item → redelivered, not acked
     assert cmd._os_buffer == []
+
+
+def test_poison_item_dropped_after_max_deliver():
+    # A doc OpenSearch keeps rejecting must NOT NAK-loop forever. On/after the
+    # _MAX_DELIVER'th delivery a per-item rejection is term()'d (dead-lettered).
+    from apps.telemetry.management.commands.run_stream_processor import _MAX_DELIVER
+    cmd = _proc(FakeOS("partial", fail_indices={0}))
+    poison = FakeMsg(deliveries=_MAX_DELIVER)
+    cmd._os_buffer = [("i", {}, poison)]
+    asyncio.run(cmd._os_flush_now())
+    assert poison.terms == 1 and poison.naks == 0   # dropped, not redelivered
+    assert cmd._os_buffer == []
+
+
+def test_poison_item_naks_before_max_deliver():
+    from apps.telemetry.management.commands.run_stream_processor import _MAX_DELIVER
+    cmd = _proc(FakeOS("partial", fail_indices={0}))
+    early = FakeMsg(deliveries=_MAX_DELIVER - 1)
+    cmd._os_buffer = [("i", {}, early)]
+    asyncio.run(cmd._os_flush_now())
+    assert early.naks == 1 and early.terms == 0     # still retrying, not yet dropped
+
+
+def test_outage_never_drops_even_at_high_delivery_count():
+    # transient whole-batch failure (OpenSearch down) must redeliver indefinitely
+    # — the delivery cap applies only to per-item rejections, never to an outage.
+    from apps.telemetry.management.commands.run_stream_processor import _MAX_DELIVER
+    cmd = _proc(FakeOS("raise"))
+    m = FakeMsg(deliveries=_MAX_DELIVER + 10)
+    cmd._os_buffer = [("i", {}, m)]
+    asyncio.run(cmd._os_flush_now())
+    assert m.naks == 1 and m.terms == 0             # NAK'd, never dropped on outage
 
 
 def test_unconfigured_client_acks_and_drops():
