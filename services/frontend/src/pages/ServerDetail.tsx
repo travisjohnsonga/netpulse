@@ -13,6 +13,7 @@ import {
 } from '../api/client'
 import { useCapabilities } from '../store/authStore'
 import { parseApiErrors } from '../api/errors'
+import { STRIPED_ROW, CONTENT_TABLE } from '../lib/tableStyles'
 
 const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
@@ -549,10 +550,13 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
           <div className="text-sm text-gray-400">No services match “{q}”.</div>
         ) : (
           <div className="max-h-96 overflow-y-auto">
-            <table className="w-full text-sm">
+            {/* Content-width table (no w-full): columns size to content, slack
+                pools on the right. Zebra stripes (shared STRIPED_ROW) replace
+                row dividers; whitespace-nowrap keeps columns tight. */}
+            <table className={CONTENT_TABLE}>
               <thead className="text-left text-xs text-gray-500 sticky top-0 bg-white dark:bg-gray-800">
                 <tr>{['Monitor?', 'Status', 'Service', 'Name', 'State', 'Start type'].map((h) => (
-                  <th key={h} className="px-2 py-1 font-medium">{canEdit || h !== 'Monitor?' ? h : ''}</th>
+                  <th key={h} className="px-3 py-1 font-medium whitespace-nowrap">{canEdit || h !== 'Monitor?' ? h : ''}</th>
                 ))}</tr>
               </thead>
               <tbody>
@@ -562,22 +566,22 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
                   // blank (don't duplicate it across both columns).
                   const friendly = s.display_name && s.display_name !== s.name
                   return (
-                    <tr key={s.name} className="border-t dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                      <td className="px-2 py-1">
+                    <tr key={s.name} className={STRIPED_ROW}>
+                      <td className="px-3 py-1 text-center w-px">
                         {canEdit && (
                           <input type="checkbox" checked={watched.has(s.name)} disabled={pending === s.name}
                                  onChange={() => toggleWatch(s.name)}
                                  title="Watch this service for down/restart alerts" />
                         )}
                       </td>
-                      <td className="px-2 py-1">
+                      <td className="px-3 py-1 text-center w-px">
                         <span className={`inline-block h-1.5 w-1.5 rounded-full ${s.running ? 'bg-green-500' : 'bg-gray-400'}`}
                               title={s.running ? 'running' : 'stopped'} />
                       </td>
-                      <td className="px-2 py-1 font-medium text-gray-900 dark:text-gray-100">{friendly ? s.display_name : s.name}</td>
-                      <td className="px-2 py-1 text-gray-500 dark:text-gray-400">{friendly ? s.name : '—'}</td>
-                      <td className="px-2 py-1 text-gray-500 dark:text-gray-400">{s.state || (s.running ? 'running' : '—')}</td>
-                      <td className="px-2 py-1 text-gray-500 dark:text-gray-400">{s.start_type || '—'}</td>
+                      <td className="px-3 py-1 font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">{friendly ? s.display_name : s.name}</td>
+                      <td className="px-3 py-1 text-gray-500 dark:text-gray-400 whitespace-nowrap">{friendly ? s.name : '—'}</td>
+                      <td className="px-3 py-1 text-gray-500 dark:text-gray-400 whitespace-nowrap">{s.state || (s.running ? 'running' : '—')}</td>
+                      <td className="px-3 py-1 text-gray-500 dark:text-gray-400 whitespace-nowrap">{s.start_type || '—'}</td>
                     </tr>
                   )
                 })}
