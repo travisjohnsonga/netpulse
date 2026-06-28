@@ -809,7 +809,7 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
   const st = a.status
   const pass = st ? `${st.checks_passed}/${st.checks_total}` : '—'
   const allOk = st && st.checks_total > 0 && st.checks_passed === st.checks_total
-  const hasChecks = !!st && (st.services.length + st.ports.length + (st.custom?.length ?? 0)) > 0
+  const hasChecks = !!st && (st.services.length + st.ports.length + (st.custom?.length ?? 0) + (st.functional?.length ?? 0)) > 0
 
   const Check = ({ ok, label, sub }: { ok: boolean; label: string; sub?: string }) => (
     <li className="flex items-center gap-2 py-0.5">
@@ -859,6 +859,30 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
               <ul>{st.custom.map((c, i) => (
                 <Check key={c.name ?? i} ok={!!(c.passed ?? c.ok)} label={c.name ?? `check ${i + 1}`} />
               ))}</ul>
+            </div>
+          )}
+          {!!st.functional?.length && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Functional health</div>
+              <ul className="space-y-0.5">{st.functional.map((f) => {
+                const c = f.health === 'healthy' ? 'text-green-600 dark:text-green-400'
+                  : f.health === 'warning' ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-red-600 dark:text-red-400'  // degraded | down
+                return (
+                  <li key={f.url} className="flex items-center gap-2 py-0.5 flex-wrap">
+                    <span className={c}>●</span>
+                    <span className="text-gray-800 dark:text-gray-200 truncate max-w-[16rem]" title={f.url}>{f.url}</span>
+                    <span className={`text-xs ${c}`}>
+                      {f.health}{f.status_code ? ` (${f.status_code})` : ''}{f.error ? ` — ${f.error}` : ''}
+                    </span>
+                    {typeof f.cert_days_remaining === 'number' && (
+                      <span className={`text-xs ${f.cert_days_remaining <= 30 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'}`}>
+                        🔒 cert {f.cert_days_remaining <= 0 ? 'EXPIRED' : `${f.cert_days_remaining}d`}
+                      </span>
+                    )}
+                  </li>
+                )
+              })}</ul>
             </div>
           )}
           {st.collected_at && <div className="text-xs text-gray-400">Last checked {timeAgo(st.collected_at)}</div>}

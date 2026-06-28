@@ -754,6 +754,74 @@ class TestRichServiceDetail:
         assert "web" in detected  # seeded Web role lists nginx
 
 
+# ── Web role functional health (HTTP gradient + cert + SSRF) ──────────────────────
+
+class TestWebFunctional:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+
+    def _agent_with_device(self):
+        from apps.devices.models import Device
+        a = Agent.objects.create(hostname="web-fn", cert_serial="ab:cd:ef:01")
+        d = Device.objects.create(hostname="web-fn", ip_address="10.9.9.9",
+                                  platform=Device.Platform.OTHER, status=Device.Status.ACTIVE)
+        a.device = d
+        a.save(update_fields=["device"])
+        return a
+
+    def _open(self, agent, alert_type, url):
+        from apps.alerts.models import AlertEvent
+        return AlertEvent.objects.filter(
+            state=AlertEvent.State.FIRING, labels__alert_type=alert_type,
+            labels__agent_id=str(agent.id), labels__url=url).first()
+
+    def test_config_rejects_offhost_url(self, auth_client):
+        a = Agent.objects.create(hostname="w1", cert_serial="s")
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"functional": {"web": {"urls": ["http://example.com/"]}}}, format="json")
+        assert r.status_code == 400  # SSRF: off-host rejected
+
+    def test_config_accepts_localhost_url(self, auth_client):
+        a = Agent.objects.create(hostname="w2", cert_serial="s")
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"functional": {"web": {"urls": ["https://localhost/health"]}}}, format="json")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.effective_config()["functional"]["web"]["urls"] == ["https://localhost/health"]
+
+    def test_role_check_functional_stored_and_alerts(self, api_client, auth_client):
+        a = self._agent_with_device()
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "services": [], "ports": [], "functional": [
+                {"url": "https://localhost/", "health": "down", "error": "timeout"}]}]},
+            format="json", **self._HDR)
+        ev = self._open(a, "site_down", "https://localhost/")
+        # device_id label set (the linkage key for Device column / Recent Alerts).
+        assert ev is not None and ev.labels.get("device_id") == a.device_id
+        st = next(r for r in auth_client.get(f"/api/servers/{a.id}/roles/").json()
+                  if r["role_type"] == "web")["status"]
+        assert st["functional"][0]["health"] == "down"
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "services": [], "ports": [], "functional": [
+                {"url": "https://localhost/", "health": "healthy", "status_code": 200}]}]},
+            format="json", **self._HDR)
+        assert self._open(a, "site_down", "https://localhost/") is None  # auto-resolved
+
+    def test_cert_expiring_alert(self, api_client):
+        a = self._agent_with_device()
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "functional": [{"url": "https://localhost/", "health": "healthy",
+                            "status_code": 200, "cert_days_remaining": 7}]}]},
+            format="json", **self._HDR)
+        assert self._open(a, "cert_expiring", "https://localhost/") is not None
+
+    def test_degraded_5xx_alert(self, api_client):
+        a = self._agent_with_device()
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "functional": [{"url": "http://localhost/", "health": "degraded", "status_code": 502}]}]},
+            format="json", **self._HDR)
+        assert self._open(a, "site_degraded", "http://localhost/") is not None
+
+
 # ── Agent management ────────────────────────────────────────────────────────────
 
 class TestAgentManagement:

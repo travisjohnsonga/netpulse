@@ -1603,6 +1603,7 @@ export interface AssignedRole {
     services: { name: string; running?: boolean; state?: string; start_type?: string }[]
     ports: { name?: string; port: number; proto: string; open: boolean; latency_ms?: number }[]
     custom?: { name?: string; passed?: boolean; ok?: boolean }[]
+    functional?: { url: string; health: string; status_code?: number; latency_ms?: number; cert_days_remaining?: number; error?: string }[]
     collected_at: string | null
   } | null
 }

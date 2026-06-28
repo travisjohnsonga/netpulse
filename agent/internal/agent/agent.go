@@ -276,6 +276,10 @@ func applyDesiredConfig(cfg *config.Config, dc *transport.DesiredConfig) bool {
 		cfg.Stability.Services = append([]string(nil), dc.Stability.Services...)
 		changed = true
 	}
+	if !equalStrings(cfg.Functional.Web.URLs, dc.Functional.Web.URLs) {
+		cfg.Functional.Web.URLs = append([]string(nil), dc.Functional.Web.URLs...)
+		changed = true
+	}
 	return changed
 }
 
@@ -315,7 +319,8 @@ func (a *Agent) runRoleChecks(hostname string) {
 	}
 	specs := collector.SpecsFor(a.cfg.RoleChecks.Roles)
 	extra := a.cfg.RoleChecks.ExtraServices[runtime.GOOS]
-	results := collector.RunRoleChecks(specs, extra)
+	funcURLs := map[string][]string{"web": a.cfg.Functional.Web.URLs}
+	results := collector.RunRoleChecks(specs, extra, funcURLs)
 	payload := map[string]interface{}{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"hostname":  hostname,

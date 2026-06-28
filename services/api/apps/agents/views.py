@@ -340,11 +340,20 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         for r in results if isinstance(results, list) else []:
             if not isinstance(r, dict) or not r.get("role"):
                 continue
+            functional = r.get("functional") or []
             AgentRoleStatus.objects.update_or_create(
                 agent=agent, role_type=r["role"],
                 defaults={"services": r.get("services") or [], "ports": r.get("ports") or [],
-                          "custom": r.get("custom") or [], "collected_at": now},
+                          "custom": r.get("custom") or [], "functional": functional,
+                          "collected_at": now},
             )
+            # Functional health → site down/degraded + cert-expiry alerts.
+            if functional:
+                try:
+                    from .functional import reconcile_functional_health
+                    reconcile_functional_health(agent, r["role"], functional)
+                except Exception as exc:
+                    logger.warning("functional reconcile failed for agent %s: %s", agent.id, exc)
             # Method 3: roles declared in the agent's config (it's reporting checks
             # for them) auto-create the assignment so they show on the Roles tab.
             role = ServerRole.objects.filter(role_type=r["role"]).first()
