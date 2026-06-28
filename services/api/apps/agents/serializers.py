@@ -125,7 +125,10 @@ class ServerSerializer(serializers.ModelSerializer):
     # General running-services list (Agent.reported_services), populated only when
     # the 'services' collection toggle is on. services_collected reflects that
     # toggle so the UI can distinguish "toggle off" from "on, no data yet".
+    # Normalized to rich dicts {name,running,state,start_type} regardless of how
+    # they were stored (older agents sent bare name strings).
     services_collected = serializers.SerializerMethodField()
+    reported_services = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
@@ -141,6 +144,16 @@ class ServerSerializer(serializers.ModelSerializer):
 
     def get_services_collected(self, obj) -> bool:
         return bool(obj.effective_config().get("collection", {}).get("services", False))
+
+    def get_reported_services(self, obj) -> list:
+        out = []
+        for s in (obj.reported_services or []):
+            if isinstance(s, dict) and s.get("name"):
+                out.append({"name": s["name"], "running": bool(s.get("running", True)),
+                            "state": s.get("state", ""), "start_type": s.get("start_type", "")})
+            elif isinstance(s, str) and s:  # stale names-only data
+                out.append({"name": s, "running": True, "state": "", "start_type": ""})
+        return out
 
     def get_os_version(self, obj) -> str:
         # Prefer the AGENT's own reported OS version (OS-detail); fall back to the

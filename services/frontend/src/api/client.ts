@@ -1491,6 +1491,12 @@ export interface ServerLatestMetrics {
   disk_max_mount: string | null
 }
 
+export interface ReportedService {
+  name: string
+  running: boolean
+  state: string
+  start_type: string
+}
 export interface Server {
   id: string
   hostname: string
@@ -1514,8 +1520,9 @@ export interface Server {
   roles: string[]
   latest_metrics: ServerLatestMetrics
   // General running-services list (the 'services' collection toggle's data);
-  // services_collected = whether that toggle is on.
-  reported_services?: string[]
+  // services_collected = whether that toggle is on. Rich entries (name + state +
+  // start_type) from newer agents; the API normalizes older names-only data too.
+  reported_services?: ReportedService[]
   services_collected?: boolean
   created_at: string
 }
