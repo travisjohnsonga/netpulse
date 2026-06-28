@@ -16,7 +16,16 @@ def auto_detect_roles(agent) -> list[dict]:
     Each entry: ``{role_id, role_name, role_type, matched_services, confidence,
     assigned}`` where confidence = matched / total role services (0–1).
     """
-    running = {s for s in (agent.reported_services or []) if s}
+    # reported_services may be bare name strings (older agents) or rich dicts
+    # {name, running, …} (newer agents) — extract the running service names either
+    # way for role matching.
+    running = set()
+    for s in (agent.reported_services or []):
+        if isinstance(s, dict):
+            if s.get("name") and s.get("running", True):
+                running.add(s["name"])
+        elif s:
+            running.add(s)
     if not running:
         return []
     assigned_ids = set(

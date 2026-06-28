@@ -123,9 +123,17 @@ func (a *Agent) collect(hostname string) {
 		}
 	}
 	if a.cfg.Collection.Services {
-		// Running service names → server-side role auto-detection.
+		// General running-services list. Send RICH ServiceStat (name + state +
+		// start_type) by running the existing CollectServices over the running
+		// set, so the Services tab can show state — not just names. Falls back to
+		// names if the rich pass fails. (Server-side role auto-detection reads the
+		// names out of these dicts.)
 		if names := collector.RunningServiceNames(); len(names) > 0 {
-			metrics["services"] = names
+			if rich, err := collector.CollectServices(names); err == nil && len(rich) > 0 {
+				metrics["services"] = rich
+			} else {
+				metrics["services"] = names
+			}
 		}
 	}
 	// Service stability (role-INDEPENDENT): rich state for the operator's watched

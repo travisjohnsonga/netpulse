@@ -248,17 +248,25 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         device_id = agent.device_id or agent.id
         written = write_agent_metrics(device_id, agent.hostname, metrics, ts=payload.get("timestamp"))
         update_fields = ["last_seen", "status", "updated_at"]
-        # Capture running service names (when the agent collects them) for role
-        # auto-detection. Accept a list of names or {name, running?} dicts.
+        # Capture the general running-services list (when the agent collects it).
+        # Newer agents send RICH dicts {name,state,start_type,running}; older ones
+        # send bare name strings — store a normalized rich list either way (capped),
+        # so the Services tab can show state. Role auto-detection reads the names
+        # back out (detection.py handles both shapes).
         services = metrics.get("services")
         if isinstance(services, list):
-            names = []
-            for s in services:
+            norm = []
+            for s in services[:500]:
                 if isinstance(s, str):
-                    names.append(s)
-                elif isinstance(s, dict) and s.get("name") and s.get("running", True):
-                    names.append(s["name"])
-            agent.reported_services = names
+                    norm.append({"name": s[:128], "running": True, "state": "", "start_type": ""})
+                elif isinstance(s, dict) and s.get("name"):
+                    norm.append({
+                        "name": str(s["name"])[:128],
+                        "running": bool(s.get("running", True)),
+                        "state": str(s.get("state", ""))[:32],
+                        "start_type": str(s.get("start_type", ""))[:32],
+                    })
+            agent.reported_services = norm
             update_fields.append("reported_services")
         # Keep the stored version in sync with the CURRENTLY RUNNING agent — the
         # agent reports its build in every payload (top-level "version"), and

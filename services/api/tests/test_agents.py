@@ -307,7 +307,9 @@ class TestServerRoleAssignment:
         api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"services": ["named", "nginx"]}},
                         format="json", HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
         a.refresh_from_db()
-        assert a.reported_services == ["named", "nginx"]
+        # Stored as normalized rich dicts now (names-only input → running=true).
+        assert [s["name"] for s in a.reported_services] == ["named", "nginx"]
+        assert all(s["running"] for s in a.reported_services)
 
     def test_server_roles_require_auth(self, api_client):
         s = self._server()
@@ -647,6 +649,55 @@ class TestServiceStability:
                             format="json", **self._HDR)
         assert r.status_code == 200, r.content
         assert self._open(a, "service_down", "docker") is not None
+
+
+# ── Rich general-service detail (state/start-type, not just names) ─────────────────
+
+class TestRichServiceDetail:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _rich(self, obj):
+        from apps.agents.serializers import ServerSerializer
+        return ServerSerializer(obj).data["reported_services"]
+
+    def test_metrics_stores_rich_services(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="srv-rich", cert_serial="ab:cd:ef:01")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"services": [
+            {"name": "nginx", "running": True, "state": "active", "start_type": "enabled"},
+            {"name": "cron", "running": True, "state": "active", "start_type": "static"}]}},
+            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        rich = self._rich(a)
+        nginx = next(s for s in rich if s["name"] == "nginx")
+        assert nginx["state"] == "active" and nginx["start_type"] == "enabled" and nginx["running"]
+
+    def test_names_only_agent_normalized(self, api_client, monkeypatch):
+        # Backward-compat: an older agent sends bare name strings.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="srv-old", cert_serial="ab:cd:ef:01")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"metrics": {"services": ["docker", "sshd"]}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        rich = self._rich(a)
+        assert {s["name"] for s in rich} == {"docker", "sshd"}
+        assert all(s["running"] and s["state"] == "" for s in rich)
+
+    def test_serializer_normalizes_stale_string_data(self):
+        # A pre-existing names-only reported_services (stored before this change).
+        a = Agent.objects.create(hostname="srv-stale", cert_serial="s",
+                                 reported_services=["docker"])
+        rich = self._rich(a)
+        assert rich == [{"name": "docker", "running": True, "state": "", "start_type": ""}]
+
+    def test_auto_detect_handles_rich_dicts(self):
+        from apps.agents.detection import auto_detect_roles
+        a = Agent.objects.create(hostname="srv-det", cert_serial="s", os="linux",
+                                 reported_services=[{"name": "nginx", "running": True}])
+        detected = {d["role_type"] for d in auto_detect_roles(a)}
+        assert "web" in detected  # seeded Web role lists nginx
 
 
 # ── Agent management ────────────────────────────────────────────────────────────

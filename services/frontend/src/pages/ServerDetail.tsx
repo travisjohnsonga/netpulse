@@ -482,7 +482,9 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
   const [q, setQ] = useState('')
   const services = server.reported_services ?? []
   const collected = server.services_collected === true
-  const filtered = q ? services.filter((s) => s.toLowerCase().includes(q.toLowerCase())) : services
+  const filtered = q
+    ? services.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()))
+    : services
 
   const LinkBtn = ({ to, label }: { to: Tab; label: string }) => (
     <button onClick={() => onTab(to)} className="text-blue-600 dark:text-blue-400 hover:underline font-medium">{label}</button>
@@ -520,9 +522,11 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
         ) : (
           <ul className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-sm">
             {filtered.map((s) => (
-              <li key={s} className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
-                <span className="truncate" title={s}>{s}</span>
+              <li key={s.name} className="flex items-center gap-2 text-gray-700 dark:text-gray-300"
+                  title={`${s.name}${s.state ? ` · ${s.state}` : ''}${s.start_type ? ` · ${s.start_type}` : ''}`}>
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${s.running ? 'bg-green-500' : 'bg-gray-400'}`} />
+                <span className="truncate">{s.name}</span>
+                {s.state && <span className="text-xs text-gray-400 shrink-0">{s.state}</span>}
               </li>
             ))}
           </ul>
