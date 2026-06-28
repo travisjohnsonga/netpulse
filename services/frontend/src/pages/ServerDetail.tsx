@@ -15,6 +15,8 @@ import { useCapabilities } from '../store/authStore'
 import { parseApiErrors } from '../api/errors'
 import { STRIPED_ROW, CONTENT_TABLE } from '../lib/tableStyles'
 import { useTabParam } from '../lib/useTabParam'
+import { fetchPingSummary, type PingSummary } from '../api/client'
+import PingSparkline, { pingColor } from '../components/PingSparkline'
 
 const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
@@ -168,6 +170,21 @@ export default function ServerDetail() {
   }, [id])
   useEffect(() => { load() }, [load])
 
+  // Collector-originated ping/RTT (same source as the Servers list), keyed by
+  // device_id — powers the header sparkline + the Overview RTT card.
+  const [ping, setPing] = useState<PingSummary>()
+  useEffect(() => {
+    if (!server?.device_id) return
+    let active = true
+    const devId = server.device_id
+    const tick = () => fetchPingSummary()
+      .then((rows) => { if (active) setPing(rows.find((r) => r.device_id === devId)) })
+      .catch(() => {})
+    tick()
+    const t = setInterval(tick, 60_000)
+    return () => { active = false; clearInterval(t) }
+  }, [server?.device_id])
+
   // One range drives every chart on the page (matches the device telemetry side).
   const cpuHist = useHistory(id, 'cpu', tab === 'CPU' || tab === 'Overview', range)
   const memHist = useHistory(id, 'memory', tab === 'Memory', range)
@@ -210,6 +227,9 @@ export default function ServerDetail() {
               Agent: {online ? 'reporting' : 'offline'}
             </span>
             <NetworkChip net={server.network} />
+            {ping?.sparkline?.length ? (
+              <PingSparkline data={ping.sparkline} color={pingColor(ping.current_ms ?? null)} />
+            ) : null}
           </div>
           <div className="text-gray-500 dark:text-gray-400">Last seen: {timeAgo(server.last_seen)}</div>
           {/* One range controls every chart on the page. */}
@@ -242,6 +262,29 @@ export default function ServerDetail() {
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">CPU — {RANGE_LABEL[range]}</div>
             <LineChart history={cpuHist} fields={['usage_pct']} height={200} />
+          </div>
+          {/* Collector-originated network RTT (the Network vantage, distinct from
+              the agent's self-reported metrics above). */}
+          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Network RTT (collector → host)</div>
+              <div className="text-sm tabular-nums" style={ping?.current_ms != null ? { color: pingColor(ping.current_ms) } : undefined}>
+                {ping?.current_ms != null ? `${ping.current_ms} ms`
+                  : server.network?.probed === false ? 'not network-probed' : '—'}
+              </div>
+            </div>
+            {ping?.sparkline?.length ? (
+              <div className="flex items-center gap-3">
+                <PingSparkline data={ping.sparkline} color={pingColor(ping.current_ms ?? null)} />
+                {ping.avg_ms != null && <span className="text-xs text-gray-400">avg {ping.avg_ms}ms · max {ping.max_ms}ms</span>}
+              </div>
+            ) : (
+              <div className="text-xs text-gray-400">
+                {server.network?.probed === false
+                  ? 'No routable host IP reported yet — the agent reports its own liveness above.'
+                  : 'No RTT samples yet.'}
+              </div>
+            )}
           </div>
           <div className="grid md:grid-cols-2 gap-4">
             <InfoPanel server={server} onChanged={load} />
