@@ -104,7 +104,6 @@ function NavLeaf({ item, nested, badge, onNavigate }: {
         )
       }
     >
-      <span className="text-base w-5 text-center" aria-hidden>{item.icon}</span>
       <span className="flex-1">{item.label}</span>
       {badge > 0 && (
         <span
@@ -136,7 +135,6 @@ function NavGroupItem({ group, badgeFor, onNavigate }: {
           active ? 'text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white',
         )}
       >
-        <span className="text-base w-5 text-center" aria-hidden>{group.icon}</span>
         <span className="flex-1 text-left">{group.label}</span>
         {childBadges > 0 && !open && (
           <span className="min-w-[1.25rem] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-center rounded-full bg-red-500 text-white">

@@ -44,9 +44,10 @@ export default function Settings() {
   const visible = SETTINGS_NAV.filter((i) => hasAnyCapability(caps, i.requiredCapability))
   return (
     <div className="flex gap-6">
-      {/* Settings sub-navigation — icons only on narrow screens, full on desktop */}
-      <nav className="shrink-0 w-14 lg:w-56 space-y-1">
-        <h1 className="hidden lg:block text-lg font-bold text-gray-900 dark:text-gray-100 px-3 mb-3">Settings</h1>
+      {/* Settings sub-navigation — text-only labels (the narrow width is wide
+          enough to show the label, so nothing is blank on mobile). */}
+      <nav className="shrink-0 w-44 lg:w-56 space-y-1">
+        <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100 px-3 mb-3">Settings</h1>
         {visible.map((item) => (
           <NavLink
             key={item.to}
@@ -54,16 +55,14 @@ export default function Settings() {
             title={item.label}
             className={({ isActive }) =>
               clsx(
-                'flex items-center gap-3 rounded-lg text-sm font-medium transition-colors',
-                'justify-center lg:justify-start px-0 lg:px-3 py-2.5',
+                'flex items-center rounded-lg text-sm font-medium transition-colors px-3 py-2.5',
                 isActive
                   ? 'bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
                   : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white',
               )
             }
           >
-            <span className="text-base w-5 text-center" aria-hidden>{item.icon}</span>
-            <span className="hidden lg:inline">{item.label}</span>
+            <span className="truncate">{item.label}</span>
           </NavLink>
         ))}
       </nav>
