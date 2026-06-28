@@ -1517,6 +1517,9 @@ export interface Server {
   cert_expires_at: string | null
   collection_interval: number
   device_id: number | null
+  // The agent's real source IP (for collector-originated ping/RTT); distinct
+  // from the synthetic Device IP. Null/loopback → "not network-probed".
+  last_ip?: string | null
   site: { id: number; name: string } | null
   roles: string[]
   latest_metrics: ServerLatestMetrics
@@ -1551,11 +1554,21 @@ export interface WatchedServiceStatus {
   restarts_24h: number
   collected_at: string | null
 }
+export interface ServerNetworkState {
+  // Collector-originated network reachability (distinct from agent self-report).
+  probed: boolean            // false = no routable host IP → "not network-probed"
+  reachable: boolean | null  // null when not probed
+  ip?: string | null
+  rtt_ms?: number | null
+  reason?: string
+}
 export interface ServerDetail extends Server {
   detail_metrics: ServerDetailMetrics
   recent_alerts: ServerAlert[]
   // Service stability: the configured watch list + per-service health.
   watched_services?: { configured: string[]; statuses: WatchedServiceStatus[] }
+  // Collector-originated network reachability for the "Network" chip.
+  network?: ServerNetworkState
 }
 
 export interface MetricHistory {

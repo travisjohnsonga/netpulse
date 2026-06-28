@@ -71,7 +71,42 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
         data["detail_metrics"] = detail_metrics(device_id)
         data["recent_alerts"] = self._recent_alerts(server)
         data["watched_services"] = self._watched_services(server)
+        data["network"] = self._network_state(server)
         return Response(data)
+
+    @staticmethod
+    def _network_state(server) -> dict:
+        """Collector-originated network reachability for the server-detail
+        "Network" chip — distinct from the agent's self-reported liveness.
+
+        - ``probed=False`` when the agent has no routable IP (Agent.last_ip is
+          missing/loopback/synthetic) → the UI shows "not network-probed", NOT a
+          false "unreachable" (#133 lesson).
+        - otherwise ``reachable`` is driven by the standing Host-unreachable alert
+          (fired by the reachability monitor's collector probe). The RTT for the
+          chip comes from the same ping-summary the Servers list uses (by
+          device_id), so it isn't recomputed here."""
+        from apps.devices.management.commands.run_reachability_monitor import is_pingable_ip
+        if not is_pingable_ip(server.last_ip):
+            return {"probed": False, "reachable": None, "ip": server.last_ip,
+                    "reason": "no routable host IP reported by the agent yet"}
+        open_unreachable = AlertEvent.objects.filter(
+            state=AlertEvent.State.FIRING,
+            labels__alert_type="host_unreachable",
+            labels__agent_id=str(server.id),
+        ).exists()
+        # Current RTT from the SAME cached ping-summary the Servers list uses
+        # (no extra InfluxDB query) — keyed by device_id. Absent → chip shows
+        # "reachable" without a number.
+        rtt = None
+        if server.device_id:
+            from django.core.cache import cache
+            for row in (cache.get("ping_summary") or []):
+                if row.get("device_id") == server.device_id:
+                    rtt = row.get("current_ms")
+                    break
+        return {"probed": True, "reachable": not open_unreachable,
+                "ip": server.last_ip, "rtt_ms": rtt}
 
     @staticmethod
     def _watched_services(server) -> dict:
