@@ -7,6 +7,20 @@ All notable changes to spane (NetPulse) are documented here. Versions follow the
 ## Unreleased
 
 ### Added
+- **Service stability monitoring** (role-independent): operator-watched services
+  (`desired_config.stability.services`), `WatchedServiceStatus`, **Service Down**
+  + **Service Flapping** alerts (debounce + auto-resolve).
+- **Agent liveness alerting**: an **Agent Offline** alert when an agent stops
+  reporting past its threshold (`run_scheduler` `agent_liveness`, 60s; per-agent
+  suppress for lab boxes).
+- **Web-role functional health check** (agent v1.5.0): HTTP/cert probe with any-of
+  health resolution; the web-role card headline leads with the functional verdict
+  ("✓ Healthy · cert Nd") instead of a service-count. Loopback-only SSRF allowlist.
+- **Agent log forwarding — Stage 1**: agent tails curated security logs → mTLS →
+  NATS → OpenSearch. *(Under-flowing; open diagnosis.)*
+- **Agent OS detail + rich service detail**; ServerDetail Services-tab table.
+- **Shared `useTabParam` hook**: tab-in-URL persistence across ServerDetail,
+  DeviceDetail, SiteDetail, Settings, and the Sites view toggle.
 - **WAN circuit tracking** (`apps.circuits`): provider/bandwidth/contract details,
   ISP IP assignment (IPv4/IPv6 block, gateway, BGP ASNs), device+interface
   binding, per-circuit alert threshold. Utilization from InfluxDB interface
@@ -38,10 +52,30 @@ All notable changes to spane (NetPulse) are documented here. Versions follow the
   reports the real version (was "unknown"); shown in Settings → System + TV footer.
 
 ### Fixed
+- **Stream-processor log/flow durability**: logs/flows are now acked only after a
+  successful OpenSearch write (was acked-on-receipt → silent loss on an OpenSearch
+  blip); NAK→redeliver on failure, with a poison-message drop after
+  `STREAM_PROCESSOR_MAX_DELIVER` (5) attempts so a doc OpenSearch always rejects
+  can't wedge the consumer. Transient outages never drop (durable in the stream).
+- **Agent device records no longer pollute the network views**: agent-backed
+  servers (synthetic/loopback Device records) are excluded from the **Devices
+  list** and the **reachability monitor** (they belong on the Servers page and
+  report their own liveness); resolved the resulting stale false
+  `device-unreachable` alerts.
+- **Devices list**: the row Connect button moved to a right-aligned plain-text
+  **SSH** action column.
+- **CI**: `agent-latest` rolling release is republished only on tag pushes, so
+  main-branch pushes no longer clobber it.
 - flow-threshold alert: exporter IP was truncated to the first octet; throughput
   units (a 0-duration record read as 100s of Gbps); + device/top-talker context.
 - Compliance score on the device list showed template-only instead of the
   weighted combined score.
+
+### Changed
+- **Text-only left-nav sidebar** — emoji nav icons removed (cleaner enterprise
+  tone); badges/collapse/active-state/capability gating retained.
+- **Alerts page** defaults to **actionable-only** (firing + unacknowledged) with a
+  "show resolved & acknowledged" toggle.
 
 ### Security
 - Dependabot: **form-data** CRLF (#8) → 4.0.6, **js-yaml** DoS (#7) → 4.2.0

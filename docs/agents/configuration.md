@@ -75,3 +75,40 @@ config-declared assignments converge on the same list.
 
 After editing the config, restart the service (`systemctl restart
 netpulse-agent`).
+
+## Server-managed configuration (pull)
+
+Most settings are managed from the **server**, not by hand-editing the file. The
+agent's metrics-push **response** carries a `desired_config` (with a
+`desired_version`); the agent applies it on its next ~30s check-in. Operators set
+it from the UI (Servers → server → **Config**) or `PATCH /api/servers/{id}/config/`
+(audit-logged, `AGENT_CONFIG_CHANGED`); the server validates it against an
+allowlist (`AgentConfigSerializer`).
+
+```json
+{
+  "collection": { "interval": 30, "cpu": true, "memory": true,
+                  "disk": true, "network": true, "processes": false, "services": false },
+  "logs": { "enabled": false, "sources": ["auth", "service", "kernel"], "additional_paths": [] },
+  "stability": { "services": ["sshd", "docker"] },
+  "functional": { "web": { "urls": [] } }
+}
+```
+
+- **`collection.*`** — the same collection toggles as the local config, but
+  server-managed (pull-applied).
+- **`logs`** — **Stage 1 log forwarding.** When `enabled`, the agent tails the
+  curated security sources (`auth`/`service`/`kernel`) plus any allowlisted
+  `additional_paths` and ships raw lines over mTLS → NATS → OpenSearch. ⚠️ Stage 1
+  is currently under-flowing (see Known issues).
+- **`stability.services`** — **role-independent** watched services. The agent
+  reports each one's running state + restart history; the server fires/auto-resolves
+  **"Service Down"** and **"Service Flapping"** alerts. Watch the services you care
+  about regardless of role.
+- **`functional.web`** — the **web-role functional health check.** `urls` is an
+  optional override; left empty, the agent derives `http://localhost:80/` +
+  `https://localhost:443/` from the role's ports. Each URL is probed for
+  HTTP health (2xx/3xx healthy → 4xx warning → 5xx degraded → error down) and TLS
+  cert expiry; the server fires site-down/site-degraded/cert-expiring(≤30d) alerts.
+  **SSRF guard:** URLs must be `http`/`https` to a loopback host (enforced both
+  server-side in the serializer and agent-side in Go, including redirect hops).
