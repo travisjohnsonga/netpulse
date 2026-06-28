@@ -58,7 +58,7 @@ def test_log_written_to_daily_index():
     cmd = _make_command()
     _run(cmd._on_log(FakeMsg("netpulse.logs.rtr-01", {"message": "interface up", "severity": "info"})))
     assert len(cmd._os_buffer) == 1
-    index, doc = cmd._os_buffer[0]
+    index, doc, _msg = cmd._os_buffer[0]
     assert index.startswith("netpulse-logs-")
     assert doc["source"] == "rtr-01"
     assert doc["message"] == "interface up"

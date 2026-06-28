@@ -52,6 +52,11 @@ def _unit_status_text(status_ok, ok_text: str, bad_text: str) -> str:
 
 _BATCH_SIZE = int(os.environ.get("STREAM_PROCESSOR_BATCH_SIZE", "100"))
 _BATCH_TIMEOUT = float(os.environ.get("STREAM_PROCESSOR_BATCH_TIMEOUT_SECONDS", "5"))
+# When an OpenSearch bulk write fails, JetStream-backed (logs/flows) messages are
+# NAK'd for redelivery after this delay instead of acked-and-lost — so a backend
+# blip can't drop security logs. The delay avoids hot-looping while OpenSearch is
+# down (the message comes back, is re-buffered, and retried on the next flush).
+_REDELIVER_DELAY_S = float(os.environ.get("STREAM_PROCESSOR_REDELIVER_DELAY_SECONDS", "5"))
 _FLOW_THRESHOLD_MBPS = float(os.environ.get("ANOMALY_FLOW_THRESHOLD_MBPS", "1000"))
 # A single flow record's bytes/duration is only a meaningful throughput over a
 # real time window. NetFlow/IPFIX records with equal first/last-switched
@@ -179,8 +184,10 @@ class Command(BaseCommand):
         self._influx_org = settings.INFLUXDB_ORG
 
         # --- OpenSearch bulk buffer -------------------------------------------
-        # buffer: list of (index, doc) tuples
-        self._os_buffer: list[tuple[str, dict]] = []
+        # buffer: list of (index, doc, msg|None) tuples. msg is the JetStream
+        # message (acked after a successful write, NAK'd on failure) or None for
+        # auto-acked paths (telemetry traps).
+        self._os_buffer: list[tuple[str, dict, object]] = []
         self._os_buffer_lock = asyncio.Lock()
 
         # Per-interface counter state for rate calculation:
@@ -207,22 +214,28 @@ class Command(BaseCommand):
         # and fall back to core NATS subscribe for subjects that have no stream yet.
         subscriptions = []
 
-        # JetStream durable consumers
+        # JetStream durable consumers. manual_ack=True means the handler owns the
+        # ack: we ack ONLY after the OpenSearch write succeeds and NAK (redeliver)
+        # on failure, so an OpenSearch blip can't drop the message. We enable it
+        # for the OpenSearch-backed streams (logs + flows); telemetry (InfluxDB)
+        # keeps auto-ack — its durability is a separate concern.
         js_subjects = [
-            ("netpulse.telemetry.>", "TELEMETRY", self._on_telemetry),
-            ("netpulse.flows.>", "FLOWS", self._on_flow),
-            ("netpulse.otel.>", "OTEL", self._on_otel),
-            ("netpulse.logs.>", "LOGS", self._on_log),
-            ("netpulse.alerts.>", "ALERTS", self._on_alert),
+            ("netpulse.telemetry.>", "TELEMETRY", self._on_telemetry, False),
+            ("netpulse.flows.>", "FLOWS", self._on_flow, True),
+            ("netpulse.otel.>", "OTEL", self._on_otel, False),
+            ("netpulse.logs.>", "LOGS", self._on_log, True),
+            ("netpulse.alerts.>", "ALERTS", self._on_alert, False),
         ]
 
-        for subject, stream_name, cb in js_subjects:
-            sub = await self._js_subscribe(js, subject, stream_name, cb)
+        for subject, stream_name, cb, manual_ack in js_subjects:
+            sub = await self._js_subscribe(js, subject, stream_name, cb, manual_ack=manual_ack)
             if sub is not None:
                 subscriptions.append(sub)
-                logger.debug("stream-processor: JetStream subscribed to %s", subject)
+                logger.debug("stream-processor: JetStream subscribed to %s (manual_ack=%s)",
+                             subject, manual_ack)
             else:
-                # Fall back to core NATS subscribe
+                # Fall back to core NATS subscribe (fire-and-forget; manual_ack is
+                # a no-op there — the ack/nak calls degrade harmlessly).
                 sub = await nc.subscribe(subject, cb=cb)
                 subscriptions.append(sub)
                 logger.debug(
@@ -325,10 +338,53 @@ class Command(BaseCommand):
     # JetStream consumer helper
     # -----------------------------------------------------------------------
 
-    async def _js_subscribe(self, js, subject: str, stream_name: str, cb):
+    # ── JetStream ack helpers (no-op-safe for core-NATS msgs) ──────────────────
+
+    @staticmethod
+    async def _safe_ack(msg) -> None:
+        """Ack a message; tolerate core-NATS msgs (no ack) and double-acks."""
+        if msg is None:
+            return
+        try:
+            await msg.ack()
+        except Exception as exc:
+            logger.debug("stream-processor: ack failed: %s", exc)
+
+    @staticmethod
+    async def _safe_nak(msg) -> None:
+        """NAK a message for redelivery (after a back-off) so JetStream retries it."""
+        if msg is None:
+            return
+        try:
+            await msg.nak(delay=_REDELIVER_DELAY_S)
+        except TypeError:
+            # Older nats.py without delay kwarg.
+            try:
+                await msg.nak()
+            except Exception as exc:
+                logger.debug("stream-processor: nak failed: %s", exc)
+        except Exception as exc:
+            logger.debug("stream-processor: nak failed: %s", exc)
+
+    @staticmethod
+    async def _safe_term(msg) -> None:
+        """Terminate a poison (unprocessable) message so it is NOT redelivered."""
+        if msg is None:
+            return
+        try:
+            await msg.term()
+        except Exception as exc:
+            # term() unavailable → fall back to ack (still drops it, no redelivery loop).
+            await Command._safe_ack(msg)
+            logger.debug("stream-processor: term unavailable, acked instead: %s", exc)
+
+    async def _js_subscribe(self, js, subject: str, stream_name: str, cb, manual_ack: bool = False):
         """
         Attempt a durable push-consumer subscription on the given stream.
         Returns the subscription or None if the stream does not exist.
+
+        manual_ack=True hands ack control to the handler/flush (ack-after-write,
+        NAK-on-failure); False auto-acks when the callback returns.
         """
         try:
             consumer_name = f"sp-{stream_name.lower()}"
@@ -337,7 +393,7 @@ class Command(BaseCommand):
                 durable=consumer_name,
                 stream=stream_name,
                 cb=cb,
-                manual_ack=False,
+                manual_ack=manual_ack,
             )
             return sub
         except Exception as exc:
@@ -548,7 +604,6 @@ class Command(BaseCommand):
         try:
             parts = msg.subject.split(".")
             payload = json.loads(msg.data)
-
             # The subject is netpulse.flows.<exporter_ip>.<type>, but an IPv4
             # exporter_ip contains dots, so positional split(".") parsing
             # truncated the IP to its first octet ("10") and read the type from
@@ -560,14 +615,16 @@ class Command(BaseCommand):
                 or payload.get("src_device")
                 or (".".join(parts[2:-1]) if len(parts) > 3 else "unknown")
             )
-            logger.debug(
-                "stream-processor: flow msg subject=%s bytes=%d",
-                msg.subject,
-                len(msg.data),
-            )
+        except Exception as exc:
+            logger.error("stream-processor: dropping unprocessable flow msg %s: %s", msg.subject, exc)
+            await self._safe_term(msg)
+            return
 
-            if flow_type == "latency":
-                # LatencyObservation dict
+        if flow_type == "latency":
+            # LatencyObservation → InfluxDB. Influx durability is out of scope for
+            # the ack-after-write guarantee, so ack on completion (the old
+            # auto-ack behaviour — no regression).
+            try:
                 latency_ms = float(payload.get("latency_ms", 0))
                 await self._write_influx(
                     measurement="transit_latency",
@@ -580,33 +637,33 @@ class Command(BaseCommand):
                     timestamp=payload.get("observed_at"),
                 )
                 await self._check_anomalies("latency", exporter_ip, payload)
-            else:
-                # FlowRecord dict — write to OpenSearch
-                doc = {
-                    "exporter_ip": exporter_ip,
-                    "protocol_version": flow_type,
-                    "@timestamp": _utcnow_iso(),
-                    **payload,
-                }
-                await self._buffer_opensearch(_index("netpulse-flows"), doc)
+            except Exception as exc:
+                logger.error("stream-processor: error processing latency flow %s: %s", msg.subject, exc)
+            finally:
+                await self._safe_ack(msg)
+            return
 
-                # Anomaly check: throughput = bytes / duration. Floor the
-                # duration so a 0/near-0-duration record can't fabricate a
-                # hundreds-of-Gbps phantom rate (see _FLOW_MIN_DURATION_MS).
-                duration_ms = max(float(payload.get("duration_ms") or 0), _FLOW_MIN_DURATION_MS)
-                bytes_count = int(payload.get("bytes", payload.get("bytes_count", 0)))
-                bps = (bytes_count / (duration_ms / 1000)) * 8  # bits per second
-                mbps = bps / 1_000_000
-                if mbps > _FLOW_THRESHOLD_MBPS:
-                    await self._check_anomalies("flow_threshold", exporter_ip, {
-                        "mbps": mbps,
-                        **payload,
-                    })
+        # FlowRecord → OpenSearch. The buffer owns the ack: acked only after the
+        # bulk write succeeds, NAK'd for redelivery on failure (see _flush_locked).
+        doc = {
+            "exporter_ip": exporter_ip,
+            "protocol_version": flow_type,
+            "@timestamp": _utcnow_iso(),
+            **payload,
+        }
+        await self._buffer_opensearch(_index("netpulse-flows"), doc, msg)
 
+        # Anomaly check is best-effort and must not affect the message's ack fate.
+        try:
+            # throughput = bytes / duration. Floor the duration so a 0/near-0
+            # duration record can't fabricate a Gbps phantom rate (_FLOW_MIN_DURATION_MS).
+            duration_ms = max(float(payload.get("duration_ms") or 0), _FLOW_MIN_DURATION_MS)
+            bytes_count = int(payload.get("bytes", payload.get("bytes_count", 0)))
+            mbps = ((bytes_count / (duration_ms / 1000)) * 8) / 1_000_000
+            if mbps > _FLOW_THRESHOLD_MBPS:
+                await self._check_anomalies("flow_threshold", exporter_ip, {"mbps": mbps, **payload})
         except Exception as exc:
-            logger.error(
-                "stream-processor: error processing flow msg %s: %s", msg.subject, exc
-            )
+            logger.error("stream-processor: flow anomaly check error %s: %s", msg.subject, exc)
 
     async def _on_otel(self, msg):
         """Handle netpulse.otel.<service>.<type> messages."""
@@ -671,21 +728,26 @@ class Command(BaseCommand):
             parts = msg.subject.split(".")
             # parts: ["netpulse", "logs", <source/device_id>, ...]
             source = parts[2] if len(parts) > 2 else "unknown"
-
             payload = json.loads(msg.data)
-            logger.debug(
-                "stream-processor: log msg subject=%s bytes=%d", msg.subject, len(msg.data)
-            )
-
             doc = {"source": source, "subject": msg.subject, "@timestamp": _utcnow_iso(), **payload}
-            await self._buffer_opensearch(_daily_index("netpulse-logs"), doc)
-
-            await self._inspect_log_security(source, payload)
-
         except Exception as exc:
-            logger.error(
-                "stream-processor: error processing log msg %s: %s", msg.subject, exc
-            )
+            # Unprocessable/malformed message: terminate it so it is NOT
+            # redelivered forever (redelivery is reserved for OpenSearch write
+            # failures, handled at flush time).
+            logger.error("stream-processor: dropping unprocessable log msg %s: %s", msg.subject, exc)
+            await self._safe_term(msg)
+            return
+
+        # Hand the message to the buffer; it is acked only after the OpenSearch
+        # write succeeds (NAK'd for redelivery on failure) — see _flush_locked.
+        await self._buffer_opensearch(_daily_index("netpulse-logs"), doc, msg)
+
+        # Security/anomaly inspection is best-effort and must not affect the
+        # message's ack fate (the buffer now owns it).
+        try:
+            await self._inspect_log_security(source, payload)
+        except Exception as exc:
+            logger.error("stream-processor: log security inspect error %s: %s", msg.subject, exc)
 
     async def _inspect_log_security(self, source: str, payload: dict):
         """Scan a log payload for auth failures and anomaly keywords."""
@@ -777,10 +839,16 @@ class Command(BaseCommand):
     # OpenSearch bulk writer
     # -----------------------------------------------------------------------
 
-    async def _buffer_opensearch(self, index: str, doc: dict):
-        """Add a document to the bulk buffer; flush if batch size is reached."""
+    async def _buffer_opensearch(self, index: str, doc: dict, msg=None):
+        """Add a document to the bulk buffer; flush if batch size is reached.
+
+        ``msg`` is the JetStream message that produced this doc (or None for
+        auto-acked paths, e.g. telemetry traps). When present, the message is
+        acked only after this doc's OpenSearch write succeeds, and NAK'd for
+        redelivery on failure — so an OpenSearch outage can't drop it.
+        """
         async with self._os_buffer_lock:
-            self._os_buffer.append((index, doc))
+            self._os_buffer.append((index, doc, msg))
             if len(self._os_buffer) >= _BATCH_SIZE:
                 await self._flush_locked()
 
@@ -831,33 +899,88 @@ class Command(BaseCommand):
             await self._flush_locked()
 
     async def _flush_locked(self):
-        """Internal flush — must be called with _os_buffer_lock held."""
-        if not self._os_buffer or self._os_client is None:
+        """Internal flush — must be called with _os_buffer_lock held.
+
+        Ack-after-write: a message is acked only once its doc is durably written
+        to OpenSearch. On a whole-batch failure (OpenSearch down) or per-item
+        failure (partial bulk errors), the message is NAK'd so JetStream
+        redelivers it — no acked-but-not-written loss. msg-less entries (traps,
+        already auto-acked) are re-buffered for retry since they can't redeliver.
+        """
+        if not self._os_buffer:
             return
 
         batch = self._os_buffer[:]
         self._os_buffer.clear()
 
-        # Build bulk body
+        if self._os_client is None:
+            # OpenSearch unconfigured — can't store. Ack msg-bearing entries so
+            # they don't redeliver forever; drop the rest.
+            for _index, _doc, msg in batch:
+                await self._safe_ack(msg)
+            logger.warning("stream-processor: OpenSearch client unavailable — dropped %d docs", len(batch))
+            return
+
         bulk_body: list[dict] = []
-        for index, doc in batch:
+        for index, doc, _msg in batch:
             bulk_body.append({"index": {"_index": index}})
             bulk_body.append(doc)
 
         try:
             response = await self._os_client.bulk(body=bulk_body)
-            errors = response.get("errors", False)
-            if errors:
-                logger.warning(
-                    "stream-processor: OpenSearch bulk had errors (first item): %s",
-                    response.get("items", [{}])[0],
-                )
-            else:
-                logger.debug(
-                    "stream-processor: OpenSearch bulk flushed %d docs", len(batch)
-                )
         except Exception as exc:
-            logger.error("stream-processor: OpenSearch bulk flush error: %s", exc)
+            # Whole write failed (OpenSearch unreachable). Redeliver everything —
+            # nothing is acked, so no loss.
+            n_msg = sum(1 for _i, _d, m in batch if m is not None)
+            logger.error("stream-processor: OpenSearch bulk failed — redelivering %d/%d msg(s): %s",
+                         n_msg, len(batch), exc)
+            await self._handle_flush_failure(batch)
+            return
+
+        items = response.get("items", [])
+        if not response.get("errors", False):
+            for _index, _doc, msg in batch:
+                await self._safe_ack(msg)
+            logger.debug("stream-processor: OpenSearch bulk flushed %d docs", len(batch))
+            return
+
+        # Partial errors: ack the succeeded items, redeliver the failed ones.
+        # items[k] corresponds to batch[k] (one action+doc pair per entry).
+        failed: list[tuple] = []
+        ok = 0
+        first_err = None
+        for entry, item in zip(batch, items):
+            result = item.get("index") or item.get("create") or {}
+            status = result.get("status", 500)
+            if status < 300:
+                await self._safe_ack(entry[2])
+                ok += 1
+            else:
+                failed.append(entry)
+                if first_err is None:
+                    first_err = result.get("error")
+        logger.warning("stream-processor: OpenSearch bulk partial — %d ok, %d failed (first error: %s)",
+                       ok, len(failed), first_err)
+        await self._handle_flush_failure(failed)
+
+    async def _handle_flush_failure(self, entries: list[tuple]):
+        """Redeliver/retry a set of failed (index, doc, msg) entries without loss.
+
+        Must be called with _os_buffer_lock held (mutates the buffer).
+        - msg-bearing entries → NAK so JetStream redelivers (re-buffered on
+          redelivery), bounded by the redeliver back-off.
+        - msg-less entries (traps; already auto-acked, can't redeliver) →
+          re-buffer so they retry on the next flush.
+        """
+        requeue: list[tuple] = []
+        for index, doc, msg in entries:
+            if msg is not None:
+                await self._safe_nak(msg)
+            else:
+                requeue.append((index, doc, None))
+        if requeue:
+            # Prepend so retries go ahead of newly-arrived data.
+            self._os_buffer[:0] = requeue
 
     # -----------------------------------------------------------------------
     # Alert writer (PostgreSQL via Django ORM)
