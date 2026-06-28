@@ -21,36 +21,24 @@ def device():
 
 
 class TestFetchDevicesExclusions:
-    """The monitor must not probe agent-linked or loopback/synthetic-IP devices —
-    those produce permanent false 'unreachable' (agent hosts report their own
-    liveness; a synthetic device IP points at the collector, not a real target)."""
+    """The monitor probes NETWORK devices only (device_kind — the single source of
+    truth). SERVER devices report their own liveness + get ping/RTT via the agent
+    -IP path, so they're never in the device-probe set (no false 'unreachable')."""
 
-    def test_excludes_agent_linked_device(self):
+    def test_excludes_server_kind_includes_network_kind(self):
         from apps.devices.models import Device
-        from apps.agents.models import Agent
         real = Device.objects.create(hostname="real", ip_address="10.0.0.1", status="active")
-        agentdev = Device.objects.create(hostname="srv", ip_address="10.0.0.2", status="active")
-        Agent.objects.create(hostname="srv", device=agentdev, status=Agent.Status.ACTIVE)
+        srv = Device.objects.create(hostname="srv", ip_address="10.0.0.2", status="active",
+                                    device_kind=Device.DeviceKind.SERVER)
         ids = {d["id"] for d in _cmd()._fetch_devices()}
-        assert real.id in ids
-        assert agentdev.id not in ids
+        assert real.id in ids          # network_device (default)
+        assert srv.id not in ids       # server → excluded
 
-    def test_excludes_loopback_ip_device(self):
+    def test_server_with_unreachable_status_still_excluded(self):
         from apps.devices.models import Device
-        loop = Device.objects.create(hostname="loop", ip_address="127.0.0.1", status="unreachable")
-        good = Device.objects.create(hostname="ok", ip_address="10.0.0.3", status="active")
-        ids = {d["id"] for d in _cmd()._fetch_devices()}
-        assert good.id in ids
-        assert loop.id not in ids
-
-    def test_management_ip_loopback_excluded_even_with_real_ip_address(self):
-        from apps.devices.models import Device
-        # _check probes management_ip first; a loopback mgmt IP must be excluded
-        # regardless of a real ip_address (matches the probe-host precedence).
-        d = Device.objects.create(hostname="m", ip_address="10.0.0.4",
-                                  management_ip="127.0.0.1", status="active")
-        ids = {x["id"] for x in _cmd()._fetch_devices()}
-        assert d.id not in ids
+        srv = Device.objects.create(hostname="s2", ip_address="10.0.0.5", status="unreachable",
+                                    device_kind=Device.DeviceKind.SERVER)
+        assert srv.id not in {d["id"] for d in _cmd()._fetch_devices()}
 
 
 class TestReachabilityApply:

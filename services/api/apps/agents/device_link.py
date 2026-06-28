@@ -45,11 +45,23 @@ def ensure_agent_device(agent, request=None, site=None):
         device = Device.objects.create(
             hostname=agent.hostname, ip_address=ip, management_ip=ip,
             platform=Device.Platform.OTHER, status=Device.Status.ACTIVE,
+            # Authoritatively a SERVER (agent-backed) at creation — keeps it off
+            # the Devices list / central reachability monitor without any
+            # query-time IP/agent heuristic (the device_kind field is the SoT).
+            device_kind=Device.DeviceKind.SERVER,
             site=site, notes="Monitored by spane Agent",
         )
-    elif site is not None and not device.site_id:
-        device.site = site
-        device.save(update_fields=["site"])
+    else:
+        # An existing Device that an agent is (re)claiming is a server too.
+        changed = []
+        if device.device_kind != Device.DeviceKind.SERVER:
+            device.device_kind = Device.DeviceKind.SERVER
+            changed.append("device_kind")
+        if site is not None and not device.site_id:
+            device.site = site
+            changed.append("site")
+        if changed:
+            device.save(update_fields=changed)
 
     # device.agent is a OneToOne — transfer it off any prior agent (e.g. a revoked
     # enrollment for this host) so the (re-)enrolling agent can claim it.
