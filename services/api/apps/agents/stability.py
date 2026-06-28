@@ -24,6 +24,13 @@ _DOWN_RULE = "Service Down"
 _FLAP_RULE = "Service Flapping"
 
 
+def _device_label(agent):
+    # device_id is the linkage key the rest of the system filters on (Device
+    # column, server Recent Alerts, device-scoped views). Include it so a
+    # stability alert shows where it belongs, not just by hostname in the title.
+    return {"device_id": agent.device_id} if agent.device_id else {}
+
+
 def _rule(name, severity, description, rtype):
     from apps.alerts.models import AlertRule
     rule, _ = AlertRule.objects.get_or_create(
@@ -74,7 +81,8 @@ def _reconcile_down(agent, ws, now):
                 state=AlertEvent.State.FIRING,
                 labels={"source": "service_stability", "alert_type": "service_down",
                         "agent_id": str(agent.id), "service": ws.name,
-                        "hostname": agent.hostname, "severity": "critical"},
+                        "hostname": agent.hostname, "severity": "critical",
+                        **_device_label(agent)},
                 annotations={
                     "title": f"Service down: {ws.name} on {agent.hostname}",
                     "message": (f"Watched service '{ws.name}' is "
@@ -101,7 +109,8 @@ def _reconcile_flap(agent, ws, now):
                 state=AlertEvent.State.FIRING,
                 labels={"source": "service_stability", "alert_type": "service_flapping",
                         "agent_id": str(agent.id), "service": ws.name,
-                        "hostname": agent.hostname, "severity": "warning"},
+                        "hostname": agent.hostname, "severity": "warning",
+                        **_device_label(agent)},
                 annotations={
                     "title": f"Service flapping: {ws.name} on {agent.hostname}",
                     "message": (f"'{ws.name}' restarted {len(recent)} times in the last "
