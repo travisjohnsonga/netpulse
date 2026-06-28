@@ -548,30 +548,42 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
         {filtered.length === 0 ? (
           <div className="text-sm text-gray-400">No services match “{q}”.</div>
         ) : (
-          <ul className="divide-y dark:divide-gray-700 max-h-96 overflow-y-auto text-sm">
-            {filtered.map((s) => {
-              const friendly = s.display_name && s.display_name !== s.name
-              return (
-                <li key={s.name} className="flex items-center gap-2 py-1.5"
-                    title={`${s.name}${s.state ? ` · ${s.state}` : ''}${s.start_type ? ` · ${s.start_type}` : ''}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${s.running ? 'bg-green-500' : 'bg-gray-400'}`} />
-                  <span className="truncate text-gray-800 dark:text-gray-200">
-                    {friendly ? s.display_name : s.name}
-                    {friendly && <span className="text-xs text-gray-400 ml-1.5">{s.name}</span>}
-                  </span>
-                  {s.state && <span className="text-xs text-gray-400 shrink-0">{s.state}</span>}
-                  {canEdit && (
-                    <label className="ml-auto flex items-center gap-1 text-xs text-gray-400 cursor-pointer shrink-0"
-                           title="Watch this service for down/restart alerts">
-                      <input type="checkbox" checked={watched.has(s.name)} disabled={pending === s.name}
-                             onChange={() => toggleWatch(s.name)} />
-                      watch
-                    </label>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
+          <div className="max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-gray-500 sticky top-0 bg-white dark:bg-gray-800">
+                <tr>{['Monitor?', 'Status', 'Service', 'Name', 'State', 'Start type'].map((h) => (
+                  <th key={h} className="px-2 py-1 font-medium">{canEdit || h !== 'Monitor?' ? h : ''}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => {
+                  // Friendly name in Service; actual name in Name. When there's no
+                  // distinct friendly name, show the name in Service and leave Name
+                  // blank (don't duplicate it across both columns).
+                  const friendly = s.display_name && s.display_name !== s.name
+                  return (
+                    <tr key={s.name} className="border-t dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                      <td className="px-2 py-1">
+                        {canEdit && (
+                          <input type="checkbox" checked={watched.has(s.name)} disabled={pending === s.name}
+                                 onChange={() => toggleWatch(s.name)}
+                                 title="Watch this service for down/restart alerts" />
+                        )}
+                      </td>
+                      <td className="px-2 py-1">
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${s.running ? 'bg-green-500' : 'bg-gray-400'}`}
+                              title={s.running ? 'running' : 'stopped'} />
+                      </td>
+                      <td className="px-2 py-1 font-medium text-gray-900 dark:text-gray-100">{friendly ? s.display_name : s.name}</td>
+                      <td className="px-2 py-1 text-gray-500 dark:text-gray-400">{friendly ? s.name : '—'}</td>
+                      <td className="px-2 py-1 text-gray-500 dark:text-gray-400">{s.state || (s.running ? 'running' : '—')}</td>
+                      <td className="px-2 py-1 text-gray-500 dark:text-gray-400">{s.start_type || '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
         <div className="mt-2 text-xs text-gray-400">
           {q && filtered.length > 0 && <span>{filtered.length} of {services.length} shown. </span>}
