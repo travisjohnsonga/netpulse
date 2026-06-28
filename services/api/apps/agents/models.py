@@ -230,6 +230,13 @@ class Agent(TimestampedModel):
     # used by role auto-detection. Populated only when the agent collects services.
     reported_services = models.JSONField(default=list, blank=True)
     last_seen = models.DateTimeField(null=True, blank=True, db_index=True)
+    # The agent's REAL source IP as seen on its last metrics check-in (via
+    # get_client_ip — spoof-resistant X-Forwarded-For). This is the host's real
+    # network address, used for collector-originated reachability (ping/RTT) —
+    # distinct from the linked Device's ip_address, which for agents is often a
+    # synthetic placeholder (#118 self-heal). Null until a usable client IP is
+    # seen; a loopback/placeholder value means "not network-probeable".
+    last_ip = models.GenericIPAddressField(null=True, blank=True)
     # Liveness alerting (see apps/agents/liveness.py). offline_threshold_seconds
     # overrides the global AGENT_OFFLINE_SECONDS for THIS agent (null = global) —
     # tighten for a critical host. liveness_alerts_enabled=False suppresses the

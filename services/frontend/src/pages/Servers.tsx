@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchServers, type Server } from '../api/client'
+import { fetchServers, fetchPingSummary, type Server, type PingSummary } from '../api/client'
+import PingSparkline, { pingColor } from '../components/PingSparkline'
 import { useSite } from '../store/siteStore'
 
 // last_seen older than this (ms) with no fresh heartbeat → offline.
@@ -50,6 +51,24 @@ function Bar({ pct }: { pct: number | null | undefined }) {
   )
 }
 
+// Collector ping/RTT cell — mirrors the Devices list (ms + sparkline). A server
+// with no routable IP (synthetic device record) simply has no ping data → "—",
+// never a false "unreachable".
+function Ping({ p }: { p?: PingSummary }) {
+  const ms = p?.current_ms ?? null
+  const color = pingColor(ms)
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="text-xs tabular-nums w-12" style={ms != null ? { color } : undefined}>
+        {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-600">—</span>}
+      </span>
+      {p?.sparkline?.length ? (
+        <span className="hidden sm:inline-block"><PingSparkline data={p.sparkline} color={color} /></span>
+      ) : null}
+    </span>
+  )
+}
+
 const STATE_BADGE: Record<string, string> = {
   online: 'text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900/40',
   offline: 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/40',
@@ -69,8 +88,23 @@ export default function Servers() {
   // Site scoping comes from the global header selector.
   const { selectedSite } = useSite()
 
+  // Collector-originated ping/RTT, keyed by device_id — the SAME summary the
+  // Devices list uses (the monitor now writes device_reachability for agent
+  // hosts too), so servers get the device-style ping column + sparkline.
+  const [ping, setPing] = useState<Record<number, PingSummary>>({})
+
   useEffect(() => {
     fetchServers().then(setServers).catch(() => setError('Failed to load servers.')).finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    const tick = () => fetchPingSummary()
+      .then((rows) => { if (active) setPing(Object.fromEntries(rows.map((r) => [r.device_id, r]))) })
+      .catch(() => {})
+    tick()
+    const id = setInterval(tick, 60_000)
+    return () => { active = false; clearInterval(id) }
   }, [])
 
   // Servers at the active site (summary cards + filters scope to this set).
@@ -156,7 +190,7 @@ export default function Servers() {
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
             <tr>
-              {['Hostname', 'OS', 'CPU', 'Memory', 'Disk', 'Load', 'Roles', 'Last Seen', 'Status'].map((h) => (
+              {['Hostname', 'OS', 'Ping', 'CPU', 'Memory', 'Disk', 'Load', 'Roles', 'Last Seen', 'Status'].map((h) => (
                 <th key={h} className="px-3 py-2 font-medium">{h}</th>
               ))}
             </tr>
@@ -170,6 +204,7 @@ export default function Servers() {
                   className="border-b dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer">
                   <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100">{s.hostname}</td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{s.os_name || s.os || '—'}</td>
+                  <td className="px-3 py-2"><Ping p={s.device_id != null ? ping[s.device_id] : undefined} /></td>
                   <td className="px-3 py-2"><Bar pct={m.cpu_pct} /></td>
                   <td className="px-3 py-2"><Bar pct={m.memory_pct} /></td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-300">

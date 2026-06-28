@@ -161,7 +161,7 @@ class ServerSerializer(serializers.ModelSerializer):
             "status", "last_seen", "is_online",
             "offline_threshold_seconds", "liveness_alerts_enabled",
             "agent_version", "cert_expires_at", "collection_interval",
-            "device_id", "site", "roles", "latest_metrics",
+            "device_id", "last_ip", "site", "roles", "latest_metrics",
             "reported_services", "services_collected", "created_at",
         )
         read_only_fields = fields

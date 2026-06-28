@@ -293,6 +293,17 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                 setattr(agent, model_field, val)
                 update_fields.append(model_field)
         agent.last_seen = timezone.now()
+        # Capture the agent's real source IP for collector-originated ping/RTT
+        # (distinct from the synthetic Device IP). Spoof-resistant get_client_ip;
+        # only update on a usable, changed value so a missing XFF never blanks it.
+        try:
+            from apps.core.client_ip import get_client_ip
+            client_ip = get_client_ip(request)
+            if client_ip and client_ip != agent.last_ip:
+                agent.last_ip = client_ip
+                update_fields.append("last_ip")
+        except Exception:
+            pass
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE
         agent.save(update_fields=update_fields)

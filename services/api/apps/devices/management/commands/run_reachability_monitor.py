@@ -49,6 +49,31 @@ LATENCY_RULE_CRIT = "Ping Latency Critical"
 # monitor skips it. (Mirrors apps.agents.models._SELF_HOSTS.)
 SYNTHETIC_HOSTS = {"127.0.0.1", "::1", "[::1]", "0.0.0.0", "localhost"}
 
+HOST_UNREACHABLE_RULE = "Host Unreachable"
+
+
+def is_pingable_ip(ip) -> bool:
+    """True if ``ip`` is a real, routable target the collector can meaningfully
+    probe — i.e. NOT loopback, link-local, unspecified, multicast, or the
+    synthetic ULA placeholder (#118 `placeholder_ip`, fc00::/7). Private LAN
+    ranges (10/8, 172.16/12, 192.168/16) ARE pingable on-site, so they pass.
+    An agent whose only known IP fails this is reported "not network-probed"
+    rather than a false "unreachable" (the #133 lesson)."""
+    import ipaddress
+    if not ip:
+        return False
+    try:
+        addr = ipaddress.ip_address(str(ip).strip().strip("[]"))
+    except ValueError:
+        return False
+    if addr.is_loopback or addr.is_link_local or addr.is_unspecified or addr.is_multicast:
+        return False
+    # fc00::/7 is the ULA space the agent device-link uses for synthetic IPs —
+    # valid + unique for the DB but never routable to a real host.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.is_private and not addr.ipv4_mapped:
+        return False
+    return True
+
 
 def classify_latency(rtt_ms: float | None) -> str:
     """Bucket an RTT sample: 'crit' > crit threshold, 'warn' > warn threshold, else 'ok'."""
@@ -73,6 +98,10 @@ class Command(BaseCommand):
         # Per-device latency-alert state ({device_id: {"warn", "crit", "level"}}),
         # kept across cycles so we alert only on escalation, not every check.
         self._lat_state: dict = {}
+        # Per-agent consecutive-failure counts for the host-unreachable alert
+        # (in-memory, like _lat_state — the standing AlertEvent is the durable
+        # debounce; this just gates the FAILURE_THRESHOLD before firing).
+        self._agent_fails: dict = {}
         self._influx = self._connect_influx()
         try:
             asyncio.run(self._run(options["interval"], options["timeout"], options["once"]))
@@ -139,6 +168,13 @@ class Command(BaseCommand):
 
     async def _cycle(self, timeout: float):
         from asgiref.sync import sync_to_async
+
+        # Agent HOSTS this collector is responsible for get the SAME ping/RTT
+        # probe as network devices — against the agent's REAL IP (Agent.last_ip),
+        # not the synthetic Device record that #133/#136 excluded. Same
+        # device_reachability schema (so the Servers UI reads it by device_id),
+        # but a distinct "Host unreachable" alert (see _apply_agents).
+        await self._cycle_agents(timeout)
 
         devices = await sync_to_async(self._fetch_devices)()
         if not devices:
@@ -233,6 +269,124 @@ class Command(BaseCommand):
                 await layer.group_send("devices", {"type": "device_status", "payload": payload})
         except Exception as exc:
             logger.warning("device_status WS push failed: %s", exc)
+
+    # ── agent hosts (ping/RTT for servers) ────────────────────────────────────
+
+    async def _cycle_agents(self, timeout: float):
+        """Probe the agent hosts this collector owns, store RTT, fire/resolve the
+        Host-unreachable alert. Mirrors the device path but against Agent.last_ip
+        and with the agent-specific apply logic."""
+        from asgiref.sync import sync_to_async
+        agents = await sync_to_async(self._fetch_agent_targets)()
+        if not agents:
+            return
+        results = await asyncio.gather(*[self._check(a, timeout) for a in agents])
+        # SAME device_reachability schema, keyed by the agent's device_id, so the
+        # Servers list/detail read ping/RTT exactly like the Devices list does.
+        self._write_reachability(results)
+        await sync_to_async(self._apply_agents)(results)
+        reachable = sum(1 for _a, ok, _m, _r in results if ok)
+        logger.info("reachability: %d/%d agent hosts reachable", reachable, len(results))
+
+    @staticmethod
+    def _fetch_agent_targets() -> list[dict]:
+        """Agent hosts this (the default/local) collector is responsible for, as
+        probe targets against the agent's REAL IP (Agent.last_ip).
+
+        Target set = agents whose effective collector is the default collector
+        (or unresolved → the default is the fallback) AND whose last_ip is
+        routable. An agent with no usable IP is OMITTED (reported "not probed" by
+        the API) — never a false "unreachable" (#133 lesson). Stage 1 origination
+        is central = the is_default collector; Stage 2 moves it on-site via NATS
+        with the same data/UI."""
+        from apps.agents.models import Agent
+        from apps.collectors.models import Collector
+
+        default = Collector.objects.filter(is_default=True).first()
+        default_pk = default.pk if default else None
+        targets = []
+        agents = (Agent.objects.filter(status=Agent.Status.ACTIVE)
+                  .select_related("device", "device__site", "device__site__default_collector",
+                                  "device__collector"))
+        for a in agents:
+            if not is_pingable_ip(a.last_ip):
+                continue  # not probeable → no false unreachable
+            # Resolve which collector owns this agent host (mirrors
+            # collectors.resolve.effective_collector precedence, inlined to avoid a
+            # per-agent default-collector query). With no remote collectors yet
+            # everything falls back to the default, so central probes it all.
+            dev = a.device if a.device_id else None
+            if dev is not None and dev.collector_id:
+                owner_pk = dev.collector_id
+            elif dev is not None and dev.site_id and dev.site.default_collector_id:
+                owner_pk = dev.site.default_collector_id
+            else:
+                owner_pk = default_pk
+            if default_pk is not None and owner_pk != default_pk:
+                continue  # owned by a remote collector → it will probe (Stage 2)
+            targets.append({
+                "id": a.device_id or a.id,      # device_id tags the RTT for the UI
+                "hostname": a.hostname,
+                "management_ip": a.last_ip, "ip_address": a.last_ip,
+                "status": "active", "consecutive_failures": 0,
+                "_agent_id": str(a.id), "_is_agent": True,
+            })
+        return targets
+
+    def _apply_agents(self, results) -> None:
+        """Fire/resolve the standing **Host Unreachable** AlertEvent per agent host
+        (distinct from agent_offline — that's the agent's self-report; this is the
+        collector's network probe). DB-direct debounce like liveness/stability;
+        `labels.device_id` + `labels.agent_id` linkage so it surfaces on the
+        server. In-memory failure counting gates FAILURE_THRESHOLD."""
+        from django.utils import timezone
+        from apps.alerts.models import AlertEvent, AlertRule
+        from apps.alerting.maintenance import is_in_maintenance
+
+        now = timezone.now()
+        for d, ok, _method, _rtt in results:
+            aid = d["_agent_id"]
+            did = d["id"]
+            host = d["hostname"]
+            open_ev = AlertEvent.objects.filter(
+                state=AlertEvent.State.FIRING,
+                labels__alert_type="host_unreachable",
+                labels__agent_id=aid,
+            ).first()
+            if ok:
+                self._agent_fails.pop(aid, None)
+                if open_ev is not None:
+                    open_ev.state = AlertEvent.State.RESOLVED
+                    open_ev.resolved_at = now
+                    open_ev.resolution_note = "Host reachable again."
+                    open_ev.save(update_fields=["state", "resolved_at", "resolution_note"])
+                continue
+            fails = self._agent_fails.get(aid, 0) + 1
+            self._agent_fails[aid] = fails
+            if fails >= FAILURE_THRESHOLD and open_ev is None:
+                if is_in_maintenance(device_id=did, severity="high"):
+                    continue
+                rule, _ = AlertRule.objects.get_or_create(
+                    name=HOST_UNREACHABLE_RULE,
+                    defaults={"description": ("A monitored server's host is not "
+                                              "reachable over the network from its collector."),
+                              "severity": AlertRule.Severity.HIGH,
+                              "condition": {"rule_type": "host_unreachable"},
+                              "cooldown_minutes": 0, "is_system": True},
+                )
+                AlertEvent.objects.create(
+                    rule=rule, state=AlertEvent.State.FIRING,
+                    labels={"source": "reachability_monitor", "alert_type": "host_unreachable",
+                            "device_id": did, "agent_id": aid, "hostname": host,
+                            "severity": "critical"},
+                    annotations={
+                        "title": f"Host unreachable: {host}",
+                        "message": (f"The collector cannot reach {host} ({d['ip_address']}) "
+                                    f"over the network ({fails} consecutive failures). The agent "
+                                    f"may still be reporting (host up, network path down) or the "
+                                    f"host may be down."),
+                        "severity": "critical"},
+                )
 
     # ── data access (sync) ────────────────────────────────────────────────────
 

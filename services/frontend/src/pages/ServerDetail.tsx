@@ -7,7 +7,7 @@ import {
   fetchServer, fetchServerMetricHistory, fetchServerRoleAssignments,
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
   changeServerSite, fetchSites, fetchServerConfig, updateServerConfig, updateServerLiveness,
-  type ServerDetail as ServerDetailT, type MetricHistory,
+  type ServerDetail as ServerDetailT, type MetricHistory, type ServerNetworkState,
   type AssignedRole, type DetectedRole, type ServerRole, type Site,
   type AgentDesiredConfig,
 } from '../api/client'
@@ -43,6 +43,34 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 const color = (p?: number | null) => p == null ? 'bg-gray-300 dark:bg-gray-600' : p >= 80 ? 'bg-red-500' : p >= 60 ? 'bg-amber-500' : 'bg-green-500'
+
+// Collector-originated network reachability chip (complements the Agent chip).
+// "not probed" = no routable host IP (synthetic device record) — never a false
+// "unreachable" (#133 lesson).
+function NetworkChip({ net }: { net?: ServerNetworkState }) {
+  if (!net || !net.probed) {
+    return (
+      <span className="px-2 py-0.5 rounded-full text-xs text-gray-500 bg-gray-100 dark:text-gray-400 dark:bg-gray-700/50"
+        title={net?.reason || 'No routable host IP reported by the agent yet'}>
+        Network: not probed
+      </span>
+    )
+  }
+  if (net.reachable) {
+    return (
+      <span className="px-2 py-0.5 rounded-full text-xs text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900/40"
+        title={net.ip ? `Collector reached ${net.ip}` : undefined}>
+        Network: reachable{net.rtt_ms != null ? ` ${net.rtt_ms}ms` : ''}
+      </span>
+    )
+  }
+  return (
+    <span className="px-2 py-0.5 rounded-full text-xs text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/40"
+      title={net.ip ? `Collector cannot reach ${net.ip}` : undefined}>
+      Network: unreachable
+    </span>
+  )
+}
 
 function MetricCard({ label, pct, sub }: { label: string; pct: number | null; sub?: string }) {
   return (
@@ -173,9 +201,16 @@ export default function ServerDetail() {
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 text-sm">
-          <span className={`px-2 py-0.5 rounded-full text-xs ${online ? 'text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900/40' : 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/40'}`}>
-            {online ? '✅ Online' : '🔴 Offline'}
-          </span>
+          {/* Two complementary vantages: the AGENT's self-report (is it checking
+              in?) and the COLLECTOR's network probe (can we reach the host?).
+              They can disagree — reachable-but-not-reporting = agent crashed /
+              host up; reporting-but-unreachable-network = path degrading. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className={`px-2 py-0.5 rounded-full text-xs ${online ? 'text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900/40' : 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/40'}`}>
+              Agent: {online ? 'reporting' : 'offline'}
+            </span>
+            <NetworkChip net={server.network} />
+          </div>
           <div className="text-gray-500 dark:text-gray-400">Last seen: {timeAgo(server.last_seen)}</div>
           {/* One range controls every chart on the page. */}
           <TimeRangeSelector value={range} onChange={setRange} />
