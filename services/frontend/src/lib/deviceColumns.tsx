@@ -1,7 +1,6 @@
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
 import { type Device, type PingSummary, reachabilityOf, reachabilityReason } from '../api/client'
-import { sshUrl, sshTooltip } from './ssh'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
 import RoleBubble from '../components/RoleBubble'
 import VendorLogo from '../components/VendorLogo'
@@ -78,19 +77,10 @@ const dash = (v: string | null | undefined): ReactNode => (v ? v : <span classNa
 export const DEVICE_COLUMNS: DeviceColumn[] = [
   {
     key: 'hostname', label: 'Hostname', locked: true, default: true, sortKey: 'hostname',
+    // The SSH/connect action moved to the right-aligned actions column (rendered
+    // by Devices.tsx) where row actions belong.
     render: (d) => (
-      <span className="inline-flex items-center gap-2">
-        <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
-        <a
-          href={sshUrl(d)}
-          onClick={(e) => e.stopPropagation()}
-          target="_blank" rel="noopener noreferrer"
-          title={sshTooltip(d.hostname, d)}
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border border-blue-200 text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
-        >
-          <span aria-hidden>⌨</span> Connect
-        </a>
-      </span>
+      <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
     ),
   },
   {

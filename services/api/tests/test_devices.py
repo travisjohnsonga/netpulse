@@ -94,6 +94,39 @@ class TestDeviceGroupEndpoints:
 
 # ── Device CRUD ───────────────────────────────────────────────────────────────
 
+class TestAgentDeviceExcludedFromList:
+    """Agent-backed servers have a Device record only as an internal linkage
+    artifact (#118 self-heal); they belong on the Servers page, not the Devices
+    list. They must be excluded from the list view but still resolve via retrieve."""
+
+    def _agent_device(self, hostname, ip):
+        from apps.agents.models import Agent
+        dev = Device.objects.create(hostname=hostname, ip_address=ip)
+        Agent.objects.create(hostname=hostname, device=dev, status=Agent.Status.ACTIVE)
+        return dev
+
+    def test_agent_linked_device_excluded_from_list(self, auth_client, device):
+        # device (real, no agent) stays; an agent-linked record is hidden.
+        self._agent_device("srv-01", "172.18.0.24")           # real IP, agent-linked
+        self._agent_device("win-01", "127.0.0.1")             # synthetic + agent-linked
+        resp = auth_client.get("/api/devices/")
+        hostnames = {r["hostname"] for r in resp.json()["results"]}
+        assert "core-rtr-01" in hostnames
+        assert "srv-01" not in hostnames and "win-01" not in hostnames
+        assert resp.json()["count"] == 1
+
+    def test_synthetic_ip_device_excluded_even_without_agent(self, auth_client, device):
+        Device.objects.create(hostname="loopdev", ip_address="127.0.0.1")
+        resp = auth_client.get("/api/devices/")
+        hostnames = {r["hostname"] for r in resp.json()["results"]}
+        assert "loopdev" not in hostnames and "core-rtr-01" in hostnames
+
+    def test_agent_device_still_retrievable(self, auth_client):
+        # Excluded from the LIST, but the record still resolves (internal refs).
+        dev = self._agent_device("srv-02", "10.5.5.5")
+        assert auth_client.get(f"/api/devices/{dev.id}/").status_code == 200
+
+
 class TestDeviceEndpoints:
     def test_list_devices(self, auth_client, device):
         resp = auth_client.get("/api/devices/")

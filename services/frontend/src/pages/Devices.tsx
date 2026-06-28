@@ -10,6 +10,7 @@ import { useSite } from '../store/siteStore'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
 } from '../lib/deviceColumns'
+import { sshUrl, sshTooltip } from '../lib/ssh'
 
 const PLATFORM_OPTIONS = ['All', 'IOS-XE', 'IOS-XR', 'NX-OS', 'Junos', 'EOS', 'FortiOS', 'Other']
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
@@ -324,6 +325,7 @@ export default function Devices() {
                         </th>
                       )
                     })}
+                    <th className="px-5 py-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -345,6 +347,18 @@ export default function Devices() {
                       {activeColumns.map((col) => (
                         <td key={col.key} className="px-5 py-3">{col.render(device, colCtx)}</td>
                       ))}
+                      {/* Right-aligned row action: opens the SSH/console (was the
+                          inline "Connect" button next to the hostname). */}
+                      <td className="px-5 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={sshUrl(device)}
+                          target="_blank" rel="noopener noreferrer"
+                          title={sshTooltip(device.hostname, device)}
+                          className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400"
+                        >
+                          SSH
+                        </a>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
