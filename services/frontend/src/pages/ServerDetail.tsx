@@ -813,7 +813,35 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
   const st = a.status
   const pass = st ? `${st.checks_passed}/${st.checks_total}` : '—'
   const allOk = st && st.checks_total > 0 && st.checks_passed === st.checks_total
-  const hasChecks = !!st && (st.services.length + st.ports.length + (st.custom?.length ?? 0) + (st.functional?.length ?? 0)) > 0
+  const func = st?.functional ?? []
+  const hasFunctional = func.length > 0
+  const hasChecks = !!st && (st.services.length + st.ports.length + (st.custom?.length ?? 0) + func.length) > 0
+
+  // For a role with a FUNCTIONAL result (web), the headline leads with the
+  // functional verdict — does the site actually respond + is its cert valid —
+  // the thing that answers "is this server working". The services/ports X/Y-pass
+  // count drops to a secondary line: a containerized web server serves the site
+  // without all of nginx/apache/httpd running as local services, so the process
+  // count ("2/5") is misleading as the headline. Verdict = worst URL (any-of:
+  // one URL down is a problem); cert = the soonest-expiring URL.
+  const RANK: Record<string, number> = { healthy: 0, warning: 1, degraded: 2, down: 3 }
+  const worst = hasFunctional
+    ? func.reduce((w, f) => ((RANK[f.health] ?? 3) > (RANK[w.health] ?? 3) ? f : w), func[0])
+    : null
+  const certDays = hasFunctional
+    ? func.reduce<number | null>(
+        (m, f) => (typeof f.cert_days_remaining === 'number'
+          ? (m === null ? f.cert_days_remaining : Math.min(m, f.cert_days_remaining))
+          : m), null)
+    : null
+  const fVerdict = !worst ? null
+    : worst.health === 'healthy'
+      ? { icon: '✓', label: 'Healthy', cls: 'text-green-600 dark:text-green-400' }
+    : worst.health === 'warning'
+      ? { icon: '⚠', label: `Warning${worst.status_code ? ` (${worst.status_code})` : ''}`, cls: 'text-amber-600 dark:text-amber-400' }
+    : worst.health === 'degraded'
+      ? { icon: '⚠', label: `Degraded${worst.status_code ? ` (${worst.status_code})` : ''}`, cls: 'text-red-600 dark:text-red-400' }
+      : { icon: '✗', label: `Down${worst.error ? ` — ${worst.error}` : ''}`, cls: 'text-red-600 dark:text-red-400' }
 
   const Check = ({ ok, label, sub }: { ok: boolean; label: string; sub?: string }) => (
     <li className="flex items-center gap-2 py-0.5">
@@ -831,10 +859,26 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
       </div>
       <button
         onClick={() => hasChecks && setOpen((v) => !v)}
-        className={`text-sm mt-1 flex items-center gap-1 ${allOk ? 'text-green-600' : st && st.checks_total ? 'text-amber-600' : 'text-gray-400'} ${hasChecks ? 'hover:underline' : 'cursor-default'}`}>
-        {st && st.checks_total ? `${allOk ? '✅' : '⚠️'} ${pass} pass` : 'No checks reported yet'}
+        className={`text-sm mt-1 flex items-center gap-1.5 flex-wrap ${hasChecks ? 'hover:underline' : 'cursor-default'} ${
+          fVerdict ? fVerdict.cls : allOk ? 'text-green-600' : st && st.checks_total ? 'text-amber-600' : 'text-gray-400'}`}>
+        {fVerdict ? (
+          <>
+            <span>{fVerdict.icon} {fVerdict.label}</span>
+            {certDays !== null && (
+              <span className={`text-xs ${certDays <= 30 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'}`}>
+                · 🔒 cert {certDays <= 0 ? 'EXPIRED' : `${certDays}d`}
+              </span>
+            )}
+          </>
+        ) : (
+          st && st.checks_total ? `${allOk ? '✅' : '⚠️'} ${pass} pass` : 'No checks reported yet'
+        )}
         {hasChecks && <span className="text-xs text-gray-400">{open ? '▾' : '▸'}</span>}
       </button>
+      {/* Functional verdict leads; keep the services/ports pass count visible but demoted. */}
+      {fVerdict && st && st.checks_total > 0 && (
+        <div className="text-xs text-gray-400 mt-0.5">{allOk ? '✅' : '⚠️'} {pass} service/port checks pass</div>
+      )}
 
       {open && st && (
         <div className="mt-2 border-t dark:border-gray-700 pt-2 space-y-2 text-sm">
