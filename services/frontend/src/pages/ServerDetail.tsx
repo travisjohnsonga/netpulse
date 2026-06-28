@@ -735,25 +735,78 @@ function RolesTab({ id, os }: { id: string; os: string }) {
       )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {assigned.map((a) => {
-          const st = a.status
-          const pass = st ? `${st.checks_passed}/${st.checks_total}` : '—'
-          const allOk = st && st.checks_total > 0 && st.checks_passed === st.checks_total
-          return (
-            <div key={a.id} className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-              <div className="flex items-start justify-between">
-                <div className="font-semibold text-gray-900 dark:text-gray-100">{a.name}</div>
-                {a.auto_detected && <span className="text-[10px] text-gray-400 uppercase">auto</span>}
-              </div>
-              <div className={`text-sm mt-1 ${allOk ? 'text-green-600' : st && st.checks_total ? 'text-amber-600' : 'text-gray-400'}`}>
-                {st && st.checks_total ? `${allOk ? '✅' : '⚠️'} ${pass} pass` : 'No checks reported yet'}
-              </div>
-              <button onClick={() => remove(a.role_id)} className="mt-3 text-xs text-red-600 hover:underline">Remove</button>
-            </div>
-          )
-        })}
+        {assigned.map((a) => <RoleCard key={a.id} a={a} onRemove={remove} />)}
         {!assigned.length && <div className="text-sm text-gray-500 col-span-full">No roles assigned. Use “Assign Role” or “Auto-detect”.</div>}
       </div>
+    </div>
+  )
+}
+
+// One role card: the X/Y-pass summary header + an expandable per-check breakdown
+// (each service running/not, each port listening/not, each custom check) driven
+// by the role's own ServerRole definitions — shared frame, role-specific checks.
+function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number) => void }) {
+  const [open, setOpen] = useState(false)
+  const st = a.status
+  const pass = st ? `${st.checks_passed}/${st.checks_total}` : '—'
+  const allOk = st && st.checks_total > 0 && st.checks_passed === st.checks_total
+  const hasChecks = !!st && (st.services.length + st.ports.length + (st.custom?.length ?? 0)) > 0
+
+  const Check = ({ ok, label, sub }: { ok: boolean; label: string; sub?: string }) => (
+    <li className="flex items-center gap-2 py-0.5">
+      <span className={ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{ok ? '✓' : '✗'}</span>
+      <span className="text-gray-800 dark:text-gray-200">{label}</span>
+      {sub && <span className="text-xs text-gray-400">{sub}</span>}
+    </li>
+  )
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
+      <div className="flex items-start justify-between">
+        <div className="font-semibold text-gray-900 dark:text-gray-100">{a.name}</div>
+        {a.auto_detected && <span className="text-[10px] text-gray-400 uppercase">auto</span>}
+      </div>
+      <button
+        onClick={() => hasChecks && setOpen((v) => !v)}
+        className={`text-sm mt-1 flex items-center gap-1 ${allOk ? 'text-green-600' : st && st.checks_total ? 'text-amber-600' : 'text-gray-400'} ${hasChecks ? 'hover:underline' : 'cursor-default'}`}>
+        {st && st.checks_total ? `${allOk ? '✅' : '⚠️'} ${pass} pass` : 'No checks reported yet'}
+        {hasChecks && <span className="text-xs text-gray-400">{open ? '▾' : '▸'}</span>}
+      </button>
+
+      {open && st && (
+        <div className="mt-2 border-t dark:border-gray-700 pt-2 space-y-2 text-sm">
+          {st.services.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Services</div>
+              <ul>{st.services.map((s) => (
+                <Check key={s.name} ok={!!s.running} label={s.name}
+                  sub={s.running ? (s.state || 'running') : (s.state || 'not running')} />
+              ))}</ul>
+            </div>
+          )}
+          {st.ports.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Ports</div>
+              <ul>{st.ports.map((p) => (
+                <Check key={`${p.port}/${p.proto}`} ok={!!p.open}
+                  label={`${p.name ? `${p.name} ` : ''}${p.port}/${p.proto}`}
+                  sub={p.open ? 'listening' : 'closed'} />
+              ))}</ul>
+            </div>
+          )}
+          {!!st.custom?.length && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Custom</div>
+              <ul>{st.custom.map((c, i) => (
+                <Check key={c.name ?? i} ok={!!(c.passed ?? c.ok)} label={c.name ?? `check ${i + 1}`} />
+              ))}</ul>
+            </div>
+          )}
+          {st.collected_at && <div className="text-xs text-gray-400">Last checked {timeAgo(st.collected_at)}</div>}
+        </div>
+      )}
+
+      <button onClick={() => onRemove(a.role_id)} className="mt-3 text-xs text-red-600 hover:underline">Remove</button>
     </div>
   )
 }

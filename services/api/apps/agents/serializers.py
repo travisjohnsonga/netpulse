@@ -201,12 +201,13 @@ class AssignedRoleSerializer(serializers.ModelSerializer):
             return None
         services = st.services or []
         ports = st.ports or []
+        custom = st.custom or []
         ok = (sum(1 for s in services if isinstance(s, dict) and s.get("running"))
               + sum(1 for p in ports if isinstance(p, dict) and p.get("open")))
         total = len(services) + len(ports)
         return {
             "checks_passed": ok, "checks_total": total,
-            "services": services, "ports": ports,
+            "services": services, "ports": ports, "custom": custom,
             "collected_at": st.collected_at,
         }
 
