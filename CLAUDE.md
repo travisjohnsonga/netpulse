@@ -37,6 +37,48 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~1933 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7.
 
+**Recently completed (agent + resilience + UI session — 2026-06-28):** all merged to `main`.
+- **Service stability monitoring** (#121, role-INDEPENDENT) — `apps/agents/stability.py` +
+  `WatchedServiceStatus`: the agent reports rich `ServiceStat` for operator-watched services
+  (`desired_config.stability.services`); the server records state/transitions and fires/auto-resolves
+  **"Service Down"** + **"Service Flapping"** `AlertEvent`s (debounce, `labels.device_id` linkage).
+- **Agent liveness alerting** (#116) — `apps/agents/liveness.py`, `run_scheduler` `agent_liveness`
+  task (60s): fires/auto-resolves an **"Agent Offline"** alert when `now - last_seen` exceeds the
+  agent's threshold (`offline_after_seconds()`); `liveness_alerts_enabled=False` suppresses the lab box.
+  (Stage 2 — DEGRADED = heartbeat-fresh-but-ingest-stale — still roadmap.)
+- **Web-role functional health check** (#126, v1.5.0) — `apps/agents/functional.{go,py}`: agent-side
+  HTTP/cert probe (loopback-only SSRF allowlist, `IsAllowedSelfURL`; classify 2xx/3xx healthy → 4xx
+  warning → 5xx degraded → err down; cert NotAfter days). `reconcile_functional_health` fires
+  site_down/site_degraded/cert_expiring(≤30d)/cert_expired. **Any-of resolution:** a web role's verdict
+  is the FUNCTIONAL result (site responds + cert valid), NOT "do all of nginx/apache/httpd run." The
+  RoleCard headline now leads with that verdict ("✓ Healthy · cert Nd"), not the old "2/5 services" count.
+- **Agent log forwarding — Stage 1** (`apps/agents/log_publish.py`) — agent tails curated security logs
+  (auth/service/kernel + allowlisted paths) → mTLS → NATS `netpulse.logs.<source>.<host>` → existing
+  stream-processor → OpenSearch. ⚠️ **Built but barely flowing (~2 docs ever); under open diagnosis**
+  (see Known issues). Stages 2–3 (parse/enrich, broader sources) are roadmap.
+- **OS-detail + rich service detail + Services-tab table + Roles-tab functional UI** — agent reports
+  os_name/os_version/os_kernel; `reported_services` carry `display_name`; ServerDetail Services tab is a
+  6-col table (`tableStyles.ts` zebra), tab state in the URL (`useTabParam`).
+- **Agent device-record hygiene** — the #118 device-link self-heal creates a `Device` for each agent
+  (often synthetic `127.0.0.1`). These are agent **servers**, not network devices: now **excluded from
+  the reachability monitor** (#133, `agent__isnull=True` + synthetic-IP) AND the **Devices list** (#136,
+  list action only — retrieve/CRUD still resolve). Devices list **Connect** button → right-aligned
+  plain-text **"SSH"** action. Reachability for agent hosts will come from collector→real-IP **ping/RTT**
+  (roadmap), not the device-IP probe.
+- **Stream-processor log/flow durability** (#134 + #138) — logs+flows JetStream consumers switched to
+  `manual_ack=True`: **ack only after a successful OpenSearch bulk write**, NAK→redeliver on failure
+  (per-item on partial errors), **poison-drop after `STREAM_PROCESSOR_MAX_DELIVER` (5)** deliveries so a
+  doc OpenSearch always rejects can't NAK-loop/wedge the consumer; transient outages never drop (durable
+  in the stream). Fixes the prior ack-on-receipt loss-on-OpenSearch-blip bug.
+- **Alerts page** defaults to **actionable-only** (firing + unacknowledged) with a "show resolved &
+  acknowledged" toggle (#130); **Services table** width/zebra via shared `src/lib/tableStyles.ts` (#131);
+  shared **`useTabParam`** hook → consistent tab-in-URL persistence across ServerDetail/DeviceDetail/
+  SiteDetail/Settings/Sites (#135); **text-only left-nav** (emoji icons dropped, #137).
+- **CI / versioning** — `build-agent.yml` republishes the rolling `agent-latest` release **only on tag
+  pushes** (`if: startsWith(github.ref,'refs/tags/')`, #125) so main pushes don't clobber it.
+  **Versioning discipline (Option C):** minor = features, patch = fixes; **don't version dev iterations**.
+  Current agent release: **v1.5.0**.
+
 **Recently completed (feature sweep — 2026-06-20):** a large batch of features + fixes (all
 committed to `main`, ~1933 api tests passing). Endpoint paths below are the real ones.
 
@@ -430,7 +472,18 @@ correlation), `management_ip` is the optional OOB/management override (connectio
 **Known issues:** a fresh install can store the container IP as the collector IP if `NETPULSE_HOST_IP`
 isn't set (setup.sh now sets it; `register_local_collector` self-heals a 172.16/12 value) · SonicWall
 v7 config backup needs the built-in `admin` (named accounts get 401) · OpenBao token can be lost after
-a factory reset (re-unseal/re-init).
+a factory reset (re-unseal/re-init) · **agent log forwarding is under-flowing** — Stage 1 is wired
+(agent → NATS → stream-processor → OpenSearch) but only ~2 docs have ever landed; open diagnosis (the
+device-syslog path flows fine, so it's specific to the agent relay) · **the lab is VMware-on-PC** — the
+host PC sleeping/rebooting silently drops the lab device VMs off the virtual network (e.g. all telemetry
+froze 2026-06-26 for ~43h until the VMs were powered back on). This is an **environment artifact, not
+spane behavior**: when every stream freezes at the same instant and the host can't even ARP the lab
+subnet, suspect the PC/VMs before the stack. `fix-nat` does nothing while ARP fails — the devices must be
+powered on first.
+
+**Recently FIXED (was a known issue):** the stream-processor **ack-on-receipt** loss-on-OpenSearch-blip
+bug — logs/flows now ack only after a successful write, NAK→redeliver on failure, poison-drop after N
+attempts (#134 + #138).
 
 ## Architecture (brief)
 

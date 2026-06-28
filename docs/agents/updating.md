@@ -73,6 +73,11 @@ beside the install command.
     `Invoke-WebRequest`: stock PowerShell 5.1 can't speak HTTP/2 and fails
     against the nginx front door.
 
+    The updater's pre-swap version check is also hardened for **PowerShell 5.1**:
+    `--version` output arriving on stderr / as an `ErrorRecord` is coerced to a
+    string and matched against `netpulse-agent vX.Y.Z`, so the check no longer
+    misreports `(unreadable)` and skip the upgrade.
+
 ## Updating from a local binary (air-gapped)
 
 If you've already copied a binary to the host (e.g. from the CI artifact), swap

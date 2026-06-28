@@ -18,6 +18,29 @@ in flight lives in the code and the README "Current State", not here.
 
 ---
 
+## Recently shipped — no longer roadmap
+
+Moved out of this page because they're now in `main` (see the README/CLAUDE.md
+"Current State" and `CHANGELOG.md` for detail):
+
+- **Agent liveness alerting** (the "Agent Offline" watchdog) — Stage 1 of the
+  agent-health entry below. *Stage 2 (Degraded = heartbeat-fresh-but-ingest-stale)
+  is still roadmap.*
+- **Service stability monitoring** — operator-watched services, `WatchedServiceStatus`,
+  "Service Down" / "Service Flapping" alerts (role-independent).
+- **Web-role functional health check** (v1.5.0) — agent-side HTTP/cert probe with
+  the any-of health resolution; the web role's verdict is now the functional
+  result (site responds + cert valid), not "do all of nginx/apache/httpd run."
+- **Agent log forwarding — Stage 1** (agent tails security logs → mTLS → NATS →
+  OpenSearch). ⚠️ *Built but currently barely flowing (≈2 docs ever); under open
+  diagnosis — see Known Issues.* Stages 2–3 (parsing/enrichment, broader sources)
+  remain roadmap.
+- **OS-detail, rich service detail, Services-tab table + Roles-tab functional UI.**
+- **Stream-processor log/flow durability** — ack-after-write + NAK-on-failure +
+  poison-message drop (no log loss on an OpenSearch blip).
+
+---
+
 ## Agent health: distinguish "online" from "reporting" — *Near-term · highest priority*
 
 > **Status — Stage 1 BUILT (`feature/agent-liveness-alerting`).** The **heartbeat-stale
@@ -305,3 +328,128 @@ device loss.
 authenticator type can extend it rather than requiring a redesign. Account-
 recovery and device-loss flows are the hard part (and overlap with the existing
 recovery-codes design).
+
+---
+
+## Server network reachability — ping/RTT from the collector — *Near-term*
+
+**The idea.** Agent hosts report their own liveness (check-in + the agent-offline
+watchdog), but nothing measures **network reachability to the host** the way the
+device reachability-monitor does for network devices. Add a **collector-originated
+ping/RTT** probe against the **agent's real IP** (not the synthetic `127.0.0.1`
+Device record), giving servers the same up/RTT/latency-alert treatment devices get.
+
+**Why it pairs with the agent-device exclusions (shipped).** Agent-backed Device
+records were excluded from the central reachability monitor and the Devices list
+(they had loopback/synthetic IPs → permanent false "unreachable"). This entry is
+the *right* probe to replace the wrong one: collector → agent's real IP. Stop the
+wrong probe (done), add the right one (this).
+
+**Considerations.** Source the real IP from the agent's reported address, not the
+Device record; reuse the reachability-monitor's RTT + latency-alert plumbing;
+respect maintenance windows.
+
+---
+
+## Agent process monitoring — *Design pass*
+
+**The idea.** Per-process CPU/memory visibility on agent hosts (top-N by CPU∪mem),
+a process list + top-CPU chart on the server detail, and (Stage 2b) process-level
+stability (flap/restart) mirroring the watched-service stability work.
+
+**Considerations.** CPU% is a **rate** (stateful — needs per-process deltas across
+samples); bound the payload with a top-N cap (default ~25, cpu∪mem) so a busy host
+doesn't ship thousands of rows; the `processes` collection is pull-managed via
+desired-config like the other toggles.
+
+---
+
+## Drift detection (security review signal, not an alarm) — *Design pass*
+
+**The idea.** A shared **drift-detection** framework that surfaces *change worth a
+human's eyes* into the daily ops report (INFORM, not alert):
+
+- **New-service detection** — a service appearing on a host that wasn't there
+  before (security drift).
+- **Rogue-admin / unexpected-change detection** — config/privilege/account changes
+  that weren't expected.
+
+**Why a report signal, not an alert.** These are **review** signals — a periodic
+"here's what changed, is it expected?" — not a page-someone alarm. Build them on
+one shared drift primitive (baseline → diff → classify) feeding the ops report.
+
+---
+
+## Operator-triggered remote agent update — *Arc · gated (HARD prereq: binary signing)*
+
+See **"Agent auto-update"** above — the operator-triggered (pull-based
+`desired_version`) variant is the same arc. **Gating prerequisite: cryptographic
+binary signing + pinned-key verification** before the agent will execute a fetched
+binary. Add **update-status reporting** (the agent reports apply success/failure)
+with **sticky-failure** semantics (a failed update does not retry-loop). Designed,
+**not built** — stays here until the signing infrastructure lands post-evaluation.
+
+---
+
+## Agent log forwarding — Stages 2–3 — *Design pass*
+
+Stage 1 (tail security logs → mTLS → NATS → OpenSearch) shipped. **Stage 2**
+(server-side parsing/enrichment of the raw lines) and **Stage 3** (broader sources,
+Windows Event Log, custom paths beyond the curated security profiles) remain.
+⚠️ Stage 1 is currently under-flowing (see Known Issues) — stabilize ingestion
+before building on it.
+
+---
+
+## Scaling / future architecture — *Design notes (forward-looking; NOT built)*
+
+> Captures a design conversation so it isn't rediscovered later. **None of this is
+> implemented** — spane today is single-instance Docker Compose, which is the
+> correct choice for the lab / early product / pre-evaluation stage.
+
+**Current model.** Single-instance **Docker Compose**: a fixed set of containers,
+**no autoscaling** — an overloaded service simply falls behind. Right for now.
+
+**Autoscaling is an orchestrator feature, not a Docker one.** The path when scale
+demands it: **Compose → Kubernetes** (Horizontal Pod Autoscaler = metric-based
+replica scaling + Service load-balancing). (Docker Swarm gives replicas + balancing
+but weak autoscaling.)
+
+**Two scaling classes of service:**
+
+- **Stateless / horizontally scalable** — the **API** (Django web tier), the
+  **ingest** services (syslog/snmp/flow/otlp), the **stream-processor**. These can
+  run N replicas behind load-balancing.
+- **Stateful / cluster-scaled** (NOT "add a copy") — **Postgres, OpenSearch,
+  InfluxDB, NATS**. These scale via clustering / replicas / sharding — deliberate,
+  stateful operations.
+
+**Architectural plus already in place.** The **NATS/JetStream** design supports
+horizontal **stream-processor** scaling *for free*: multiple instances on the same
+durable consumer get messages **load-balanced** by JetStream (queue-group
+semantics). The substrate is already the right shape.
+
+**⚠️ Caveat / homework before relying on it — worker instance-safety.** Horizontal
+worker scaling only works if the worker is **instance-safe**: no in-memory state
+that assumes "I see *all* messages." The **stream-processor today holds in-memory
+state** — the alert-dedup map (`_alert_last_fired`), per-interface counter state,
+and the OpenSearch `_os_buffer` — so running **2 copies today could cause duplicate
+alerts or split counters** until that state is made instance-safe (shared/external,
+or partitioned by a consistent key). **Verify stream-processor instance-safety
+before scaling it past one replica.**
+
+**Container portability / k8s-readiness (the path is viable, not a rewrite):**
+
+- spane's images are **OCI-standard** (Docker *builds* OCI; Kubernetes *runs* OCI).
+  The **same images run unchanged in k8s** — the image is the portable unit.
+- k8s uses **containerd/CRI-O** as its runtime (not the Docker daemon — the 2020
+  "dockershim" deprecation), but that's **invisible to OCI images**; they run
+  identically.
+- Compose → k8s is an **orchestration-layer** change (author k8s manifests:
+  Deployments / Services / ConfigMaps / PVCs), **not a re-containerization** — the
+  images carry over as-is. `kompose` can auto-convert the compose file as a rough
+  starting point.
+- **Net:** the path to autoscaling is **viable and not a rewrite** — same images,
+  swap Compose for a k8s orchestrator (HPA for autoscaling + Service
+  load-balancing), with the **worker instance-safety** caveat above as the one real
+  piece of homework.
