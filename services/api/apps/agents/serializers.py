@@ -30,13 +30,34 @@ class _LogsConfigSerializer(serializers.Serializer):
         return value
 
 
+class _StabilityConfigSerializer(serializers.Serializer):
+    services = serializers.ListField(
+        child=serializers.CharField(max_length=128), required=False)
+
+    def validate_services(self, value):
+        # De-dupe, validate each name against the safe charset, and cap the list.
+        from .models import STABILITY_MAX_SERVICES, is_valid_service_name
+        cleaned = list(dict.fromkeys(v.strip() for v in value if v and v.strip()))
+        bad = [v for v in cleaned if not is_valid_service_name(v)]
+        if bad:
+            raise serializers.ValidationError(
+                f"Invalid service name(s): {bad}. Allowed characters: letters, "
+                f"digits, and . _ @ : + - .")
+        if len(cleaned) > STABILITY_MAX_SERVICES:
+            raise serializers.ValidationError(
+                f"Too many watched services ({len(cleaned)}); max {STABILITY_MAX_SERVICES}.")
+        return cleaned
+
+
 class AgentConfigSerializer(serializers.Serializer):
     """Validates a (partial) desired-config PATCH. Unknown collection keys are
-    rejected so a typo can't silently disable nothing; log paths are allowlisted."""
+    rejected so a typo can't silently disable nothing; log paths are allowlisted;
+    watched service names are charset-validated + capped."""
     collection = serializers.DictField(child=serializers.BooleanField(), required=False)
     interval_seconds = serializers.IntegerField(min_value=10, max_value=3600, required=False)
     disk = _DiskConfigSerializer(required=False)
     logs = _LogsConfigSerializer(required=False)
+    stability = _StabilityConfigSerializer(required=False)
 
     def validate_collection(self, value):
         allowed = set(DEFAULT_AGENT_CONFIG["collection"])

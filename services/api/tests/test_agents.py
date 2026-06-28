@@ -557,6 +557,98 @@ class TestAgentLiveness:
         assert a.offline_threshold_seconds == 120 and a.liveness_alerts_enabled is False
 
 
+# ── Service stability monitoring (watched services → down/flap alerts) ────────────
+
+class TestServiceStability:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _agent(self):
+        return Agent.objects.create(hostname="srv-stab", cert_serial="ab:cd:ef:01")
+
+    def _open(self, agent, alert_type, service):
+        from apps.alerts.models import AlertEvent
+        return AlertEvent.objects.filter(
+            state=AlertEvent.State.FIRING, labels__alert_type=alert_type,
+            labels__agent_id=str(agent.id), labels__service=service).first()
+
+    # --- config validation (charset + cap), via the audited /config/ PATCH ---
+    def test_config_accepts_valid_watched_services(self, auth_client):
+        a = self._agent()
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"stability": {"services": ["docker", "postgresql", "sshd"]}},
+                              format="json")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.effective_config()["stability"]["services"] == ["docker", "postgresql", "sshd"]
+
+    def test_config_rejects_bad_service_name(self, auth_client):
+        a = self._agent()
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"stability": {"services": ["ok", "bad; rm -rf"]}}, format="json")
+        assert r.status_code == 400
+
+    def test_config_rejects_too_many(self, auth_client):
+        a = self._agent()
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"stability": {"services": [f"svc{i}" for i in range(60)]}}, format="json")
+        assert r.status_code == 400
+
+    def test_config_change_is_audited(self, auth_client):
+        from apps.core.models import AuditLog
+        a = self._agent()
+        auth_client.patch(f"/api/servers/{a.id}/config/",
+                          {"stability": {"services": ["docker"]}}, format="json")
+        assert AuditLog.objects.filter(event_type=AuditLog.EventType.AGENT_CONFIG_CHANGED).exists()
+
+    # --- transition detection + alerts ---
+    def test_down_fires_and_recovery_resolves(self):
+        from apps.agents.stability import reconcile_watched_services
+        from apps.alerts.models import AlertEvent
+        a = self._agent()
+        reconcile_watched_services(a, [{"name": "docker", "running": True, "state": "active"}])
+        assert self._open(a, "service_down", "docker") is None
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        ev = self._open(a, "service_down", "docker")
+        assert ev is not None and ev.rule.name == "Service Down"
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        assert AlertEvent.objects.filter(labels__alert_type="service_down",
+                                         labels__service="docker").count() == 1  # debounced
+        reconcile_watched_services(a, [{"name": "docker", "running": True, "state": "active"}])
+        assert self._open(a, "service_down", "docker") is None  # auto-resolved
+
+    def test_flap_fires_on_repeated_restarts(self):
+        from django.utils import timezone
+        from apps.agents.stability import reconcile_watched_services
+        from apps.agents.models import WatchedServiceStatus
+        a = self._agent()
+        reconcile_watched_services(a, [{"name": "nginx", "running": True, "state": "active"}])
+        ws = WatchedServiceStatus.objects.get(agent=a, name="nginx")
+        ws.restarts = [timezone.now().isoformat() for _ in range(3)]  # within flap window
+        ws.save(update_fields=["restarts"])
+        reconcile_watched_services(a, [{"name": "nginx", "running": True, "state": "active"}])
+        assert self._open(a, "service_flapping", "nginx") is not None
+
+    def test_dewatching_resolves_and_removes(self):
+        from apps.agents.stability import reconcile_watched_services
+        from apps.agents.models import WatchedServiceStatus
+        a = self._agent()
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        assert self._open(a, "service_down", "docker") is not None
+        reconcile_watched_services(a, [])  # docker removed from the watch list
+        assert self._open(a, "service_down", "docker") is None
+        assert not WatchedServiceStatus.objects.filter(agent=a, name="docker").exists()
+
+    def test_metrics_payload_drives_stability(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent()
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"metrics": {"watched_services": [
+                                {"name": "docker", "running": False, "state": "inactive"}]}},
+                            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        assert self._open(a, "service_down", "docker") is not None
+
+
 # ── Agent management ────────────────────────────────────────────────────────────
 
 class TestAgentManagement:

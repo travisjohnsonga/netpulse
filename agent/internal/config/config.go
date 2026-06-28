@@ -42,6 +42,13 @@ type RoleChecks struct {
 	ExtraServices map[string][]string `json:"extra_services"` // {"linux": [...], "windows": [...]}
 }
 
+// Stability is the role-INDEPENDENT watched-services list. The agent runs the
+// existing rich CollectServices() over Services on every check-in and reports
+// state so the server can track up/down + restart/flap and alert.
+type Stability struct {
+	Services []string `json:"services"`
+}
+
 type Config struct {
 	ServerURL  string `json:"server_url"`
 	AgentID    string `json:"agent_id"`
@@ -60,6 +67,7 @@ type Config struct {
 	Collection Collection    `json:"collection"`
 	Disk       DiskFilter    `json:"disk"`
 	Logs       LogForwarding `json:"logs"`
+	Stability  Stability     `json:"stability"`
 	RoleChecks RoleChecks    `json:"role_checks"`
 
 	Log struct {
