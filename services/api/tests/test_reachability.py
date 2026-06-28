@@ -20,6 +20,39 @@ def device():
     return Device.objects.create(hostname="r1", ip_address="10.0.0.1", status="active")
 
 
+class TestFetchDevicesExclusions:
+    """The monitor must not probe agent-linked or loopback/synthetic-IP devices —
+    those produce permanent false 'unreachable' (agent hosts report their own
+    liveness; a synthetic device IP points at the collector, not a real target)."""
+
+    def test_excludes_agent_linked_device(self):
+        from apps.devices.models import Device
+        from apps.agents.models import Agent
+        real = Device.objects.create(hostname="real", ip_address="10.0.0.1", status="active")
+        agentdev = Device.objects.create(hostname="srv", ip_address="10.0.0.2", status="active")
+        Agent.objects.create(hostname="srv", device=agentdev, status=Agent.Status.ACTIVE)
+        ids = {d["id"] for d in _cmd()._fetch_devices()}
+        assert real.id in ids
+        assert agentdev.id not in ids
+
+    def test_excludes_loopback_ip_device(self):
+        from apps.devices.models import Device
+        loop = Device.objects.create(hostname="loop", ip_address="127.0.0.1", status="unreachable")
+        good = Device.objects.create(hostname="ok", ip_address="10.0.0.3", status="active")
+        ids = {d["id"] for d in _cmd()._fetch_devices()}
+        assert good.id in ids
+        assert loop.id not in ids
+
+    def test_management_ip_loopback_excluded_even_with_real_ip_address(self):
+        from apps.devices.models import Device
+        # _check probes management_ip first; a loopback mgmt IP must be excluded
+        # regardless of a real ip_address (matches the probe-host precedence).
+        d = Device.objects.create(hostname="m", ip_address="10.0.0.4",
+                                  management_ip="127.0.0.1", status="active")
+        ids = {x["id"] for x in _cmd()._fetch_devices()}
+        assert d.id not in ids
+
+
 class TestReachabilityApply:
     def test_reachable_updates_heartbeat(self, device):
         cmd = _cmd()
