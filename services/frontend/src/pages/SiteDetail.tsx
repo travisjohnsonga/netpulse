@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
+import { useTabParam } from '../lib/useTabParam'
 import {
   fetchSite, fetchSiteDevices, saveSite, fetchSites, fetchDevices, setDeviceSite,
   fetchCollectors, fetchSiteServers, fetchChecks,
@@ -31,7 +32,8 @@ export default function SiteDetail() {
   const [site, setSite] = useState<Site | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<string>('Overview')
+  // Active tab in the URL (?tab=…) so a refresh restores it and links are shareable.
+  const [tab, setTab] = useTabParam(TABS, 'Overview')
   const [editing, setEditing] = useState(false)
   const [allSites, setAllSites] = useState<Site[]>([])
 

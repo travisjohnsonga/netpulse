@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import TimeRangeSelector, { RANGE_LABEL, type TimeRange } from '../components/TimeRangeSelector'
@@ -14,6 +14,7 @@ import {
 import { useCapabilities } from '../store/authStore'
 import { parseApiErrors } from '../api/errors'
 import { STRIPED_ROW, CONTENT_TABLE } from '../lib/tableStyles'
+import { useTabParam } from '../lib/useTabParam'
 
 const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
@@ -130,15 +131,7 @@ export default function ServerDetail() {
   const [server, setServer] = useState<ServerDetailT>()
   // Active tab lives in the URL (?tab=Services) so a refresh restores it and the
   // URL is shareable/bookmarkable. Defaults to Overview when absent/invalid.
-  const [searchParams, setSearchParams] = useSearchParams()
-  const tabParam = searchParams.get('tab')
-  const tab: Tab = (tabParam && (TABS as readonly string[]).includes(tabParam) ? tabParam : 'Overview') as Tab
-  const setTab = (t: Tab) => setSearchParams((prev) => {
-    const next = new URLSearchParams(prev)
-    if (t === 'Overview') next.delete('tab')
-    else next.set('tab', t)
-    return next
-  }, { replace: true })
+  const [tab, setTab] = useTabParam(TABS, 'Overview')
   const [range, setRange] = useState<TimeRange>('1h')
   const [error, setError] = useState<string | null>(null)
 

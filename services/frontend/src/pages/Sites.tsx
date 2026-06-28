@@ -5,6 +5,7 @@ import { fetchSites, type Site, type SiteType } from '../api/client'
 import EmptyState from '../components/EmptyState'
 import SiteFormModal from '../components/SiteFormModal'
 import SiteDeviceStatus, { SiteServerStatus, SiteCheckStatus } from '../components/SiteDeviceStatus'
+import { useTabParam } from '../lib/useTabParam'
 
 const TYPE_BADGE: Record<SiteType, string> = {
   datacenter: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
@@ -21,7 +22,8 @@ export default function Sites() {
   const [sites, setSites] = useState<Site[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [view, setView] = useState<'table' | 'tree'>('table')
+  // View choice (table/hierarchy) persists in the URL (?view=tree) across refresh.
+  const [view, setView] = useTabParam(['table', 'tree'] as const, 'table', 'view')
   const [editing, setEditing] = useState<Site | 'new' | null>(null)
 
   const load = useCallback(() => {
