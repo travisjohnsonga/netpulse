@@ -270,6 +270,13 @@ class DeviceRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
+# Loopback/synthetic IPs. An agent-backed server's Device record is created by
+# the agent self-heal (#118) often with a synthetic 127.0.0.1 — it's an internal
+# linkage artifact, not a real network device. Mirrors run_reachability_monitor's
+# SYNTHETIC_HOSTS and apps.agents.models._SELF_HOSTS.
+_SYNTHETIC_DEVICE_HOSTS = {"127.0.0.1", "::1", "[::1]", "0.0.0.0", "localhost"}
+
+
 class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
     Manage network devices — the core inventory of spane.
@@ -311,6 +318,20 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                         .values("score")[:1])
         qs = super().get_queryset().annotate(
             compliance_score=Subquery(latest_score, output_field=FloatField()))
+
+        # Agent-backed servers have a Device record only as an internal
+        # agent-linkage artifact (#118 self-heal, often with a synthetic
+        # 127.0.0.1 IP). They are network *servers* (shown on the Servers page),
+        # NOT network devices, so they must not appear in the Devices list.
+        # Scope to the list view only — retrieve/CRUD still resolve the record
+        # for internal references (reachability resolve, server linkage, etc.).
+        if self.action == "list":
+            synthetic_effective = (
+                Q(management_ip__in=_SYNTHETIC_DEVICE_HOSTS)
+                | ((Q(management_ip__isnull=True) | Q(management_ip=""))
+                   & Q(ip_address__in=_SYNTHETIC_DEVICE_HOSTS))
+            )
+            qs = qs.filter(agent__isnull=True).exclude(synthetic_effective)
 
         p = self.request.query_params
         checked = p.get("compliance_checked")
