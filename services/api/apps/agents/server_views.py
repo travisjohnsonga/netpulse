@@ -91,8 +91,18 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
                     continue
             return n
 
+        # Friendly names come from the general running-services list (the agent
+        # collects DisplayName there); look them up by name. Blank for a watched
+        # service that isn't currently in that list (e.g. stopped, or the
+        # 'services' toggle is off) — the UI falls back to the actual name.
+        display = {}
+        for s in (server.reported_services or []):
+            if isinstance(s, dict) and s.get("name") and s.get("display_name"):
+                display[s["name"]] = s["display_name"]
+
         rows = [{
-            "name": ws.name, "running": ws.running, "state": ws.state,
+            "name": ws.name, "display_name": display.get(ws.name, ""),
+            "running": ws.running, "state": ws.state,
             "last_change_at": ws.last_change_at, "down_since": ws.down_since,
             "restarts_24h": restarts_24h(ws.restarts), "collected_at": ws.collected_at,
         } for ws in server.watched_services.all()]

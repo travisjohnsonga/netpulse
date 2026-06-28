@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import TimeRangeSelector, { RANGE_LABEL, type TimeRange } from '../components/TimeRangeSelector'
@@ -127,7 +127,17 @@ function useHistory(id: string, metric: string, active: boolean, range: TimeRang
 export default function ServerDetail() {
   const { id = '' } = useParams()
   const [server, setServer] = useState<ServerDetailT>()
-  const [tab, setTab] = useState<Tab>('Overview')
+  // Active tab lives in the URL (?tab=Services) so a refresh restores it and the
+  // URL is shareable/bookmarkable. Defaults to Overview when absent/invalid.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const tab: Tab = (tabParam && (TABS as readonly string[]).includes(tabParam) ? tabParam : 'Overview') as Tab
+  const setTab = (t: Tab) => setSearchParams((prev) => {
+    const next = new URLSearchParams(prev)
+    if (t === 'Overview') next.delete('tab')
+    else next.set('tab', t)
+    return next
+  }, { replace: true })
   const [range, setRange] = useState<TimeRange>('1h')
   const [error, setError] = useState<string | null>(null)
 
@@ -483,8 +493,24 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
   const services = server.reported_services ?? []
   const collected = server.services_collected === true
   const filtered = q
-    ? services.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()))
+    ? services.filter((s) =>
+        s.name.toLowerCase().includes(q.toLowerCase()) ||
+        (s.display_name || '').toLowerCase().includes(q.toLowerCase()))
     : services
+
+  // Per-row watch toggle: add/remove the service in stability.services via the
+  // same config PATCH (applies on the agent's next check-in). For STOPPED
+  // services (not in this running list) use the text-add in the Watched section.
+  const canEdit = useCapabilities().includes('agent:edit')
+  const watched = new Set(server.watched_services?.configured ?? [])
+  const [pending, setPending] = useState<string | null>(null)
+  const toggleWatch = async (name: string) => {
+    const cur = server.watched_services?.configured ?? []
+    const next = watched.has(name) ? cur.filter((s) => s !== name) : [...cur, name]
+    setPending(name)
+    try { await updateServerConfig(server.id, { stability: { services: next } }); onChanged() }
+    catch { /* error surfaced in the Watched section */ } finally { setPending(null) }
+  }
 
   const LinkBtn = ({ to, label }: { to: Tab; label: string }) => (
     <button onClick={() => onTab(to)} className="text-blue-600 dark:text-blue-400 hover:underline font-medium">{label}</button>
@@ -520,20 +546,35 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
         {filtered.length === 0 ? (
           <div className="text-sm text-gray-400">No services match “{q}”.</div>
         ) : (
-          <ul className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-sm">
-            {filtered.map((s) => (
-              <li key={s.name} className="flex items-center gap-2 text-gray-700 dark:text-gray-300"
-                  title={`${s.name}${s.state ? ` · ${s.state}` : ''}${s.start_type ? ` · ${s.start_type}` : ''}`}>
-                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${s.running ? 'bg-green-500' : 'bg-gray-400'}`} />
-                <span className="truncate">{s.name}</span>
-                {s.state && <span className="text-xs text-gray-400 shrink-0">{s.state}</span>}
-              </li>
-            ))}
+          <ul className="divide-y dark:divide-gray-700 max-h-96 overflow-y-auto text-sm">
+            {filtered.map((s) => {
+              const friendly = s.display_name && s.display_name !== s.name
+              return (
+                <li key={s.name} className="flex items-center gap-2 py-1.5"
+                    title={`${s.name}${s.state ? ` · ${s.state}` : ''}${s.start_type ? ` · ${s.start_type}` : ''}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${s.running ? 'bg-green-500' : 'bg-gray-400'}`} />
+                  <span className="truncate text-gray-800 dark:text-gray-200">
+                    {friendly ? s.display_name : s.name}
+                    {friendly && <span className="text-xs text-gray-400 ml-1.5">{s.name}</span>}
+                  </span>
+                  {s.state && <span className="text-xs text-gray-400 shrink-0">{s.state}</span>}
+                  {canEdit && (
+                    <label className="ml-auto flex items-center gap-1 text-xs text-gray-400 cursor-pointer shrink-0"
+                           title="Watch this service for down/restart alerts">
+                      <input type="checkbox" checked={watched.has(s.name)} disabled={pending === s.name}
+                             onChange={() => toggleWatch(s.name)} />
+                      watch
+                    </label>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
-        {q && filtered.length > 0 && (
-          <div className="mt-2 text-xs text-gray-400">{filtered.length} of {services.length} shown</div>
-        )}
+        <div className="mt-2 text-xs text-gray-400">
+          {q && filtered.length > 0 && <span>{filtered.length} of {services.length} shown. </span>}
+          {pending && <span className="text-amber-500">Updating “{pending}” — applies on the agent's next check-in (~30s).</span>}
+        </div>
       </>
     )
   }
@@ -601,10 +642,14 @@ function WatchedServicesSection({ server, onChanged }: { server: ServerDetailT; 
             const st = byName.get(name)
             const up = st?.running === true
             const pending = !st || !st.collected_at
+            const friendly = st?.display_name && st.display_name !== name
             return (
               <li key={name} className="flex items-center gap-3 py-2 text-sm">
                 <span className={`h-2 w-2 rounded-full shrink-0 ${pending ? 'bg-gray-300 dark:bg-gray-600' : up ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="font-medium text-gray-900 dark:text-gray-100 w-40 truncate" title={name}>{name}</span>
+                <span className="font-medium text-gray-900 dark:text-gray-100 w-48 truncate" title={name}>
+                  {friendly ? st!.display_name : name}
+                  {friendly && <span className="text-xs font-normal text-gray-400 ml-1.5">{name}</span>}
+                </span>
                 <span className={`text-xs ${pending ? 'text-gray-400' : up ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                   {pending ? 'pending check-in' : up ? 'up' : `down${st?.down_since ? ` since ${timeAgo(st.down_since)}` : ''}`}
                 </span>
