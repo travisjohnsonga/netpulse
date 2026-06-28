@@ -94,37 +94,52 @@ class TestDeviceGroupEndpoints:
 
 # ── Device CRUD ───────────────────────────────────────────────────────────────
 
-class TestAgentDeviceExcludedFromList:
-    """Agent-backed servers have a Device record only as an internal linkage
-    artifact (#118 self-heal); they belong on the Servers page, not the Devices
-    list. They must be excluded from the list view but still resolve via retrieve."""
+class TestServerDevicesExcludedFromList:
+    """device_kind is the single source of truth (replacing the agent__isnull/
+    synthetic-IP heuristic): SERVER devices (agent-backed) live on the Servers
+    page and are excluded from the Devices LIST, but still resolve via retrieve.
+    Set authoritatively at creation, never re-inferred at query time."""
 
-    def _agent_device(self, hostname, ip):
-        from apps.agents.models import Agent
-        dev = Device.objects.create(hostname=hostname, ip_address=ip)
-        Agent.objects.create(hostname=hostname, device=dev, status=Agent.Status.ACTIVE)
-        return dev
-
-    def test_agent_linked_device_excluded_from_list(self, auth_client, device):
-        # device (real, no agent) stays; an agent-linked record is hidden.
-        self._agent_device("srv-01", "172.18.0.24")           # real IP, agent-linked
-        self._agent_device("win-01", "127.0.0.1")             # synthetic + agent-linked
+    def test_server_kind_excluded_network_kind_included(self, auth_client, device):
+        # core-rtr-01 (default network_device) stays; a server is hidden — even
+        # with a perfectly real IP (no IP heuristic involved anymore).
+        Device.objects.create(hostname="srv-01", ip_address="172.18.0.24",
+                              device_kind=Device.DeviceKind.SERVER)
         resp = auth_client.get("/api/devices/")
+        assert resp.status_code == 200
         hostnames = {r["hostname"] for r in resp.json()["results"]}
         assert "core-rtr-01" in hostnames
-        assert "srv-01" not in hostnames and "win-01" not in hostnames
+        assert "srv-01" not in hostnames
         assert resp.json()["count"] == 1
 
-    def test_synthetic_ip_device_excluded_even_without_agent(self, auth_client, device):
-        Device.objects.create(hostname="loopdev", ip_address="127.0.0.1")
-        resp = auth_client.get("/api/devices/")
-        hostnames = {r["hostname"] for r in resp.json()["results"]}
-        assert "loopdev" not in hostnames and "core-rtr-01" in hostnames
-
-    def test_agent_device_still_retrievable(self, auth_client):
-        # Excluded from the LIST, but the record still resolves (internal refs).
-        dev = self._agent_device("srv-02", "10.5.5.5")
+    def test_server_device_still_retrievable(self, auth_client):
+        dev = Device.objects.create(hostname="srv-02", ip_address="10.5.5.5",
+                                    device_kind=Device.DeviceKind.SERVER)
         assert auth_client.get(f"/api/devices/{dev.id}/").status_code == 200
+
+    def test_list_endpoint_200_real_and_no_servers(self, auth_client, device):
+        # Guards the #136 regression: the actual endpoint must return 200 with the
+        # right contents (not just the filter logic in isolation).
+        Device.objects.create(hostname="real-sw", ip_address="192.168.1.2")
+        Device.objects.create(hostname="agent-host", ip_address="10.9.9.9",
+                              device_kind=Device.DeviceKind.SERVER)
+        resp = auth_client.get("/api/devices/")
+        assert resp.status_code == 200
+        hostnames = {r["hostname"] for r in resp.json()["results"]}
+        assert {"core-rtr-01", "real-sw"} <= hostnames and "agent-host" not in hostnames
+
+    def test_ensure_agent_device_tags_server_at_creation(self):
+        # The #118 self-heal authoritatively classifies the created Device.
+        from apps.agents.models import Agent
+        from apps.agents.device_link import ensure_agent_device
+        a = Agent.objects.create(hostname="newsrv", status=Agent.Status.ACTIVE)
+        dev = ensure_agent_device(a)
+        assert dev.device_kind == Device.DeviceKind.SERVER
+
+    def test_manual_created_device_defaults_network_device(self, auth_client):
+        resp = auth_client.post("/api/devices/", {"hostname": "sw-99", "ip_address": "10.7.7.7"})
+        assert resp.status_code == 201
+        assert Device.objects.get(hostname="sw-99").device_kind == Device.DeviceKind.NETWORK_DEVICE
 
 
 class TestDeviceEndpoints:

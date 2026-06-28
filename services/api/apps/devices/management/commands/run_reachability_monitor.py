@@ -42,13 +42,6 @@ LATENCY_CRIT_CHECKS = int(os.environ.get("PING_LATENCY_CRIT_CHECKS", "2"))
 LATENCY_RULE_WARN = "High Ping Latency"
 LATENCY_RULE_CRIT = "Ping Latency Critical"
 
-# Loopback/synthetic probe hosts. A device whose effective probe address is one
-# of these doesn't point at a real network target — it points at the collector
-# itself (e.g. an agent-linked server whose Device record was self-healed to
-# 127.0.0.1). TCP-probing it can only manufacture false "unreachable", so the
-# monitor skips it. (Mirrors apps.agents.models._SELF_HOSTS.)
-SYNTHETIC_HOSTS = {"127.0.0.1", "::1", "[::1]", "0.0.0.0", "localhost"}
-
 HOST_UNREACHABLE_RULE = "Host Unreachable"
 
 
@@ -393,27 +386,17 @@ class Command(BaseCommand):
     @staticmethod
     def _fetch_devices() -> list[dict]:
         from apps.devices.models import Device
-        # Exclude AGENT-LINKED devices: agent-backed servers report their own
-        # liveness (agent check-in + the agent-offline watchdog), and their
-        # Device IP is frequently synthetic (loopback) — the central TCP probe
-        # would only produce a permanent false "unreachable". Network
-        # reachability for agent HOSTS comes from the collector pinging the
-        # agent's REAL IP (ping/RTT), not this device-IP probe.
-        rows = list(
-            Device.objects.filter(status__in=[Device.Status.ACTIVE, Device.Status.UNREACHABLE])
-            .filter(agent__isnull=True)
-            .values("id", "hostname", "management_ip", "ip_address", "status", "consecutive_failures")
+        # NETWORK devices only (device_kind — the single source of truth). Agent
+        # -backed servers (device_kind=SERVER) report their own liveness and get
+        # network reachability from the collector pinging the agent's REAL IP
+        # (the agent-host path below), not this device-IP probe. No agent__isnull
+        # /synthetic-IP heuristic — that was fragile and is replaced by the field.
+        return list(
+            Device.objects.filter(
+                status__in=[Device.Status.ACTIVE, Device.Status.UNREACHABLE],
+                device_kind=Device.DeviceKind.NETWORK_DEVICE,
+            ).values("id", "hostname", "management_ip", "ip_address", "status", "consecutive_failures")
         )
-        # Belt-and-suspenders: also drop any device whose effective probe host is
-        # loopback/synthetic (covers a synthetic IP even if the agent link is
-        # gone), matching _check's `management_ip or ip_address` precedence.
-        out = []
-        for d in rows:
-            host = (d.get("management_ip") or d.get("ip_address") or "").strip().lower()
-            if host in SYNTHETIC_HOSTS:
-                continue
-            out.append(d)
-        return out
 
     def _apply_all(self, results) -> list[tuple]:
         from django.utils import timezone
