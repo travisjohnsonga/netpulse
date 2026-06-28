@@ -11,6 +11,7 @@ import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
 } from '../lib/deviceColumns'
 import { sshUrl, sshTooltip } from '../lib/ssh'
+import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui'
 
 const PLATFORM_OPTIONS = ['All', 'IOS-XE', 'IOS-XR', 'NX-OS', 'Junos', 'EOS', 'FortiOS', 'Other']
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
@@ -171,16 +172,10 @@ export default function Devices() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setShowDiscoveryModal(true)}
-            className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
-          >
+          <button onClick={() => setShowDiscoveryModal(true)} className={BTN_SECONDARY}>
             Run Discovery
           </button>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
+          <button onClick={() => setShowAddModal(true)} className={BTN_PRIMARY}>
             + Add Device
           </button>
         </div>
@@ -200,12 +195,12 @@ export default function Devices() {
           placeholder="Search hostname, IP, vendor..."
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={`flex-1 ${INPUT}`}
         />
         <select
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>{s === 'All' ? 'All Statuses' : s}</option>
@@ -214,7 +209,7 @@ export default function Devices() {
         <select
           value={platformFilter}
           onChange={(e) => { setPlatformFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           {PLATFORM_OPTIONS.map((p) => (
             <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>
@@ -223,7 +218,7 @@ export default function Devices() {
         <select
           value={roleFilter}
           onChange={(e) => { setRoleFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           <option value="All">All Roles</option>
           {roles.map((r) => (
@@ -233,7 +228,7 @@ export default function Devices() {
         <select
           value={complianceFilter}
           onChange={(e) => { setComplianceFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           <option value="All">Any Compliance</option>
           <option value="A">A (90–100)</option>

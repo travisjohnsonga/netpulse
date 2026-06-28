@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { fetchServers, fetchPingSummary, type Server, type PingSummary } from '../api/client'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
 import { useSite } from '../store/siteStore'
+import { INPUT, SELECT } from '../lib/ui'
 
 // last_seen older than this (ms) with no fresh heartbeat → offline.
 const OFFLINE_MS = 5 * 60 * 1000
@@ -176,11 +177,11 @@ export default function Servers() {
 
       <div className="flex flex-wrap gap-2 mb-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search hostname…"
-          className="px-3 py-2 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600 flex-1 min-w-[12rem]" />
+          className={`${INPUT} flex-1 min-w-[12rem]`} />
         {[['OS', osFilter, setOsFilter, osOptions], ['Role', roleFilter, setRoleFilter, roleOptions],
           ['Status', statusFilter, setStatusFilter, ['All', 'online', 'degraded', 'offline']]].map(([label, val, setter, opts]) => (
           <select key={label as string} value={val as string} onChange={(e) => (setter as (v: string) => void)(e.target.value)}
-            className="px-3 py-2 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600">
+            className={SELECT}>
             {(opts as string[]).map((o) => <option key={o} value={o}>{o === 'All' ? `${label}: All` : o}</option>)}
           </select>
         ))}
