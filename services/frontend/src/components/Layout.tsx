@@ -360,7 +360,11 @@ export default function Layout({ children }: Props) {
         <DeliveryHealthBanner />
 
         {/* Page content — the only scroll region; sidebar + header stay fixed */}
-        <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6">
+        {/* Extra bottom padding (pb-24) clears the fixed "Ask spane" FAB
+            (bottom-6 + button height ≈ 70px) so the last row of any long list —
+            e.g. the Alert Rules table toggles — stays fully clickable, not
+            covered. Global here so every scrollable page gets the same clearance. */}
+        <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6 pb-24 lg:pb-24">
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>
