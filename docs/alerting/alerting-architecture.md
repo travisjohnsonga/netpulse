@@ -224,6 +224,33 @@ independent of dispatch). Make that an explicit, controllable product feature:
   confirm it isn't noisy, *then* enable notifications. Tune paging to what matters
   without going blind — the anti-fatigue control that complements suppression.
 
+### Per-device/server silencing — three forms (network devices AND servers)
+
+The generation-vs-notification split applied per *target* — three forms covering
+the spectrum (permanent / ad-hoc-timed / scheduled). **Existing pieces to build on,
+not duplicate:** `Agent.liveness_alerts_enabled` (default True, but **liveness-ONLY**
+— suppresses just Agent-Offline; too narrow); `MaintenanceWindow` (scheduled,
+device/site scope + recurrence — **modeled, engine doesn't enforce**);
+`AlertAcknowledgement.snoozed_until` (a timed-mute precedent). **No `environment`
+field on `Device` today.**
+
+| Form | What | Backend | UI |
+|---|---|---|---|
+| **1. Permanent disable** — "monitor, never page" (dev/test/qa boxes) | `alerting_enabled` (default True). False → still **generates** AlertEvents (UI/telemetry visibility) but **never notifies**. | New `Device.alerting_enabled` — the broad generalization of `liveness_alerts_enabled` (which folds in / becomes a sub-toggle). Dispatch checks it → skip notify, keep the event. | "Alerting: On / Observe-only" toggle on device + server detail. |
+| **2. Timed silence** — "mute for N, I'm patching" | `silenced_until` timestamp; while future → suppress **notifications** (events still generate, shown "silenced"). **Auto-expires → alerting auto-resumes.** | New `Device.silenced_until` (mirror `snoozed_until`). Dispatch checks `now < silenced_until`. **Auto-expiry is the safety property** — a maintenance mute can't silently become permanent and mask a later real outage. | "Silence alerts" quick action → duration prompt (1h/4h/8h/24h/custom); show countdown + allow early un-silence. |
+| **3. Maintenance windows** — scheduled/recurring | the scheduled cousin of #2; `MaintenanceWindow` already models device/site scope + recurrence. | **Enforce** it (the §4b gap) — honored for #149 *firing* via `is_in_maintenance`; extend uniformly to the notify decision + resolve-suppression. | Existing window UI; surface "in maintenance" on the device. |
+
+**Invariant (all three):** they suppress the **notification**, never the **AlertEvent
+generation** — the Alerts list + telemetry always show the device's true state
+(someone looking sees it; nobody gets paged). The generation-vs-notification split,
+keyed per target. **All three apply to both `device_kind=network_device` and
+`server`** (same `Device` flags → one mechanism for the whole fleet).
+
+**Optional enabler — `environment` field (dev/test/qa/prod):** tag a device/server's
+environment and drive policy from it ("dev = observe-only by default") instead of
+toggling each box. The per-device flags work without it; environment-based policy
+**scales** for many dev boxes — a default-policy layer over the per-device flags.
+
 ---
 
 ## 5. Target architecture (one unified system, phased)
@@ -259,14 +286,20 @@ delivery code path. **Pick one; do not grow a third.**
   failures (decouple the debounce-claim from send success so a 0-of-N delivery is
   retried); a **delivery-health** metric/heartbeat. *Make silent failure impossible.*
 
-- **Phase 2 — Generation/notification split + suppression enforcement (anti-fatigue,
-  low-cost, early):** make "UI alert generation" and "external notification" an explicit
-  control — **global** + **per-rule `notify` toggle** ("observe mode": generate UI
-  alerts, don't page) on top of the existing per-severity (`min_severity`) /
-  per-channel hooks. Enforce **maintenance windows** on the full path (incl. the route
-  flag + resolve notifications) and **manual snooze** (`AlertAcknowledgement.snoozed_until`).
-  Never suppresses the `AlertEvent` record — only the notification. *Cheap, high-value,
-  prevents fatigue while keeping full visibility.* (See §4b.)
+- **Phase 2 — Silencing & the generation/notification split (anti-fatigue + planned
+  maintenance, low-cost, early):** make "UI alert generation" and "external
+  notification" an explicit control. Three **per-device/server** silencing forms
+  (apply to network devices AND servers, generate-but-don't-notify): **(1) permanent
+  disable** `Device.alerting_enabled` (generalizes `liveness_alerts_enabled`) for
+  dev/test boxes; **(2) timed silence** `Device.silenced_until` (mute-for-N, **auto-
+  expiring** so a patch-mute can't mask a later outage); **(3) maintenance windows**
+  (enforce the existing `MaintenanceWindow` uniformly on the notify path + resolve).
+  Plus **global** + **per-rule `notify` toggle** ("observe mode") on top of the
+  existing per-severity (`min_severity`) / per-channel hooks, and **manual snooze**.
+  None suppress the `AlertEvent` record — only the notification. *(Optional enabler:
+  an `environment` field to drive policy by dev/test/qa/prod.)* *Cheap, high-value,
+  prevents fatigue and tames planned maintenance while keeping full visibility.*
+  (See §4b.)
 
 - **Phase 3 — Escalation timers + ack (don't-miss-a-critical):** add an
   **`escalation_tick`** task to the existing `run_scheduler` loop that advances
