@@ -19,12 +19,18 @@ export interface ServerColCtx {
   ping?: Record<number, PingSummary>
 }
 
+// Sort value for a column: number | string to compare, or null for "no data"
+// (which always sorts to the bottom regardless of direction).
+export type SortVal = number | string | null
+
 export interface ServerColumn {
   key: string
   label: string
   locked?: boolean
   default: boolean
   render: (s: Server, ctx: ServerColCtx) => ReactNode
+  // Present → column is client-side sortable. Returns the comparable value.
+  sortVal?: (s: Server, ctx: ServerColCtx) => SortVal
 }
 
 const dash = <span className="text-gray-300 dark:text-gray-500">—</span>
@@ -46,16 +52,22 @@ export const SERVER_COLUMNS: ServerColumn[] = [
   {
     key: 'hostname', label: 'Hostname', locked: true, default: true,
     render: (s) => <span className="font-medium text-gray-900 dark:text-gray-100">{s.hostname}</span>,
+    sortVal: (s) => s.hostname,
   },
   // ── Canonical shared order (identical positions to the Devices list):
   // Status → IP Address → Ping → CPU → Memory → Last Change. ──────────────────
-  { key: 'status', label: 'Status', default: true, render: (s) => <StatusBadge up={serverUp(s)} /> },
+  {
+    key: 'status', label: 'Status', default: true, render: (s) => <StatusBadge up={serverUp(s)} />,
+    sortVal: (s) => (serverUp(s) ? 1 : 0),
+  },
   {
     key: 'ip_address', label: 'IP Address', default: true,
     render: (s) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{s.last_ip || dash}</span>,
+    sortVal: (s) => s.last_ip || null,
   },
   {
     key: 'ping', label: 'Ping', default: true,
+    sortVal: (s, ctx) => (s.device_id != null ? (ctx.ping?.[s.device_id]?.current_ms ?? null) : null),
     render: (s, ctx) => {
       const p = s.device_id != null ? ctx.ping?.[s.device_id] : undefined
       const ms = p?.current_ms ?? null
@@ -72,30 +84,16 @@ export const SERVER_COLUMNS: ServerColumn[] = [
       )
     },
   },
-  { key: 'cpu', label: 'CPU', default: true, render: (s) => <MetricBar pct={s.latest_metrics.cpu_pct} /> },
-  { key: 'memory', label: 'Memory', default: true, render: (s) => <MetricBar pct={s.latest_metrics.memory_pct} /> },
-  {
-    key: 'last_change', label: 'Last Change', default: true,
-    render: (s) => <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(s.last_seen)}</span>,
-  },
-  // ── Server-specific columns ─────────────────────────────────────────────────
-  { key: 'os', label: 'OS', default: true, render: (s) => <span className="text-gray-600 dark:text-gray-300">{s.os_name || s.os || '—'}</span> },
-  {
-    key: 'disk', label: 'Disk', default: true,
-    render: (s) => {
-      const m = s.latest_metrics
-      if (m.disk_max_pct == null) return dash
-      return (
-        <span className={m.disk_max_pct >= 80 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'}>
-          {m.disk_max_mount} {Math.round(m.disk_max_pct)}%
-        </span>
-      )
-    },
-  },
+  { key: 'cpu', label: 'CPU', default: true, render: (s) => <MetricBar pct={s.latest_metrics.cpu_pct} />,
+    sortVal: (s) => s.latest_metrics.cpu_pct ?? null },
+  { key: 'memory', label: 'Memory', default: true, render: (s) => <MetricBar pct={s.latest_metrics.memory_pct} />,
+    sortVal: (s) => s.latest_metrics.memory_pct ?? null },
   {
     key: 'load', label: 'Load', default: true,
     render: (s) => <span className="tabular-nums text-gray-600 dark:text-gray-300">{s.latest_metrics.load_1 == null ? '—' : s.latest_metrics.load_1.toFixed(2)}</span>,
+    sortVal: (s) => s.latest_metrics.load_1 ?? null,
   },
+  // ── Server-specific columns: Roles → Last Change → OS ───────────────────────
   {
     key: 'roles', label: 'Roles', default: true,
     render: (s) => (
@@ -106,11 +104,18 @@ export const SERVER_COLUMNS: ServerColumn[] = [
       </div>
     ),
   },
+  {
+    key: 'last_change', label: 'Last Change', default: true,
+    render: (s) => <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(s.last_seen)}</span>,
+    sortVal: (s) => (s.last_seen ? Date.parse(s.last_seen) : null),
+  },
+  { key: 'os', label: 'OS', default: true, render: (s) => <span className="text-gray-600 dark:text-gray-300">{s.os_name || s.os || '—'}</span>,
+    sortVal: (s) => (s.os_name || s.os) || null },
 ]
 
-// v2: bumped for the canonical order change (IP Address → 3rd) so any saved
-// round-1 layout is invalidated and everyone gets the new default order.
-export const SERVER_COLUMN_STORAGE_KEY = 'netpulse.servers.columns.v2'
+// v3: bumped again — IP-3rd + Disk removed + Load/Roles reorder — so any saved
+// layout is invalidated and everyone gets the new default order/column set.
+export const SERVER_COLUMN_STORAGE_KEY = 'netpulse.servers.columns.v3'
 
 export function defaultServerColumnKeys(): string[] {
   return SERVER_COLUMNS.filter((c) => c.locked || c.default).map((c) => c.key)

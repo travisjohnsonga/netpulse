@@ -76,6 +76,11 @@ export default function Servers() {
     [columnKeys],
   )
   const colCtx: ServerColCtx = { ping }
+  // Client-side sort (Servers loads the full set, so sort in memory — matches the
+  // existing client-side filter). asc ↔ desc toggle per click; nulls always last.
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null)
+  const toggleSort = (key: string) => setSort((cur) =>
+    cur?.key === key ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
 
   useEffect(() => {
     fetchServers().then(setServers).catch(() => setError('Failed to load servers.')).finally(() => setLoading(false))
@@ -107,6 +112,23 @@ export default function Servers() {
     if (statusFilter !== 'All' && serverState(s) !== statusFilter) return false
     return true
   }), [siteScoped, search, osFilter, roleFilter, statusFilter])
+
+  const sorted = useMemo(() => {
+    const col = sort && SERVER_COLUMNS.find((c) => c.key === sort.key)
+    if (!col?.sortVal) return filtered
+    const dir = sort!.dir === 'desc' ? -1 : 1
+    const sv = col.sortVal
+    return [...filtered].sort((a, b) => {
+      const av = sv(a, colCtx); const bv = sv(b, colCtx)
+      if (av == null && bv == null) return 0
+      if (av == null) return 1   // nulls/— always sort to the bottom, both dirs
+      if (bv == null) return -1
+      const r = typeof av === 'number' && typeof bv === 'number'
+        ? av - bv : String(av).localeCompare(String(bv))
+      return r * dir
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, sort, ping])
 
   const online = siteScoped.filter(isOnline).length
   const offline = siteScoped.length - online
@@ -162,15 +184,22 @@ export default function Servers() {
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
             <tr>
-              {activeColumns.map((col, i) => (
-                <th key={col.key}
-                  className={`px-3 py-2 font-medium whitespace-nowrap ${i === 0 ? STICKY_COL_HEAD : ''}`}>{col.label}</th>
-              ))}
+              {activeColumns.map((col, i) => {
+                const sortable = !!col.sortVal
+                const arrow = sort?.key === col.key ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : ''
+                return (
+                  <th key={col.key}
+                    onClick={sortable ? () => toggleSort(col.key) : undefined}
+                    className={`px-3 py-2 font-medium whitespace-nowrap ${i === 0 ? STICKY_COL_HEAD : ''} ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''}`}>
+                    {col.label}<span className="text-blue-500">{arrow}</span>
+                  </th>
+                )
+              })}
               <th className="px-3 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((s) => (
+            {sorted.map((s) => (
               <tr key={s.id} onClick={() => nav(`/servers/${s.id}`)}
                 className={`cursor-pointer ${STRIPED_ROW}`}>
                 {activeColumns.map((col, i) => (

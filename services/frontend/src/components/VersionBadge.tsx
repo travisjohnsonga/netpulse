@@ -18,17 +18,20 @@ export default function VersionBadge() {
 
   if (!v) return null
   const upd = v.update_available
+  // Show the CLEAN release version (v0.5.0), never the git-describe dev suffix.
+  // The full version stays in the tooltip for support ("which exact build").
+  const shown = v.display_version || v.current_version
 
   return (
     <div className="relative group inline-block">
       <span
         className={clsx(
           'text-xs px-2 py-0.5 rounded-full cursor-default',
-          upd ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-800 text-gray-500',
+          upd ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-800 text-gray-400',
         )}
-        title={upd ? 'Update available' : `spane v${v.current_version}`}
+        title={upd ? `Update available — running ${v.current_version}` : `spane ${v.current_version}`}
       >
-        v{v.current_version}{upd ? ' ↑' : ''}
+        v{shown}{v.is_dev_build ? ' · dev' : ''}{upd ? ' ↑' : ''}
       </span>
       {upd && (
         <div className="absolute bottom-7 left-0 hidden group-hover:block w-60 z-50 text-left

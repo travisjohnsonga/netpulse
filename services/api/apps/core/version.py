@@ -27,6 +27,21 @@ _CACHE_TTL = 3600  # 1 hour — don't hammer the GitHub API
 _APP_TAG_PREFIX = "app-v"
 
 
+def _display_version() -> str:
+    """Clean RELEASE version for the UI — base semver with the git-describe dev
+    suffix stripped: '0.5.0-4-g37ea9c0' → '0.5.0', '0.0.0+abc' → '0.0.0'. The
+    full settings.VERSION is still returned separately for debugging/support."""
+    v = (settings.VERSION or "").lstrip("v")
+    return v.split("-", 1)[0].split("+", 1)[0] or "0.0.0"
+
+
+def _is_dev_build() -> bool:
+    """True when the build is past the last tag (git-describe has a suffix) — lets
+    the UI show a subtle 'dev' marker without exposing the commit count/sha."""
+    v = settings.VERSION or ""
+    return "-" in v or "+" in v
+
+
 def _semver_tuple(s: str) -> tuple:
     """Parse a version string to a comparable (major, minor, patch) tuple.
     Tolerates an ``app-v`` prefix and a git-describe / pre-release suffix
@@ -49,7 +64,9 @@ def _semver_tuple(s: str) -> tuple:
 @permission_classes([AllowAny])
 def version(request):
     return Response({
-        "version": settings.VERSION,
+        "version": settings.VERSION,            # full git-describe (debugging/support)
+        "display_version": _display_version(),  # clean release semver (UI)
+        "is_dev_build": _is_dev_build(),
         "commit": settings.GIT_COMMIT,
         "branch": settings.GITHUB_BRANCH,
         "built_at": settings.BUILT_AT,
@@ -60,7 +77,9 @@ def version(request):
 @permission_classes([AllowAny])
 def version_check(request):
     base = {
-        "current_version": settings.VERSION,
+        "current_version": settings.VERSION,            # full git-describe
+        "display_version": _display_version(),           # clean release semver (badge)
+        "is_dev_build": _is_dev_build(),
         "current_commit": settings.GIT_COMMIT,
         "latest_version": None,
         "update_available": False,

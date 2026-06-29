@@ -3020,9 +3020,11 @@ export async function createDevice(payload: DeviceCreatePayload): Promise<Device
 }
 
 export interface VersionCheck {
-  current_version: string
+  current_version: string        // full git-describe (debugging)
+  display_version?: string       // clean release semver (UI)
+  is_dev_build?: boolean
   current_commit: string
-  latest_commit: string | null
+  latest_commit?: string | null
   latest_version: string | null
   update_available: boolean
   commits_behind: number
