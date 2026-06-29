@@ -1310,7 +1310,7 @@ export interface AlertRule {
 export interface AlertChannel {
   id: number
   name: string
-  channel_type: 'slack' | 'email' | 'pagerduty' | 'webhook'
+  channel_type: 'slack' | 'email' | 'pagerduty' | 'webhook' | 'teams'
   config: Record<string, unknown>
   is_active: boolean
 }

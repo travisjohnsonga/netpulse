@@ -9,6 +9,7 @@ class AlertChannel(TimestampedModel):
         EMAIL = "email", "Email"
         PAGERDUTY = "pagerduty", "PagerDuty"
         WEBHOOK = "webhook", "Webhook"
+        TEAMS = "teams", "Microsoft Teams"
 
     name = models.CharField(max_length=255)
     channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
@@ -57,6 +58,12 @@ class AlertEvent(TimestampedModel):
     # Who/what resolved it: "auto" (recovery transition), "user", or "" while firing.
     resolved_by = models.CharField(max_length=32, blank=True)
     resolution_note = models.TextField(blank=True)
+    # Outbound-notification dedup/debounce: stamped the first time the FIRING /
+    # RESOLVED transition is dispatched to channels, so a re-save or a redundant
+    # dispatch call never re-notifies (a flapping alert can't spam channels).
+    # See apps/alerts/dispatch.py + signals.py.
+    fired_notified_at = models.DateTimeField(null=True, blank=True)
+    resolved_notified_at = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimestampedModel.Meta):
         indexes = [models.Index(fields=["rule", "state", "-created_at"])]

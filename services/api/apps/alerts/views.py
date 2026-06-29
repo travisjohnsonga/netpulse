@@ -31,6 +31,43 @@ class AlertChannelViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     serializer_class = AlertChannelSerializer
     filterset_fields = ["channel_type", "is_active"]
 
+    def perform_create(self, serializer):
+        from .channel_secrets import store_channel_secrets
+        channel = serializer.save()
+        store_channel_secrets(channel)
+
+    def perform_update(self, serializer):
+        from .channel_secrets import store_channel_secrets
+        channel = serializer.save()
+        store_channel_secrets(channel)
+
+    def perform_destroy(self, instance):
+        from .channel_secrets import delete_channel_secrets
+        delete_channel_secrets(instance.pk)
+        instance.delete()
+
+    @action(detail=True, methods=["post"], url_path="test")
+    def test(self, request, pk=None):
+        """Send a synthetic test notification through this one channel so an
+        operator can verify it's wired (email arrives / Teams card posts)."""
+        from django.conf import settings
+
+        from .dispatch import send_to_channel
+        from .payload import AlertPayload
+
+        channel = self.get_object()
+        base = (getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
+        payload = AlertPayload(
+            event_id=None, transition="firing", severity="info",
+            title="spane test alert",
+            message=f"This is a test notification from spane for channel '{channel.name}'.",
+            rule_name="Channel Test",
+            link=f"{base}/alerts" if base else "",
+        )
+        ok, detail = send_to_channel(channel, payload)
+        return Response({"ok": ok, "detail": detail},
+                        status=status.HTTP_200_OK if ok else status.HTTP_502_BAD_GATEWAY)
+
 
 class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     """
@@ -193,11 +230,16 @@ class AlertEventViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMix
         note = request.data.get("resolution_note", "") or request.data.get("note", "") or ""
         if not ids:
             return Response({"error": "No IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
-        updated = (AlertEvent.objects
-                   .filter(id__in=ids).exclude(state=AlertEvent.State.RESOLVED)
-                   .update(state=AlertEvent.State.RESOLVED,
-                           resolved_at=timezone.now(), resolved_by="user",
-                           resolution_note=note, updated_at=timezone.now()))
+        target = (AlertEvent.objects
+                  .filter(id__in=ids).exclude(state=AlertEvent.State.RESOLVED))
+        pks = list(target.values_list("pk", flat=True))
+        updated = target.update(state=AlertEvent.State.RESOLVED,
+                                resolved_at=timezone.now(), resolved_by="user",
+                                resolution_note=note, updated_at=timezone.now())
+        if pks:
+            # .update() bypasses the post_save dispatch signal → notify explicitly.
+            from .resolve import notify_resolved
+            notify_resolved(pks)
         return Response({"updated": updated, "failed": len(ids) - updated, "errors": []})
 
     @action(detail=True, methods=["post"])

@@ -195,6 +195,15 @@ EMAIL_BACKEND = os.environ.get(
     else "django.core.mail.backends.console.EmailBackend",
 )
 
+# ── Alert dispatch ────────────────────────────────────────────────────────────
+# Whether the alerts dispatch layer (apps/alerts/dispatch.py) delivers fired /
+# resolved AlertEvents to their configured channels. Off in the test suite so
+# the broad suite never makes real SMTP/webhook calls (dispatch tests re-enable
+# it via override_settings). Per-channel send retry/backoff are tunable.
+ALERT_DISPATCH_ENABLED = os.environ.get("ALERT_DISPATCH_ENABLED", "true").lower() in ("1", "true", "yes")
+ALERT_DISPATCH_MAX_ATTEMPTS = int(os.environ.get("ALERT_DISPATCH_MAX_ATTEMPTS", "2"))
+ALERT_DISPATCH_BACKOFF_S = float(os.environ.get("ALERT_DISPATCH_BACKOFF_S", "2.0"))
+
 # ── OpenBao ───────────────────────────────────────────────────────────────────
 
 OPENBAO_ADDR = os.environ.get("OPENBAO_ADDR", "http://openbao:8200")

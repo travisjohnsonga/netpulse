@@ -7,6 +7,25 @@ All notable changes to spane (NetPulse) are documented here. Versions follow the
 ## Unreleased
 
 ### Added
+- **Alert dispatch layer + email/Teams notifiers** — AlertEvents now deliver to
+  the configured `AlertChannel`s (previously fired/showed in the UI but sent
+  nothing). A single `apps/alerts/dispatch.py` choke point is wired via an
+  AlertEvent `post_save` signal (+ the `.update()`-based resolve paths), so every
+  alert source (interface/reachability/stability/liveness/functional/environment/
+  circuits/compliance/…) routes through the same dispatch. Pluggable notifier
+  registry: **email** (HTML + text, recipients from channel config) and
+  **Microsoft Teams** (Adaptive Card or legacy MessageCard, severity-coloured,
+  "View in spane" button, green recovery card on resolve), plus webhook/slack/
+  PagerDuty notifiers. Fire/resolve **debounce** (notify once per FIRING + once
+  per RESOLVED via `fired_notified_at`/`resolved_notified_at`, atomic claim — a
+  flapping alert can't spam), per-channel **retry/backoff**, and **failure
+  isolation** (one bad channel never blocks the others or crashes the engine).
+  Severity-threshold + label-routing channel matching; `config.all_alerts` global
+  channels. Channel secrets (Teams/webhook URLs, PagerDuty routing keys) stored in
+  OpenBao. New `TEAMS` channel type (alerts migration 0004). `POST /api/alerts/
+  channels/{id}/test/` and `manage.py fire_test_alert` for verification.
+  `tests/test_alert_dispatch.py` (33). Disabled in the test suite via
+  `ALERT_DISPATCH_ENABLED`.
 - **Service stability monitoring** (role-independent): operator-watched services
   (`desired_config.stability.services`), `WatchedServiceStatus`, **Service Down**
   + **Service Flapping** alerts (debounce + auto-resolve).

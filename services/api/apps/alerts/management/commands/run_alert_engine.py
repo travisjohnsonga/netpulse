@@ -11,8 +11,13 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         # Stub: stay alive quietly until stopped, instead of exiting (which made
-        # the container restart-loop under restart:unless-stopped). Real event
-        # evaluation/dispatch lands later.
+        # the container restart-loop under restart:unless-stopped). NOTE: alert
+        # *dispatch* no longer "lands later" — it is wired via the AlertEvent
+        # post_save signal (apps/alerts/signals.py → dispatch.py), which is
+        # connected in every process that writes AlertEvents (reachability
+        # monitor, check engine, scheduler, stream-processor, …), so delivery
+        # happens inline at the fire/resolve point. What remains for this engine
+        # is future rule-condition *evaluation* (turning raw events into alerts).
         logger.info("run_alert_engine: starting (stub)")
         try:
             while True:
