@@ -223,6 +223,17 @@ class Device(TimestampedModel):
     # When the device first transitioned to 'unreachable' (cleared on recovery).
     # Drives the downtime duration shown in the device-list status badge.
     unreachable_since = models.DateTimeField(null=True, blank=True)
+    # Per-device alert silencing (applies to BOTH network devices and servers —
+    # a server's alerts carry this Device's id). NOTIFICATION-only suppression:
+    # the AlertEvent is still generated (UI shows truth), only dispatch is skipped.
+    # Enforced in apps/alerts/dispatch.py:dispatch_event.
+    #   alerting_enabled=False → permanent observe-only (dev/test/qa boxes). The
+    #     broad generalization of Agent.liveness_alerts_enabled (which stays as the
+    #     liveness-specific *creation* suppressor and is NOT replaced).
+    #   silenced_until → timed mute; suppresses until the timestamp passes, then
+    #     AUTO-RESUMES (the safety property — a patch-mute can't become permanent).
+    alerting_enabled = models.BooleanField(default=True)
+    silenced_until = models.DateTimeField(null=True, blank=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     role = models.ForeignKey(
         "devices.DeviceRole",

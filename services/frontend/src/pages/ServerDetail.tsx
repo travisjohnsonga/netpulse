@@ -7,12 +7,14 @@ import {
   fetchServer, fetchServerMetricHistory, fetchServerRoleAssignments,
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
   changeServerSite, fetchSites, fetchServerConfig, updateServerConfig, updateServerLiveness,
+  updateServerAlerting,
   type ServerDetail as ServerDetailT, type MetricHistory, type ServerNetworkState,
   type ServerDetailMetrics,
   type AssignedRole, type DetectedRole, type ServerRole, type Site,
   type AgentDesiredConfig,
 } from '../api/client'
 import { useCapabilities } from '../store/authStore'
+import AlertingControl from '../components/AlertingControl'
 import { parseApiErrors } from '../api/errors'
 import { STRIPED_ROW, CONTENT_TABLE } from '../lib/tableStyles'
 import { useTabParam } from '../lib/useTabParam'
@@ -442,6 +444,7 @@ export default function ServerDetail() {
               <div className="text-xs text-gray-400 mt-2">5m {dm.load.load5?.toFixed(2) ?? '—'} · 15m {dm.load.load15?.toFixed(2) ?? '—'}</div>
             </div>
           </div>
+          <ServerAlertingRow server={server} onChanged={load} />
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">CPU — {RANGE_LABEL[range]}</div>
             <LineChart history={cpuHist} fields={['usage_pct']} height={200} />
@@ -539,6 +542,20 @@ function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: ()
 // threshold, with a capability-gated enable/disable toggle (agent:edit). Disable
 // is the escape hatch for a host that legitimately sleeps (the lab) so it doesn't
 // alert-storm. Audit-logged server-side.
+// Per-server alert silencing (observe-only + timed mute). Writes the agent's
+// Device flags via /servers/{id}/alerting/; gated by agent:edit.
+function ServerAlertingRow({ server, onChanged }: { server: ServerDetailT; onChanged: () => void }) {
+  const canEdit = useCapabilities().includes('agent:edit')
+  return (
+    <AlertingControl
+      alertingEnabled={server.alerting_enabled ?? true}
+      silencedUntil={server.silenced_until ?? null}
+      canEdit={canEdit}
+      onUpdate={async (patch) => { await updateServerAlerting(server.id, patch); onChanged() }}
+    />
+  )
+}
+
 function LivenessRow({ server, onChanged }: { server: ServerDetailT; onChanged: () => void }) {
   const caps = useCapabilities()
   const canEdit = caps.includes('agent:edit')

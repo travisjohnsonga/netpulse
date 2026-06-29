@@ -1566,6 +1566,9 @@ export interface Server {
   is_online?: boolean
   offline_threshold_seconds?: number | null
   liveness_alerts_enabled?: boolean
+  // Per-device alert silencing (on the agent's Device; set via /servers/{id}/alerting/).
+  alerting_enabled?: boolean
+  silenced_until?: string | null
   agent_version: string
   cert_expires_at: string | null
   collection_interval: number
@@ -1726,6 +1729,19 @@ export async function updateServerLiveness(
   patch: { offline_threshold_seconds?: number | null; liveness_alerts_enabled?: boolean },
 ): Promise<ServerDetail> {
   const { data } = await api.patch<ServerDetail>(`/servers/${id}/liveness/`, patch)
+  return data
+}
+
+// Per-device/server alert silencing (generate-but-don't-notify). alerting_enabled
+// = observe-only; silenced_until = timed mute (ISO, or null to un-silence).
+// Gated by device:edit / agent:edit + audited server-side.
+export type AlertingPatch = { alerting_enabled?: boolean; silenced_until?: string | null }
+export async function updateDeviceAlerting(id: number, patch: AlertingPatch): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(`/devices/${id}/alerting/`, patch)
+  return data
+}
+export async function updateServerAlerting(id: string, patch: AlertingPatch): Promise<ServerDetail> {
+  const { data } = await api.patch<ServerDetail>(`/servers/${id}/alerting/`, patch)
   return data
 }
 
@@ -3020,6 +3036,9 @@ export interface DeviceDetail {
   is_reachable?: boolean
   consecutive_failures?: number
   last_reachability_check?: string | null
+  // Per-device alert silencing (set via /devices/{id}/alerting/).
+  alerting_enabled?: boolean
+  silenced_until?: string | null
   collector_name?: string | null
   collector_ip?: string | null
   collector_status?: string | null

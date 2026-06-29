@@ -786,6 +786,29 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         device = self.get_object()
         return Response(check_and_update_hostname(device))
 
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["patch"], url_path="alerting")
+    def alerting(self, request, pk=None):
+        """Per-device alert silencing: `alerting_enabled` (False = observe-only) +
+        `silenced_until` (timed mute, null to un-silence). NOTIFICATION-only —
+        AlertEvents still generate; only dispatch is suppressed. device:edit; audited."""
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+
+        from .serializers import DeviceAlertingSerializer
+        device = self.get_object()
+        ser = DeviceAlertingSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        changed = [f for f in ("alerting_enabled", "silenced_until") if f in ser.validated_data]
+        for f in changed:
+            setattr(device, f, ser.validated_data[f])
+        if changed:
+            device.save(update_fields=changed + ["updated_at"])
+            log_event(AuditLog.EventType.DEVICE_UPDATED, request=request, target=device,
+                      description=f"Alert silencing changed for {device.hostname}",
+                      metadata={k: str(getattr(device, k)) for k in changed})
+        return Response(self.get_serializer(device).data)
+
     @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="poll-now")
     def poll_now(self, request, pk=None):

@@ -121,6 +121,10 @@ class AgentSerializer(serializers.ModelSerializer):
     # Authoritative online state (same threshold the liveness alert uses) so the
     # UI badge agrees with alerting instead of computing its own window.
     is_online = serializers.BooleanField(read_only=True)
+    # Per-device alert silencing (lives on the agent's Device; set via the
+    # /servers/{id}/alerting/ action). Read-only here.
+    alerting_enabled = serializers.BooleanField(source="device.alerting_enabled", read_only=True, default=True)
+    silenced_until = serializers.DateTimeField(source="device.silenced_until", read_only=True, default=None)
 
     class Meta:
         model = Agent
@@ -129,7 +133,8 @@ class AgentSerializer(serializers.ModelSerializer):
             "os_version", "os_kernel", "arch", "version",
             "cert_serial", "cert_expires_at", "status", "collection_interval",
             "role_types", "last_seen", "is_online",
-            "offline_threshold_seconds", "liveness_alerts_enabled", "created_at",
+            "offline_threshold_seconds", "liveness_alerts_enabled",
+            "alerting_enabled", "silenced_until", "created_at",
         )
         read_only_fields = fields
 
@@ -153,6 +158,9 @@ class ServerSerializer(serializers.ModelSerializer):
     # they were stored (older agents sent bare name strings).
     services_collected = serializers.SerializerMethodField()
     reported_services = serializers.SerializerMethodField()
+    # Per-device alert silencing (on the agent's Device; set via /servers/{id}/alerting/).
+    alerting_enabled = serializers.BooleanField(source="device.alerting_enabled", read_only=True, default=True)
+    silenced_until = serializers.DateTimeField(source="device.silenced_until", read_only=True, default=None)
 
     class Meta:
         model = Agent
@@ -160,6 +168,7 @@ class ServerSerializer(serializers.ModelSerializer):
             "id", "hostname", "os", "os_name", "os_version", "os_kernel", "arch",
             "status", "last_seen", "is_online",
             "offline_threshold_seconds", "liveness_alerts_enabled",
+            "alerting_enabled", "silenced_until",
             "agent_version", "cert_expires_at", "collection_interval",
             "device_id", "last_ip", "site", "roles", "latest_metrics",
             "reported_services", "services_collected", "created_at",

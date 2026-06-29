@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   fetchDeviceRiskScore, fetchDeviceAlerts, fetchMonitoredInterfaces, fetchRecentConfigs, fetchCredential,
-  fetchDeviceMetrics, enrichDevice, checkHostname, fetchDeviceAudit,
+  fetchDeviceMetrics, enrichDevice, checkHostname, fetchDeviceAudit, updateDeviceAlerting,
   type DeviceDetail, type RiskScore, type AlertEvent, type RecentConfig, type DeviceMetrics,
   type AuditLogEntry, UNIFI_CONSOLE_PLATFORMS,
 } from '../../api/client'
 import Gauge from '../../components/Gauge'
 import DeviceEditModal from '../../components/DeviceEditModal'
+import AlertingControl from '../../components/AlertingControl'
 import ConsoleTelemetry from './ConsoleTelemetry'
+import { useCapabilities } from '../../store/authStore'
 
 const SEVERITY_BADGE: Record<string, string> = {
   critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
@@ -33,6 +35,7 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
   const [credName, setCredName] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
   const [audit, setAudit] = useState<AuditLogEntry[] | null>(null)
+  const canEdit = useCapabilities().includes('device:edit')
 
   useEffect(() => {
     fetchDeviceAudit(device.id, 10).then(setAudit).catch(() => setAudit([]))
@@ -181,6 +184,13 @@ export default function Overview({ device, onTab, onRefresh, onManageCredentials
       </Card>
 
       {/* Status indicators */}
+      <AlertingControl
+        alertingEnabled={device.alerting_enabled ?? true}
+        silencedUntil={device.silenced_until ?? null}
+        canEdit={canEdit}
+        onUpdate={async (patch) => { await updateDeviceAlerting(device.id, patch); onRefresh?.() }}
+      />
+
       <Card>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Status</h3>
         <div className="space-y-3">

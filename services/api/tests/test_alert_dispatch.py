@@ -548,3 +548,54 @@ class TestDeliveryReliability:
                                        status="sent", attempts=1)
         h2 = delivery_health()
         assert h2["healthy"] is True and h2["channels_failing"] == 0
+
+
+# ── per-device/server silencing (generate-but-don't-notify) ────────────────────
+
+class TestDeviceSilencing:
+    def _device(self, **kw):
+        from apps.devices.models import Device
+        kw.setdefault("device_kind", "network_device")
+        return Device.objects.create(**kw)
+
+    @ENABLED
+    def test_observe_only_generates_but_skips_dispatch(self, rec):
+        dev = self._device(hostname="d-obs", ip_address="10.7.0.1", alerting_enabled=False)
+        rule = make_rule(); ch = make_channel(); rule.channels.add(ch)
+        ev = make_event(rule, device_id=dev.id)
+        s = dispatch.dispatch_event(ev, "firing")
+        assert s["reason"] == "device_alerting_disabled"
+        assert rec.calls == []
+        assert AlertEvent.objects.filter(id=ev.id).exists()            # still generated
+        assert NotificationLog.objects.filter(event=ev).count() == 0   # not notified
+
+    @ENABLED
+    def test_silenced_until_future_skips(self, rec):
+        from datetime import timedelta
+        from django.utils import timezone
+        dev = self._device(hostname="d-sil", ip_address="10.7.0.2", device_kind="server",
+                           silenced_until=timezone.now() + timedelta(hours=1))
+        rule = make_rule(); ch = make_channel(); rule.channels.add(ch)
+        ev = make_event(rule, device_id=dev.id)
+        s = dispatch.dispatch_event(ev, "firing")
+        assert s["reason"] == "device_silenced"
+        assert rec.calls == []
+
+    @ENABLED
+    def test_silence_expired_auto_resumes(self, rec):
+        from datetime import timedelta
+        from django.utils import timezone
+        dev = self._device(hostname="d-exp", ip_address="10.7.0.3",
+                           silenced_until=timezone.now() - timedelta(minutes=1))
+        rule = make_rule(); ch = make_channel(); rule.channels.add(ch)
+        ev = make_event(rule, device_id=dev.id)
+        s = dispatch.dispatch_event(ev, "firing")
+        assert s["sent"] == 1  # past silenced_until → auto-resumed
+
+    @ENABLED
+    def test_normal_device_notifies(self, rec):
+        dev = self._device(hostname="d-norm", ip_address="10.7.0.4")
+        rule = make_rule(); ch = make_channel(); rule.channels.add(ch)
+        ev = make_event(rule, device_id=dev.id)
+        s = dispatch.dispatch_event(ev, "firing")
+        assert s["sent"] == 1
