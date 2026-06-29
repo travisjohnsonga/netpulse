@@ -67,7 +67,7 @@ FUNCTIONAL_MAX_URLS = 20
 # (loopback). The agent checks its own site; it must never be pointed at an
 # arbitrary internal/external address. Enforced server-side (serializer) AND
 # agent-side (defense in depth, incl. redirect re-validation).
-_SELF_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+_SELF_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}  # nosec B104 — SSRF self-host URL allowlist (host strings to match), not a socket bind
 
 
 def is_allowed_self_url(url: str) -> bool:
