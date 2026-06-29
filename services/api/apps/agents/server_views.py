@@ -39,6 +39,9 @@ def _merge_config(stored: dict, patch: dict) -> dict:
         out["stability"] = {**(out.get("stability") or {}), **patch["stability"]}
     if "functional" in patch:
         out["functional"] = {**(out.get("functional") or {}), **patch["functional"]}
+    if "role_services" in patch:
+        # Per-role merge so editing one role's selection doesn't drop the others.
+        out["role_services"] = {**(out.get("role_services") or {}), **patch["role_services"]}
     return out
 
 
