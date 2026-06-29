@@ -494,7 +494,7 @@ export default function ServerDetail() {
 
       {tab === 'Services' && <ServicesTab server={server} onTab={setTab} onChanged={load} />}
       {tab === 'Roles' && <RolesTab id={id} os={server.os} />}
-      {tab === 'Config' && <ConfigTab id={id} os={server.os} />}
+      {tab === 'Config' && <ConfigTab id={id} os={server.os} onChanged={load} />}
 
       {tab === 'Logs' && <ServerLogsTab hostname={server.hostname} />}
 
@@ -1212,7 +1212,7 @@ const FUNC_PRESET: Record<Exclude<FuncMode, 'custom'>, string[]> = {
   default: [], http: ['http://localhost/'], https: ['https://localhost/'],
 }
 
-function ConfigTab({ id, os }: { id: string; os: string }) {
+function ConfigTab({ id, os, onChanged }: { id: string; os: string; onChanged: () => void }) {
   const canEdit = useCapabilities().includes('agent:edit')
   const [cfg, setCfg] = useState<AgentDesiredConfig | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1222,12 +1222,19 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
   const [newMount, setNewMount] = useState('')
   const [mountList, setMountList] = useState<'exclude_mounts' | 'include_mounts'>('exclude_mounts')
   const [newUrl, setNewUrl] = useState('')
+  // Explicit functional-mode intent. The mode is normally DERIVED from the URL
+  // list, but that can't represent "Custom" when the URLs happen to equal a
+  // preset (or are empty) — so picking a radio records intent here and it wins
+  // over the derived value. Reset to null on (re)load so saved configs display
+  // by their derived mode.
+  const [modeSel, setModeSel] = useState<FuncMode | null>(null)
   // Assigned roles + role definitions, for the per-server role-service selection.
   const [roles, setRoles] = useState<AssignedRole[]>([])
   const [roleDefs, setRoleDefs] = useState<ServerRole[]>([])
 
   const load = useCallback(() => {
-    fetchServerConfig(id).then(setCfg).catch(() => setError('Failed to load config.'))
+    fetchServerConfig(id).then((c) => { setCfg(c); setModeSel(null) })
+      .catch(() => setError('Failed to load config.'))
   }, [id])
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -1260,14 +1267,19 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
   // Functional web check (per-server override of the role-derived probe URLs).
   const funcUrls = cfg.functional?.web?.urls ?? []
   const funcBad = funcUrls.filter((u) => !isOnHostUrl(u))
-  const funcMode: FuncMode = funcUrls.length === 0 ? 'default'
+  const derivedMode: FuncMode = funcUrls.length === 0 ? 'default'
     : funcUrls.length === 1 && funcUrls[0] === FUNC_PRESET.http[0] ? 'http'
     : funcUrls.length === 1 && funcUrls[0] === FUNC_PRESET.https[0] ? 'https'
     : 'custom'
+  // Explicit intent wins; otherwise fall back to what the URLs imply.
+  const funcMode: FuncMode = modeSel ?? derivedMode
   const setFunc = (urls: string[]) => { setCfg({ ...cfg, functional: { web: { urls } } }); setSaveState('idle') }
   const setFuncMode = (m: FuncMode) => {
-    if (m === 'custom') setFunc(funcUrls.length ? funcUrls : [...FUNC_PRESET.http])
-    else setFunc([...FUNC_PRESET[m]])
+    setModeSel(m)
+    // Presets replace the URL list; Custom keeps the current URLs (so the input
+    // shows even when they equal a preset, or stays empty for a fresh entry —
+    // the modeSel intent keeps the Custom input open regardless of URL values).
+    if (m !== 'custom') setFunc([...FUNC_PRESET[m]])
   }
   const addUrl = () => {
     const u = newUrl.trim()
@@ -1318,7 +1330,11 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
         stability: { services: watched },
       })
       setCfg(updated)
+      setModeSel(null)
       setSaveState('pending')
+      // Re-fetch the parent server so the Services tab's watched_services and the
+      // Roles tab's role status reflect this write immediately (no hard refresh).
+      onChanged()
     } catch (e: unknown) {
       const status = (e as { response?: { status?: number } })?.response?.status
       setError(status === 403 ? 'You lack the agent:edit capability to change config.'
