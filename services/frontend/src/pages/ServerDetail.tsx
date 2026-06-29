@@ -8,6 +8,7 @@ import {
   assignServerRole, removeServerRole, detectServerRoles, fetchServerRoles,
   changeServerSite, fetchSites, fetchServerConfig, updateServerConfig, updateServerLiveness,
   type ServerDetail as ServerDetailT, type MetricHistory, type ServerNetworkState,
+  type ServerDetailMetrics,
   type AssignedRole, type DetectedRole, type ServerRole, type Site,
   type AgentDesiredConfig,
 } from '../api/client'
@@ -15,10 +16,11 @@ import { useCapabilities } from '../store/authStore'
 import { parseApiErrors } from '../api/errors'
 import { STRIPED_ROW, CONTENT_TABLE } from '../lib/tableStyles'
 import { useTabParam } from '../lib/useTabParam'
-import { fetchPingSummary, type PingSummary } from '../api/client'
+import { fetchPingSummary, fetchLogs, type PingSummary, type LogEntry } from '../api/client'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
+import { severityBadge } from '../lib/severity'
 
-const TABS = ['Overview', 'CPU', 'Memory', 'Disk', 'Network', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
+const TABS = ['Overview', 'Statistics', 'Processes', 'Services', 'Roles', 'Config', 'Logs', 'Alerts'] as const
 type Tab = typeof TABS[number]
 
 function fmtBytes(n?: number | null): string {
@@ -156,6 +158,185 @@ function useHistory(id: string, metric: string, active: boolean, range: TimeRang
   return data
 }
 
+const STAT_CARD = 'bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4'
+const STAT_TITLE = 'text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2'
+const TOP_N = 5
+
+// "Show all N / Show top 5" toggle for the multi-item resource lists.
+function ShowAll({ total, open, onToggle }: { total: number; open: boolean; onToggle: () => void }) {
+  if (total <= TOP_N) return null
+  return (
+    <button onClick={onToggle}
+      className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400">
+      {open ? `Show top ${TOP_N}` : `Show all ${total}`}
+    </button>
+  )
+}
+
+// Combined Statistics tab: CPU + Memory + Disk + Network on one page. The
+// multi-item lists (cores / disks / interfaces) show the top 5 by utilization
+// with a "Show all" expand. All four histories are loaded by the parent when
+// this tab is active; the page range selector drives them.
+function StatisticsTab({ dm, range, cpuHist, memHist, diskHist, netHist }: {
+  dm: ServerDetailMetrics; range: TimeRange
+  cpuHist?: MetricHistory; memHist?: MetricHistory; diskHist?: MetricHistory; netHist?: MetricHistory
+}) {
+  const [coresOpen, setCoresOpen] = useState(false)
+  const [disksOpen, setDisksOpen] = useState(false)
+  const [nicsOpen, setNicsOpen] = useState(false)
+
+  const cores = [...dm.cpu_cores].sort((a, b) => b.usage_pct - a.usage_pct)
+  const disks = [...dm.disks].sort((a, b) => (b.usage_pct ?? 0) - (a.usage_pct ?? 0))
+  const nics = [...dm.interfaces].sort(
+    (a, b) => ((b.rx_bps ?? 0) + (b.tx_bps ?? 0)) - ((a.rx_bps ?? 0) + (a.tx_bps ?? 0)))
+  const shownCores = coresOpen ? cores : cores.slice(0, TOP_N)
+  const shownDisks = disksOpen ? disks : disks.slice(0, TOP_N)
+  const shownNics = nicsOpen ? nics : nics.slice(0, TOP_N)
+
+  return (
+    <div className="space-y-5">
+      <div className="grid lg:grid-cols-2 gap-5">
+        {/* CPU */}
+        <div className={STAT_CARD}>
+          <div className={STAT_TITLE}>CPU — {RANGE_LABEL[range]}</div>
+          <LineChart history={cpuHist} fields={['usage_pct', 'user', 'system', 'iowait']} height={200} />
+          {!!cores.length && (
+            <div className="mt-4">
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">
+                Per-core{cores.length > TOP_N && !coresOpen ? ` (top ${TOP_N} of ${cores.length})` : ''}
+              </div>
+              <div className="space-y-2">
+                {shownCores.map((c) => (
+                  <div key={c.core} className="flex items-center gap-3">
+                    <span className="text-xs w-16 text-gray-500 dark:text-gray-400">{c.core}</span>
+                    <div className="flex-1 h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                      <div className={`h-full ${color(c.usage_pct)}`} style={{ width: `${Math.min(100, c.usage_pct)}%` }} />
+                    </div>
+                    <span className="text-xs w-10 text-right tabular-nums text-gray-600 dark:text-gray-300">{Math.round(c.usage_pct)}%</span>
+                  </div>
+                ))}
+              </div>
+              <ShowAll total={cores.length} open={coresOpen} onToggle={() => setCoresOpen((v) => !v)} />
+            </div>
+          )}
+        </div>
+
+        {/* Memory */}
+        <div className={STAT_CARD}>
+          <div className={STAT_TITLE}>Memory — {RANGE_LABEL[range]}</div>
+          <LineChart history={memHist} fields={['usage_pct']} height={200} />
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            {[['Total', dm.memory.total_bytes], ['Used', dm.memory.used_bytes], ['Cached', dm.memory.cached_bytes],
+              ['Free', dm.memory.free_bytes], ['Swap total', dm.memory.swap_total], ['Swap used', dm.memory.swap_used]].map(([l, v]) => (
+              <div key={l as string}>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{l}</div>
+                <div className="font-medium text-gray-900 dark:text-gray-100">{fmtBytes(v as number)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Disk */}
+      <div className={STAT_CARD}>
+        <div className={STAT_TITLE}>Disk{disks.length > TOP_N && !disksOpen ? ` (top ${TOP_N} of ${disks.length} by use%)` : ''}</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-gray-500 dark:text-gray-400"><tr>{['Mount', 'Total', 'Used', 'Free', 'Use%'].map((h) => <th key={h} className="px-2 py-1">{h}</th>)}</tr></thead>
+            <tbody>
+              {shownDisks.length ? shownDisks.map((d) => (
+                <tr key={d.mount} className={STRIPED_ROW}>
+                  <td className="px-2 py-1 font-medium text-gray-800 dark:text-gray-200">{d.mount}</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{fmtBytes(d.total_bytes)}</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{fmtBytes(d.used_bytes)}</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{fmtBytes(d.free_bytes)}</td>
+                  <td className={`px-2 py-1 ${(d.usage_pct ?? 0) >= 80 ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-600 dark:text-gray-300'}`}>{d.usage_pct == null ? '—' : `${Math.round(d.usage_pct)}%`}</td>
+                </tr>
+              )) : <tr><td colSpan={5} className="px-2 py-6 text-center text-gray-500 dark:text-gray-400">No disk data.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <ShowAll total={disks.length} open={disksOpen} onToggle={() => setDisksOpen((v) => !v)} />
+        <div className="mt-4"><LineChart history={diskHist} fields={['usage_pct']} height={200} /></div>
+      </div>
+
+      {/* Network */}
+      <div className={STAT_CARD}>
+        <div className={STAT_TITLE}>Network{nics.length > TOP_N && !nicsOpen ? ` (top ${TOP_N} of ${nics.length} by throughput)` : ''}</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-gray-500 dark:text-gray-400"><tr>{['Interface', 'RX bps', 'TX bps', 'RX err', 'TX err'].map((h) => <th key={h} className="px-2 py-1">{h}</th>)}</tr></thead>
+            <tbody>
+              {shownNics.length ? shownNics.map((i) => (
+                <tr key={i.interface} className={STRIPED_ROW}>
+                  <td className="px-2 py-1 font-medium text-gray-800 dark:text-gray-200">{i.interface}</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{fmtBytes(i.rx_bps)}/s</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{fmtBytes(i.tx_bps)}/s</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{i.rx_errors ?? 0}</td>
+                  <td className="px-2 py-1 text-gray-600 dark:text-gray-300">{i.tx_errors ?? 0}</td>
+                </tr>
+              )) : <tr><td colSpan={5} className="px-2 py-6 text-center text-gray-500 dark:text-gray-400">No interface data.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <ShowAll total={nics.length} open={nicsOpen} onToggle={() => setNicsOpen((v) => !v)} />
+        <div className="mt-4"><LineChart history={netHist} fields={['rx_bps', 'tx_bps']} height={200} /></div>
+      </div>
+    </div>
+  )
+}
+
+// Server-scoped logs embedded on the detail Logs tab (same device_hostname
+// filter the Logs page uses) — no redirect; recent N for this host inline.
+function ServerLogsTab({ hostname }: { hostname: string }) {
+  const [rows, setRows] = useState<LogEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    fetchLogs({ device_hostname: hostname, page_size: '50' })
+      .then((d) => { if (active) setRows(d.results || []) })
+      .catch(() => { if (active) setRows([]) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [hostname])
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b dark:border-gray-700">
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent logs</div>
+        <Link to={`/logs?device_hostname=${encodeURIComponent(hostname)}`}
+          className="text-sm text-blue-600 dark:text-blue-400 hover:underline">View all in Logs →</Link>
+      </div>
+      {loading ? (
+        <div className="p-6 text-sm text-gray-500 dark:text-gray-400">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="p-6 text-sm text-gray-500 dark:text-gray-400">
+          No logs forwarded for this server yet. (Agent log forwarding ships new log
+          lines as they appear; an idle host produces few.)
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
+              <tr>{['Time', 'Severity', 'Message'].map((h) => <th key={h} className="px-4 py-2 font-medium">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className={STRIPED_ROW}>
+                  <td className="px-4 py-1.5 whitespace-nowrap font-mono text-xs text-gray-500 dark:text-gray-400">{new Date(r.timestamp).toLocaleString()}</td>
+                  <td className="px-4 py-1.5"><span className={severityBadge(r.severity_label || r.severity)}>{r.severity_label || r.severity}</span></td>
+                  <td className="px-4 py-1.5 font-mono text-xs text-gray-700 dark:text-gray-300">{r.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ServerDetail() {
   const { id = '' } = useParams()
   const [server, setServer] = useState<ServerDetailT>()
@@ -186,10 +367,12 @@ export default function ServerDetail() {
   }, [server?.device_id])
 
   // One range drives every chart on the page (matches the device telemetry side).
-  const cpuHist = useHistory(id, 'cpu', tab === 'CPU' || tab === 'Overview', range)
-  const memHist = useHistory(id, 'memory', tab === 'Memory', range)
-  const diskHist = useHistory(id, 'disk', tab === 'Disk', range)
-  const netHist = useHistory(id, 'network', tab === 'Network', range)
+  // All four histories load together on the Statistics tab (cpu also on Overview).
+  const stats = tab === 'Statistics'
+  const cpuHist = useHistory(id, 'cpu', stats || tab === 'Overview', range)
+  const memHist = useHistory(id, 'memory', stats, range)
+  const diskHist = useHistory(id, 'disk', stats, range)
+  const netHist = useHistory(id, 'network', stats, range)
 
   if (error) return <div className="p-6 text-red-600">{error}</div>
   if (!server) return <div className="p-6 text-gray-500">Loading…</div>
@@ -293,94 +476,9 @@ export default function ServerDetail() {
         </div>
       )}
 
-      {tab === 'CPU' && (
-        <div className="space-y-5">
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">CPU usage (user / system / iowait)</div>
-            <LineChart history={cpuHist} fields={['usage_pct', 'user', 'system', 'iowait']} />
-          </div>
-          {!!dm.cpu_cores.length && (
-            <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Per-core</div>
-              <div className="space-y-2">
-                {dm.cpu_cores.map((c) => (
-                  <div key={c.core} className="flex items-center gap-3">
-                    <span className="text-xs w-16 text-gray-500">{c.core}</span>
-                    <div className="flex-1 h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
-                      <div className={`h-full ${color(c.usage_pct)}`} style={{ width: `${Math.min(100, c.usage_pct)}%` }} />
-                    </div>
-                    <span className="text-xs w-10 text-right tabular-nums">{Math.round(c.usage_pct)}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === 'Memory' && (
-        <div className="space-y-5">
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Memory usage — {RANGE_LABEL[range]}</div>
-            <LineChart history={memHist} fields={['usage_pct']} />
-          </div>
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            {[['Total', dm.memory.total_bytes], ['Used', dm.memory.used_bytes], ['Cached', dm.memory.cached_bytes], ['Free', dm.memory.free_bytes],
-              ['Swap total', dm.memory.swap_total], ['Swap used', dm.memory.swap_used]].map(([l, v]) => (
-              <div key={l as string}><div className="text-xs text-gray-500">{l}</div><div className="font-medium text-gray-900 dark:text-gray-100">{fmtBytes(v as number)}</div></div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {tab === 'Disk' && (
-        <div className="space-y-5">
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500"><tr>{['Mount', 'Total', 'Used', 'Free', 'Use%'].map((h) => <th key={h} className="px-2 py-1">{h}</th>)}</tr></thead>
-              <tbody>
-                {dm.disks.length ? dm.disks.map((d) => (
-                  <tr key={d.mount} className="border-t dark:border-gray-700/60">
-                    <td className="px-2 py-1 font-medium">{d.mount}</td>
-                    <td className="px-2 py-1">{fmtBytes(d.total_bytes)}</td>
-                    <td className="px-2 py-1">{fmtBytes(d.used_bytes)}</td>
-                    <td className="px-2 py-1">{fmtBytes(d.free_bytes)}</td>
-                    <td className={`px-2 py-1 ${(d.usage_pct ?? 0) >= 80 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}>{d.usage_pct == null ? '—' : `${Math.round(d.usage_pct)}%`}</td>
-                  </tr>
-                )) : <tr><td colSpan={5} className="px-2 py-6 text-center text-gray-500">No disk data.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Disk utilization — {RANGE_LABEL[range]}</div>
-            <LineChart history={diskHist} fields={['usage_pct']} />
-          </div>
-        </div>
-      )}
-
-      {tab === 'Network' && (
-        <div className="space-y-5">
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500"><tr>{['Interface', 'RX bps', 'TX bps', 'RX err', 'TX err'].map((h) => <th key={h} className="px-2 py-1">{h}</th>)}</tr></thead>
-              <tbody>
-                {dm.interfaces.length ? dm.interfaces.map((i) => (
-                  <tr key={i.interface} className="border-t dark:border-gray-700/60">
-                    <td className="px-2 py-1 font-medium">{i.interface}</td>
-                    <td className="px-2 py-1">{fmtBytes(i.rx_bps)}/s</td>
-                    <td className="px-2 py-1">{fmtBytes(i.tx_bps)}/s</td>
-                    <td className="px-2 py-1">{i.rx_errors ?? 0}</td>
-                    <td className="px-2 py-1">{i.tx_errors ?? 0}</td>
-                  </tr>
-                )) : <tr><td colSpan={5} className="px-2 py-6 text-center text-gray-500">No interface data.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Throughput — {RANGE_LABEL[range]}</div>
-            <LineChart history={netHist} fields={['rx_bps', 'tx_bps']} />
-          </div>
-        </div>
+      {tab === 'Statistics' && (
+        <StatisticsTab dm={dm} range={range}
+          cpuHist={cpuHist} memHist={memHist} diskHist={diskHist} netHist={netHist} />
       )}
 
       {tab === 'Processes' && (
@@ -395,11 +493,7 @@ export default function ServerDetail() {
       {tab === 'Roles' && <RolesTab id={id} os={server.os} />}
       {tab === 'Config' && <ConfigTab id={id} os={server.os} />}
 
-      {tab === 'Logs' && (
-        <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-6 text-sm text-gray-500">
-          Server logs are indexed centrally. <Link to={`/logs?q=${encodeURIComponent(server.hostname)}`} className="text-blue-600 dark:text-blue-400">Open Logs filtered by {server.hostname} →</Link>
-        </div>
-      )}
+      {tab === 'Logs' && <ServerLogsTab hostname={server.hostname} />}
 
       {tab === 'Alerts' && <div className="max-w-2xl"><AlertsPanel server={server} /></div>}
     </div>

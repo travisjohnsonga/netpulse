@@ -120,6 +120,31 @@ on recovery.
 
 ---
 
+## Role dashboard — servers grouped by role + role-check health — *Near-term (post log-forwarding diagnosis)*
+
+**The idea.** A dashboard organized **by role** rather than by server. Today roles
+are surfaced per-server (the server-detail Roles tab) and per-profile (the Server
+Role Profiles table) — there's no aggregate "show me all servers BY role + their
+role-check health" view. Pick/see a role (Web Server, Domain Controller, DNS, …)
+and see **all servers with that role + each one's role-check status**
+(healthy/degraded/down from the functional + service/port checks).
+
+**Why it's tractable.** The data already exists — `AgentRoleStatus` holds per-
+(agent, role_type) check results (services/ports/custom pass/fail), and the
+functional-health verdict (#126/#132) gives the web-role rollup. This is an
+aggregation view over existing models, not new collection.
+
+**Surfaces.** Per-role health rollup ("X of Y DNS servers healthy"); the list of
+servers in each role with their check status; drill into a failing one. Answers
+"are all my DNS servers healthy?" / "which Domain Controllers are failing checks?"
+at a glance.
+
+**Builds on.** The role-check work — #123 (per-check detail), #126 (functional
+health), #132 (functional-verdict headline). Sequenced **after** the agent
+log-forwarding diagnosis.
+
+---
+
 ## Fleet: "agents needing update" view — *Near-term*
 
 **The idea.** Now that an agent's stored version refreshes from its metrics

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, Fragment } from 'react'
 import clsx from 'clsx'
 import { SectionHeader } from '../Settings'
 import {
@@ -200,11 +200,56 @@ function statusDot(status: string) {
     status === 'active' ? 'bg-green-500' : status === 'revoked' ? 'bg-red-500' : 'bg-gray-400')
 }
 
+// Expanded role-profile detail: what the role monitors + the exact services /
+// ports / custom checks it runs (reference for each built-in role).
+function RoleDetail({ role }: { role: ServerRole }) {
+  const chip = 'inline-block px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-mono'
+  const heading = 'text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1'
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-700 dark:text-gray-300">
+        {role.description || <span className="text-gray-400 dark:text-gray-500">No description.</span>}
+      </p>
+      <div className="grid sm:grid-cols-2 gap-4">
+        <div>
+          <div className={heading}>Windows services</div>
+          {role.windows_services.length
+            ? <div className="flex flex-wrap gap-1">{role.windows_services.map((s) => <span key={s} className={chip}>{s}</span>)}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+        <div>
+          <div className={heading}>Linux services</div>
+          {role.linux_services.length
+            ? <div className="flex flex-wrap gap-1">{role.linux_services.map((s) => <span key={s} className={chip}>{s}</span>)}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+        <div>
+          <div className={heading}>Port checks</div>
+          {role.port_checks.length
+            ? <div className="flex flex-wrap gap-1">{role.port_checks.map((p, i) => (
+                <span key={i} className={chip}>{p.proto.toUpperCase()} {p.port} ({p.name}){p.optional ? ' ·opt' : ''}</span>
+              ))}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+        <div>
+          <div className={heading}>Custom checks</div>
+          {role.custom_checks.length
+            ? <div className="flex flex-wrap gap-1">{role.custom_checks.map((c, i) => (
+                <span key={i} className={chip}>{String((c as { name?: string }).name ?? `check ${i + 1}`)}</span>
+              ))}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Agents() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tokens, setTokens] = useState<AgentToken[]>([])
   const [roles, setRoles] = useState<ServerRole[]>([])
   const [showModal, setShowModal] = useState(false)
+  const [expandedRole, setExpandedRole] = useState<number | null>(null)
 
   const load = useCallback(() => {
     fetchAgents().then(setAgents).catch(() => {})
@@ -278,19 +323,34 @@ export default function Agents() {
         <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
-              <tr><th className="text-left px-3 py-2 font-medium">Role</th><th className="text-left px-3 py-2 font-medium">Services</th><th className="text-left px-3 py-2 font-medium">Agents</th><th className="px-3 py-2"></th></tr>
+              <tr><th className="px-3 py-2 w-6"></th><th className="text-left px-3 py-2 font-medium">Role</th><th className="text-left px-3 py-2 font-medium">Services</th><th className="text-left px-3 py-2 font-medium">Agents</th><th className="px-3 py-2"></th></tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {roles.map((r) => (
-                <tr key={r.id} className="text-gray-700 dark:text-gray-300">
-                  <td className="px-3 py-2 font-medium">{r.name}{r.is_builtin && <span className="ml-2 text-xs text-gray-400">built-in</span>}</td>
-                  <td className="px-3 py-2 text-xs">{r.windows_services.length} Win · {r.linux_services.length} Lin</td>
-                  <td className="px-3 py-2">{r.agent_count}</td>
-                  <td className="px-3 py-2 text-right">
-                    {!r.is_builtin && <button onClick={() => deleteServerRole(r.id).then(load)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>}
-                  </td>
-                </tr>
-              ))}
+              {roles.map((r) => {
+                const open = expandedRole === r.id
+                return (
+                <Fragment key={r.id}>
+                  <tr className="text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40 cursor-pointer"
+                    onClick={() => setExpandedRole(open ? null : r.id)}>
+                    <td className="px-3 py-2 text-gray-400">{open ? '▾' : '▸'}</td>
+                    <td className="px-3 py-2 font-medium">{r.name}{r.is_builtin && <span className="ml-2 text-xs text-gray-400">built-in</span>}</td>
+                    <td className="px-3 py-2 text-xs">{r.windows_services.length} Win · {r.linux_services.length} Lin</td>
+                    <td className="px-3 py-2">{r.agent_count}</td>
+                    <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                      {!r.is_builtin && <button onClick={() => deleteServerRole(r.id).then(load)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>}
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr className="bg-gray-50/60 dark:bg-gray-900/30">
+                      <td></td>
+                      <td colSpan={4} className="px-3 py-3">
+                        <RoleDetail role={r} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>

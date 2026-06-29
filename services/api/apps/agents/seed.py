@@ -4,7 +4,7 @@ from __future__ import annotations
 BUILTIN_ROLES = [
     {
         "name": "DHCP Server", "role_type": "dhcp",
-        "description": "Windows/Linux DHCP service",
+        "description": "Monitors DHCP service health and lease availability (the service is up and handing out addresses).",
         "windows_services": ["DHCPServer"],
         "linux_services": ["isc-dhcp-server", "dhcpd", "kea-dhcp4"],
         "port_checks": [{"port": 67, "proto": "udp", "name": "DHCP"}],
@@ -16,7 +16,7 @@ BUILTIN_ROLES = [
     },
     {
         "name": "DNS Server", "role_type": "dns",
-        "description": "Windows DNS / BIND / Unbound",
+        "description": "Monitors DNS resolution — the DNS service is running and answering queries on 53 (and DoT 853 where used).",
         "windows_services": ["DNS"],
         "linux_services": ["named", "bind9", "unbound", "dnsmasq", "systemd-resolved"],
         "port_checks": [
@@ -31,7 +31,7 @@ BUILTIN_ROLES = [
     },
     {
         "name": "Network Policy Server", "role_type": "nps",
-        "description": "Windows NPS/RADIUS server",
+        "description": "Monitors network access auth (RADIUS) — the NPS/FreeRADIUS service is up and listening for auth/accounting.",
         "windows_services": ["IAS"],
         "linux_services": ["freeradius", "radiusd"],
         "port_checks": [
@@ -43,7 +43,7 @@ BUILTIN_ROLES = [
     },
     {
         "name": "Domain Controller", "role_type": "dc",
-        "description": "Active Directory DC",
+        "description": "Monitors Active Directory Domain Services — AD DS, DNS, Kerberos, replication (ADWS/Netlogon) and time sync.",
         "windows_services": ["NTDS", "ADWS", "DNS", "Kerberos", "Netlogon", "W32Time"],
         "linux_services": [],
         "port_checks": [
@@ -57,7 +57,7 @@ BUILTIN_ROLES = [
     },
     {
         "name": "Web Server", "role_type": "web",
-        "description": "IIS / nginx / Apache",
+        "description": "Monitors the web server — the site responds over HTTP/HTTPS and its TLS certificate is valid (functional health).",
         "windows_services": ["W3SVC", "WAS"],
         "linux_services": ["nginx", "apache2", "httpd"],
         "port_checks": [
@@ -71,7 +71,7 @@ BUILTIN_ROLES = [
     },
     {
         "name": "Database Server", "role_type": "db",
-        "description": "MSSQL / PostgreSQL / MySQL / Mongo",
+        "description": "Monitors the database engine — the DB service is running and accepting connections on its port.",
         "windows_services": ["MSSQLSERVER", "SQLSERVERAGENT", "MSSQLFDLauncher"],
         "linux_services": ["postgresql", "mysql", "mariadb", "mongod"],
         "port_checks": [
@@ -83,7 +83,7 @@ BUILTIN_ROLES = [
     },
     {
         "name": "Syslog Server", "role_type": "syslog",
-        "description": "rsyslog / syslog-ng",
+        "description": "Monitors the syslog collector — the service is up and receiving log traffic on 514 (and TLS 6514 where used).",
         "windows_services": [],
         "linux_services": ["rsyslog", "syslog-ng", "syslogd"],
         "port_checks": [

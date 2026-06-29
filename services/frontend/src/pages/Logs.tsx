@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   fetchLogs, fetchDevices, fetchSites,
@@ -14,9 +14,12 @@ const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 
 
 export default function Logs() {
   const navigate = useNavigate()
+  // Seed the device filter from ?device_hostname= so a "View all in Logs →" link
+  // (e.g. from a server-detail Logs tab) lands pre-filtered to that host.
+  const [searchParams] = useSearchParams()
   const [devices, setDevices] = useState<Device[]>([])
   const [sites, setSites] = useState<Site[]>([])
-  const [deviceHost, setDeviceHost] = useState('')
+  const [deviceHost, setDeviceHost] = useState(searchParams.get('device_hostname') || '')
   const [site, setSite] = useState('')
   const [role, setRole] = useState('')
   const [severities, setSeverities] = useState<Set<string>>(new Set())
@@ -118,7 +121,7 @@ export default function Logs() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Network Logs</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Logs</h1>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Auto-refresh 30s</label>
           <button onClick={exportCsv} disabled={!rows.length} className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">Export</button>

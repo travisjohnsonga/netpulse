@@ -61,6 +61,15 @@ chmod +x "${INSTALL_DIR}/netpulse-agent"
 id -u netpulse-agent &>/dev/null || \
   useradd -r -s /sbin/nologin -d /nonexistent netpulse-agent
 
+# Log forwarding tails the curated security logs (/var/log/auth.log,
+# /var/log/syslog), which are mode 640 owned by syslog:adm — so the agent user
+# must be in a group that can READ them or the tailer silently reads NOTHING
+# (the original log-forwarding "2 docs ever" bug). adm covers Debian/Ubuntu's
+# /var/log; systemd-journal covers journald-only distros. Idempotent on re-run.
+usermod -aG adm netpulse-agent 2>/dev/null || true
+getent group systemd-journal >/dev/null 2>&1 && \
+  usermod -aG systemd-journal netpulse-agent 2>/dev/null || true
+
 CONFIG_PATH="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
 # Enroll, capturing output so we can give a clear message if the host already

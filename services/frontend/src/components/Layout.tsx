@@ -73,7 +73,8 @@ const navEntries: NavEntry[] = [
   {
     label: 'Servers', icon: '🖥️', children: [
       { label: 'All Servers', href: '/servers', icon: '🖥️', requiredCapability: 'agent:view' },
-      { label: 'Agents', href: '/settings/agents', icon: '🛰️', requiredCapability: 'agent:view' },
+      // Agent enrollment/management lives under Settings → Agents (its home);
+      // the duplicate entry here was removed.
     ],
   },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true, requiredCapability: 'alert:view' },
