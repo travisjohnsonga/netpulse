@@ -5,7 +5,7 @@ import { useSite } from '../store/siteStore'
 import { INPUT, SELECT } from '../lib/ui'
 import StatCard from '../components/StatCard'
 import ColumnPicker from '../components/ColumnPicker'
-import { STRIPED_ROW } from '../lib/tableStyles'
+import { STRIPED_ROW, STICKY_COL, STICKY_COL_HEAD } from '../lib/tableStyles'
 import {
   SERVER_COLUMNS, defaultServerColumnKeys, loadServerColumnKeys, saveServerColumnKeys,
   type ServerColCtx,
@@ -162,8 +162,9 @@ export default function Servers() {
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
             <tr>
-              {activeColumns.map((col) => (
-                <th key={col.key} className="px-3 py-2 font-medium whitespace-nowrap">{col.label}</th>
+              {activeColumns.map((col, i) => (
+                <th key={col.key}
+                  className={`px-3 py-2 font-medium whitespace-nowrap ${i === 0 ? STICKY_COL_HEAD : ''}`}>{col.label}</th>
               ))}
               <th className="px-3 py-2 font-medium text-right">Actions</th>
             </tr>
@@ -172,8 +173,8 @@ export default function Servers() {
             {filtered.map((s) => (
               <tr key={s.id} onClick={() => nav(`/servers/${s.id}`)}
                 className={`cursor-pointer ${STRIPED_ROW}`}>
-                {activeColumns.map((col) => (
-                  <td key={col.key} className="px-3 py-2">{col.render(s, colCtx)}</td>
+                {activeColumns.map((col, i) => (
+                  <td key={col.key} className={`px-3 py-2 whitespace-nowrap ${i === 0 ? STICKY_COL : ''}`}>{col.render(s, colCtx)}</td>
                 ))}
                 {/* Protocol-aware connect (RDP for Windows, SSH for Linux). */}
                 <td className="px-3 py-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

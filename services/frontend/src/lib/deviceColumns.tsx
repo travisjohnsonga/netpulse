@@ -85,13 +85,15 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
       <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
     ),
   },
-  // ── Canonical shared order: Status → Ping → CPU → Memory → Last Change ──────
-  // (mirrored exactly on the Servers list so the common columns line up.)
+  // ── Canonical shared order: Status → IP Address → Ping → CPU → Memory →
+  // Last Change (mirrored on the Servers list; first three are always
+  // Hostname | Status | IP Address). ─────────────────────────────────────────
   {
     // Shared Up/Down badge (no duration in the pill — that's the Last Change column).
     key: 'status', label: 'Status', default: true, sortKey: 'status',
     render: (d) => <StatusBadge up={deviceUp(d)} />,
   },
+  { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{d.ip_address}</span> },
   {
     key: 'ping', label: 'Ping', default: true,
     render: (d, ctx) => {
@@ -129,7 +131,6 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
     },
   },
   // ── Device-specific columns (slotted after the shared set) ──────────────────
-  { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{d.ip_address}</span> },
   {
     key: 'vendor', label: 'Vendor', default: true, sortKey: 'vendor',
     render: (d) => (
@@ -157,7 +158,10 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
   { key: 'notes', label: 'Notes', default: false, render: (d) => <span className="text-gray-500 text-xs line-clamp-1 max-w-xs">{dash(d.notes?.trim())}</span> },
 ]
 
-export const COLUMN_STORAGE_KEY = 'netpulse.devices.columns'
+// v2: bumped when the canonical column ORDER changed (IP Address moved to 3rd).
+// A new key invalidates pre-existing saved layouts so everyone picks up the new
+// default order; users re-customise from there.
+export const COLUMN_STORAGE_KEY = 'netpulse.devices.columns.v2'
 
 export function defaultColumnKeys(): string[] {
   return DEVICE_COLUMNS.filter((c) => c.locked || c.default).map((c) => c.key)

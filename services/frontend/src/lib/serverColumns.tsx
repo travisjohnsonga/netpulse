@@ -47,8 +47,13 @@ export const SERVER_COLUMNS: ServerColumn[] = [
     key: 'hostname', label: 'Hostname', locked: true, default: true,
     render: (s) => <span className="font-medium text-gray-900 dark:text-gray-100">{s.hostname}</span>,
   },
-  // ── Canonical shared order (identical positions to the Devices list) ─────────
+  // ── Canonical shared order (identical positions to the Devices list):
+  // Status → IP Address → Ping → CPU → Memory → Last Change. ──────────────────
   { key: 'status', label: 'Status', default: true, render: (s) => <StatusBadge up={serverUp(s)} /> },
+  {
+    key: 'ip_address', label: 'IP Address', default: true,
+    render: (s) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{s.last_ip || dash}</span>,
+  },
   {
     key: 'ping', label: 'Ping', default: true,
     render: (s, ctx) => {
@@ -101,13 +106,11 @@ export const SERVER_COLUMNS: ServerColumn[] = [
       </div>
     ),
   },
-  {
-    key: 'ip_address', label: 'IP Address', default: true,
-    render: (s) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{s.last_ip || dash}</span>,
-  },
 ]
 
-export const SERVER_COLUMN_STORAGE_KEY = 'netpulse.servers.columns'
+// v2: bumped for the canonical order change (IP Address → 3rd) so any saved
+// round-1 layout is invalidated and everyone gets the new default order.
+export const SERVER_COLUMN_STORAGE_KEY = 'netpulse.servers.columns.v2'
 
 export function defaultServerColumnKeys(): string[] {
   return SERVER_COLUMNS.filter((c) => c.locked || c.default).map((c) => c.key)

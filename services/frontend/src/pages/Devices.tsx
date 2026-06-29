@@ -11,7 +11,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { useComplianceRunAll } from '../hooks/useComplianceRun'
 import { useSite } from '../store/siteStore'
 import {
-  DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
+  DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, COLUMN_STORAGE_KEY, type ColCtx,
 } from '../lib/deviceColumns'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui'
@@ -136,7 +136,7 @@ export default function Devices() {
 
   const setColumns = (keys: string[]) => { setColumnKeys(keys); saveColumnKeys(keys) }
   const resetColumns = () => {
-    localStorage.removeItem('netpulse.devices.columns')
+    localStorage.removeItem(COLUMN_STORAGE_KEY)
     setColumnKeys(defaultColumnKeys())
   }
 
@@ -326,7 +326,10 @@ export default function Devices() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
-                    <th className="pl-5 pr-2 py-3 w-10">
+                    {/* Frozen identity columns (checkbox + Hostname) so they stay
+                        anchored while the metric columns scroll on laptop widths.
+                        Checkbox fixed at w-12 (3rem) so Hostname pins flush at left-12. */}
+                    <th className="w-12 px-3 py-3 sticky left-0 z-20 bg-gray-50 dark:bg-gray-900">
                       <input
                         type="checkbox"
                         aria-label="Select all devices on this page"
@@ -336,15 +339,16 @@ export default function Devices() {
                         onChange={toggleAll}
                       />
                     </th>
-                    {activeColumns.map((col) => {
+                    {activeColumns.map((col, i) => {
                       const sortable = !!col.sortKey
                       const active = col.sortKey === ordering || `-${col.sortKey}` === ordering
                       const arrow = !active ? '' : ordering.startsWith('-') ? ' ↓' : ' ↑'
+                      const sticky = i === 0 ? 'sticky left-12 z-20 bg-gray-50 dark:bg-gray-900' : ''
                       return (
                         <th
                           key={col.key}
                           onClick={sortable ? () => toggleSort(col.sortKey as string) : undefined}
-                          className={`px-5 py-3 font-medium whitespace-nowrap ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''} ${active ? 'text-gray-700 dark:text-gray-200' : ''}`}
+                          className={`px-5 py-3 font-medium whitespace-nowrap ${sticky} ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''} ${active ? 'text-gray-700 dark:text-gray-200' : ''}`}
                         >
                           {col.label}<span className="text-blue-500">{arrow}</span>
                         </th>
@@ -354,23 +358,28 @@ export default function Devices() {
                   </tr>
                 </thead>
                 <tbody>
-                  {devices.map((device) => (
+                  {devices.map((device) => {
+                    const isSel = selected.has(device.id)
+                    // Frozen cells need an opaque bg matching the row state.
+                    const frozenBg = isSel ? 'bg-blue-50 dark:bg-blue-900/40' : 'bg-white dark:bg-gray-800'
+                    return (
                     <tr
                       key={device.id}
                       onClick={() => navigate(`/devices/${device.id}`)}
-                      className={`cursor-pointer ${selected.has(device.id) ? 'bg-blue-50/60 dark:bg-blue-900/20' : STRIPED_ROW}`}
+                      className={`cursor-pointer ${isSel ? 'bg-blue-50/60 dark:bg-blue-900/20' : STRIPED_ROW}`}
                     >
-                      <td className="pl-5 pr-2 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td className={`w-12 px-3 py-3 sticky left-0 z-10 ${frozenBg}`} onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           aria-label={`Select ${device.hostname}`}
                           className="rounded border-gray-300 dark:border-gray-600 cursor-pointer"
-                          checked={selected.has(device.id)}
+                          checked={isSel}
                           onChange={() => toggleSelect(device.id)}
                         />
                       </td>
-                      {activeColumns.map((col) => (
-                        <td key={col.key} className="px-5 py-3">{col.render(device, colCtx)}</td>
+                      {activeColumns.map((col, i) => (
+                        <td key={col.key}
+                          className={`px-5 py-3 whitespace-nowrap ${i === 0 ? `sticky left-12 z-10 ${frozenBg}` : ''}`}>{col.render(device, colCtx)}</td>
                       ))}
                       {/* Right-aligned row action: opens the SSH/console (was the
                           inline "Connect" button next to the hostname). */}
@@ -385,7 +394,8 @@ export default function Devices() {
                         </a>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
