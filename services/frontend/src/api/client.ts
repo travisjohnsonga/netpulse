@@ -3991,6 +3991,53 @@ export async function fetchAlertNotifications(eventId: number): Promise<AlertNot
   return unwrap(data)
 }
 
+// ── Notification delivery log + health (apps/alerts NotificationLog, PR #152) ──
+// Distinct from the escalation AlertNotification above: this is the #149-dispatch
+// delivery source of truth (one row per send attempt, sent/failed).
+export interface NotificationDelivery {
+  id: number
+  event: number
+  event_title: string
+  channel: number | null
+  channel_name: string
+  channel_type: string
+  transition: string
+  status: 'sent' | 'failed'
+  attempts: number
+  detail: string
+  created_at: string
+}
+export interface DeliveryHealthChannel {
+  channel_id: number | null
+  channel_name: string
+  channel_type: string
+  sent: number
+  failed: number
+  last_success: string | null
+  last_failure: string | null
+  healthy: boolean
+}
+export interface DeliveryHealth {
+  healthy: boolean
+  channels_failing: number
+  recent_failures: number
+  window_minutes: number
+  channels: DeliveryHealthChannel[]
+}
+
+export async function fetchNotificationDeliveries(
+  params: { status?: string; channel?: string; page_size?: string } = {},
+): Promise<NotificationDelivery[]> {
+  const { data } = await api.get<NotificationDelivery[] | Paginated<NotificationDelivery>>(
+    '/alerts/notifications/', { params: { page_size: '100', ...params } })
+  return unwrap(data)
+}
+
+export async function fetchDeliveryHealth(): Promise<DeliveryHealth> {
+  const { data } = await api.get<DeliveryHealth>('/alerts/notifications/delivery-health/')
+  return data
+}
+
 export async function acknowledgeAlertEvent(eventId: number, note?: string, snoozeMinutes?: number): Promise<void> {
   await api.post(`/alerts/events/${eventId}/acknowledge/`, { note, snooze_minutes: snoozeMinutes })
 }

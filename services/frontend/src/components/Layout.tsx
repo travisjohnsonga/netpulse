@@ -15,6 +15,7 @@ import SiteSelector from './SiteSelector'
 import LogoMark from './LogoMark'
 import ChatOpsPanel from './ChatOpsPanel'
 import ForbiddenNotice from './ForbiddenNotice'
+import DeliveryHealthBanner from './DeliveryHealthBanner'
 
 // Drop nav leaves the user lacks the capability for (groups with no remaining
 // children are dropped too). Convenience gating; the API 403 is the boundary.
@@ -78,6 +79,7 @@ const navEntries: NavEntry[] = [
     ],
   },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true, requiredCapability: 'alert:view' },
+  { label: 'Notifications', href: '/notifications', icon: '📨', requiredCapability: 'alert:view' },
   { label: 'Logs', href: '/logs', icon: '🧾', requiredCapability: 'log:view' },
   { label: 'Service Checks', href: '/checks', icon: '✓', requiredCapability: 'check:view' },
   { label: 'CVE', href: '/cve', icon: '🛡', divider: true, requiredCapability: 'cve:view' },
@@ -353,6 +355,9 @@ export default function Layout({ children }: Props) {
             </button>
           </div>
         )}
+
+        {/* Notification-delivery degraded banner — the always-present failure tier */}
+        <DeliveryHealthBanner />
 
         {/* Page content — the only scroll region; sidebar + header stay fixed */}
         <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6">
