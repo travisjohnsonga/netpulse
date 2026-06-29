@@ -9,9 +9,18 @@
 // Intentionally NOT unified: the actual DATA each page shows (servers: agent
 // CPU/mem/disk; devices: ping/SNMP/reachability). Unify the frame, not the content.
 
+// ── Text color tokens (dark-mode readable) ─────────────────────────────────────
+// A 3-level hierarchy. The dark shades are deliberately ONE step lighter than the
+// old conventions (secondary gray-400 → gray-300, muted gray-500 → gray-400) so
+// secondary/muted text clears ~4.5:1 on the dark gray-800/900 bg instead of the
+// old dim ~3:1. Use these for body/label/timestamp text across pages.
+export const TEXT_PRIMARY = 'text-gray-900 dark:text-gray-100'      // headings, key values
+export const TEXT_SECONDARY = 'text-gray-600 dark:text-gray-300'    // body, labels, cell values
+export const TEXT_MUTED = 'text-gray-500 dark:text-gray-400'        // timestamps, hints, "—"
+
 // ── Page header ───────────────────────────────────────────────────────────────
 export const PAGE_TITLE = 'text-2xl font-bold text-gray-900 dark:text-gray-100'
-export const PAGE_SUBTITLE = 'text-sm text-gray-500 dark:text-gray-400 mt-0.5'
+export const PAGE_SUBTITLE = `text-sm ${TEXT_MUTED} mt-0.5`
 
 // ── Filter bar (search input + dropdowns), consistent across list pages ────────
 export const INPUT =

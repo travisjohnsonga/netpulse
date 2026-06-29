@@ -86,7 +86,23 @@ class AlertEventSerializer(serializers.ModelSerializer):
             or (obj.labels or {}).get("alert_type") or ""
 
     def get_device(self, obj):
-        return (obj.labels or {}).get("device") or ""
+        # Prefer the explicit "device" label (set by some alert types). Otherwise
+        # resolve device_id → the real Device hostname so the Alerts Device column
+        # shows a name (e.g. "NetPulseW25Test"/"router1") rather than the raw
+        # "device {id}" the frontend would fall back to. Genuinely device-less
+        # alerts (e.g. log anomalies) return "" (shown as "–").
+        labels = obj.labels or {}
+        name = labels.get("device")
+        if name:
+            return name
+        device_id = labels.get("device_id")
+        if device_id is not None:
+            from apps.devices.models import Device
+            hostname = (Device.objects.filter(id=device_id)
+                        .values_list("hostname", flat=True).first())
+            if hostname:
+                return hostname
+        return ""
 
     def get_device_id(self, obj):
         return (obj.labels or {}).get("device_id")

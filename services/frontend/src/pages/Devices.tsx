@@ -187,7 +187,7 @@ export default function Devices() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Devices</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+          <p className="text-sm text-gray-500 dark:text-gray-300 mt-0.5">
             {total > 0 ? `${total} device${total !== 1 ? 's' : ''} managed` : 'No devices yet'}
           </p>
         </div>
@@ -306,7 +306,7 @@ export default function Devices() {
                   >
                     {starting || isRunning ? 'Running…' : '▶ Run Compliance'}
                   </button>
-                  <button onClick={() => setSelected(new Set())} className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium">Clear</button>
+                  <button onClick={() => setSelected(new Set())} className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 font-medium">Clear</button>
                 </div>
               </div>
             )}
@@ -393,7 +393,7 @@ export default function Devices() {
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 dark:border-gray-700 text-sm">
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className="text-gray-500 dark:text-gray-300">
                   Page {page} of {totalPages}
                 </span>
                 <div className="flex gap-2">
@@ -431,7 +431,7 @@ export default function Devices() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
             <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">Auto-Discovery</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
               Automatically discover devices on your network using SNMP, gNMI, NETCONF, and topology walking.
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">

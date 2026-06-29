@@ -23,3 +23,9 @@ export function sshTooltip(hostname: string, d: SSHTarget, username?: string | n
   const who = username ? ` as ${username}` : ''
   return `SSH to ${hostname}${who} (${host}:${port || 22})`
 }
+
+// Build an rdp:// URL for Windows hosts (handed to the OS's RDP handler, same
+// pattern as ssh://). Used by the protocol-aware connect on the Servers list.
+export function rdpUrl(host: string): string {
+  return `rdp://${host}`
+}

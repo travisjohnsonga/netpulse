@@ -16,7 +16,7 @@ function deviceUp(d: Device): boolean {
 // Inline % bar matching the Servers list CPU/Memory cells; "—" when no value
 // (device down or no SNMP/gNMI metric for it).
 function MetricBar({ pct }: { pct: number | null | undefined }) {
-  if (pct == null) return <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+  if (pct == null) return <span className="text-xs text-gray-300 dark:text-gray-500">—</span>
   const c = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-green-500'
   return (
     <span className="inline-flex items-center gap-2 min-w-[6rem]">
@@ -85,18 +85,30 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
       <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
     ),
   },
+  // ── Canonical shared order: Status → Ping → CPU → Memory → Last Change ──────
+  // (mirrored exactly on the Servers list so the common columns line up.)
   {
     // Shared Up/Down badge (no duration in the pill — that's the Last Change column).
     key: 'status', label: 'Status', default: true, sortKey: 'status',
     render: (d) => <StatusBadge up={deviceUp(d)} />,
   },
   {
-    // Down → how long down (unreachable_since); Up → how long since last contact
-    // (last_seen). Matches the Servers "Last Change" column.
-    key: 'last_change', label: 'Last Change', default: true, sortKey: 'unreachable_since',
-    render: (d) => {
-      const iso = !deviceUp(d) && d.unreachable_since ? d.unreachable_since : d.last_seen
-      return <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(iso)}</span>
+    key: 'ping', label: 'Ping', default: true,
+    render: (d, ctx) => {
+      const p = ctx.ping?.[d.id]
+      const ms = p?.current_ms ?? null
+      const color = pingColor(ms)
+      return (
+        <span className="inline-flex items-center gap-2">
+          <span className="text-xs tabular-nums w-12" style={ms != null ? { color } : undefined}>
+            {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-500">—</span>}
+          </span>
+          {/* Sparkline hidden on small screens; ms value always shown. */}
+          {p?.sparkline?.length ? (
+            <span className="hidden sm:inline-block"><PingSparkline data={p.sparkline} color={color} /></span>
+          ) : null}
+        </span>
+      )
     },
   },
   {
@@ -107,26 +119,17 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
     key: 'memory', label: 'Memory', default: true,
     render: (d, ctx) => <MetricBar pct={ctx.metrics?.[d.id]?.memory_pct} />,
   },
-  { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600">{d.ip_address}</span> },
   {
-    key: 'ping', label: 'Ping', default: true,
-    render: (d, ctx) => {
-      const p = ctx.ping?.[d.id]
-      const ms = p?.current_ms ?? null
-      const color = pingColor(ms)
-      return (
-        <span className="inline-flex items-center gap-2">
-          <span className="text-xs tabular-nums w-12" style={ms != null ? { color } : undefined}>
-            {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-600">—</span>}
-          </span>
-          {/* Sparkline hidden on small screens; ms value always shown. */}
-          {p?.sparkline?.length ? (
-            <span className="hidden sm:inline-block"><PingSparkline data={p.sparkline} color={color} /></span>
-          ) : null}
-        </span>
-      )
+    // Down → how long down (unreachable_since); Up → how long since last contact
+    // (last_seen). Matches the Servers "Last Change" column.
+    key: 'last_change', label: 'Last Change', default: true, sortKey: 'unreachable_since',
+    render: (d) => {
+      const iso = !deviceUp(d) && d.unreachable_since ? d.unreachable_since : d.last_seen
+      return <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(iso)}</span>
     },
   },
+  // ── Device-specific columns (slotted after the shared set) ──────────────────
+  { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{d.ip_address}</span> },
   {
     key: 'vendor', label: 'Vendor', default: true, sortKey: 'vendor',
     render: (d) => (

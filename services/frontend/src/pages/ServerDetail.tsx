@@ -52,7 +52,7 @@ const color = (p?: number | null) => p == null ? 'bg-gray-300 dark:bg-gray-600' 
 function NetworkChip({ net }: { net?: ServerNetworkState }) {
   if (!net || !net.probed) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-xs text-gray-500 bg-gray-100 dark:text-gray-400 dark:bg-gray-700/50"
+      <span className="px-2 py-0.5 rounded-full text-xs text-gray-500 bg-gray-100 dark:text-gray-300 dark:bg-gray-700/50"
         title={net?.reason || 'No routable host IP reported by the agent yet'}>
         Network: not probed
       </span>
@@ -77,7 +77,7 @@ function NetworkChip({ net }: { net?: ServerNetworkState }) {
 function MetricCard({ label, pct, sub }: { label: string; pct: number | null; sub?: string }) {
   return (
     <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="text-xs text-gray-500 dark:text-gray-300">{label}</div>
       <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{pct == null ? '—' : `${Math.round(pct)}%`}</div>
       <div className="mt-2 h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
         <div className={`h-full ${color(pct)}`} style={{ width: `${Math.min(100, pct ?? 0)}%` }} />
@@ -211,7 +211,7 @@ export default function ServerDetail() {
       <div className="mt-2 mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{server.hostname}</h1>
-          <div className="text-sm text-gray-500 dark:text-gray-400 mt-1 flex flex-wrap gap-x-4">
+          <div className="text-sm text-gray-500 dark:text-gray-300 mt-1 flex flex-wrap gap-x-4">
             <span>{server.os_name || server.os || 'Unknown OS'}</span>
             <span>Arch: {server.arch || '—'}</span>
             <span>Agent {fmtVersion(server.agent_version)}</span>
@@ -231,7 +231,7 @@ export default function ServerDetail() {
               <PingSparkline data={ping.sparkline} color={pingColor(ping.current_ms ?? null)} />
             ) : null}
           </div>
-          <div className="text-gray-500 dark:text-gray-400">Last seen: {timeAgo(server.last_seen)}</div>
+          <div className="text-gray-500 dark:text-gray-300">Last seen: {timeAgo(server.last_seen)}</div>
           {/* One range controls every chart on the page. */}
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>
@@ -254,7 +254,7 @@ export default function ServerDetail() {
             <MetricCard label="Memory" pct={(dm.memory.usage_pct as number) ?? m.memory_pct} />
             <MetricCard label="Disk" pct={m.disk_max_pct} sub={m.disk_max_mount ?? undefined} />
             <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-4">
-              <div className="text-xs text-gray-500 dark:text-gray-400">Load (1m)</div>
+              <div className="text-xs text-gray-500 dark:text-gray-300">Load (1m)</div>
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{dm.load.load1?.toFixed(2) ?? m.load_1?.toFixed(2) ?? '—'}</div>
               <div className="text-xs text-gray-400 mt-2">5m {dm.load.load5?.toFixed(2) ?? '—'} · 15m {dm.load.load15?.toFixed(2) ?? '—'}</div>
             </div>
@@ -425,14 +425,14 @@ function InfoPanel({ server, onChanged }: { server: ServerDetailT; onChanged: ()
       <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">System Information</div>
       <dl className="text-sm space-y-1.5">
         <div className="flex justify-between gap-4">
-          <dt className="text-gray-500 dark:text-gray-400">Hostname <span className="text-[10px] text-gray-400">(reported by agent)</span></dt>
+          <dt className="text-gray-500 dark:text-gray-300">Hostname <span className="text-[10px] text-gray-400">(reported by agent)</span></dt>
           <dd className="text-gray-900 dark:text-gray-100 font-medium truncate max-w-[60%]" title={server.hostname}>{server.hostname}</dd>
         </div>
         <SiteRow server={server} onChanged={onChanged} />
         <LivenessRow server={server} onChanged={onChanged} />
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-4">
-            <dt className="text-gray-500 dark:text-gray-400">{k}</dt>
+            <dt className="text-gray-500 dark:text-gray-300">{k}</dt>
             <dd className="text-gray-900 dark:text-gray-100 font-medium truncate max-w-[60%]" title={v}>{v}</dd>
           </div>
         ))}
@@ -462,7 +462,7 @@ function LivenessRow({ server, onChanged }: { server: ServerDetailT; onChanged: 
 
   return (
     <div className="flex justify-between gap-4 items-center">
-      <dt className="text-gray-500 dark:text-gray-400">Offline alert</dt>
+      <dt className="text-gray-500 dark:text-gray-300">Offline alert</dt>
       <dd className="text-gray-900 dark:text-gray-100 font-medium flex items-center gap-2">
         <span className={enabled ? '' : 'text-gray-400'}>
           {enabled ? `Enabled · offline > ${thr}` : 'Disabled'}
@@ -510,7 +510,7 @@ function SiteRow({ server, onChanged }: { server: ServerDetailT; onChanged: () =
     return (
       <div className="flex flex-col gap-1.5 py-1">
         <div className="flex items-center gap-2">
-          <span className="text-gray-500 dark:text-gray-400">Site</span>
+          <span className="text-gray-500 dark:text-gray-300">Site</span>
           <select value={pick} onChange={(e) => setPick(e.target.value === '' ? '' : Number(e.target.value))}
             className="flex-1 px-2 py-1 text-sm border rounded dark:bg-gray-900 dark:border-gray-600">
             <option value="">Unassigned</option>
@@ -525,7 +525,7 @@ function SiteRow({ server, onChanged }: { server: ServerDetailT; onChanged: () =
   }
   return (
     <div className="flex justify-between gap-4 items-center">
-      <dt className="text-gray-500 dark:text-gray-400">Site</dt>
+      <dt className="text-gray-500 dark:text-gray-300">Site</dt>
       <dd className="text-gray-900 dark:text-gray-100 font-medium truncate max-w-[60%] flex items-center gap-2">
         <span title={server.site?.name ?? ''}>{server.site?.name ?? '—'}</span>
         {canEdit && (
@@ -594,7 +594,7 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
   if (!collected) {
     // (a) toggle OFF
     body = (
-      <div className="text-sm text-gray-500 dark:text-gray-400">
+      <div className="text-sm text-gray-500 dark:text-gray-300">
         The <span className="font-medium">Services</span> collection toggle is off, so this host
         isn't reporting its running services. Enable it on the{' '}
         <LinkBtn to="Config" label="Config" /> tab to list running services here.
@@ -603,7 +603,7 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
   } else if (services.length === 0) {
     // (b) toggle ON, no data yet
     body = (
-      <div className="text-sm text-gray-500 dark:text-gray-400">
+      <div className="text-sm text-gray-500 dark:text-gray-300">
         Services collection is on — waiting for the agent's next check-in.
       </div>
     )
@@ -650,9 +650,9 @@ function ServicesTab({ server, onTab, onChanged }: { server: ServerDetailT; onTa
                               title={s.running ? 'running' : 'stopped'} />
                       </td>
                       <td className="px-3 py-1 font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">{friendly ? s.display_name : s.name}</td>
-                      <td className="px-3 py-1 text-gray-500 dark:text-gray-400 whitespace-nowrap">{friendly ? s.name : '—'}</td>
-                      <td className="px-3 py-1 text-gray-500 dark:text-gray-400 whitespace-nowrap">{s.state || (s.running ? 'running' : '—')}</td>
-                      <td className="px-3 py-1 text-gray-500 dark:text-gray-400 whitespace-nowrap">{s.start_type || '—'}</td>
+                      <td className="px-3 py-1 text-gray-500 dark:text-gray-300 whitespace-nowrap">{friendly ? s.name : '—'}</td>
+                      <td className="px-3 py-1 text-gray-500 dark:text-gray-300 whitespace-nowrap">{s.state || (s.running ? 'running' : '—')}</td>
+                      <td className="px-3 py-1 text-gray-500 dark:text-gray-300 whitespace-nowrap">{s.start_type || '—'}</td>
                     </tr>
                   )
                 })}
@@ -721,7 +721,7 @@ function WatchedServicesSection({ server, onChanged }: { server: ServerDetailT; 
       {err && <div className="mb-2 text-xs text-red-600">{err}</div>}
 
       {configured.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+        <p className="text-sm text-gray-500 dark:text-gray-300 mb-3">
           No services watched yet. Add one (e.g. <code>docker</code>, <code>sshd</code>) to alert
           when it stops or restarts repeatedly — no role required.
         </p>
@@ -955,7 +955,7 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
         <div className="mt-2 border-t dark:border-gray-700 pt-2 space-y-2 text-sm">
           {st.services.length > 0 && (
             <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Services</div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-300 mb-0.5">Services</div>
               <ul>{st.services.map((s) => (
                 <Check key={s.name} ok={!!s.running} label={s.name}
                   sub={s.running ? (s.state || 'running') : (s.state || 'not running')} />
@@ -964,7 +964,7 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
           )}
           {st.ports.length > 0 && (
             <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Ports</div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-300 mb-0.5">Ports</div>
               <ul>{st.ports.map((p) => (
                 <Check key={`${p.port}/${p.proto}`} ok={!!p.open}
                   label={`${p.name ? `${p.name} ` : ''}${p.port}/${p.proto}`}
@@ -974,7 +974,7 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
           )}
           {!!st.custom?.length && (
             <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Custom</div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-300 mb-0.5">Custom</div>
               <ul>{st.custom.map((c, i) => (
                 <Check key={c.name ?? i} ok={!!(c.passed ?? c.ok)} label={c.name ?? `check ${i + 1}`} />
               ))}</ul>
@@ -982,7 +982,7 @@ function RoleCard({ a, onRemove }: { a: AssignedRole; onRemove: (roleId: number)
           )}
           {!!st.functional?.length && (
             <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">Functional health</div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-300 mb-0.5">Functional health</div>
               <ul className="space-y-0.5">{st.functional.map((f) => {
                 const c = f.health === 'healthy' ? 'text-green-600 dark:text-green-400'
                   : f.health === 'warning' ? 'text-amber-600 dark:text-amber-400'
@@ -1098,7 +1098,7 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
   return (
     <div className="space-y-4 max-w-2xl">
       {!canEdit && (
-        <div className="text-xs px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border dark:border-gray-700">
+        <div className="text-xs px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 border dark:border-gray-700">
           Read-only — editing the agent config requires the <code>agent:edit</code> capability.
         </div>
       )}
@@ -1136,12 +1136,12 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
       {/* Disk monitoring */}
       <div className={card}>
         <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Disk monitoring</div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
           Removable/optical media is skipped automatically. Exclude drops a drive; include (if any) limits to listed drives. {mountHint}.
         </p>
         {(['exclude_mounts', 'include_mounts'] as const).map((list) => (
           <div key={list} className="mb-3">
-            <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
               {list === 'exclude_mounts' ? 'Exclude' : 'Include (empty = all)'}
             </div>
             <div className="flex flex-wrap gap-1.5">

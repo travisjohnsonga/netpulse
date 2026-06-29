@@ -41,14 +41,14 @@ export default function StatCard({
         borderColors[color],
       )}
     >
-      <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <span className="text-sm font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wide">
         {title}
       </span>
       <span className={clsx('text-3xl font-bold', valueColors[color])}>
         {value}
       </span>
       {subtitle && (
-        <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subtitle}</span>
+        <span className="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{subtitle}</span>
       )}
       {footer}
       {action && (

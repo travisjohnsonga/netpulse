@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchServers, fetchPingSummary, type Server, type PingSummary } from '../api/client'
-import PingSparkline, { pingColor } from '../components/PingSparkline'
 import { useSite } from '../store/siteStore'
 import { INPUT, SELECT } from '../lib/ui'
-import StatusBadge from '../components/StatusBadge'
 import StatCard from '../components/StatCard'
-import { compactAgo } from '../lib/time'
+import ColumnPicker from '../components/ColumnPicker'
 import { STRIPED_ROW } from '../lib/tableStyles'
+import {
+  SERVER_COLUMNS, defaultServerColumnKeys, loadServerColumnKeys, saveServerColumnKeys,
+  type ServerColCtx,
+} from '../lib/serverColumns'
+import { sshUrl, rdpUrl, sshTooltip } from '../lib/ssh'
 
 // last_seen older than this (ms) with no fresh heartbeat → offline.
 const OFFLINE_MS = 5 * 60 * 1000
@@ -28,43 +31,25 @@ function serverState(s: Server): 'online' | 'offline' | 'degraded' {
   return hot ? 'degraded' : 'online'
 }
 
-function barColor(pct: number | null | undefined): string {
-  if (pct == null) return 'bg-gray-300 dark:bg-gray-600'
-  if (pct >= 80) return 'bg-red-500'
-  if (pct >= 60) return 'bg-amber-500'
-  return 'bg-green-500'
-}
-
-function Bar({ pct }: { pct: number | null | undefined }) {
-  if (pct == null) return <span className="text-xs text-gray-400">—</span>
+// Protocol-aware connect: RDP for Windows hosts, SSH for Linux. The agent reports
+// os = os_family ("windows"/"linux"); target host = the agent's reporting IP.
+function ConnectAction({ s }: { s: Server }) {
+  const host = s.last_ip
+  if (!host) return <span className="text-gray-300 dark:text-gray-500">—</span>
+  const win = (s.os || '').toLowerCase().startsWith('win')
+  const href = win ? rdpUrl(host) : sshUrl({ ip_address: host })
   return (
-    <div className="flex items-center gap-2 min-w-[7rem]">
-      <div className="flex-1 h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
-        <div className={`h-full ${barColor(pct)}`} style={{ width: `${Math.min(100, pct)}%` }} />
-      </div>
-      <span className="text-xs tabular-nums w-9 text-right text-gray-600 dark:text-gray-300">{Math.round(pct)}%</span>
-    </div>
+    <a
+      href={href}
+      onClick={(e) => e.stopPropagation()}
+      target="_blank" rel="noopener noreferrer"
+      title={win ? `RDP to ${s.hostname} (${host})` : sshTooltip(s.hostname, { ip_address: host })}
+      className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400"
+    >
+      {win ? 'RDP' : 'SSH'}
+    </a>
   )
 }
-
-// Collector ping/RTT cell — mirrors the Devices list (ms + sparkline). A server
-// with no routable IP (synthetic device record) simply has no ping data → "—",
-// never a false "unreachable".
-function Ping({ p }: { p?: PingSummary }) {
-  const ms = p?.current_ms ?? null
-  const color = pingColor(ms)
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className="text-xs tabular-nums w-12" style={ms != null ? { color } : undefined}>
-        {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-600">—</span>}
-      </span>
-      {p?.sparkline?.length ? (
-        <span className="hidden sm:inline-block"><PingSparkline data={p.sparkline} color={color} /></span>
-      ) : null}
-    </span>
-  )
-}
-
 
 export default function Servers() {
   const nav = useNavigate()
@@ -82,6 +67,15 @@ export default function Servers() {
   // Devices list uses (the monitor now writes device_reachability for agent
   // hosts too), so servers get the device-style ping column + sparkline.
   const [ping, setPing] = useState<Record<number, PingSummary>>({})
+  // Column show/hide/reorder (same control + persistence model as the Devices list).
+  const [columnKeys, setColumnKeys] = useState<string[]>(loadServerColumnKeys)
+  const setColumns = (keys: string[]) => { setColumnKeys(keys); saveServerColumnKeys(keys) }
+  const resetColumns = () => { setColumnKeys(defaultServerColumnKeys()) }
+  const activeColumns = useMemo(
+    () => columnKeys.map((k) => SERVER_COLUMNS.find((c) => c.key === k)).filter(Boolean) as typeof SERVER_COLUMNS,
+    [columnKeys],
+  )
+  const colCtx: ServerColCtx = { ping }
 
   useEffect(() => {
     fetchServers().then(setServers).catch(() => setError('Failed to load servers.')).finally(() => setLoading(false))
@@ -126,7 +120,7 @@ export default function Servers() {
         <div className="max-w-lg mx-auto mt-12 text-center border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-10">
           <div className="text-4xl mb-3">🖥️</div>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">No servers monitored yet</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
+          <p className="text-sm text-gray-500 dark:text-gray-300 mb-5">
             Install the spane Agent on your Linux or Windows servers to see CPU,
             memory, disk and service metrics here.
           </p>
@@ -161,51 +155,32 @@ export default function Servers() {
             {(opts as string[]).map((o) => <option key={o} value={o}>{o === 'All' ? `${label}: All` : o}</option>)}
           </select>
         ))}
+        <ColumnPicker activeKeys={columnKeys} onChange={setColumns} onReset={resetColumns} columns={SERVER_COLUMNS} />
       </div>
 
       <div className="overflow-x-auto bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl">
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
             <tr>
-              {['Hostname', 'OS', 'Ping', 'CPU', 'Memory', 'Disk', 'Load', 'Roles', 'Last Change', 'Status'].map((h) => (
-                <th key={h} className="px-3 py-2 font-medium">{h}</th>
+              {activeColumns.map((col) => (
+                <th key={col.key} className="px-3 py-2 font-medium whitespace-nowrap">{col.label}</th>
               ))}
+              <th className="px-3 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((s) => {
-              const m = s.latest_metrics
-              const up = isOnline(s)
-              return (
-                <tr key={s.id} onClick={() => nav(`/servers/${s.id}`)}
-                  className={`cursor-pointer ${STRIPED_ROW}`}>
-                  <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-100">{s.hostname}</td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{s.os_name || s.os || '—'}</td>
-                  <td className="px-3 py-2"><Ping p={s.device_id != null ? ping[s.device_id] : undefined} /></td>
-                  <td className="px-3 py-2"><Bar pct={m.cpu_pct} /></td>
-                  <td className="px-3 py-2"><Bar pct={m.memory_pct} /></td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
-                    {m.disk_max_pct == null ? '—' : (
-                      <span className={m.disk_max_pct >= 80 ? 'text-red-600 dark:text-red-400' : ''}>
-                        {m.disk_max_mount} {Math.round(m.disk_max_pct)}%{m.disk_max_pct >= 80 ? ' ⚠️' : ''}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-gray-600 dark:text-gray-300">
-                    {m.load_1 == null ? '—' : m.load_1.toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {s.roles.length ? s.roles.map((r) => (
-                        <span key={r} className="px-1.5 py-0.5 text-[10px] uppercase rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">{r}</span>
-                      )) : <span className="text-xs text-gray-400">—</span>}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(s.last_seen)}</td>
-                  <td className="px-3 py-2"><StatusBadge up={up} /></td>
-                </tr>
-              )
-            })}
+            {filtered.map((s) => (
+              <tr key={s.id} onClick={() => nav(`/servers/${s.id}`)}
+                className={`cursor-pointer ${STRIPED_ROW}`}>
+                {activeColumns.map((col) => (
+                  <td key={col.key} className="px-3 py-2">{col.render(s, colCtx)}</td>
+                ))}
+                {/* Protocol-aware connect (RDP for Windows, SSH for Linux). */}
+                <td className="px-3 py-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  <ConnectAction s={s} />
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
         {!filtered.length && <div className="p-6 text-center text-sm text-gray-500">No servers match the filters.</div>}

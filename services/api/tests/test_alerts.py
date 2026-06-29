@@ -195,6 +195,27 @@ class TestAlertEventEndpoints:
         assert resp.status_code == 401
 
 
+class TestDeviceNameResolution:
+    """get_device resolves device_id → the real hostname when no 'device' label is
+    set, so the Alerts Device column shows a name not 'device {id}'."""
+
+    def test_resolves_device_id_to_hostname(self, auth_client, rule):
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="router1.lab", ip_address="10.0.0.1")
+        e = AlertEvent.objects.create(rule=rule, state="firing",
+                                      labels={"device_id": dev.id, "severity": "high"})
+        assert auth_client.get(f"/api/alerts/events/{e.pk}/").json()["device"] == "router1.lab"
+
+    def test_explicit_device_label_wins(self, auth_client, rule):
+        e = AlertEvent.objects.create(rule=rule, state="firing",
+                                      labels={"device": "explicit-name", "device_id": 999})
+        assert auth_client.get(f"/api/alerts/events/{e.pk}/").json()["device"] == "explicit-name"
+
+    def test_no_device_returns_blank(self, auth_client, rule):
+        e = AlertEvent.objects.create(rule=rule, state="firing", labels={"source": "log_anomaly"})
+        assert auth_client.get(f"/api/alerts/events/{e.pk}/").json()["device"] == ""
+
+
 class TestInterfaceAlertSerialization:
     """The event serializer surfaces interface metadata from labels/annotations."""
 
