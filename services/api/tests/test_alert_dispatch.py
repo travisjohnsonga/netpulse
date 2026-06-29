@@ -131,6 +131,26 @@ class TestMatching:
         assert dispatch.matching_channels(match, payload_mod.build_payload(match, "firing")) == [ch]
         assert dispatch.matching_channels(nomatch, payload_mod.build_payload(nomatch, "firing")) == []
 
+    def test_ui_only_type_not_notified_by_default(self, rec):
+        # config_changed is a UI/audit visibility type → AlertEvent still created,
+        # but no channel notifies unless it opts in.
+        rule = make_rule()
+        ch = make_channel(config={"all_alerts": True})
+        ev = make_event(rule, severity="medium", alert_type="config_changed")
+        assert dispatch.matching_channels(ev, payload_mod.build_payload(ev, "firing")) == []
+
+    def test_ui_only_type_notifies_when_opted_in(self, rec):
+        rule = make_rule()
+        ch = make_channel(config={"all_alerts": True, "notify_types": ["config_changed"]})
+        ev = make_event(rule, severity="medium", alert_type="config_changed")
+        assert dispatch.matching_channels(ev, payload_mod.build_payload(ev, "firing")) == [ch]
+
+    def test_normal_type_still_notifies(self, rec):
+        rule = make_rule()
+        ch = make_channel(config={"all_alerts": True})
+        ev = make_event(rule, severity="medium", alert_type="site_down")
+        assert dispatch.matching_channels(ev, payload_mod.build_payload(ev, "firing")) == [ch]
+
 
 # ── dispatch core ──────────────────────────────────────────────────────────────
 

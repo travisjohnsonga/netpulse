@@ -75,10 +75,34 @@ def _routing_matches(channel, payload) -> bool:
     return True
 
 
+# Alert types that are UI/audit *visibility* events: the AlertEvent is always
+# created (Alerts list + audit trail), but they do NOT notify by default — paging
+# people for a routine config diff is noise. The generation-vs-notification split
+# applied per type. A channel opts in per-type via config.notify_types, e.g.
+# {"notify_types": ["config_changed"]}. Override the default set with the
+# ALERT_UI_ONLY_TYPES setting if needed.
+DEFAULT_UI_ONLY_TYPES = frozenset({"config_changed"})
+
+
+def _ui_only_types() -> frozenset:
+    from django.conf import settings
+    override = getattr(settings, "ALERT_UI_ONLY_TYPES", None)
+    return frozenset(override) if override is not None else DEFAULT_UI_ONLY_TYPES
+
+
+def _type_notifies(channel, alert_type: str) -> bool:
+    """A UI-only/audit alert type notifies a channel ONLY if that channel
+    explicitly opts in via config.notify_types. All other types notify normally."""
+    if not alert_type or alert_type not in _ui_only_types():
+        return True
+    allow = (channel.config or {}).get("notify_types") or []
+    return alert_type in allow
+
+
 def matching_channels(event, payload) -> list:
     """Active channels for this event: those linked to its rule plus any channel
-    flagged ``config.all_alerts`` (global), filtered by severity threshold and
-    routing. Deduped by id."""
+    flagged ``config.all_alerts`` (global), filtered by severity threshold,
+    routing, and per-type UI-only suppression. Deduped by id."""
     from .models import AlertChannel
 
     candidates: dict = {}
@@ -96,6 +120,8 @@ def matching_channels(event, payload) -> list:
         if event_order < _channel_min_order(ch):
             continue
         if not _routing_matches(ch, payload):
+            continue
+        if not _type_notifies(ch, payload.alert_type):  # UI-only/audit types: opt-in only
             continue
         out.append(ch)
     return out
