@@ -120,6 +120,41 @@ on recovery.
 
 ---
 
+## UI-editable server role configuration — *Near-term*
+
+**The idea.** Make role profiles + the functional-check settings **editable through
+the UI**. Today the backend already supports edits (`ServerRoleSerializer`'s
+`windows_services` / `linux_services` / `port_checks` / `custom_checks` are
+writable; `functional.web.urls` lives in `desired_config`) — what's missing is the
+**UI forms**. Natural home: the **expandable Role Profile rows** just built (which
+now *show* intent + checks) — add edit controls inside the expansion.
+
+**Make UI-editable:**
+1. **Functional web check** — add/edit/remove the `functional.web.urls` the check
+   probes; configure **which ports** the web role checks (default 80+443, or
+   HTTP-only / HTTPS-only / custom like 8080/8443) so a non-standard or HTTP-only
+   app is configured correctly instead of failing on assumed 80/443; toggle the
+   **HTTPS expectation** (an HTTP-only service shouldn't flag "no cert").
+2. **Port checks** — add/remove `port_checks` (`{port, proto, name}`).
+3. **Services** — add/remove `windows_services` / `linux_services`.
+4. **Custom checks** — edit `custom_checks`.
+
+**Guardrails:**
+- **Built-ins are read-only templates** (recommend): `is_builtin=true` roles aren't
+  edited in place — offer **"Clone to custom"** to make an editable copy, so the
+  built-in stays a known-good baseline.
+- **SSRF allowlist enforced UI-side** for functional URLs — http(s) to the host
+  itself only (mirror `apps.agents.models.is_allowed_self_url`); the UI must
+  validate the same on-host constraint, not let a user point it off-host.
+- **RBAC + audit** — editing role config is privileged (`role:edit` or similar)
+  and audited.
+
+**Pairs with** the role-dashboard TODO below (view by role) and builds on the
+expandable Role Profiles (intent + checks visible) — together: view roles, see
+their config, edit their config.
+
+---
+
 ## Role dashboard — servers grouped by role + role-check health — *Near-term (post log-forwarding diagnosis)*
 
 **The idea.** A dashboard organized **by role** rather than by server. Today roles
