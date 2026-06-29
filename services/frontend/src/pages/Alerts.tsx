@@ -438,8 +438,11 @@ export default function Alerts() {
                       )}
                     </td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-300 text-xs font-mono">
-                      {alert.device_id ? (
-                        <Link to={`/devices/${alert.device_id}?tab=telemetry`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                      {(alert.server_id || alert.device_id) ? (
+                        <Link to={alert.device_kind === 'server' && alert.server_id
+                          ? `/servers/${alert.server_id}?tab=Statistics`
+                          : `/devices/${alert.device_id}?tab=telemetry`}
+                          className="text-blue-600 dark:text-blue-400 hover:underline">
                           {alert.device || `device ${alert.device_id}`}
                         </Link>
                       ) : (alert.device || '—')}
