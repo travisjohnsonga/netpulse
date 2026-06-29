@@ -67,3 +67,35 @@ class AlertEvent(TimestampedModel):
 
     class Meta(TimestampedModel.Meta):
         indexes = [models.Index(fields=["rule", "state", "-created_at"])]
+
+
+class NotificationLog(TimestampedModel):
+    """One row per dispatch ATTEMPT to a channel — the delivery source of truth.
+
+    Dispatch records SUCCESS and FAILURE here so "did it deliver?" is queryable
+    and a silent failure becomes visible: the delivery-health endpoint reads it,
+    and a persistent failure fires a cross-channel meta-alarm. Channel identity
+    is denormalized (name/type) so the log survives the channel's deletion."""
+
+    class Status(models.TextChoices):
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
+    event = models.ForeignKey(AlertEvent, on_delete=models.CASCADE, related_name="deliveries")
+    channel = models.ForeignKey(AlertChannel, null=True, blank=True,
+                                on_delete=models.SET_NULL, related_name="deliveries")
+    channel_name = models.CharField(max_length=255, blank=True)
+    channel_type = models.CharField(max_length=20)
+    transition = models.CharField(max_length=10)  # firing | resolved
+    status = models.CharField(max_length=8, choices=Status.choices, db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=1)
+    detail = models.TextField(blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        indexes = [
+            models.Index(fields=["channel", "-created_at"]),
+            models.Index(fields=["status", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.channel_type} {self.status} (event {self.event_id})"

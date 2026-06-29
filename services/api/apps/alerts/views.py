@@ -10,8 +10,10 @@ from rest_framework.viewsets import GenericViewSet
 from apps.alerting.models import AlertAcknowledgement
 from apps.core.permissions import CapabilityViewSetMixin
 
-from .models import AlertChannel, AlertEvent, AlertRule
-from .serializers import AlertChannelSerializer, AlertEventSerializer, AlertRuleSerializer
+from .models import AlertChannel, AlertEvent, AlertRule, NotificationLog
+from .serializers import (
+    AlertChannelSerializer, AlertEventSerializer, AlertRuleSerializer, NotificationLogSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -291,3 +293,32 @@ class AlertEventViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMix
         minutes = request.data.get("minutes") or request.data.get("snooze_minutes") or 30
         ack, _ = self._record_ack(event, request.user, request.data.get("note"), minutes)
         return Response(AlertAcknowledgementSerializer(ack).data)
+
+
+class NotificationLogViewSet(CapabilityViewSetMixin, ListModelMixin, GenericViewSet):
+    """
+    Notification delivery log + delivery-health — the source of truth for "did the
+    alert actually get delivered." Dispatch writes a row per attempt (sent/failed)
+    so a silent send failure is visible here, in `delivery-health/`, and (when
+    persistent) via a cross-channel meta-alarm.
+
+    `GET /api/alerts/notifications/` — recent deliveries (filter `status`,
+    `channel`, `channel_type`). `GET /api/alerts/notifications/delivery-health/` —
+    per-channel health summary (last success/failure, currently-failing).
+    """
+
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
+    queryset = NotificationLog.objects.select_related("event", "event__rule", "channel").all()
+    serializer_class = NotificationLogSerializer
+    filterset_fields = ["status", "channel", "channel_type"]
+    ordering = ["-created_at"]
+
+    @action(detail=False, methods=["get"], url_path="delivery-health")
+    def delivery_health(self, request):
+        from .delivery_health import delivery_health
+        try:
+            window = int(request.query_params.get("window_minutes", 60))
+        except (TypeError, ValueError):
+            window = 60
+        return Response(delivery_health(window_minutes=max(1, min(window, 1440))))
