@@ -244,6 +244,32 @@ def _suppressed_by_maintenance(payload) -> bool:
         return False
 
 
+def _device_suppressed(event) -> str | None:
+    """Per-device notification suppression (NOT generation). Returns a reason
+    string if the subject device is observe-only (alerting_enabled=False) or
+    timed-silenced (silenced_until in the future), else None. Auto-resumes once
+    silenced_until passes (checked at dispatch time — no scheduler needed)."""
+    device_id = (getattr(event, "labels", None) or {}).get("device_id")
+    if device_id is None:
+        return None
+    try:
+        from django.utils import timezone
+
+        from apps.devices.models import Device
+        row = (Device.objects.filter(id=device_id)
+               .values("alerting_enabled", "silenced_until").first())
+        if not row:
+            return None
+        if not row["alerting_enabled"]:
+            return "device_alerting_disabled"
+        until = row["silenced_until"]
+        if until and until > timezone.now():
+            return "device_silenced"
+    except Exception:  # noqa: BLE001 — a lookup failure must never block dispatch
+        return None
+    return None
+
+
 def dispatch_event(event, transition: str) -> dict:
     """
     Deliver an AlertEvent transition ("firing"/"resolved") to all matching
@@ -267,6 +293,14 @@ def dispatch_event(event, transition: str) -> dict:
         # is reused (no extra query).
         if getattr(event, "rule_id", None) and not event.rule.notify_enabled:
             summary["reason"] = "rule_notify_disabled"
+            return summary
+        # Per-device/server silencing: the AlertEvent is still generated (UI shows
+        # truth), but notifications are suppressed when the subject device is set
+        # observe-only or is timed-silenced. (Applies to both kinds — a server's
+        # alert carries its Device id.)
+        dev_reason = _device_suppressed(event)
+        if dev_reason:
+            summary["reason"] = dev_reason
             return summary
         # Re-read so the payload reflects the just-stamped resolved fields, etc.
         event.refresh_from_db()
