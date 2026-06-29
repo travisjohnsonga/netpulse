@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { SectionHeader } from '../Settings'
-import { checkInfraHealth, fetchCollectors, type InfraHealth, type InfraServiceHealth, type Collector } from '../../api/client'
+import { checkInfraHealth, fetchCollectors, fetchDeliveryHealth, type InfraHealth, type InfraServiceHealth, type Collector, type DeliveryHealth } from '../../api/client'
 
 // Human label per infrastructure service key, in display order.
 const SERVICES: { key: keyof InfraHealth['services']; label: string }[] = [
@@ -40,6 +41,7 @@ function StatusBadge({ svc }: { svc?: InfraServiceHealth }) {
 
 export default function PlatformStatus() {
   const [health, setHealth] = useState<InfraHealth | null>(null)
+  const [delivery, setDelivery] = useState<DeliveryHealth | null>(null)
   const [localCollector, setLocalCollector] = useState<Collector | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -54,6 +56,9 @@ export default function PlatformStatus() {
         .catch(() => { if (!cancelled) { setError('Could not reach the API.'); setLoading(false) } })
       fetchCollectors()
         .then((cs) => { if (!cancelled) setLocalCollector(cs.find((c) => c.collector_type === 'local') ?? null) })
+        .catch(() => {})
+      fetchDeliveryHealth()
+        .then((d) => { if (!cancelled) setDelivery(d) })
         .catch(() => {})
     }
     load()
@@ -124,6 +129,38 @@ export default function PlatformStatus() {
           <span className="text-gray-400 dark:text-gray-500">not registered yet</span>
         )}
         <a href="/settings/collectors" className="ml-auto text-blue-600 hover:text-blue-800 text-xs">Manage →</a>
+      </div>
+
+      {/* Notification delivery — per-channel delivery health (PR #152). "Service up"
+          ≠ "delivery working": a healthy engine can still fail every send. */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 px-5 py-4 mt-4 text-sm">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="font-medium text-gray-700 dark:text-gray-200">Notification Delivery</span>
+          {delivery && (
+            <span className={clsx('inline-flex items-center gap-1.5 font-medium',
+              delivery.healthy ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+              <span className={clsx('w-2 h-2 rounded-full', delivery.healthy ? 'bg-green-500' : 'bg-red-500')} />
+              {delivery.healthy ? 'Healthy' : `${delivery.channels_failing} channel(s) failing`}
+            </span>
+          )}
+          <Link to="/notifications" className="ml-auto text-blue-600 hover:text-blue-800 text-xs">Delivery log →</Link>
+        </div>
+        {!delivery || delivery.channels.length === 0 ? (
+          <p className="text-gray-400 dark:text-gray-500 text-xs">No notifications sent in the last hour.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {delivery.channels.map((c) => (
+              <div key={`${c.channel_id ?? c.channel_type}`} className="flex items-center gap-2 text-xs">
+                <span className={clsx('w-2 h-2 rounded-full', c.healthy ? 'bg-green-500' : 'bg-red-500')} />
+                <span className="font-medium text-gray-700 dark:text-gray-200">{c.channel_name || c.channel_type}</span>
+                <span className="text-gray-400 dark:text-gray-500">
+                  {c.failed} failed / {c.sent} sent · last ok {agoStr(c.last_success ?? undefined)}
+                  {!c.healthy && c.last_failure ? ` · last fail ${agoStr(c.last_failure ?? undefined)}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">
