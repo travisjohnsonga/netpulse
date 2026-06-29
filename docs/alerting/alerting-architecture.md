@@ -200,9 +200,18 @@ new models.**
   *acknowledged* (someone owns it, notifications halted). The serializer already
   derives this (firing + has `AlertAcknowledgement`).
 - **Where to ack:** the UI button exists (`acknowledge` / `bulk-acknowledge`, which
-  already cancels *pending* `AlertNotification`s). New work: an **email ack-link** and
-  a **Teams card action** (Adaptive Card `Action.Http`) so on-call can ack from the
-  notification — the action must reach the engine to halt the timers.
+  already cancels *pending* `AlertNotification`s) — this is the **on-prem** ack
+  surface and works everywhere.
+  - **Ack-from-notification (email ack-link / Teams card `Action.Http`) is a
+    SaaS-tier feature, NOT on-prem.** It requires the app to be **publicly reachable**
+    to record the ack; an on-prem (non-public) deployment would need a VPN to hit the
+    link, so it's not reliable there. **On-prem ack stays in-app.** Build the
+    notification-ack surfaces when the **SaaS tier** (the hosted `spane.app` offering)
+    is in scope.
+  - *Possible middle-ground (SaaS-era complexity, later):* a narrowly-exposed
+    **signed ack-token endpoint**, or **ack via a Teams bot action** that routes
+    through Teams' own infra rather than a direct link back to spane. Out of scope
+    until the SaaS tier.
 
 ### Generation vs. external notification — make the split an explicit control
 
@@ -305,10 +314,12 @@ delivery code path. **Pick one; do not grow a third.**
   **`escalation_tick`** task to the existing `run_scheduler` loop that advances
   firing-unacked alerts — **timed multi-step escalation** (`EscalationStep.delay_minutes`),
   **reminders** (`EscalationPolicy.repeat_interval_minutes`), **ack halts escalation +
-  reminders** (current-firing scope; re-fire notifies fresh), on-call `Shift`
-  resolution, and **ack from the notification** (email link + Teams `Action.Http`).
-  All delivering via the Phase-0/1 `send_to_channel`. (Models exist; this is the engine
-  Stage-1 → Stage-2 work — see §4b.) **No Celery; use `run_scheduler`.**
+  reminders** (current-firing scope; re-fire notifies fresh), and on-call `Shift`
+  resolution. Ack here is the **in-app** button (works on-prem + SaaS). All delivering
+  via the Phase-0/1 `send_to_channel`. (Models exist; this is the engine Stage-1 →
+  Stage-2 work — see §4b.) **No Celery; use `run_scheduler`.**
+  - **Ack-from-notification (email ack-link / Teams card action) is deferred to the
+    SaaS tier** — it needs the app publicly reachable; on-prem ack stays in-app (§4b).
 
 - **Phase 4 — Unify routing onto the substrate:** one `Route` concept (extend
   `AlertChannel` matching or a thin routing layer) matching severity/source/**kind**/
