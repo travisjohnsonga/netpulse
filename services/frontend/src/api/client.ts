@@ -1720,6 +1720,11 @@ export interface AgentDesiredConfig {
   // what this host actually serves (e.g. HTTP-only → ["http://localhost/"], so the
   // agent's webTargets() skips the 443 probe). SSRF-constrained server-side.
   functional?: { web?: { urls: string[] } }
+  // Per-server role-service selection: role_type → the subset of that role's
+  // services this host actually runs. Empty/absent for a role = count them all
+  // (the default). Set a subset so an unselected service isn't a failing
+  // "not_found" in the role's X/Y-pass count.
+  role_services?: Record<string, string[]>
 }
 // Per-agent liveness-alert config (PATCH; gated by agent:edit + audit-logged).
 // offline_threshold_seconds=null → global default; liveness_alerts_enabled=false

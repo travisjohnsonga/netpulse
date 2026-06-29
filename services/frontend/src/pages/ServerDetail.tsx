@@ -892,11 +892,19 @@ function RolesTab({ id, os }: { id: string; os: string }) {
   const [pick, setPick] = useState<number | ''>('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<AssignedRole | null>(null)
+  // Role-remove confirmation when the role has services under stability watch.
+  const [confirm, setConfirm] = useState<{ a: AssignedRole; services: string[] } | null>(null)
 
   const load = useCallback(() => {
     fetchServerRoleAssignments(id).then(setAssigned).catch(() => {})
   }, [id])
   useEffect(() => { load(); fetchServerRoles().then(setAllRoles).catch(() => {}) }, [load])
+
+  const osServices = useCallback((roleType: string): string[] => {
+    const def = allRoles.find((r) => r.role_type === roleType)
+    if (!def) return []
+    return os === 'windows' ? def.windows_services : def.linux_services
+  }, [allRoles, os])
 
   const assign = async (roleId: number) => {
     setBusy(true)
@@ -907,7 +915,33 @@ function RolesTab({ id, os }: { id: string; os: string }) {
       setDetected((d) => d.filter((x) => x.role_id !== roleId))
     } finally { setBusy(false); setShowAssign(false); setPick('') }
   }
-  const remove = async (roleId: number) => { await removeServerRole(id, roleId); load() }
+  // Removing a role: if any of its services are under stability watch (or it has a
+  // per-server service selection), confirm first and offer to clean those up too —
+  // otherwise a stale watch keeps firing flap/down alerts for an unassigned role.
+  const remove = async (roleId: number) => {
+    const a = assigned.find((x) => x.role_id === roleId)
+    try {
+      const cfg = await fetchServerConfig(id)
+      const watched = cfg.stability?.services ?? []
+      const svc = a ? osServices(a.role_type).filter((s) => watched.includes(s)) : []
+      if (a && svc.length) { setConfirm({ a, services: svc }); return }
+    } catch { /* fall through to a plain remove */ }
+    await removeServerRole(id, roleId); load()
+  }
+  const confirmRemove = async () => {
+    if (!confirm) return
+    const { a, services } = confirm
+    setBusy(true)
+    try {
+      const cfg = await fetchServerConfig(id)
+      const watched = (cfg.stability?.services ?? []).filter((s) => !services.includes(s))
+      const rs = { ...(cfg.role_services ?? {}) }
+      delete rs[a.role_type]
+      await updateServerConfig(id, { stability: { services: watched }, role_services: rs })
+    } catch { /* best-effort cleanup; still remove the role */ }
+    await removeServerRole(id, a.role_id)
+    setConfirm(null); setBusy(false); load()
+  }
   const detect = async () => { setDetected(await detectServerRoles(id)) }
 
   const pickable = useMemo(() => allRoles.filter((r) => !assigned.some((a) => a.role_id === r.id)), [allRoles, assigned])
@@ -983,6 +1017,31 @@ function RolesTab({ id, os }: { id: string; os: string }) {
         {assigned.map((a) => <RoleCard key={a.id} a={a} onRemove={remove} />)}
         {!assigned.length && <div className="text-sm text-gray-500 col-span-full">No roles assigned. Use “Assign Role” or “Auto-detect”.</div>}
       </div>
+
+      {confirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !busy && setConfirm(null)}>
+          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-5 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Remove role “{confirm.a.name}”?</div>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              These services are under stability watch via this role. Removing the role will
+              stop monitoring them (and clears this server's service selection for the role):
+            </p>
+            <div className="flex flex-wrap gap-1.5 my-3">
+              {confirm.services.map((s) => (
+                <span key={s} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-mono">{s}</span>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirm(null)} disabled={busy}
+                className="px-3 py-1.5 text-sm border rounded-lg dark:border-gray-600 dark:text-gray-300 disabled:opacity-50">Cancel</button>
+              <button onClick={confirmRemove} disabled={busy}
+                className="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50">
+                {busy ? 'Removing…' : 'Remove role & stop watching'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1163,11 +1222,18 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
   const [newMount, setNewMount] = useState('')
   const [mountList, setMountList] = useState<'exclude_mounts' | 'include_mounts'>('exclude_mounts')
   const [newUrl, setNewUrl] = useState('')
+  // Assigned roles + role definitions, for the per-server role-service selection.
+  const [roles, setRoles] = useState<AssignedRole[]>([])
+  const [roleDefs, setRoleDefs] = useState<ServerRole[]>([])
 
   const load = useCallback(() => {
     fetchServerConfig(id).then(setCfg).catch(() => setError('Failed to load config.'))
   }, [id])
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    fetchServerRoleAssignments(id).then(setRoles).catch(() => {})
+    fetchServerRoles().then(setRoleDefs).catch(() => {})
+  }, [id])
 
   // After a save, poll the server's last_seen; once it advances past the save
   // time the agent has checked in and pulled the change → "applied".
@@ -1210,6 +1276,35 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
   }
   const removeUrl = (u: string) => setFunc(funcUrls.filter((x) => x !== u))
 
+  // ── Per-server role-service selection (PART 2) + stability link (PART 3) ──
+  // The agent reports every service its assigned roles know about; the operator
+  // narrows that to what THIS host actually runs so an unselected service isn't a
+  // failing "not_found" in the role's X/Y count. Empty/absent for a role = all.
+  const roleSel = cfg.role_services ?? {}
+  const watched = cfg.stability?.services ?? []
+  const servicesForRole = (roleType: string): string[] => {
+    const def = roleDefs.find((r) => r.role_type === roleType)
+    if (!def) return []
+    return os === 'windows' ? def.windows_services : def.linux_services
+  }
+  // Effective selection for a role: explicit subset if set, else "all" (= every
+  // service the role defines), so an unconfigured role shows everything checked.
+  const effectiveSel = (roleType: string): string[] =>
+    roleSel[roleType] ?? servicesForRole(roleType)
+  const toggleService = (roleType: string, name: string, on: boolean) => {
+    const cur = effectiveSel(roleType)
+    const next = on ? [...new Set([...cur, name])] : cur.filter((s) => s !== name)
+    setCfg({ ...cfg, role_services: { ...roleSel, [roleType]: next } })
+    setSaveState('idle')
+  }
+  const toggleWatch = (name: string, on: boolean) => {
+    const next = on ? [...new Set([...watched, name])] : watched.filter((s) => s !== name)
+    setCfg({ ...cfg, stability: { services: next } })
+    setSaveState('idle')
+  }
+  // Roles that actually expose services for this OS (skip pure port/functional roles).
+  const serviceRoles = roles.filter((a) => servicesForRole(a.role_type).length > 0)
+
   const save = async () => {
     if (!intervalValid || funcBad.length) return
     setSaving(true); setError(null)
@@ -1219,6 +1314,8 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
         interval_seconds: cfg.interval_seconds,
         disk: cfg.disk,
         functional: { web: { urls: funcUrls } },
+        role_services: cfg.role_services ?? {},
+        stability: { services: watched },
       })
       setCfg(updated)
       setSaveState('pending')
@@ -1377,6 +1474,54 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
           <div className="text-xs text-red-600 mt-1">Off-host URLs are not allowed: {funcBad.join(', ')}</div>
         )}
       </div>
+
+      {/* Per-server role services (which of each role's services this host runs) +
+          stability watch link. */}
+      {serviceRoles.length > 0 && (
+        <div className={card}>
+          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Role services</div>
+          <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
+            Pick which of each role's services this host actually runs — only checked
+            services count toward the role's health, so an unused one (e.g. nginx on an
+            Apache box) isn't a false “not found”. “Watch” adds the service to stability
+            monitoring (down/flap alerts). All checked = monitor all.
+          </p>
+          <div className="space-y-4">
+            {serviceRoles.map((a) => {
+              const all = servicesForRole(a.role_type)
+              const sel = effectiveSel(a.role_type)
+              return (
+                <div key={a.id}>
+                  <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">{a.name}</div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-end gap-4 pr-0.5 text-[10px] uppercase text-gray-400">
+                      <span className="w-16 text-center">Runs here</span>
+                      <span className="w-12 text-center">Watch</span>
+                    </div>
+                    {all.map((name) => (
+                      <div key={name} className="flex items-center justify-between text-sm">
+                        <span className="font-mono text-gray-700 dark:text-gray-300">{name}</span>
+                        <div className="flex items-center gap-4">
+                          <input type="checkbox" className="w-16 h-4 disabled:opacity-50"
+                            checked={sel.includes(name)} disabled={!canEdit}
+                            onChange={(e) => toggleService(a.role_type, name, e.target.checked)} />
+                          <input type="checkbox" className="w-12 h-4 disabled:opacity-50"
+                            checked={watched.includes(name)} disabled={!canEdit}
+                            onChange={(e) => toggleWatch(name, e.target.checked)} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-[11px] text-gray-400 mt-3">
+            Checking external vhosts or a URL not served on this host? Use a Service Check
+            (Checks → add an HTTP/HTTPS check) — the agent only probes this host (localhost).
+          </p>
+        </div>
+      )}
 
       {canEdit && (
         <div className="flex justify-end">

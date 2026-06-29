@@ -52,6 +52,12 @@ DEFAULT_AGENT_CONFIG = {
     # on localhost; empty = derive from the role's open ports. SSRF-constrained to
     # the host itself (is_allowed_self_url, both sides).
     "functional": {"web": {"urls": []}},
+    # Per-role SERVICE selection: which of a role's defined services THIS server
+    # actually runs (e.g. Web → apache2 only, not nginx/httpd). {role_type: [names]}.
+    # Empty/absent for a role = count ALL the role's services (current behavior).
+    # The role-status count (AssignedRoleSerializer.get_status) honors this subset
+    # so an unselected service isn't counted as a failing "not_found".
+    "role_services": {},
 }
 
 # Functional-check guardrails.
@@ -276,6 +282,8 @@ class Agent(TimestampedModel):
             "stability": {"services": list(stability.get("services") or [])},
             "functional": {"web": {"urls": list(
                 ((cfg.get("functional") or {}).get("web") or {}).get("urls") or [])}},
+            "role_services": {str(k): list(v or []) for k, v in
+                              (cfg.get("role_services") or {}).items()},
         }
 
     def save(self, *args, **kwargs):
