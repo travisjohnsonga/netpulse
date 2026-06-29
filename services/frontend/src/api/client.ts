@@ -202,6 +202,10 @@ export interface Alert {
   title: string
   device: string
   device_id: number | null
+  // Subject routing: 'server' → link to /servers/{server_id} (Agent UUID);
+  // 'network_device' (or absent) → /devices/{device_id}.
+  device_kind?: 'network_device' | 'server' | ''
+  server_id?: string | null
   interface: string
   transition: '' | 'up' | 'down'
   downtime_seconds: number | null
