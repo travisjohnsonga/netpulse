@@ -36,6 +36,11 @@ class AlertRule(TimestampedModel):
     channels = models.ManyToManyField(AlertChannel, blank=True, related_name="rules")
     is_active = models.BooleanField(default=True)
     cooldown_minutes = models.PositiveIntegerField(default=60)
+    # Generation-vs-notification split at the RULE level: when False the rule
+    # still CREATES AlertEvents (they show in the UI / Alerts list) but dispatch
+    # is skipped — no email/Teams (observe-only). Distinct from is_active=False,
+    # which disables the rule entirely. Enforced in dispatch.py:dispatch_event.
+    notify_enabled = models.BooleanField(default=True)
     # Seeded default rule (see seed_alert_rules). Protected from deletion;
     # disable it by toggling is_active instead. When is_active is False the
     # alert engines skip creating events for this rule.

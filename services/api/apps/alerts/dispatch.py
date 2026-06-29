@@ -261,6 +261,13 @@ def dispatch_event(event, transition: str) -> dict:
         if not _claim(event, transition):
             summary["reason"] = "already notified"
             return summary
+        # Per-rule notify gate: the rule still GENERATES events (the AlertEvent
+        # exists / shows in the UI), but notifications are off (observe-only).
+        # Checked before refresh_from_db() so the signal's select_related("rule")
+        # is reused (no extra query).
+        if getattr(event, "rule_id", None) and not event.rule.notify_enabled:
+            summary["reason"] = "rule_notify_disabled"
+            return summary
         # Re-read so the payload reflects the just-stamped resolved fields, etc.
         event.refresh_from_db()
         payload = build_payload(event, transition)
