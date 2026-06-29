@@ -1305,6 +1305,9 @@ export interface AlertRule {
   condition: Record<string, unknown>
   channels: number[]
   is_active: boolean
+  // Generation-vs-notification split at the rule level: false → still generates
+  // AlertEvents (UI) but does not dispatch notifications (observe-only).
+  notify_enabled: boolean
   is_system: boolean
   cooldown_minutes: number
   created_at: string

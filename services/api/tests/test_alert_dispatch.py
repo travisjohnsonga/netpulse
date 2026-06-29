@@ -258,6 +258,30 @@ class TestDispatch:
         assert summary["reason"] == "maintenance"
         assert rec.calls == []
 
+    @ENABLED
+    def test_rule_notify_disabled_generates_but_skips_dispatch(self, rec):
+        # notify_enabled=False: the AlertEvent still exists (UI), dispatch skipped.
+        rule = make_rule()
+        rule.notify_enabled = False
+        rule.save(update_fields=["notify_enabled"])
+        ch = make_channel()
+        rule.channels.add(ch)
+        ev = make_event(rule)
+        summary = dispatch.dispatch_event(ev, "firing")
+        assert summary["reason"] == "rule_notify_disabled"
+        assert rec.calls == []
+        assert AlertEvent.objects.filter(id=ev.id).exists()           # generation happened
+        assert NotificationLog.objects.filter(event=ev).count() == 0  # no delivery
+
+    @ENABLED
+    def test_rule_notify_enabled_notifies(self, rec):
+        rule = make_rule()  # notify_enabled defaults True
+        ch = make_channel()
+        rule.channels.add(ch)
+        ev = make_event(rule)
+        summary = dispatch.dispatch_event(ev, "firing")
+        assert summary["sent"] == 1 and len(rec.calls) == 1
+
 
 # ── signal wiring (create → on_commit → dispatch) ──────────────────────────────
 
