@@ -158,6 +158,74 @@ disqualifying for the eval.
 
 ---
 
+## 4b. Suppression, escalation & ack — the models exist; the engine is Stage-1
+
+**Verified core finding:** the schema for suppression, escalation, timers and ack is
+**already modeled** in `apps/alerting` — the engine just doesn't process it. The
+engine says so itself:
+
+> `apps/alerting/engine.py`: *"On-call resolution, timed multi-step escalation and
+> acknowledgement land in later stages — Stage 1 fires step 1 by email."*
+
+…and `process_alert_event()` has **zero callers** (§1), so even Stage-1 doesn't run on
+a real alert today. **The alerting focus is engine logic over an existing schema, not
+new models.**
+
+### Suppression (anti-fatigue / anti-storm)
+
+| Mechanism | Modeled? | Enforced? | Notes |
+|---|---|---|---|
+| **Maintenance windows** | ✅ `MaintenanceWindow` (devices/sites M2M; empty scope = all) + `is_in_maintenance()` | **Partial** | #149 dispatch + check engine + reachability already call `is_in_maintenance` to suppress *firing*. Not honored: the `AlertRoute.suppress_during_maintenance` flag (routing dormant) and resolve-notification suppression. |
+| **Dependency suppression** `suppress_if_parent_down` | ✅ flag on `AlertRoute` (default True) | ❌ **not built** | THE key anti-storm feature: upstream switch down → suppress the 50 downstream alerts, send one "switch down." **Needs device→upstream resolution** — there is **no `Device.parent`**; topology exists (`TopologyLink`, `ManualTopologyLink`, `LLDPNeighbor`) but nothing designates an uplink or walks "this dependent is down *because* its parent is." Needs an explicit uplink/parent field or a topology-walk against reachability state. |
+| **Dedup / grouping** (storm → one notification) | ❌ **not modeled** | ❌ | No grouping key, no storm digest. N related events = N notifications. |
+| **Manual silence / mute / snooze** | ✅ `AlertAcknowledgement.snoozed_until` | ❌ **not enforced** | "Silence this for 2h" = ack-with-snooze; the field exists, nothing re-evaluates it. |
+
+### Escalation & timers (don't-miss-a-critical)
+
+| Mechanism | Modeled? | Enforced? | Notes |
+|---|---|---|---|
+| **Timed multi-step escalation** | ✅ `EscalationStep.step_number` + `delay_minutes` | ❌ engine fires **step 1 only** | After step 1, wait `delay_minutes` → if unacked → step 2 → …. Needs a timer that advances unacked escalations. |
+| **Reminder / re-notify** | ✅ `EscalationPolicy.repeat_interval_minutes` | ❌ | Re-notify every N min until acked/resolved, so a critical isn't silently ignored. |
+| **Ack halts escalation** | ✅ `AlertAcknowledgement` | ❌ | Ack must stop step-advancement + reminders for the current firing. |
+| **The timer mechanism** | — | ❌ **missing** | Needs a periodic evaluator ("which firing-unacked alerts are due for the next step / reminder?"). **Infra exists:** the single `run_scheduler` loop (300s tick) is the home — add an `escalation_tick` task. **Do NOT add Celery** (present but unused; one scheduler only). |
+
+### Acknowledgement — stop re-alerting (scope is the design)
+
+- **Ack → halt re-notification + escalation for the *current firing only*.** No more
+  reminders, no more steps. Ack = "I've got this."
+- **Re-fire is fresh.** If the alert resolves then later re-fires, that's a **new**
+  `AlertEvent` → it notifies again. Ack mutes the *incident*, never the device
+  permanently.
+- **Stays visible.** Acked ≠ resolved ≠ gone — it remains in the Alerts list as
+  *acknowledged* (someone owns it, notifications halted). The serializer already
+  derives this (firing + has `AlertAcknowledgement`).
+- **Where to ack:** the UI button exists (`acknowledge` / `bulk-acknowledge`, which
+  already cancels *pending* `AlertNotification`s). New work: an **email ack-link** and
+  a **Teams card action** (Adaptive Card `Action.Http`) so on-call can ack from the
+  notification — the action must reach the engine to halt the timers.
+
+### Generation vs. external notification — make the split an explicit control
+
+The architecture **already separates** detection from delivery (AlertEvent creation is
+independent of dispatch). Make that an explicit, controllable product feature:
+
+- **Alert generation (the UI Alerts list) ALWAYS happens** — the in-app list is the
+  source of truth for what's firing; never suppress the *record*. You can always *see*
+  every alert regardless of notification settings. (Suppression above mutes the
+  *notification*, not the `AlertEvent` — keep it that way.)
+- **External notification is independently toggleable**, controlled separately from
+  generation: an alert can show in the UI and **not** page, or show **and** page.
+- **Control granularity** (existing hooks): **global** master notify on/off;
+  **per-rule** (`AlertRule.is_active` / a new `notify` flag — generates UI alerts but
+  doesn't page); **per-severity** (per-channel `min_severity` already — page only
+  high/critical, everything still generates); **per-route/channel**
+  (`AlertChannel.is_active`, `config.match`, `TeamMember.notify_*`).
+- **Use case — "observe mode":** stand up a new monitor generating UI alerts only,
+  confirm it isn't noisy, *then* enable notifications. Tune paging to what matters
+  without going blind — the anti-fatigue control that complements suppression.
+
+---
+
 ## 5. Target architecture (one unified system, phased)
 
 **One pipeline, one substrate:**
@@ -191,27 +259,43 @@ delivery code path. **Pick one; do not grow a third.**
   failures (decouple the debounce-claim from send success so a 0-of-N delivery is
   retried); a **delivery-health** metric/heartbeat. *Make silent failure impossible.*
 
-- **Phase 2 — Unify routing onto the substrate:** one `Route` concept (extend
+- **Phase 2 — Generation/notification split + suppression enforcement (anti-fatigue,
+  low-cost, early):** make "UI alert generation" and "external notification" an explicit
+  control — **global** + **per-rule `notify` toggle** ("observe mode": generate UI
+  alerts, don't page) on top of the existing per-severity (`min_severity`) /
+  per-channel hooks. Enforce **maintenance windows** on the full path (incl. the route
+  flag + resolve notifications) and **manual snooze** (`AlertAcknowledgement.snoozed_until`).
+  Never suppresses the `AlertEvent` record — only the notification. *Cheap, high-value,
+  prevents fatigue while keeping full visibility.* (See §4b.)
+
+- **Phase 3 — Escalation timers + ack (don't-miss-a-critical):** add an
+  **`escalation_tick`** task to the existing `run_scheduler` loop that advances
+  firing-unacked alerts — **timed multi-step escalation** (`EscalationStep.delay_minutes`),
+  **reminders** (`EscalationPolicy.repeat_interval_minutes`), **ack halts escalation +
+  reminders** (current-firing scope; re-fire notifies fresh), on-call `Shift`
+  resolution, and **ack from the notification** (email link + Teams `Action.Http`).
+  All delivering via the Phase-0/1 `send_to_channel`. (Models exist; this is the engine
+  Stage-1 → Stage-2 work — see §4b.) **No Celery; use `run_scheduler`.**
+
+- **Phase 4 — Unify routing onto the substrate:** one `Route` concept (extend
   `AlertChannel` matching or a thin routing layer) matching severity/source/**kind**/
-  **site**/**device**/tags; link routes → channels (+ optional team/policy); wire it
-  into the live fire path, replacing ad-hoc `rule.channels`+`all_alerts`; retire
+  **site**/**device**/tags; link routes → channels (+ team/policy); wire it into the
+  live fire path, replacing ad-hoc `rule.channels`+`all_alerts`; retire
   `process_alert_event`'s own sender (route → `send_to_channel`). Collapses the two
   systems. (Includes the *Expanded alert routing* roadmap item: `match_device_kind`
   via `device_kind` #142 + `match_devices` M2M.)
 
-- **Phase 3 — Escalation + on-call:** wire `EscalationPolicy` steps, on-call `Shift`
-  resolution, ack-driven stop/re-notify, snooze/silence — all delivering via the
-  Phase-0/1 dispatch. (Models largely exist; the work is wiring + connecting to the
-  one delivery path.)
+- **Phase 5 — Anti-storm (dependency suppression + grouping):** `suppress_if_parent_down`
+  — needs a device→uplink model (explicit parent FK or a topology-walk over
+  `LLDPNeighbor`/`TopologyLink` against reachability) so one "switch down" replaces 50
+  downstream pages; plus **dedup/grouping** (group by device/site/rule within a window
+  → one digest notification with a count). *The key anti-storm work — not modeled yet.*
 
-- **Phase 4 — Storm control:** dedup/grouping (group by device/site/rule within a
-  window), digest a storm into one notification with a count.
-
-- **Phase 5 — Enterprise:** ITSM (ServiceNow/Jira) as channel types, SMS/PagerDuty
+- **Phase 6 — Enterprise:** ITSM (ServiceNow/Jira) as channel types, SMS/PagerDuty
   escalation, per-team kind/site/device routing UI, alerting reports.
 
 **Cross-cutting:** async delivery queue (decouple send from the alert-writer process);
-keep + extend maintenance windows; metrics on fire→deliver latency and failure rate.
+metrics on fire→deliver latency and failure rate.
 
 ---
 
@@ -219,9 +303,18 @@ keep + extend maintenance windows; metrics on fire→deliver latency and failure
 
 1. **Two-system unification.** Recommend **#149 as the single delivery substrate**,
    `apps/alerting` reduced to the routing/escalation layer that *calls* it; retire the
-   dormant duplicate sender. (Travis's "Option A" instinct is right; the live/dormant
-   roles are inverted from the initial read — `alerting` is the dormant one.)
-2. **Reliability / failure-handling (Phase 1).** Silent dispatch failure is the #1
-   eval risk. Dead-letter + audit + alarm-on-failure + redelivery are not optional.
-3. **Routing expansion (Phase 2).** Per-kind/site/device routing (the unified
-   network+server story) lands when routing graduates onto the substrate.
+   dormant duplicate sender. (The "Option A" instinct is right; the live/dormant roles
+   are inverted from the initial read — `alerting` is the dormant one.)
+2. **Reliability / failure-handling (Phase 1).** Silent dispatch failure is the #1 eval
+   risk. Dead-letter + audit + alarm-on-failure + redelivery are not optional.
+3. **Anti-fatigue without going blind (Phase 2).** The generation-vs-notification split
+   + observe-mode + suppression enforcement (maintenance, snooze) is cheap and high-value
+   — see everything in the UI, page only for what matters.
+4. **Escalation/ack engine (Phase 3).** The schema exists; the engine is Stage-1 (fires
+   step 1, no timers, no ack-handling). The timer-driven `run_scheduler` loop + ack→halt
+   is the work that makes "criticals can't be silently missed" real.
+5. **Anti-storm — dependency suppression (Phase 5).** `suppress_if_parent_down` is
+   modeled but unbuilt and needs a device-uplink/topology model; it's THE feature that
+   stops one upstream failure becoming 50 pages.
+6. **Routing expansion (Phase 4).** Per-kind/site/device routing (unified network+server)
+   lands when routing graduates onto the substrate.
