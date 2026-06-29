@@ -1,6 +1,20 @@
 from rest_framework import serializers
 
-from .models import AlertChannel, AlertEvent, AlertRule
+from .models import AlertChannel, AlertEvent, AlertRule, NotificationLog
+
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    """A delivery attempt (the operator-facing status/log view)."""
+    event_title = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NotificationLog
+        fields = ("id", "event", "event_title", "channel", "channel_name", "channel_type",
+                  "transition", "status", "attempts", "detail", "created_at")
+        read_only_fields = fields
+
+    def get_event_title(self, obj):
+        return (obj.event.annotations or {}).get("title") or (obj.event.rule.name if obj.event_id else "")
 
 
 class AlertChannelSerializer(serializers.ModelSerializer):

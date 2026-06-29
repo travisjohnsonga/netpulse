@@ -283,11 +283,24 @@ def infrastructure_health(request):
         "openbao": _svc(_openbao_probe()),
     }
 
+    # Notification-delivery health — so external monitoring catches a silent
+    # dispatch failure ("watch the watcher"). Best-effort; never breaks /health.
+    try:
+        from apps.alerts.delivery_health import delivery_health
+        dh = delivery_health(window_minutes=60)
+        notification_delivery = {
+            "ok": dh["healthy"], "channels_failing": dh["channels_failing"],
+            "recent_failures": dh["recent_failures"],
+        }
+    except Exception:  # noqa: BLE001
+        notification_delivery = {"ok": True, "channels_failing": 0, "recent_failures": 0}
+
     return Response(
         {
             "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "version": _netpulse_version(),
             "services": services,
+            "notification_delivery": notification_delivery,
         }
     )
 

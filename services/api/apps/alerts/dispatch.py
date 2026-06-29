@@ -145,14 +145,20 @@ def _record_delivery(channel, payload, ok: bool, detail: str, attempts: int) -> 
     if not getattr(payload, "event_id", None):
         return
     try:
+        from django.db import transaction
+
         from .models import NotificationLog
-        NotificationLog.objects.create(
-            event_id=payload.event_id, channel=channel,
-            channel_name=getattr(channel, "name", "") or "",
-            channel_type=channel.channel_type, transition=payload.transition,
-            status=NotificationLog.Status.SENT if ok else NotificationLog.Status.FAILED,
-            attempts=attempts, detail=(detail or "")[:2000],
-        )
+        # Own savepoint: if the event was deleted mid-dispatch (FK violation), the
+        # failed INSERT rolls back in isolation and never breaks the caller's
+        # transaction — logging a delivery must never break dispatch.
+        with transaction.atomic():
+            NotificationLog.objects.create(
+                event_id=payload.event_id, channel=channel,
+                channel_name=getattr(channel, "name", "") or "",
+                channel_type=channel.channel_type, transition=payload.transition,
+                status=NotificationLog.Status.SENT if ok else NotificationLog.Status.FAILED,
+                attempts=attempts, detail=(detail or "")[:2000],
+            )
     except Exception as exc:  # noqa: BLE001 — logging delivery must never break dispatch
         logger.warning("could not record delivery for event %s: %s",
                        getattr(payload, "event_id", "?"), exc)

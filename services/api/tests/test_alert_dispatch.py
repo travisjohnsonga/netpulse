@@ -6,7 +6,7 @@ from django.core import mail
 from django.test import override_settings
 
 from apps.alerts import dispatch, payload as payload_mod
-from apps.alerts.models import AlertChannel, AlertEvent, AlertRule
+from apps.alerts.models import AlertChannel, AlertEvent, AlertRule, NotificationLog
 from apps.alerts.notifiers import _REGISTRY, Notifier, get_notifier, registered_types
 
 pytestmark = pytest.mark.django_db
@@ -232,7 +232,9 @@ class TestDispatch:
                 return (attempts["n"] >= 2, "flaky")
         monkeypatch.setitem(_REGISTRY, "flaky", Flaky())
         ch = make_channel(channel_type="flaky")
-        p = payload_mod.AlertPayload(event_id=1, transition="firing", severity="high",
+        # event_id=None → a synthetic send (no NotificationLog write); this test
+        # exercises retry behaviour, not delivery logging.
+        p = payload_mod.AlertPayload(event_id=None, transition="firing", severity="high",
                                      title="t", message="m")
         with override_settings(ALERT_DISPATCH_MAX_ATTEMPTS=3, ALERT_DISPATCH_BACKOFF_S=0):
             ok, _ = dispatch.send_to_channel(ch, p)
@@ -432,3 +434,93 @@ class TestChannelTestEndpoint:
         resp = auth_client.post(f"/api/alerts/channels/{ch.pk}/test/")
         assert resp.status_code == 502
         assert resp.json()["ok"] is False
+
+
+# ── delivery reliability (NotificationLog + cross-channel alarm + health) ────────
+
+class FailingNotifier(Notifier):
+    def send(self, channel, payload):
+        return False, "boom"
+
+
+class TestDeliveryReliability:
+    @ENABLED
+    def test_success_and_failure_are_logged(self, monkeypatch):
+        monkeypatch.setitem(_REGISTRY, "good", RecordingNotifier())
+        monkeypatch.setitem(_REGISTRY, "fail", FailingNotifier())
+        rule = make_rule()
+        gch = make_channel(channel_type="good", name="teams", config={"all_alerts": True})
+        fch = make_channel(channel_type="fail", name="email", config={"all_alerts": True})
+        ev = make_event(rule, severity="high")
+        dispatch.dispatch_event(ev, "firing")
+        assert NotificationLog.objects.filter(event=ev, channel=gch, status="sent").exists()
+        assert NotificationLog.objects.filter(event=ev, channel=fch, status="failed").exists()
+
+    @ENABLED
+    def test_cross_channel_alarm_routes_to_survivor(self, monkeypatch):
+        from django.core.cache import cache
+        cache.clear()
+        monkeypatch.setitem(_REGISTRY, "good", RecordingNotifier())
+        monkeypatch.setitem(_REGISTRY, "fail", FailingNotifier())
+        rule = make_rule()
+        gch = make_channel(channel_type="good", name="teams", config={"all_alerts": True})
+        fch = make_channel(channel_type="fail", name="email", config={"all_alerts": True})
+        ev = make_event(rule, severity="high")
+        dispatch.dispatch_event(ev, "firing")
+        meta = AlertEvent.objects.filter(
+            labels__alert_type="notification_delivery_failed",
+            labels__failed_channel_id=fch.id).first()
+        assert meta is not None  # the surviving channel reports the dead one
+        chans = dispatch.matching_channels(meta, payload_mod.build_payload(meta, "firing"))
+        assert gch in chans and fch not in chans  # excludes the dead channel, routes to teams
+
+    @ENABLED
+    def test_single_failing_channel_is_graceful(self, monkeypatch):
+        from django.core.cache import cache
+        cache.clear()
+        monkeypatch.setitem(_REGISTRY, "fail", FailingNotifier())
+        rule = make_rule()
+        fch = make_channel(channel_type="fail", config={"all_alerts": True})
+        ev = make_event(rule, severity="high")
+        dispatch.dispatch_event(ev, "firing")
+        meta = AlertEvent.objects.filter(labels__alert_type="notification_delivery_failed").first()
+        assert meta is not None
+        # the only channel IS the failing one → excluded → no surviving channel, no error
+        assert dispatch.matching_channels(meta, payload_mod.build_payload(meta, "firing")) == []
+        summary = dispatch.dispatch_event(meta, "firing")
+        assert summary["dispatched"] and summary["channels"] == 0 and summary["failed"] == 0
+
+    @ENABLED
+    def test_no_alarm_on_alarm(self, monkeypatch):
+        from django.core.cache import cache
+        cache.clear()
+        monkeypatch.setitem(_REGISTRY, "fail", FailingNotifier())
+        rule = make_rule()
+        fch = make_channel(channel_type="fail", config={"all_alerts": True})
+        ev = make_event(rule, severity="high", alert_type="notification_delivery_failed")
+        before = AlertEvent.objects.count()
+        dispatch._fire_delivery_failure_alarm(fch, payload_mod.build_payload(ev, "firing"))
+        assert AlertEvent.objects.count() == before  # recursion guard
+
+    def test_test_send_not_logged(self, rec):
+        ch = make_channel()
+        p = payload_mod.AlertPayload(event_id=None, transition="firing", severity="info",
+                                     title="t", message="m")
+        dispatch.send_to_channel(ch, p)
+        assert NotificationLog.objects.count() == 0  # synthetic test sends aren't deliveries
+
+    def test_delivery_health_unhealthy_then_clears(self):
+        from apps.alerts.delivery_health import delivery_health
+        rule = make_rule()
+        ch = make_channel(name="email")
+        ev = make_event(rule)
+        NotificationLog.objects.create(event=ev, channel=ch, channel_name="email",
+                                       channel_type="rec", transition="firing",
+                                       status="failed", attempts=2, detail="boom")
+        h = delivery_health()
+        assert h["healthy"] is False and h["channels_failing"] == 1
+        NotificationLog.objects.create(event=ev, channel=ch, channel_name="email",
+                                       channel_type="rec", transition="firing",
+                                       status="sent", attempts=1)
+        h2 = delivery_health()
+        assert h2["healthy"] is True and h2["channels_failing"] == 0
