@@ -1113,6 +1113,29 @@ const COLLECTION_LABELS: Record<string, string> = {
   cpu: 'CPU', memory: 'Memory', disk: 'Disk', network: 'Network', services: 'Services',
 }
 
+// SSRF guardrail mirrored from the backend (is_allowed_self_url): a functional-check
+// URL must be http(s) to the host ITSELF. Validate UI-side too so the operator gets
+// instant feedback and we never PATCH an off-host URL (the server rejects it anyway).
+function isOnHostUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1'
+  } catch { return false }
+}
+
+type FuncMode = 'default' | 'http' | 'https' | 'custom'
+const FUNC_MODES: { m: FuncMode; label: string; help: string }[] = [
+  { m: 'default', label: 'Role default', help: "Derives from the Web role's ports (typically HTTP :80 + HTTPS :443 + cert)." },
+  { m: 'http', label: 'HTTP-only', help: 'Checks http://localhost/ (:80). No 443, no certificate check.' },
+  { m: 'https', label: 'Serves HTTPS', help: 'Checks https://localhost/ (:443) + certificate validity.' },
+  { m: 'custom', label: 'Custom', help: 'Specify the exact on-host URLs/ports (e.g. :8080 / :8443).' },
+]
+const FUNC_PRESET: Record<Exclude<FuncMode, 'custom'>, string[]> = {
+  default: [], http: ['http://localhost/'], https: ['https://localhost/'],
+}
+
 function ConfigTab({ id, os }: { id: string; os: string }) {
   const canEdit = useCapabilities().includes('agent:edit')
   const [cfg, setCfg] = useState<AgentDesiredConfig | null>(null)
@@ -1122,6 +1145,7 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
   const [saveState, setSaveState] = useState<'idle' | 'pending' | 'applied'>('idle')
   const [newMount, setNewMount] = useState('')
   const [mountList, setMountList] = useState<'exclude_mounts' | 'include_mounts'>('exclude_mounts')
+  const [newUrl, setNewUrl] = useState('')
 
   const load = useCallback(() => {
     fetchServerConfig(id).then(setCfg).catch(() => setError('Failed to load config.'))
@@ -1150,14 +1174,34 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
 
   const intervalValid = cfg.interval_seconds >= 10 && cfg.interval_seconds <= 3600
 
+  // Functional web check (per-server override of the role-derived probe URLs).
+  const funcUrls = cfg.functional?.web?.urls ?? []
+  const funcBad = funcUrls.filter((u) => !isOnHostUrl(u))
+  const funcMode: FuncMode = funcUrls.length === 0 ? 'default'
+    : funcUrls.length === 1 && funcUrls[0] === FUNC_PRESET.http[0] ? 'http'
+    : funcUrls.length === 1 && funcUrls[0] === FUNC_PRESET.https[0] ? 'https'
+    : 'custom'
+  const setFunc = (urls: string[]) => { setCfg({ ...cfg, functional: { web: { urls } } }); setSaveState('idle') }
+  const setFuncMode = (m: FuncMode) => {
+    if (m === 'custom') setFunc(funcUrls.length ? funcUrls : [...FUNC_PRESET.http])
+    else setFunc([...FUNC_PRESET[m]])
+  }
+  const addUrl = () => {
+    const u = newUrl.trim()
+    if (u && !funcUrls.includes(u)) setFunc([...funcUrls, u])
+    setNewUrl('')
+  }
+  const removeUrl = (u: string) => setFunc(funcUrls.filter((x) => x !== u))
+
   const save = async () => {
-    if (!intervalValid) return
+    if (!intervalValid || funcBad.length) return
     setSaving(true); setError(null)
     try {
       const updated = await updateServerConfig(id, {
         collection: cfg.collection,
         interval_seconds: cfg.interval_seconds,
         disk: cfg.disk,
+        functional: { web: { urls: funcUrls } },
       })
       setCfg(updated)
       setSaveState('pending')
@@ -1264,9 +1308,62 @@ function ConfigTab({ id, os }: { id: string; os: string }) {
         )}
       </div>
 
+      {/* Functional web check (per-server override of the role-derived probe URLs) */}
+      <div className={card}>
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Functional web check</div>
+        <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
+          The Web role probes this host's site over HTTP/HTTPS. If a port isn't actually
+          served here, its check fails and can fire a false “site down” alert. Match the
+          mode to what this host serves. URLs must point at this host (localhost / 127.0.0.1 / ::1).
+        </p>
+        <div className="space-y-1.5">
+          {FUNC_MODES.map(({ m, label, help }) => (
+            <label key={m} className="flex items-start gap-2 text-sm">
+              <input type="radio" name="func-mode" checked={funcMode === m} disabled={!canEdit}
+                onChange={() => setFuncMode(m)} className="mt-1 h-4 w-4 disabled:opacity-50" />
+              <span>
+                <span className="text-gray-800 dark:text-gray-200 font-medium">{label}</span>
+                <span className="block text-xs text-gray-500 dark:text-gray-400">{help}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-3">
+          <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+            Effective check{funcMode === 'default' ? ' (role-derived)' : ''}:
+          </div>
+          {funcMode === 'default' ? (
+            <span className="text-xs text-gray-400">Derived from the Web role's ports on this host (e.g. http://localhost:80/ + https://localhost:443/).</span>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {funcUrls.length === 0 && <span className="text-xs text-gray-400">none</span>}
+              {funcUrls.map((u) => (
+                <span key={u} className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full font-mono ${isOnHostUrl(u)
+                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                  : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+                  {u}
+                  {canEdit && funcMode === 'custom' && <button onClick={() => removeUrl(u)} className="text-red-600 hover:text-red-800">×</button>}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        {canEdit && funcMode === 'custom' && (
+          <div className="flex items-center gap-2 mt-2">
+            <input value={newUrl} onChange={(e) => setNewUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addUrl()} placeholder="http://localhost:8080/"
+              className="flex-1 px-2 py-1 text-xs border rounded dark:bg-gray-900 dark:border-gray-600 font-mono" />
+            <button onClick={addUrl} className="px-2 py-1 text-xs border rounded dark:border-gray-600 dark:text-gray-300">Add</button>
+          </div>
+        )}
+        {funcBad.length > 0 && (
+          <div className="text-xs text-red-600 mt-1">Off-host URLs are not allowed: {funcBad.join(', ')}</div>
+        )}
+      </div>
+
       {canEdit && (
         <div className="flex justify-end">
-          <button onClick={save} disabled={saving || !intervalValid}
+          <button onClick={save} disabled={saving || !intervalValid || funcBad.length > 0}
             className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">
             {saving ? 'Saving…' : 'Save config'}
           </button>
