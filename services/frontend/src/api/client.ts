@@ -1705,6 +1705,11 @@ export interface AgentDesiredConfig {
   interval_seconds: number
   disk: { exclude_mounts: string[]; include_mounts: string[] }
   stability?: { services: string[] }
+  // Per-server functional web check override. Empty/undefined urls = derive from
+  // the role's ports (HTTP :80 + HTTPS :443); set explicit on-host URLs to match
+  // what this host actually serves (e.g. HTTP-only → ["http://localhost/"], so the
+  // agent's webTargets() skips the 443 probe). SSRF-constrained server-side.
+  functional?: { web?: { urls: string[] } }
 }
 // Per-agent liveness-alert config (PATCH; gated by agent:edit + audit-logged).
 // offline_threshold_seconds=null → global default; liveness_alerts_enabled=false
