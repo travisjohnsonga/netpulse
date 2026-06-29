@@ -367,6 +367,11 @@ metrics on fire→deliver latency and failure rate.
 7. **One shared evaluation loop, not four timers (§8).** for-duration, flap, grouping
    (§7) and escalation are all time-driven re-evaluations — build the spine once (with
    the first feature that needs it: for-duration) on `run_scheduler`, never Celery.
+8. **TV wall as the externally-independent fallback tier (§9).** The NOC wall is the
+   always-watched, WebSocket-only surface that survives an email/Teams outage and
+   shows "delivery degraded" — the fourth failure-visibility tier. Builds on existing
+   TV infra; delivery-failure display reads PR #152's delivery-health (built),
+   critical-takeover wants grouping (§7).
 
 ---
 
@@ -434,3 +439,55 @@ scheduler with a smaller `--tick` (affects all tasks) or give the alerting evalu
 its **own sub-loop/interval** inside the scheduler service. **Decide this when the
 first loop-dependent feature (for-duration) lands — establish the spine once**, then
 flap / grouping / escalation reuse it.
+
+---
+
+## 9. Design — TV dashboard as a notification tier (NOC wall)
+
+> Design only. Builds on **existing** infra — the TV dashboards (`pages/tv/`:
+> TVNetwork/Servers/Security/Compliance/Wireless + `TVRotate` rotation), live over
+> the WebSocket `/ws/telemetry/`, and the alerts WS consumer
+> (`apps/alerts/consumers.py`). This *surfaces alerts prominently on the
+> always-watched wall*, not new push infra.
+
+A NOC wall makes the TV a first-class **notification tier**, not just a status
+display — specifically the **always-watched, externally-independent fallback** the
+multi-tier failure design (§3) wanted.
+
+**Why it's a real tier:**
+- **Always-watched by design** → solves *"a header banner only works if someone's
+  looking."* A critical on the wall **is** seen; the wall is the banner on a
+  guaranteed-watched surface.
+- **Independent path** → updates ride the **WebSocket**, not email/Teams (SMTP/
+  webhook). It needs **no external service** (no SMTP, no Microsoft), so it **survives
+  the outages that kill email/Teams** — when push delivery fails (the §3 / PR #152
+  case) the wall still shows the alert *and* can show "⚠️ delivery degraded." The
+  externally-independent fallback.
+- **Attention-escalating modality** email can't do: flash, full-screen red, sound,
+  and **take over the rotation** — a critical can interrupt and pin until acked.
+
+**Phased build:**
+1. **Alert overlay** — a persistent severity-coloured alert strip/panel on the TV
+   dashboards (or a dedicated `TVAlerts` view): active firing alerts, counts, grouped
+   summaries, live via the existing **alerts WS consumer** (`apps/alerts/consumers.py`).
+   Every TV view shows current alerts. *(No new dependency.)*
+2. **Critical takeover** — a critical (config: which severities) **interrupts
+   `TVRotate`** and pins a full-screen alert until acked/resolved. **Grouping-aware:
+   once grouping (§7) lands, the takeover pins the GROUP summary** ("CRITICAL: 12
+   unreachable at Waco"), not 12 separate takeovers. **→ depends on §7 (grouping).**
+3. **Delivery-failure display** — reads the **`/api/alerts/notifications/delivery-health/`
+   endpoint built in PR #152** (and `notification_delivery` on `/api/health/
+   infrastructure/`): when push delivery is degraded, the wall shows a prominent
+   "⚠️ Alert delivery degraded — email/Teams failing." The TV becomes the fallback
+   surface precisely when the push channels are the thing that's down.
+   **→ depends on PR #152's delivery-health (BUILT).**
+4. **Optional** — audio cue on a new critical (NOC wall with sound); ack-from-the-wall
+   (with an input device) or ack-from-app clears the takeover.
+
+**Dependencies (explicit):** overlay (1) needs only the existing alerts WS consumer;
+takeover (2) wants **grouping (§7)** to pin group summaries instead of N takeovers;
+delivery-failure display (3) reads **PR #152's delivery-health** (already built).
+Where it fits §3: the in-app banner + cross-channel meta-alarm + `/api/health` are the
+failure-visibility tiers — the TV wall adds a **fourth, always-watched,
+externally-independent** one, and is the natural home for the "delivery degraded"
+signal when email/Teams are the thing that's down.
