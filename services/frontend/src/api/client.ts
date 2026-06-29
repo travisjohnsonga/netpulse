@@ -1335,6 +1335,31 @@ export async function fetchAlertChannels(): Promise<AlertChannel[]> {
   return unwrap(data)
 }
 
+export async function createAlertChannel(payload: Partial<AlertChannel>): Promise<AlertChannel> {
+  const { data } = await api.post<AlertChannel>('/alerts/channels/', payload)
+  return data
+}
+
+export async function updateAlertChannel(id: number, payload: Partial<AlertChannel>): Promise<AlertChannel> {
+  const { data } = await api.patch<AlertChannel>(`/alerts/channels/${id}/`, payload)
+  return data
+}
+
+export async function deleteAlertChannel(id: number): Promise<void> {
+  await api.delete(`/alerts/channels/${id}/`)
+}
+
+/** Send a synthetic test notification through one channel. Returns {ok, detail}. */
+export async function testAlertChannel(id: number): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const { data } = await api.post<{ ok: boolean; detail: string }>(`/alerts/channels/${id}/test/`, {})
+    return data
+  } catch (e) {
+    const err = e as { response?: { data?: { ok?: boolean; detail?: string } } }
+    return { ok: false, detail: err.response?.data?.detail ?? 'send failed' }
+  }
+}
+
 // ── Collectors ───────────────────────────────────────────────────────────────
 
 export type CollectorType = 'local' | 'remote'
