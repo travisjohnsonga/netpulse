@@ -317,7 +317,8 @@ delivery code path. **Pick one; do not grow a third.**
   reminders** (current-firing scope; re-fire notifies fresh), and on-call `Shift`
   resolution. Ack here is the **in-app** button (works on-prem + SaaS). All delivering
   via the Phase-0/1 `send_to_channel`. (Models exist; this is the engine Stage-1 →
-  Stage-2 work — see §4b.) **No Celery; use `run_scheduler`.**
+  Stage-2 work — see §4b.) Runs on the **shared evaluation loop (§8)** — **No Celery;
+  use `run_scheduler`.**
   - **Ack-from-notification (email ack-link / Teams card action) is deferred to the
     SaaS tier** — it needs the app publicly reachable; on-prem ack stays in-app (§4b).
 
@@ -332,8 +333,9 @@ delivery code path. **Pick one; do not grow a third.**
 - **Phase 5 — Anti-storm (dependency suppression + grouping):** `suppress_if_parent_down`
   — needs a device→uplink model (explicit parent FK or a topology-walk over
   `LLDPNeighbor`/`TopologyLink` against reachability) so one "switch down" replaces 50
-  downstream pages; plus **dedup/grouping** (group by device/site/rule within a window
-  → one digest notification with a count). *The key anti-storm work — not modeled yet.*
+  downstream pages; plus **dedup/grouping** — leading-edge + extend, global
+  UI-configurable key, channel-aware folding, `AlertGroup` model (**full design in
+  §7**). *The key anti-storm work — not modeled yet; runs on the shared loop (§8).*
 
 - **Phase 6 — Enterprise:** ITSM (ServiceNow/Jira) as channel types, SMS/PagerDuty
   escalation, per-team kind/site/device routing UI, alerting reports.
@@ -362,3 +364,73 @@ metrics on fire→deliver latency and failure rate.
    stops one upstream failure becoming 50 pages.
 6. **Routing expansion (Phase 4).** Per-kind/site/device routing (unified network+server)
    lands when routing graduates onto the substrate.
+7. **One shared evaluation loop, not four timers (§8).** for-duration, flap, grouping
+   (§7) and escalation are all time-driven re-evaluations — build the spine once (with
+   the first feature that needs it: for-duration) on `run_scheduler`, never Celery.
+
+---
+
+## 7. Design — alert grouping (storm collapse)
+
+> Lands in **Phase 5** (anti-storm), built **after** the for-duration/flap features
+> that establish the shared evaluation loop (§8). Recorded here as the committed
+> design.
+
+**Strategy — leading-edge + extend (NOT hold-then-send).** The first alert of a group
+**notifies immediately** (no delay on the first / a critical) and **opens a group**
+(thread/card); subsequent matching alerts **fold into it** instead of spawning new
+notifications; the group emits **batched updates** as it grows and **resolves** when
+its members clear. The storm collapses to one thread *without* delaying the leading
+alert. (The PagerDuty / Alertmanager model.)
+
+**Grouping key — global, UI-configurable.** ONE key for all alerts (simplest); the
+operator picks which fields compose it — no code change. **Default = `site` +
+`alert_type`** → "Site X: 12 unreachable." Configurable dimensions: `site`,
+`alert_type`/`source`, `severity`, `device_kind`, `agent`/`device` — all already on
+`AlertEvent.severity` + `labels`, so the key is built from those.
+
+**Channel-aware folding** — fold to what the channel supports:
+- **Teams / Slack** (editable/threadable) → **update** the existing card / post into the
+  thread ("now 12, was 5").
+- **Email** (can't edit a sent message) → a **leading email** + **throttled digest
+  updates** (batched "now 12", never one-per-device).
+
+**Timers (all on the shared loop, §8):** **leading send** (immediate, or a ~5s
+**micro-coalesce** to absorb a simultaneous burst into the first notification) +
+**`group_interval`** (flush batched updates every ~30–60s, not per-alert) +
+**`repeat_interval`** (still-firing reminders). The group **window EXTENDS** while
+alerts keep arriving and **settles** when quiet.
+
+**Data model:** add **`AlertGroup`** (`key`, members, `state` =
+collecting/notified/resolved, `opened_at`/`last_update_at`/`resolved_at`, + per-channel
+message/thread ids so updates can edit the right card) and a **`group` FK on
+`AlertEvent`**. On fire: compute key → find-or-open group → attach → leading-send or
+fold per the group's state. On resolve: detach; when the last member clears, resolve
+the group (and its card/thread). **Depends on §8.**
+
+---
+
+## 8. Design — the shared evaluation loop (one spine, not four timers)
+
+Several features are **time-driven re-evaluations of firing state** and **must share
+one periodic loop**:
+- **for-duration** — "has this condition held ≥ N min?" (fire-after-sustained).
+- **flap detection** — "flapping over the window?" (suppress / annotate).
+- **grouping** (§7) — "flush batched updates / has the window settled?"
+- **escalation** (Phase 3) — "firing-unacked alert due for its next step / reminder?"
+
+**Mechanism — `run_scheduler`, NOT Celery (confirmed).** The single authoritative
+scheduler is the `run_scheduler` management-command loop (the `scheduler` service).
+`Celery` / `django-celery-beat` are in requirements but **UNUSED** — do not add a
+second scheduler. Add **one alerting evaluation task** (generalize the
+`escalation_tick` referenced above into an **`alerting_tick`**) that, each pass,
+advances *all* of the above over the firing set.
+
+**Cadence caveat (important):** `run_scheduler`'s default `--tick` is **300s** — far
+too coarse for grouping's ~5s coalesce / 30–60s `group_interval` and for tight
+escalation timing. The loop already clamps to a 5s floor (`max(5, tick)`), so the
+alerting evaluation needs a **dedicated faster cadence** (e.g. 15–30s): either run the
+scheduler with a smaller `--tick` (affects all tasks) or give the alerting evaluation
+its **own sub-loop/interval** inside the scheduler service. **Decide this when the
+first loop-dependent feature (for-duration) lands — establish the spine once**, then
+flap / grouping / escalation reuse it.
