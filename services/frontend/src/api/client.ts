@@ -202,6 +202,10 @@ export interface Alert {
   title: string
   device: string
   device_id: number | null
+  // Subject routing: 'server' → link to /servers/{server_id} (Agent UUID);
+  // 'network_device' (or absent) → /devices/{device_id}.
+  device_kind?: 'network_device' | 'server' | ''
+  server_id?: string | null
   interface: string
   transition: '' | 'up' | 'down'
   downtime_seconds: number | null
@@ -1301,6 +1305,9 @@ export interface AlertRule {
   condition: Record<string, unknown>
   channels: number[]
   is_active: boolean
+  // Generation-vs-notification split at the rule level: false → still generates
+  // AlertEvents (UI) but does not dispatch notifications (observe-only).
+  notify_enabled: boolean
   is_system: boolean
   cooldown_minutes: number
   created_at: string
@@ -1559,6 +1566,9 @@ export interface Server {
   is_online?: boolean
   offline_threshold_seconds?: number | null
   liveness_alerts_enabled?: boolean
+  // Per-device alert silencing (on the agent's Device; set via /servers/{id}/alerting/).
+  alerting_enabled?: boolean
+  silenced_until?: string | null
   agent_version: string
   cert_expires_at: string | null
   collection_interval: number
@@ -1705,6 +1715,16 @@ export interface AgentDesiredConfig {
   interval_seconds: number
   disk: { exclude_mounts: string[]; include_mounts: string[] }
   stability?: { services: string[] }
+  // Per-server functional web check override. Empty/undefined urls = derive from
+  // the role's ports (HTTP :80 + HTTPS :443); set explicit on-host URLs to match
+  // what this host actually serves (e.g. HTTP-only → ["http://localhost/"], so the
+  // agent's webTargets() skips the 443 probe). SSRF-constrained server-side.
+  functional?: { web?: { urls: string[] } }
+  // Per-server role-service selection: role_type → the subset of that role's
+  // services this host actually runs. Empty/absent for a role = count them all
+  // (the default). Set a subset so an unselected service isn't a failing
+  // "not_found" in the role's X/Y-pass count.
+  role_services?: Record<string, string[]>
 }
 // Per-agent liveness-alert config (PATCH; gated by agent:edit + audit-logged).
 // offline_threshold_seconds=null → global default; liveness_alerts_enabled=false
@@ -1714,6 +1734,19 @@ export async function updateServerLiveness(
   patch: { offline_threshold_seconds?: number | null; liveness_alerts_enabled?: boolean },
 ): Promise<ServerDetail> {
   const { data } = await api.patch<ServerDetail>(`/servers/${id}/liveness/`, patch)
+  return data
+}
+
+// Per-device/server alert silencing (generate-but-don't-notify). alerting_enabled
+// = observe-only; silenced_until = timed mute (ISO, or null to un-silence).
+// Gated by device:edit / agent:edit + audited server-side.
+export type AlertingPatch = { alerting_enabled?: boolean; silenced_until?: string | null }
+export async function updateDeviceAlerting(id: number, patch: AlertingPatch): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(`/devices/${id}/alerting/`, patch)
+  return data
+}
+export async function updateServerAlerting(id: string, patch: AlertingPatch): Promise<ServerDetail> {
+  const { data } = await api.patch<ServerDetail>(`/servers/${id}/alerting/`, patch)
   return data
 }
 
@@ -3008,6 +3041,9 @@ export interface DeviceDetail {
   is_reachable?: boolean
   consecutive_failures?: number
   last_reachability_check?: string | null
+  // Per-device alert silencing (set via /devices/{id}/alerting/).
+  alerting_enabled?: boolean
+  silenced_until?: string | null
   collector_name?: string | null
   collector_ip?: string | null
   collector_status?: string | null
@@ -3980,6 +4016,53 @@ export async function fetchAlertNotifications(eventId: number): Promise<AlertNot
   const { data } = await api.get<AlertNotificationRecord[] | Paginated<AlertNotificationRecord>>(
     '/alerting/notifications/', { params: { alert_event: eventId, ordering: 'created_at' } })
   return unwrap(data)
+}
+
+// ── Notification delivery log + health (apps/alerts NotificationLog, PR #152) ──
+// Distinct from the escalation AlertNotification above: this is the #149-dispatch
+// delivery source of truth (one row per send attempt, sent/failed).
+export interface NotificationDelivery {
+  id: number
+  event: number
+  event_title: string
+  channel: number | null
+  channel_name: string
+  channel_type: string
+  transition: string
+  status: 'sent' | 'failed'
+  attempts: number
+  detail: string
+  created_at: string
+}
+export interface DeliveryHealthChannel {
+  channel_id: number | null
+  channel_name: string
+  channel_type: string
+  sent: number
+  failed: number
+  last_success: string | null
+  last_failure: string | null
+  healthy: boolean
+}
+export interface DeliveryHealth {
+  healthy: boolean
+  channels_failing: number
+  recent_failures: number
+  window_minutes: number
+  channels: DeliveryHealthChannel[]
+}
+
+export async function fetchNotificationDeliveries(
+  params: { status?: string; channel?: string; page_size?: string } = {},
+): Promise<NotificationDelivery[]> {
+  const { data } = await api.get<NotificationDelivery[] | Paginated<NotificationDelivery>>(
+    '/alerts/notifications/', { params: { page_size: '100', ...params } })
+  return unwrap(data)
+}
+
+export async function fetchDeliveryHealth(): Promise<DeliveryHealth> {
+  const { data } = await api.get<DeliveryHealth>('/alerts/notifications/delivery-health/')
+  return data
 }
 
 export async function acknowledgeAlertEvent(eventId: number, note?: string, snoozeMinutes?: number): Promise<void> {

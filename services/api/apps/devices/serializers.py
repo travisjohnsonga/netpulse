@@ -162,6 +162,14 @@ class DeviceGroupSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
 
 
+class DeviceAlertingSerializer(serializers.Serializer):
+    """Body for the per-device/server alert-silencing actions. NOTIFICATION-only:
+    alerting_enabled=False = observe-only; silenced_until = timed mute (null to
+    un-silence). Shared by DeviceViewSet + ServerViewSet `/alerting/`."""
+    alerting_enabled = serializers.BooleanField(required=False)
+    silenced_until = serializers.DateTimeField(required=False, allow_null=True)
+
+
 class DeviceSerializer(serializers.ModelSerializer):
     # Resolved collector display info (assigned → site default → global default).
     collector_name = serializers.SerializerMethodField()

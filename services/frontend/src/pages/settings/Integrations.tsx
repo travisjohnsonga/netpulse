@@ -221,17 +221,21 @@ export default function Integrations() {
     const def = ALERT_CHANNELS[integration.id]
     const existing = channels[integration.id]
     const secret = (values[def.secretField] || '').trim()
+    const minSeverity = values.min_severity || 'medium'
     try {
       let ch: AlertChannel
       if (!existing) {
         if (!secret) return { ok: false, message: `Please enter the ${integration.fields[0]?.label || 'required field'}.` }
-        ch = await createAlertChannel({ name: integration.name, channel_type: def.type, is_active: true, config: def.config(values) })
+        ch = await createAlertChannel({ name: integration.name, channel_type: def.type, is_active: true,
+          config: { ...def.config(values), min_severity: minSeverity } })
       } else {
-        // Update: only overwrite the secret/config when a new value was entered;
-        // otherwise PATCH just keeps it active (config — incl. the OpenBao secret — untouched).
-        const payload: Partial<AlertChannel> = { is_active: true }
-        if (secret) payload.config = def.config(values)
-        ch = await updateAlertChannel(existing.id, payload)
+        // Update: with a new secret, rebuild config (the backend moves the secret to
+        // OpenBao); without one, keep the existing config (incl. the OpenBao secret
+        // marker) and only update min_severity. Always PATCH config so severity saves.
+        const config = secret
+          ? { ...def.config(values), min_severity: minSeverity }
+          : { ...(existing.config || {}), min_severity: minSeverity }
+        ch = await updateAlertChannel(existing.id, { is_active: true, config })
       }
       const test = await testAlertChannel(ch.id)
       loadAll()
@@ -305,6 +309,7 @@ export default function Integrations() {
           integration={setup}
           isAlertChannel={setup.id in ALERT_CHANNELS}
           hasChannel={Boolean(channels[setup.id])}
+          currentMinSeverity={(channels[setup.id]?.config?.min_severity as string) || 'medium'}
           onClose={() => setSetup(null)}
           onSubmit={async (values) => {
             if (setup.id in ALERT_CHANNELS) return submitAlertChannel(setup, values)
@@ -328,15 +333,19 @@ export default function Integrations() {
   )
 }
 
-function SetupModal({ integration, isAlertChannel, hasChannel, onClose, onSubmit, onDisconnect }: {
+const SEVERITY_OPTIONS = ['info', 'low', 'medium', 'high', 'critical'] as const
+
+function SetupModal({ integration, isAlertChannel, hasChannel, currentMinSeverity, onClose, onSubmit, onDisconnect }: {
   integration: Integration
   isAlertChannel: boolean
   hasChannel: boolean
+  currentMinSeverity: string
   onClose: () => void
   onSubmit: (values: Record<string, string>) => Promise<{ ok: boolean; message: string }>
   onDisconnect: () => void
 }) {
   const [values, setValues] = useState<Record<string, string>>({})
+  const [minSeverity, setMinSeverity] = useState(currentMinSeverity)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
   const connected = hasChannel
@@ -344,7 +353,8 @@ function SetupModal({ integration, isAlertChannel, hasChannel, onClose, onSubmit
   const submit = async () => {
     setBusy(true)
     setResult(null)
-    const r = await onSubmit(values)
+    // Carry the per-channel min_severity alongside the field values.
+    const r = await onSubmit({ ...values, min_severity: minSeverity })
     setResult(r)
     setBusy(false)
   }
@@ -381,6 +391,19 @@ function SetupModal({ integration, isAlertChannel, hasChannel, onClose, onSubmit
             />
           </div>
         ))}
+        {isAlertChannel && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Minimum severity to notify</label>
+            <select value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)} className={inputCls}>
+              {SEVERITY_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}{s === 'medium' ? ' (default)' : ''}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+              Only alerts at this severity or above notify here. Everything still shows in the Alerts list — this gates the notification, not the alert. (Audit/visibility types like config-change never notify unless opted in.)
+            </p>
+          </div>
+        )}
         {result && (
           <p className={`text-xs rounded-md px-3 py-2 ${result.ok
             ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'

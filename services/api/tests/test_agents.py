@@ -1216,3 +1216,37 @@ class TestLogForwarding:
         assert r.status_code == 200, r.content
         assert r.json()["logs"]["additional_paths"] == ["/var/log/myapp/app.log"]
         assert r.json()["logs"]["security_profile"] is False
+
+
+@pytest.mark.django_db
+class TestRoleServiceSubset:
+    """Per-server role-service selection filters the role-status count so an
+    unselected service isn't a failing 'not_found' (item 3, PART 2)."""
+
+    def test_subset_counts_only_selected(self):
+        from apps.agents.models import Agent, AgentRole, AgentRoleStatus, ServerRole
+        from apps.agents.serializers import AssignedRoleSerializer
+        role = ServerRole.objects.create(name="Web T", role_type="webt",
+                                         linux_services=["nginx", "apache2", "httpd"])
+        agent = Agent.objects.create(hostname="web-sel",
+                                     desired_config={"role_services": {"webt": ["apache2"]}})
+        ar = AgentRole.objects.create(agent=agent, role=role)
+        AgentRoleStatus.objects.create(agent=agent, role_type="webt", services=[
+            {"name": "apache2", "running": True},
+            {"name": "nginx", "running": False},
+            {"name": "httpd", "running": False}])
+        st = AssignedRoleSerializer(ar).data["status"]
+        assert st["checks_total"] == 1 and st["checks_passed"] == 1   # only apache2
+        assert [s["name"] for s in st["services"]] == ["apache2"]
+
+    def test_no_selection_counts_all(self):
+        from apps.agents.models import Agent, AgentRole, AgentRoleStatus, ServerRole
+        from apps.agents.serializers import AssignedRoleSerializer
+        role = ServerRole.objects.create(name="Web T2", role_type="webt2",
+                                         linux_services=["nginx", "apache2"])
+        agent = Agent.objects.create(hostname="web-sel2", desired_config={})
+        ar = AgentRole.objects.create(agent=agent, role=role)
+        AgentRoleStatus.objects.create(agent=agent, role_type="webt2", services=[
+            {"name": "apache2", "running": True}, {"name": "nginx", "running": False}])
+        st = AssignedRoleSerializer(ar).data["status"]
+        assert st["checks_total"] == 2 and st["checks_passed"] == 1   # all counted

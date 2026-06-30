@@ -39,6 +39,9 @@ def _merge_config(stored: dict, patch: dict) -> dict:
         out["stability"] = {**(out.get("stability") or {}), **patch["stability"]}
     if "functional" in patch:
         out["functional"] = {**(out.get("functional") or {}), **patch["functional"]}
+    if "role_services" in patch:
+        # Per-role merge so editing one role's selection doesn't drop the others.
+        out["role_services"] = {**(out.get("role_services") or {}), **patch["role_services"]}
     return out
 
 
@@ -283,6 +286,32 @@ class ServerViewSet(CapabilityViewSetMixin, viewsets.ReadOnlyModelViewSet):
                 AuditLog.EventType.AGENT_CONFIG_CHANGED, request=request, target=server,
                 description=f"Agent liveness config changed for {server.hostname}",
                 metadata={k: getattr(server, k) for k in changed})
+        return Response(self.get_serializer(server).data)
+
+    @action(detail=True, methods=["patch"], url_path="alerting")
+    def alerting(self, request, pk=None):
+        """Per-server alert silencing — writes the agent's Device flags
+        (`alerting_enabled` = observe-only, `silenced_until` = timed mute, auto-
+        resumes). NOTIFICATION-only — AlertEvents still generate. agent:edit; audited."""
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        from apps.devices.serializers import DeviceAlertingSerializer
+
+        server = self.get_object()
+        if not server.device_id:
+            return Response({"detail": "Server has no linked device."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        ser = DeviceAlertingSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        device = server.device
+        changed = [f for f in ("alerting_enabled", "silenced_until") if f in ser.validated_data]
+        for f in changed:
+            setattr(device, f, ser.validated_data[f])
+        if changed:
+            device.save(update_fields=changed + ["updated_at"])
+            log_event(AuditLog.EventType.AGENT_CONFIG_CHANGED, request=request, target=server,
+                      description=f"Alert silencing changed for {server.hostname}",
+                      metadata={k: str(getattr(device, k)) for k in changed})
         return Response(self.get_serializer(server).data)
 
     @action(detail=True, methods=["delete"], url_path=r"roles/(?P<role_id>[^/.]+)")

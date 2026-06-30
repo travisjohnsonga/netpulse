@@ -48,7 +48,7 @@ export default function TVNetwork({ rotation }: { rotation?: Parameters<typeof T
 
         <TVPanel title="Active Alerts" className="overflow-auto">
           {active.length === 0 ? (
-            <div className="text-2xl" style={{ color: TV.success }}>✅ No active alerts</div>
+            <div className="text-2xl" style={{ color: TV.success }}>No active alerts</div>
           ) : (
             <div className="space-y-3">
               {(['critical', 'high', 'medium', 'low'] as const).map((sev) => bySev[sev] ? (

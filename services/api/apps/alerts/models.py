@@ -36,6 +36,11 @@ class AlertRule(TimestampedModel):
     channels = models.ManyToManyField(AlertChannel, blank=True, related_name="rules")
     is_active = models.BooleanField(default=True)
     cooldown_minutes = models.PositiveIntegerField(default=60)
+    # Generation-vs-notification split at the RULE level: when False the rule
+    # still CREATES AlertEvents (they show in the UI / Alerts list) but dispatch
+    # is skipped — no email/Teams (observe-only). Distinct from is_active=False,
+    # which disables the rule entirely. Enforced in dispatch.py:dispatch_event.
+    notify_enabled = models.BooleanField(default=True)
     # Seeded default rule (see seed_alert_rules). Protected from deletion;
     # disable it by toggling is_active instead. When is_active is False the
     # alert engines skip creating events for this rule.
@@ -67,3 +72,35 @@ class AlertEvent(TimestampedModel):
 
     class Meta(TimestampedModel.Meta):
         indexes = [models.Index(fields=["rule", "state", "-created_at"])]
+
+
+class NotificationLog(TimestampedModel):
+    """One row per dispatch ATTEMPT to a channel — the delivery source of truth.
+
+    Dispatch records SUCCESS and FAILURE here so "did it deliver?" is queryable
+    and a silent failure becomes visible: the delivery-health endpoint reads it,
+    and a persistent failure fires a cross-channel meta-alarm. Channel identity
+    is denormalized (name/type) so the log survives the channel's deletion."""
+
+    class Status(models.TextChoices):
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
+    event = models.ForeignKey(AlertEvent, on_delete=models.CASCADE, related_name="deliveries")
+    channel = models.ForeignKey(AlertChannel, null=True, blank=True,
+                                on_delete=models.SET_NULL, related_name="deliveries")
+    channel_name = models.CharField(max_length=255, blank=True)
+    channel_type = models.CharField(max_length=20)
+    transition = models.CharField(max_length=10)  # firing | resolved
+    status = models.CharField(max_length=8, choices=Status.choices, db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=1)
+    detail = models.TextField(blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        indexes = [
+            models.Index(fields=["channel", "-created_at"]),
+            models.Index(fields=["status", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.channel_type} {self.status} (event {self.event_id})"

@@ -82,6 +82,23 @@ class AgentConfigSerializer(serializers.Serializer):
     logs = _LogsConfigSerializer(required=False)
     stability = _StabilityConfigSerializer(required=False)
     functional = _FunctionalConfigSerializer(required=False)
+    # {role_type: [service names this server runs]} — the per-server role-service
+    # subset. Names validated/de-duped; empty list = count all the role's services.
+    role_services = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()), required=False)
+
+    def validate_role_services(self, value):
+        from .models import is_valid_service_name
+        cleaned = {}
+        for role_type, names in value.items():
+            uniq = list(dict.fromkeys(n.strip() for n in (names or []) if n and n.strip()))
+            bad = [n for n in uniq if not is_valid_service_name(n)]
+            if bad:
+                raise serializers.ValidationError(
+                    f"Invalid service name(s) for role {role_type}: {bad}. Allowed "
+                    f"characters: letters, digits, and . _ @ : + -.")
+            cleaned[str(role_type)] = uniq
+        return cleaned
 
     def validate_collection(self, value):
         allowed = set(DEFAULT_AGENT_CONFIG["collection"])
@@ -121,6 +138,10 @@ class AgentSerializer(serializers.ModelSerializer):
     # Authoritative online state (same threshold the liveness alert uses) so the
     # UI badge agrees with alerting instead of computing its own window.
     is_online = serializers.BooleanField(read_only=True)
+    # Per-device alert silencing (lives on the agent's Device; set via the
+    # /servers/{id}/alerting/ action). Read-only here.
+    alerting_enabled = serializers.BooleanField(source="device.alerting_enabled", read_only=True, default=True)
+    silenced_until = serializers.DateTimeField(source="device.silenced_until", read_only=True, default=None)
 
     class Meta:
         model = Agent
@@ -129,7 +150,8 @@ class AgentSerializer(serializers.ModelSerializer):
             "os_version", "os_kernel", "arch", "version",
             "cert_serial", "cert_expires_at", "status", "collection_interval",
             "role_types", "last_seen", "is_online",
-            "offline_threshold_seconds", "liveness_alerts_enabled", "created_at",
+            "offline_threshold_seconds", "liveness_alerts_enabled",
+            "alerting_enabled", "silenced_until", "created_at",
         )
         read_only_fields = fields
 
@@ -153,6 +175,9 @@ class ServerSerializer(serializers.ModelSerializer):
     # they were stored (older agents sent bare name strings).
     services_collected = serializers.SerializerMethodField()
     reported_services = serializers.SerializerMethodField()
+    # Per-device alert silencing (on the agent's Device; set via /servers/{id}/alerting/).
+    alerting_enabled = serializers.BooleanField(source="device.alerting_enabled", read_only=True, default=True)
+    silenced_until = serializers.DateTimeField(source="device.silenced_until", read_only=True, default=None)
 
     class Meta:
         model = Agent
@@ -160,6 +185,7 @@ class ServerSerializer(serializers.ModelSerializer):
             "id", "hostname", "os", "os_name", "os_version", "os_kernel", "arch",
             "status", "last_seen", "is_online",
             "offline_threshold_seconds", "liveness_alerts_enabled",
+            "alerting_enabled", "silenced_until",
             "agent_version", "cert_expires_at", "collection_interval",
             "device_id", "last_ip", "site", "roles", "latest_metrics",
             "reported_services", "services_collected", "created_at",
@@ -226,6 +252,13 @@ class AssignedRoleSerializer(serializers.ModelSerializer):
         if not st:
             return None
         services = st.services or []
+        # Per-server role-service subset: if the operator picked which of this
+        # role's services this server actually runs, count/show ONLY those — an
+        # unselected service isn't a failing "not_found". Empty/absent = all.
+        sel = ((obj.agent.desired_config or {}).get("role_services") or {}).get(obj.role.role_type)
+        if sel:
+            selset = set(sel)
+            services = [s for s in services if isinstance(s, dict) and s.get("name") in selset]
         ports = st.ports or []
         custom = st.custom or []
         ok = (sum(1 for s in services if isinstance(s, dict) and s.get("running"))

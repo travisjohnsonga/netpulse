@@ -26,7 +26,7 @@ def backfill_device_kind(apps, schema_editor):
 
     # Synthetic/loopback-IP devices (e.g. an agent link later cleared) → server.
     # Valid IP literals only (GenericIPAddressField → inet adaptation).
-    synthetic = ["127.0.0.1", "::1", "0.0.0.0"]
+    synthetic = ["127.0.0.1", "::1", "0.0.0.0"]  # nosec B104 — synthetic IP literals to match in data, not a bind address
     Device.objects.filter(
         Q(ip_address__in=synthetic) | Q(management_ip__in=synthetic)
     ).update(device_kind=SERVER)

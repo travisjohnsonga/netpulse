@@ -2,8 +2,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  fetchLogs, fetchDevices, fetchSites,
-  type LogEntry, type Device, type Site,
+  fetchLogs, fetchDevices, fetchSites, fetchServers,
+  type LogEntry, type Device, type Site, type Server,
 } from '../api/client'
 import { SEVERITY_ORDER, TIME_RANGES, rangeFrom, severityBadge } from '../lib/severity'
 import { usePreferencesStore } from '../store/preferencesStore'
@@ -18,6 +18,7 @@ export default function Logs() {
   // (e.g. from a server-detail Logs tab) lands pre-filtered to that host.
   const [searchParams] = useSearchParams()
   const [devices, setDevices] = useState<Device[]>([])
+  const [servers, setServers] = useState<Server[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [deviceHost, setDeviceHost] = useState(searchParams.get('device_hostname') || '')
   const [site, setSite] = useState('')
@@ -51,6 +52,7 @@ export default function Logs() {
 
   useEffect(() => {
     fetchDevices({ page_size: '500' }).then((d) => setDevices(d.results)).catch(() => {})
+    fetchServers().then(setServers).catch(() => {})
     fetchSites().then(setSites).catch(() => {})
   }, [])
 
@@ -74,6 +76,23 @@ export default function Logs() {
     }
     return m
   }, [devices])
+  // Servers (agent hosts) aren't in the Devices list, so map their hostnames →
+  // the Agent UUID for /servers/{id}. Checked BEFORE hostToId so a server log row
+  // lands on the server detail page, not a device page.
+  const hostToServer = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const s of servers) {
+      if (s.hostname) m[s.hostname] = s.id
+      if (s.hostname) m[s.hostname.split('.')[0]] = s.id  // short hostname too
+    }
+    return m
+  }, [servers])
+  const goToSubject = useCallback((hostname: string) => {
+    const sid = hostToServer[hostname]
+    if (sid) { navigate(`/servers/${sid}?tab=Logs`); return }
+    const did = hostToId[hostname]
+    if (did) navigate(`/devices/${did}`)
+  }, [hostToServer, hostToId, navigate])
 
   const load = useCallback(async (pg: number, append: boolean) => {
     setLoading(true); setError(null)
@@ -211,7 +230,7 @@ export default function Logs() {
                     <tr onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer align-top">
                       <td className="px-4 py-1.5 text-gray-500 dark:text-gray-400 font-mono text-xs whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
                       <td className="px-4 py-1.5">
-                        <button onClick={(e) => { e.stopPropagation(); const id = hostToId[r.hostname]; if (id) navigate(`/devices/${id}`) }}
+                        <button onClick={(e) => { e.stopPropagation(); goToSubject(r.hostname) }}
                           className="text-blue-600 hover:text-blue-800 font-medium">{ipOrHostToName[r.hostname] || r.hostname}</button>
                       </td>
                       <td className="px-4 py-1.5"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', severityBadge(r.severity))}>{r.severity}</span></td>

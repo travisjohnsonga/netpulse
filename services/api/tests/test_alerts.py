@@ -432,3 +432,34 @@ class TestBulkActions:
         # ?state=firing excludes the acknowledged one.
         firing_list = auth_client.get("/api/alerts/events/?state=firing").json()
         assert [r["id"] for r in firing_list["results"]] == [firing.id]
+
+
+class TestAlertSubjectRouting:
+    """The serializer emits device_kind + server_id so the UI links a server
+    subject to /servers/{agent_uuid} and a network device to /devices/{id}."""
+
+    def test_network_device_subject(self):
+        from apps.alerts.serializers import AlertEventSerializer
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="rtr-x", ip_address="10.9.9.1",
+                                    device_kind="network_device")
+        rule = AlertRule.objects.create(name="R1", severity="high", condition={})
+        ev = AlertEvent.objects.create(rule=rule, state="firing",
+                                       labels={"device_id": dev.id}, annotations={})
+        data = AlertEventSerializer(ev).data
+        assert data["device_kind"] == "network_device"
+        assert data["server_id"] is None
+
+    def test_server_subject(self):
+        from apps.agents.models import Agent
+        from apps.alerts.serializers import AlertEventSerializer
+        from apps.devices.models import Device
+        sdev = Device.objects.create(hostname="srv-x", ip_address="127.0.0.2",
+                                     device_kind="server")
+        agent = Agent.objects.create(hostname="srv-x", device=sdev)
+        rule = AlertRule.objects.create(name="R2", severity="high", condition={})
+        ev = AlertEvent.objects.create(rule=rule, state="firing",
+                                       labels={"device_id": sdev.id}, annotations={})
+        data = AlertEventSerializer(ev).data
+        assert data["device_kind"] == "server"
+        assert data["server_id"] == str(agent.id)
