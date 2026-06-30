@@ -41,7 +41,7 @@ export default function TVOps({ rotation }: { rotation?: Parameters<typeof TVLay
         </div>
         <div className="grid flex-1 grid-cols-2 gap-6 overflow-hidden">
           <TVPanel title="Config Collection (24h)" className="overflow-auto">
-            <div className="text-2xl">✅ {w?.success ?? 0} success &nbsp; ❌ {w?.failed ?? 0} failed</div>
+            <div className="text-2xl"><span style={{ color: TV.success }}>{w?.success ?? 0} success</span> &nbsp; <span style={{ color: TV.error }}>{w?.failed ?? 0} failed</span></div>
             {(health?.devices_failing ?? []).length > 0 && (
               <div className="mt-3 text-lg" style={{ color: TV.muted }}>
                 Failing: {(health?.devices_failing ?? []).slice(0, 6).map((d) => d.hostname).join(', ')}
@@ -55,7 +55,7 @@ export default function TVOps({ rotation }: { rotation?: Parameters<typeof TVLay
             <div className="space-y-2 text-xl">
               {agentList.map((a) => (
                 <div key={a.id} className="flex justify-between">
-                  <span>{a.status === 'active' ? '✅' : '🔴'} {a.hostname}</span>
+                  <span><span style={{ color: a.status === 'active' ? TV.success : TV.error }}>{a.status === 'active' ? 'UP' : 'DOWN'}</span> {a.hostname}</span>
                   <span style={{ color: TV.muted }}>{rel(a.last_seen)}</span>
                 </div>
               ))}

@@ -33,7 +33,7 @@ export default function TVServers({ rotation }: { rotation?: Parameters<typeof T
                   <td style={{ color: pctColor(m?.cpu_pct ?? null) }}>{fmt(m?.cpu_pct ?? null)}</td>
                   <td style={{ color: pctColor(m?.memory_pct ?? null) }}>{fmt(m?.memory_pct ?? null)}</td>
                   <td style={{ color: pctColor(m?.disk_max_pct ?? null) }}>{fmt(m?.disk_max_pct ?? null)}</td>
-                  <td style={{ color: ok ? TV.success : TV.error }}>{ok ? '✅' : '🔴'}</td>
+                  <td style={{ color: ok ? TV.success : TV.error }}>{ok ? 'UP' : 'DOWN'}</td>
                 </tr>
               )
             })}
