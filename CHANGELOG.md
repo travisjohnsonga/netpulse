@@ -1,10 +1,68 @@
 # Changelog
 
-All notable changes to spane (NetPulse) are documented here. Versions follow the
-`1.0.<commit-count>` scheme reported by `./netpulse.sh show-version` and
-`GET /api/health/`.
+All notable changes to spane (NetPulse) are documented here. Versions follow
+**`app-vX.Y.Z` semver** — the app's own tag prefix (distinct from the agent's
+`vX.Y.Z`), reported (stripped to `X.Y.Z`) by `./netpulse.sh show-version` and
+`GET /api/health/`. Minor = features, patch = fixes; dev builds between tags
+report `X.Y.Z-<n>-g<sha>`.
 
-## Unreleased
+## 0.7.0 — 2026-06-30
+
+The **alerting reliability + control** release: makes notification delivery
+observable and correct, and adds the generation-vs-notification controls
+(min-severity, per-rule, per-device silencing) on top of the 0.6.0 dispatch
+substrate. Plus the per-server role-check correctness fix and UI polish. Shipped
+as nine PRs (#151–#160) so each lands with its own review + changelog.
+
+### Added
+- **Delivery reliability** (#152) — every notification attempt is now recorded in
+  a new **`NotificationLog`** (per-channel status, attempts, detail, timestamp),
+  so delivery is observable instead of fire-and-forget. A **cross-channel
+  meta-alarm** raises an alert when a channel fails and routes that warning
+  through the **surviving** channels (a dead Teams webhook is reported via email,
+  and vice-versa). New **delivery-health** endpoints, integrated into
+  `GET /api/health/` (per-channel health summary). Per-channel **retry/backoff**
+  and **failure isolation** (one bad channel never blocks the others).
+- **Delivery-health UI** (#154) — a degraded-delivery **banner**, a
+  **`/notifications`** delivery-log page, and a delivery-health row on
+  **PlatformStatus**.
+- **Notification control — generation-vs-notification split at every level**
+  (#151, #155) — the `AlertEvent` is always generated (for the UI), but
+  *notification* is gated independently: per-channel **`min_severity`**, per-type
+  **UI-only** types (audit-style events like `config_changed` never page), and a
+  per-rule **notify toggle** (observe-only rules).
+- **Per-device/server silencing** (#156) — **`alerting_enabled`** (permanent
+  observe-only, e.g. a dev/test box) and **`silenced_until`** (timed,
+  auto-expiring mute) for **both** network devices and agent servers. Neither
+  suppresses the `AlertEvent` record — only the notification.
+- **Per-server role-check config** (#157, #159) — a **Custom functional-web mode**
+  (specify exact on-host URLs/ports), per-server **service multi-select** (count
+  only the services this host actually runs → kills the false `not_found` in a
+  role's X/Y service-check count), and a **stability-link checkbox** (watch a role
+  service for down/flap from the role card).
+
+### Changed
+- **Alert/log subject routing by `device_kind`** (#153) — alert and log subjects
+  link to **`/servers/`** for agent servers and **`/devices/`** for network
+  devices (previously always `/devices/`).
+- **TV/NOC dashboard emoji cleanup** (#160) — TV dashboards use colored text
+  status labels (UP/DOWN) and text affordances instead of emoji, for a clean
+  NOC-wall aesthetic (matches the text-only sidebar direction).
+
+### Fixed
+- **"Ask spane" FAB overlapped the last list row** (#158) — added bottom padding
+  to the global scroll container so the floating chat button no longer covers
+  bottom-of-list content (e.g. the final Alert Rules row's Notify/Enabled
+  toggles).
+- **Custom web-check mode was unreachable** (#159) — the functional mode was
+  derived purely from the URL list, so picking "Custom" snapped back to HTTP-only
+  and the input never opened; an explicit mode-intent state now keeps the Custom
+  input open regardless of URL values.
+- **Stale Services/Roles tab after a config write** (#159) — the server-config tab
+  now re-fetches the server on save, so watched-service and role-status changes
+  reflect immediately without a hard refresh.
+
+## 0.6.0 — 2026-06-28
 
 ### Added
 - **Alert dispatch layer + email/Teams notifiers** — AlertEvents now deliver to
@@ -103,7 +161,7 @@ All notable changes to spane (NetPulse) are documented here. Versions follow the
   `tests/test_security.py`, `scripts/check_exception_exposure.py`, a pre-commit
   hook and a CI workflow.
 
-## v0.1.0 — 2026-06-01
+## 0.1.0 — 2026-06-01
 
 - Initial release.
 - Push-first telemetry (gRPC/gNMI, SNMP fallback), NetFlow/sFlow/IPFIX flow

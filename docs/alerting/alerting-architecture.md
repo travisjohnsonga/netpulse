@@ -1,8 +1,14 @@
 # spane Alerting Architecture — Assessment & Target
 
-> **Status: ASSESSMENT / design (NOT built).** Maps the current state (warts and
-> all, empirically verified on the running lab 2026-06-29) and a phased target.
-> Nothing here is implemented beyond what's explicitly marked *live*.
+> **Status: PARTIALLY BUILT — Phases 0–2 shipped in app-v0.7.0; Phases 3–6 still
+> designed.** Originally an assessment (empirically verified on the running lab
+> 2026-06-29); the **delivery-reliability** layer (Phase 1) and the
+> **notification-control + per-device/server silencing** layer (Phase 2) are now
+> **built and shipped in app-v0.7.0**, on top of the Phase-0 dispatch substrate
+> (#149, app-v0.6.0). What remains designed-not-built is the **alerting engine**:
+> escalation timers + ack (Phase 3), routing unification (Phase 4), and anti-storm
+> — dependency suppression + grouping + flap/for-duration (Phase 5) — targeted at
+> **v0.8.0**. Per-feature status is marked ✅ built / ❌ designed throughout.
 
 ## 0. Why this matters
 
@@ -116,6 +122,15 @@ ack-driven re-notify** today. Ack is effectively cosmetic on the live path.
 
 ## 3. Reliability gaps (CRITICAL — the eval risk)
 
+> **✅ Largely RESOLVED in app-v0.7.0 (#152).** The dead-letter/audit gap, the
+> alarm-on-the-alarm, and the delivery-health surface are now built:
+> **`NotificationLog`** (per-attempt audit, queryable + `/notifications` UI), a
+> **cross-channel meta-alarm** (delivery failure routes through the surviving
+> channels), and **delivery-health in `GET /api/health/`**. **Still open:** the
+> claim-before-send re-delivery edge for a transient *total* failure, and a true
+> **async delivery queue / durable worker** (current delivery is on-commit +
+> in-line retry). The original gap analysis is kept below for context.
+
 **Silent dispatch failure is the worst case: a real alert fires, every channel send
 fails (SMTP down, webhook 500), and nobody is paged AND nobody knows.** Current
 state:
@@ -215,6 +230,11 @@ new models.**
 
 ### Generation vs. external notification — make the split an explicit control
 
+> **✅ BUILT in app-v0.7.0 (#151/#155).** The split is now an explicit control:
+> per-channel `min_severity`, per-type **UI-only** types, and a **per-rule notify
+> toggle** ("observe mode") — generation always happens, notification is gated
+> independently. Design intent below.
+
 The architecture **already separates** detection from delivery (AlertEvent creation is
 independent of dispatch). Make that an explicit, controllable product feature:
 
@@ -234,6 +254,13 @@ independent of dispatch). Make that an explicit, controllable product feature:
   without going blind — the anti-fatigue control that complements suppression.
 
 ### Per-device/server silencing — three forms (network devices AND servers)
+
+> **✅ Forms 1–2 BUILT in app-v0.7.0 (#156):** `Device.alerting_enabled`
+> (permanent observe-only) and `Device.silenced_until` (auto-expiring timed mute),
+> both applying to network devices AND agent servers, checked on the notify path
+> (the `AlertEvent` is still generated). **❌ Form 3 (uniform `MaintenanceWindow`
+> enforcement on notify + resolve) still designed**, as is the optional
+> `environment` field. Design table below.
 
 The generation-vs-notification split applied per *target* — three forms covering
 the spectrum (permanent / ad-hoc-timed / scheduled). **Existing pieces to build on,
@@ -288,16 +315,24 @@ delivery code path. **Pick one; do not grow a third.**
   secrets in OpenBao, maintenance-window suppression. *Tactical:* scope channels via
   `all_alerts`/`min_severity`/`config.match` (done for the lab).
 
-- **Phase 1 — Delivery reliability (HIGHEST):** add a **NotificationLog** (one row per
-  delivery attempt: event, channel, status, detail, ts) → queryable audit + UI surface;
-  **dead-letter** failed deliveries; **alarm-on-the-alarm** (a meta-alert when N
-  consecutive deliveries fail or a channel is down); **redelivery** of transient total
-  failures (decouple the debounce-claim from send success so a 0-of-N delivery is
-  retried); a **delivery-health** metric/heartbeat. *Make silent failure impossible.*
+- **Phase 1 — Delivery reliability (HIGHEST) — ✅ BUILT (app-v0.7.0, #152/#154):**
+  a **`NotificationLog`** (one row per delivery attempt: event, channel, status,
+  detail, ts) → queryable audit + the `/notifications` UI page + delivery-health
+  endpoints folded into `GET /api/health/`; **cross-channel meta-alarm** (a channel
+  failing raises an alert routed through the *surviving* channels); per-channel
+  **retry/backoff** and **failure isolation**. *Silent failure is now observable.*
+  *(Still designed: a true async delivery queue / dead-letter store — current
+  retry is in-line; see Cross-cutting.)*
 
-- **Phase 2 — Silencing & the generation/notification split (anti-fatigue + planned
-  maintenance, low-cost, early):** make "UI alert generation" and "external
-  notification" an explicit control. Three **per-device/server** silencing forms
+- **Phase 2 — Silencing & the generation/notification split — ✅ BUILT (app-v0.7.0,
+  #151/#155/#156):** "UI alert generation" and "external notification" are now an
+  explicit, multi-level control — per-channel `min_severity`, per-type UI-only
+  (audit events), a **per-rule notify toggle**, and **per-device/server silencing**
+  (`alerting_enabled` permanent observe-only + `silenced_until` auto-expiring timed
+  mute, for network devices AND servers). None suppress the `AlertEvent` record —
+  only the notification. *(Still designed: uniform maintenance-window enforcement
+  on the resolve path, and an `environment` dev/test/prod policy field.)* Original
+  design follows. Three **per-device/server** silencing forms
   (apply to network devices AND servers, generate-but-don't-notify): **(1) permanent
   disable** `Device.alerting_enabled` (generalizes `liveness_alerts_enabled`) for
   dev/test boxes; **(2) timed silence** `Device.silenced_until` (mute-for-N, **auto-

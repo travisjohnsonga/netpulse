@@ -38,6 +38,56 @@ Moved out of this page because they're now in `main` (see the README/CLAUDE.md
 - **OS-detail, rich service detail, Services-tab table + Roles-tab functional UI.**
 - **Stream-processor log/flow durability** — ack-after-write + NAK-on-failure +
   poison-message drop (no log loss on an OpenSearch blip).
+- **Alert dispatch layer + email/Teams notifiers** (app-v0.6.0, #149) — AlertEvents
+  now actually deliver (single `dispatch.py` choke point via `post_save`; fire +
+  resolve, debounce, retry, failure isolation; secrets in OpenBao).
+- **Alerting reliability + control** (app-v0.7.0, #151–#160) — the alerting
+  Phases 1–2 from `docs/alerting/alerting-architecture.md`: **delivery reliability**
+  (`NotificationLog`, cross-channel meta-alarm, delivery-health in `/api/health/`),
+  **notification control** (per-channel `min_severity`, per-type UI-only, per-rule
+  notify toggle), **per-device/server silencing** (`alerting_enabled` +
+  `silenced_until`), **alert-link routing by `device_kind`**, and the **per-server
+  role-check config** (Custom web mode + service multi-select + stability link —
+  kills the false role `not_found` count). *Phases 3–6 (escalation/grouping/flap)
+  are the v0.8.0 engine work — see below.*
+
+---
+
+## Next cycle — pinned
+
+Small, near-term items pinned during the 0.7.0 demo cycle (each builds directly on
+shipped work):
+
+- **Docker Host server role** — add `role_type="docker"` to the agent role seed
+  (linux `docker`/`containerd`; custom checks: daemon responsive, running/unhealthy
+  container counts, image/disk usage). The proper fix for Docker hosts mis-tagged as
+  **Web** (a Docker host listens on 80/443 via *container* bindings → false
+  nginx/apache2/httpd `not_found`). Future arc: per-container visibility (states,
+  restarts, stats) as a monitoring dimension.
+- **Per-site status cards** — a responsive auto-scaling **card grid** on the Sites
+  view, one card per site (up/down devices + servers, passing/failing service
+  checks, severity color). Largely *presentation* — the per-site rollups mostly
+  exist on `SiteViewSet`. Natural TVSites NOC view too.
+- **Service uptime for all services** — show "up since"/uptime for **every** running
+  service (not just watched). Needs the agent to report start-time
+  (systemd `ActiveEnterTimestamp` / Windows service start) → an agent rebuild;
+  flap/restart *history* stays watched-only.
+- **Network interface filtering** — filter the device interface list (by
+  status/role/name) so large chassis are navigable.
+- **Expand alert rules** — a rule **condition view** (show what each rule actually
+  matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
+- **Alerting-panel placement** — revisit where the alerting controls / silencing
+  live in the UI for discoverability.
+
+## v0.8.0 — the alerting ENGINE
+
+The next alerting milestone is the **engine** work designed in
+`docs/alerting/alerting-architecture.md` Phases 3–6 (still designed, not built):
+the **shared scheduler-spine evaluation loop** (§8, on `run_scheduler` — no Celery),
+**for-duration / hysteresis**, **flap detection**, **alert grouping / storm
+collapse** (§7), and **escalation timers + reminders + ack-halts-escalation** plus
+dependency suppression (`suppress_if_parent_down`). These turn correct, reliable
+*delivery* (0.7.0) into a fatigue-resistant, don't-miss-a-critical engine.
 
 ---
 
