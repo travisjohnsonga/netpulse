@@ -179,6 +179,41 @@ class SystemSetting(TimestampedModel):
         return obj
 
 
+class SeedMarker(TimestampedModel):
+    """Durable record that a one-time bootstrap seed has already run.
+
+    Some seeds must run ONCE on a fresh install and then never again, so that
+    operator deletions "stick" across container reboots (the api entrypoint
+    re-invokes the seed commands on every boot). Each such seed records a marker
+    row keyed by ``seed_key`` the first time it runs — either because it actually
+    seeded a fresh install, or because an upgrade recognized the install is
+    already past bootstrap. On every subsequent boot the seed sees the marker
+    and skips entirely, leaving the operator's rules (including deletions) alone.
+
+    Reusable for any future seed-once need — pick a stable ``seed_key`` string.
+    """
+
+    seed_key = models.CharField(max_length=128, unique=True, db_index=True)
+    note = models.CharField(max_length=256, blank=True)
+
+    class Meta(TimestampedModel.Meta):
+        verbose_name = "seed marker"
+        verbose_name_plural = "seed markers"
+
+    def __str__(self):
+        return f"seed:{self.seed_key}"
+
+    @classmethod
+    def is_seeded(cls, key) -> bool:
+        """True if a marker for ``key`` exists (bootstrap already happened)."""
+        return cls.objects.filter(seed_key=key).exists()
+
+    @classmethod
+    def mark(cls, key, note=""):
+        """Record ``key`` as seeded (idempotent). Returns (marker, created)."""
+        return cls.objects.get_or_create(seed_key=key, defaults={"note": note})
+
+
 class UserPreferences(TimestampedModel):
     """Per-user UI preferences (theme, log viewer defaults, table sizing, etc.)."""
 
