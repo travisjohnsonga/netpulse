@@ -215,7 +215,9 @@ def _fire_delivery_failure_alarm(failed_channel, payload) -> None:
         from .models import AlertEvent, AlertRule
         rule, _ = AlertRule.objects.get_or_create(
             name="Notification Delivery Failed",
-            defaults={"severity": "high", "condition": {"meta": True}, "is_active": True})
+            defaults={"severity": "high", "condition": {"meta": True}, "is_active": True,
+                      # Tier-1 SYSTEM: spane monitoring its own dispatch machinery.
+                      "kind": AlertRule.Kind.SYSTEM})
         AlertEvent.objects.create(
             rule=rule, state=AlertEvent.State.FIRING,
             labels={"source": "alert_dispatch", "severity": "high",

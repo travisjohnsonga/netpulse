@@ -158,6 +158,10 @@ class Command(BaseCommand):
         #     set the marker so this never runs again.
         created = []
         for name, severity, description, condition, cooldown in DEFAULT_RULES:
+            # Every DEFAULT_RULE monitors the customer's network/servers, so all
+            # seeded defaults are Tier-2 OPERATIONAL. The only Tier-1 SYSTEM rule
+            # (the notification-delivery meta-alarm) is created lazily by
+            # dispatch.py, not seeded here.
             _rule, was_created = AlertRule.objects.get_or_create(
                 name=name,
                 defaults={
@@ -165,6 +169,7 @@ class Command(BaseCommand):
                     "description": description,
                     "condition": condition,
                     "cooldown_minutes": cooldown,
+                    "kind": AlertRule.Kind.OPERATIONAL,
                     "is_system": True,
                     "is_active": True,
                 },

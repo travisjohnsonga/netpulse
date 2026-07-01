@@ -119,6 +119,57 @@ class TestSeedOnceBootstrap:
         assert AlertRule.objects.count() == 1
 
 
+class TestRuleKinds:
+    """Two-tier classification: system (spane machinery) vs operational (customer)."""
+
+    def test_fresh_seed_rules_are_all_operational(self):
+        call_command("seed_alert_rules")
+        kinds = set(AlertRule.objects.values_list("kind", flat=True))
+        # Every seeded default monitors the customer's network/servers.
+        assert kinds == {"operational"}
+        assert not AlertRule.objects.filter(kind="system").exists()
+
+    def test_specific_operational_rules_classified(self):
+        call_command("seed_alert_rules")
+        for name in ("device-unreachable", "Config Changed", "High Temperature Warning",
+                     "High PoE Usage", "High WAN Utilization"):
+            assert AlertRule.objects.get(name=name).kind == "operational"
+
+    def test_new_rule_defaults_to_operational(self):
+        rule = AlertRule.objects.create(name="Custom", severity="low", condition={})
+        assert rule.kind == "operational"
+
+    def test_backfill_reclassifies_meta_alarm_as_system(self):
+        """The data migration's backfill logic: known system-tier rules → 'system',
+        everything else stays operational (upgrade path for existing installs)."""
+        import importlib
+
+        from django.apps import apps as global_apps
+
+        call_command("seed_alert_rules")  # operational defaults
+        # Simulate a pre-kinds meta-alarm row (created before kind existed → default).
+        meta = AlertRule.objects.create(
+            name="Notification Delivery Failed", severity="high", condition={"meta": True})
+        assert meta.kind == "operational"
+
+        mod = importlib.import_module("apps.alerts.migrations.0007_alertrule_kind")
+        mod.backfill_kind(global_apps, None)
+
+        meta.refresh_from_db()
+        assert meta.kind == "system"                       # reclassified
+        # Operational rules are untouched by the backfill.
+        assert AlertRule.objects.get(name="device-unreachable").kind == "operational"
+        assert AlertRule.objects.filter(kind="system").count() == 1
+
+    def test_kind_is_read_only_via_api(self, auth_client):
+        rule = AlertRule.objects.create(name="Custom", severity="low", condition={})
+        resp = auth_client.patch(
+            f"/api/alerts/rules/{rule.pk}/", {"kind": "system"}, format="json")
+        assert resp.status_code == 200
+        rule.refresh_from_db()
+        assert rule.kind == "operational"
+
+
 class TestSystemRuleProtection:
     def test_system_rule_cannot_be_deleted(self, auth_client):
         call_command("seed_alert_rules")
