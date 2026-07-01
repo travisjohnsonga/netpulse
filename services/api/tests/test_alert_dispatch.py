@@ -495,6 +495,8 @@ class TestDeliveryReliability:
             labels__alert_type="notification_delivery_failed",
             labels__failed_channel_id=fch.id).first()
         assert meta is not None  # the surviving channel reports the dead one
+        # The meta-alarm rule is Tier-1 SYSTEM (spane monitoring its own dispatch).
+        assert meta.rule.kind == "system"
         chans = dispatch.matching_channels(meta, payload_mod.build_payload(meta, "firing"))
         assert gch in chans and fch not in chans  # excludes the dead channel, routes to teams
 

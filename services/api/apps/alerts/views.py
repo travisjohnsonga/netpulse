@@ -84,7 +84,7 @@ class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     write_capability = "alert:manage"
     queryset = AlertRule.objects.prefetch_related("channels").all()
     serializer_class = AlertRuleSerializer
-    filterset_fields = ["severity", "is_active", "is_system"]
+    filterset_fields = ["severity", "is_active", "is_system", "kind"]
     search_fields = ["name"]
 
     # Labels for the field-level diff surfaced in the audit log.

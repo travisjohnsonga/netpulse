@@ -21,6 +21,14 @@ class AlertChannel(TimestampedModel):
         return f"{self.name} ({self.channel_type})"
 
 
+# Tier-1 SYSTEM rules: spane monitoring its OWN health/machinery (the cross-
+# channel notification-delivery meta-alarm + any future engine/scheduler/
+# collector/dispatch self-health rules). Everything else is Tier-2 OPERATIONAL
+# (spane monitoring the customer's network/servers). Names here classify as
+# system; the seed backfill migration and the dispatch meta-alarm reference it.
+SYSTEM_TIER_RULE_NAMES = frozenset({"Notification Delivery Failed"})
+
+
 class AlertRule(TimestampedModel):
     class Severity(models.TextChoices):
         CRITICAL = "critical", "Critical"
@@ -28,6 +36,12 @@ class AlertRule(TimestampedModel):
         MEDIUM = "medium", "Medium"
         LOW = "low", "Low"
         INFO = "info", "Info"
+
+    class Kind(models.TextChoices):
+        # Tier 1 — spane-monitoring-spane's-own-health (platform machinery).
+        SYSTEM = "system", "System"
+        # Tier 2 — spane-monitoring-the-customer's-network/servers.
+        OPERATIONAL = "operational", "Operational"
 
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -41,9 +55,16 @@ class AlertRule(TimestampedModel):
     # is skipped — no email/Teams (observe-only). Distinct from is_active=False,
     # which disables the rule entirely. Enforced in dispatch.py:dispatch_event.
     notify_enabled = models.BooleanField(default=True)
+    # Two-tier classification by WHAT the rule monitors (rule-management arc):
+    # SYSTEM = spane's own machinery, OPERATIONAL = the customer's network. This
+    # is the source of truth for the kind badge; a later PR will make delete/
+    # disable protection kind-aware and retire is_system.
+    kind = models.CharField(
+        max_length=16, choices=Kind.choices, default=Kind.OPERATIONAL, db_index=True)
     # Seeded default rule (see seed_alert_rules). Protected from deletion;
     # disable it by toggling is_active instead. When is_active is False the
-    # alert engines skip creating events for this rule.
+    # alert engines skip creating events for this rule. NOTE: this stays the
+    # protection flag for now — orthogonal to `kind`, which only classifies.
     is_system = models.BooleanField(default=False)
 
     def __str__(self):

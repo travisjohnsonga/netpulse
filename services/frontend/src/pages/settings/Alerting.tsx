@@ -113,12 +113,19 @@ function RulesTab() {
                     <td className="px-5 py-3">
                       <p className="font-medium text-gray-800 dark:text-gray-100 flex items-center gap-2">
                         {r.name}
-                        {r.is_system && (
+                        {r.kind === 'system' ? (
                           <span
-                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
-                            title="Default rule — cannot be deleted. Disable it with the toggle instead."
+                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            title="Tier 1 — spane platform self-health (its own machinery). Load-bearing for spane's reliability."
                           >
                             System
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700/40 dark:text-gray-400"
+                            title="Tier 2 — monitors your network/servers. You own this rule."
+                          >
+                            Operational
                           </span>
                         )}
                       </p>

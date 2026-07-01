@@ -1309,6 +1309,9 @@ export interface AlertRule {
   // AlertEvents (UI) but does not dispatch notifications (observe-only).
   notify_enabled: boolean
   is_system: boolean
+  // Two-tier classification by what the rule monitors: 'system' = spane's own
+  // machinery (Tier 1), 'operational' = the customer's network/servers (Tier 2).
+  kind: 'system' | 'operational'
   cooldown_minutes: number
   created_at: string
   updated_at: string
