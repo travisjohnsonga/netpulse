@@ -1340,6 +1340,12 @@ export async function updateAlertRule(id: number, payload: Partial<AlertRule>): 
   return data
 }
 
+// Delete a rule. The backend hard-blocks Tier-1 system rules (403); only
+// operational rules are deletable.
+export async function deleteAlertRule(id: number): Promise<void> {
+  await api.delete(`/alerts/rules/${id}/`)
+}
+
 export async function fetchAlertChannels(): Promise<AlertChannel[]> {
   const { data } = await api.get<AlertChannel[] | Paginated<AlertChannel>>('/alerts/channels/')
   return unwrap(data)

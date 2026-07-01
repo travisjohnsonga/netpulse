@@ -125,11 +125,16 @@ class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         return response
 
     def destroy(self, request, *args, **kwargs):
-        """System rules are protected — disable (is_active=False) them instead."""
+        """Protection is KIND-aware (rule-management arc): Tier-1 SYSTEM rules
+        monitor spane's own health/machinery and can NEVER be deleted — disable
+        them instead. Tier-2 OPERATIONAL rules (the customer's network/servers)
+        are deletable; seed-once keeps those deletions from resurrecting on the
+        next reboot."""
         rule = self.get_object()
-        if rule.is_system:
+        if rule.kind == AlertRule.Kind.SYSTEM:
             return Response(
-                {"error": "System rules cannot be deleted. Disable the rule instead."},
+                {"error": "System rules monitor spane's own health and cannot be "
+                          "deleted. Disable the rule instead."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         name = rule.name

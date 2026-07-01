@@ -170,18 +170,38 @@ class TestRuleKinds:
         assert rule.kind == "operational"
 
 
-class TestSystemRuleProtection:
-    def test_system_rule_cannot_be_deleted(self, auth_client):
-        call_command("seed_alert_rules")
-        rule = AlertRule.objects.get(name="device-unreachable")
+class TestKindAwareProtection:
+    """Delete protection is KIND-aware: only Tier-1 system rules are blocked."""
+
+    def test_system_kind_rule_cannot_be_deleted(self, auth_client):
+        rule = AlertRule.objects.create(
+            name="Notification Delivery Failed", severity="high", condition={"meta": True},
+            kind=AlertRule.Kind.SYSTEM,
+        )
         resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
         assert resp.status_code == 403
         assert AlertRule.objects.filter(pk=rule.pk).exists()
 
-    def test_non_system_rule_can_be_deleted(self, auth_client):
-        rule = AlertRule.objects.create(
-            name="Custom rule", severity="low", condition={}, is_system=False,
-        )
+    def test_operational_seeded_rule_is_now_deletable(self, auth_client):
+        """The transition: a seeded built-in (is_system=True) that is Tier-2
+        OPERATIONAL is now deletable — protection follows kind, not is_system."""
+        call_command("seed_alert_rules")
+        rule = AlertRule.objects.get(name="device-unreachable")
+        assert rule.is_system is True and rule.kind == "operational"
+        resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
+        assert resp.status_code == 204
+        assert not AlertRule.objects.filter(pk=rule.pk).exists()
+
+    def test_deleted_operational_rule_stays_deleted_after_seed(self, auth_client):
+        """Seed-once proof: a deleted rule does not resurrect on the next seed run."""
+        call_command("seed_alert_rules")
+        rule = AlertRule.objects.get(name="High PoE Usage")
+        auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
+        call_command("seed_alert_rules")  # reboot
+        assert not AlertRule.objects.filter(name="High PoE Usage").exists()
+
+    def test_custom_rule_can_be_deleted(self, auth_client):
+        rule = AlertRule.objects.create(name="Custom rule", severity="low", condition={})
         resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
         assert resp.status_code == 204
         assert not AlertRule.objects.filter(pk=rule.pk).exists()
@@ -194,9 +214,13 @@ class TestSystemRuleProtection:
         rule.refresh_from_db()
         assert rule.is_system is False
 
-    def test_system_rule_can_still_be_disabled(self, auth_client):
-        call_command("seed_alert_rules")
-        rule = AlertRule.objects.get(name="device-unreachable")
+    def test_system_rule_disable_is_allowed_by_backend(self, auth_client):
+        """The disable warning is UI-side; the backend must ALLOW a system-rule
+        disable (is_active=False) — it never blocks the toggle."""
+        rule = AlertRule.objects.create(
+            name="Notification Delivery Failed", severity="high", condition={"meta": True},
+            kind=AlertRule.Kind.SYSTEM,
+        )
         resp = auth_client.patch(
             f"/api/alerts/rules/{rule.pk}/", {"is_active": False}, format="json")
         assert resp.status_code == 200
