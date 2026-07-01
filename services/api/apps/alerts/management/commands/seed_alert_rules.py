@@ -7,9 +7,13 @@ Rules immediately on a fresh install, can be toggled on/off (a disabled rule
 suppresses its alerts — see _db_write_alert / interface_monitor), and are
 protected from deletion.
 
-Idempotent and non-destructive: an existing rule keeps its user-set severity,
-cooldown and is_active state — we only ensure is_system=True and backfill a
-blank description. Safe to run on every deploy (called from the api entrypoint).
+Seed-once bootstrap: the defaults are seeded exactly ONCE, on a fresh install.
+A durable ``SeedMarker`` (key ``alert_rules``) records that bootstrap happened;
+every subsequent boot (the entrypoint re-invokes this) sees the marker and skips
+entirely, so an operator's deletions of default rules STICK across restarts.
+Upgrade-safe: an existing install with rules but no marker is recognized as
+already past bootstrap and marked WITHOUT re-seeding (no surprise duplicates,
+existing rules untouched). Safe to run on every deploy.
 
 The rule names below MUST match the rule_name the engines publish, so the
 seeded row and the emitted event share one AlertRule:
@@ -112,15 +116,49 @@ DEFAULT_RULES = [
 ]
 
 
+# Seed-once marker key. Once a SeedMarker with this key exists, this command
+# never touches AlertRules again — so operator deletions of default rules stick
+# across container reboots (the entrypoint re-invokes this on every boot).
+SEED_KEY = "alert_rules"
+
+
 class Command(BaseCommand):
-    help = "Seed the default (system) alert rules — idempotent, non-destructive."
+    help = (
+        "Seed the default (system) alert rules ONCE on a fresh install. "
+        "Idempotent and upgrade-safe: skips entirely once bootstrapped."
+    )
 
     def handle(self, *args, **options):
         from apps.alerts.models import AlertRule
+        from apps.core.models import SeedMarker
 
-        created, marked = [], []
+        # (1) Already bootstrapped → the operator owns the rules now. Skip
+        #     entirely so deleted defaults are never recreated.
+        if SeedMarker.is_seeded(SEED_KEY):
+            self.stdout.write(
+                "Alert rules already bootstrapped (marker present) — skipping seed."
+            )
+            return
+
+        # (2) No marker but rules already exist → an existing install upgrading
+        #     to seed-once. Recognize we're past bootstrap and set the marker,
+        #     but DON'T re-seed and DON'T touch the existing rules.
+        if AlertRule.objects.exists():
+            SeedMarker.mark(
+                SEED_KEY,
+                note="marked past-bootstrap on upgrade (existing rules present; not re-seeded)",
+            )
+            self.stdout.write(
+                "Existing alert rules present with no seed marker — marked as "
+                "bootstrapped WITHOUT re-seeding (upgrade-safe)."
+            )
+            return
+
+        # (3) Truly fresh install (no marker, no rules) → seed the defaults and
+        #     set the marker so this never runs again.
+        created = []
         for name, severity, description, condition, cooldown in DEFAULT_RULES:
-            rule, was_created = AlertRule.objects.get_or_create(
+            _rule, was_created = AlertRule.objects.get_or_create(
                 name=name,
                 defaults={
                     "severity": severity,
@@ -133,24 +171,10 @@ class Command(BaseCommand):
             )
             if was_created:
                 created.append(name)
-                continue
-            # Existing rule (possibly auto-created by an engine before seeding):
-            # adopt it as a system rule and backfill description, but leave the
-            # user's severity / cooldown / is_active alone.
-            updates = []
-            if not rule.is_system:
-                rule.is_system = True
-                updates.append("is_system")
-            if not rule.description:
-                rule.description = description
-                updates.append("description")
-            if updates:
-                rule.save(update_fields=[*updates, "updated_at"])
-                marked.append(name)
 
-        if created:
-            self.stdout.write(self.style.SUCCESS(f"Created rules: {', '.join(created)}"))
-        if marked:
-            self.stdout.write(f"Adopted existing as system: {', '.join(marked)}")
-        if not created and not marked:
-            self.stdout.write("All default alert rules already present.")
+        SeedMarker.mark(SEED_KEY, note=f"fresh-install seed ({len(created)} rules)")
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Seeded {len(created)} default alert rules and set the bootstrap marker."
+            )
+        )
