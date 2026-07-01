@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  fetchAlertRules, createAlertRule, updateAlertRule,
+  fetchAlertRules, createAlertRule, updateAlertRule, deleteAlertRule,
   type AlertRule, type AlertSeverity,
 } from '../../api/client'
+import { parseApiErrors } from '../../api/errors'
 import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
 import { SectionHeader, Tabs } from '../Settings'
+
+// A rule is a built-in monitoring rule (spane ships it and an engine fires it by
+// name) when is_system is set. Deleting one of these has broader consequence than
+// deleting a user-authored custom rule, so the delete confirm warns about it.
+const isBuiltIn = (r: AlertRule) => r.is_system
 
 const TABS = [
   { id: 'rules', label: 'Alert Rules' },
@@ -45,6 +51,11 @@ function RulesTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  // Rule pending a delete confirm (operational only).
+  const [deleting, setDeleting] = useState<AlertRule | null>(null)
+  // System rule pending a disable warning (Tier-1 self-health rules warn before
+  // being turned off — they're load-bearing for spane's own reliability).
+  const [disablingSystem, setDisablingSystem] = useState<AlertRule | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -56,14 +67,38 @@ function RulesTab() {
 
   useEffect(() => { load() }, [load])
 
-  const toggle = async (rule: AlertRule) => {
+  const setActive = async (rule: AlertRule, active: boolean) => {
     // optimistic
-    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: !r.is_active } : r)))
+    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: active } : r)))
     try {
-      await updateAlertRule(rule.id, { is_active: !rule.is_active })
+      await updateAlertRule(rule.id, { is_active: active })
     } catch {
-      setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: rule.is_active } : r)))
+      setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: !active } : r)))
       setError('Failed to update rule.')
+    }
+  }
+
+  // Enabled toggle. Friction scales with consequence: disabling a Tier-1 SYSTEM
+  // rule warns first (spane would stop watching its own health); everything else
+  // — including re-enabling a system rule — toggles immediately, no nag.
+  const toggle = (rule: AlertRule) => {
+    if (rule.kind === 'system' && rule.is_active) {
+      setDisablingSystem(rule)
+      return
+    }
+    void setActive(rule, !rule.is_active)
+  }
+
+  const confirmDelete = async () => {
+    const rule = deleting
+    if (!rule) return
+    try {
+      await deleteAlertRule(rule.id)
+      setRules((rs) => rs.filter((r) => r.id !== rule.id))
+      setDeleting(null)
+    } catch (e) {
+      setError(parseApiErrors(e, 'Failed to delete rule.'))
+      setDeleting(null)
     }
   }
 
@@ -105,6 +140,7 @@ function RulesTab() {
                   <th className="px-5 py-3 font-medium">Channels</th>
                   <th className="px-5 py-3 font-medium text-right" title="Generate AlertEvents (UI) — the whole rule on/off">Enabled</th>
                   <th className="px-5 py-3 font-medium text-right" title="Send notifications (email/Teams). Off = observe-only: still shows in the UI, pages no one.">Notify</th>
+                  <th className="px-5 py-3 font-medium text-right w-px"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -145,6 +181,22 @@ function RulesTab() {
                         <Toggle on={r.notify_enabled ?? true} onClick={() => toggleNotify(r)} />
                       </span>
                     </td>
+                    <td className="px-5 py-3 text-right">
+                      {/* Delete is available only for Tier-2 operational rules. Tier-1
+                          system rules are protected (no button) — disable instead. */}
+                      {r.kind === 'system' ? (
+                        <span className="text-gray-300 dark:text-gray-600 text-xs" title="System rules cannot be deleted — disable them instead.">—</span>
+                      ) : (
+                        <button
+                          onClick={() => setDeleting(r)}
+                          className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+                          title={`Delete rule "${r.name}"`}
+                          aria-label={`Delete rule ${r.name}`}
+                        >
+                          <TrashIcon />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -154,7 +206,93 @@ function RulesTab() {
       </div>
 
       {adding && <AddRuleModal onClose={() => setAdding(false)} onCreated={() => { setAdding(false); load() }} onError={() => setError('Failed to create rule.')} />}
+
+      {deleting && (
+        <ConfirmDialog
+          title="Delete alert rule?"
+          confirmLabel="Delete rule"
+          tone="danger"
+          onConfirm={confirmDelete}
+          onClose={() => setDeleting(null)}
+        >
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Delete rule <span className="font-semibold">“{deleting.name}”</span>? This can’t be undone.
+          </p>
+          {isBuiltIn(deleting) && (
+            <p className="mt-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40 rounded px-3 py-2">
+              This is a built-in monitoring rule — deleting it stops{' '}
+              <span className="font-semibold">{deleting.name}</span> alerts. spane may re-create it
+              with default settings the next time the condition occurs; to stop these alerts for
+              good, disable the rule instead.
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
+
+      {disablingSystem && (
+        <ConfirmDialog
+          title="Disable a system rule?"
+          confirmLabel="Disable anyway"
+          tone="warning"
+          onConfirm={async () => { await setActive(disablingSystem, false); setDisablingSystem(null) }}
+          onClose={() => setDisablingSystem(null)}
+        >
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            <span className="font-semibold">“{disablingSystem.name}”</span> monitors spane’s own
+            health — disabling it means spane can’t detect{' '}
+            {disablingSystem.name === 'Notification Delivery Failed'
+              ? 'notification-delivery failures'
+              : 'this platform-health condition'}. Disable anyway?
+          </p>
+        </ConfirmDialog>
+      )}
     </div>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" />
+    </svg>
+  )
+}
+
+// Small confirm/warning dialog built on the shared Modal. `tone` colours the
+// primary action: danger (red) for destructive deletes, warning (amber) for a
+// reversible-but-consequential disable.
+function ConfirmDialog({
+  title, children, confirmLabel, tone, onConfirm, onClose,
+}: {
+  title: string
+  children: ReactNode
+  confirmLabel: string
+  tone: 'danger' | 'warning'
+  onConfirm: () => void | Promise<void>
+  onClose: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const run = async () => {
+    setBusy(true)
+    try { await onConfirm() } finally { setBusy(false) }
+  }
+  const confirmCls = tone === 'danger'
+    ? 'bg-red-600 hover:bg-red-700'
+    : 'bg-amber-600 hover:bg-amber-700'
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      size="md"
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={run} disabled={busy} className={clsx('flex-1 py-2.5 disabled:opacity-50 text-white rounded-lg text-sm font-medium', confirmCls)}>{busy ? 'Working…' : confirmLabel}</button>
+        </>
+      }
+    >
+      <div>{children}</div>
+    </Modal>
   )
 }
 

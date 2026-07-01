@@ -17,12 +17,21 @@ class TestDefaultRules:
         seeded_names = set(system.values_list("name", flat=True))
         assert seeded_names == {name for name, *_ in DEFAULT_RULES}
 
-    def test_system_rule_not_deletable_via_api(self, auth_client):
-        call_command("seed_alert_rules")
-        rule = AlertRule.objects.filter(is_system=True).first()
+    def test_system_kind_rule_not_deletable_via_api(self, auth_client):
+        # Protection is kind-aware now: Tier-1 SYSTEM rules are blocked...
+        rule = AlertRule.objects.create(
+            name="Notification Delivery Failed", severity="high",
+            condition={"meta": True}, kind=AlertRule.Kind.SYSTEM)
         resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
         assert resp.status_code == 403
         assert AlertRule.objects.filter(pk=rule.pk).exists()
+
+    def test_seeded_operational_rule_deletable_via_api(self, auth_client):
+        # ...while seeded Tier-2 OPERATIONAL rules (all DEFAULT_RULES) are deletable.
+        call_command("seed_alert_rules")
+        rule = AlertRule.objects.filter(kind="operational").first()
+        resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
+        assert resp.status_code == 204
 
     def test_custom_rule_deletable(self, auth_client):
         rule = AlertRule.objects.create(name="Custom", severity="low",
