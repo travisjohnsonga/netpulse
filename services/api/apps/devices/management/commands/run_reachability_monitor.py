@@ -367,6 +367,9 @@ class Command(BaseCommand):
                               "condition": {"rule_type": "host_unreachable"},
                               "cooldown_minutes": 0, "is_system": True},
                 )
+                from apps.alerts.gating import rule_enabled
+                if not rule_enabled(rule):
+                    continue  # operator disabled the built-in → suppress new alerts
                 AlertEvent.objects.create(
                     rule=rule, state=AlertEvent.State.FIRING,
                     labels={"source": "reachability_monitor", "alert_type": "host_unreachable",

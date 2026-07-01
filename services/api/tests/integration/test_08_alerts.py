@@ -26,12 +26,13 @@ class TestDefaultRules:
         assert resp.status_code == 403
         assert AlertRule.objects.filter(pk=rule.pk).exists()
 
-    def test_seeded_operational_rule_deletable_via_api(self, auth_client):
-        # ...while seeded Tier-2 OPERATIONAL rules (all DEFAULT_RULES) are deletable.
+    def test_seeded_builtin_not_deletable_via_api(self, auth_client):
+        # ...and seeded engine-fired built-ins (is_system) are ALSO blocked —
+        # deleting is futile (the engine re-creates them). Disable instead.
         call_command("seed_alert_rules")
-        rule = AlertRule.objects.filter(kind="operational").first()
+        rule = AlertRule.objects.filter(kind="operational", is_system=True).first()
         resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
-        assert resp.status_code == 204
+        assert resp.status_code == 403
 
     def test_custom_rule_deletable(self, auth_client):
         rule = AlertRule.objects.create(name="Custom", severity="low",

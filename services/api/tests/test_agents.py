@@ -526,6 +526,40 @@ class TestAgentLiveness:
         assert reconcile_agent_liveness()["fired"] == 0
         assert self._fire_count() == 0
 
+    def test_disabled_builtin_suppresses_and_disable_sticks(self):
+        """KEY correctness test (rule-management arc): disabling an engine-fired
+        built-in genuinely stops its alerts AND the disable STICKS — the engine's
+        get_or_create finds the disabled rule, does not re-activate it, and fires
+        nothing, run after run."""
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertRule
+
+        # Operator has disabled the built-in "Agent Offline" rule.
+        rule = AlertRule.objects.create(
+            name="Agent Offline", severity="high", condition={"rule_type": "agent_offline"},
+            is_system=True, is_active=False)
+        self._agent(secs_ago=600)  # offline
+
+        for _ in range(3):  # multiple engine runs — must never fire or re-enable
+            res = reconcile_agent_liveness()
+            assert res["fired"] == 0
+        assert self._fire_count() == 0
+        rule.refresh_from_db()
+        assert rule.is_active is False  # get_or_create did NOT flip it back on
+
+    def test_reenabling_builtin_restores_alerts(self):
+        """Sanity: flip the disabled built-in back on → it fires again."""
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertRule
+        rule = AlertRule.objects.create(
+            name="Agent Offline", severity="high", condition={"rule_type": "agent_offline"},
+            is_system=True, is_active=False)
+        self._agent(secs_ago=600)
+        assert reconcile_agent_liveness()["fired"] == 0
+        rule.is_active = True
+        rule.save(update_fields=["is_active"])
+        assert reconcile_agent_liveness()["fired"] == 1
+
     def test_auto_resolves_when_agent_reports_again(self):
         from django.utils import timezone
         from apps.agents.liveness import reconcile_agent_liveness

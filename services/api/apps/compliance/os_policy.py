@@ -249,10 +249,14 @@ def _new_os_version_rule():
 
 def _raise_new_os_version_alert(device, platform: str, version: str) -> None:
     """Raise a standing INFO alert that a never-before-seen OS version showed up."""
+    from apps.alerts.gating import rule_enabled
     from apps.alerts.models import AlertEvent
 
+    rule = _new_os_version_rule()
+    if not rule_enabled(rule):
+        return  # operator disabled the built-in → suppress new alerts
     AlertEvent.objects.create(
-        rule=_new_os_version_rule(),
+        rule=rule,
         state=AlertEvent.State.FIRING,
         labels={
             "source": "os_policy", "device": device.hostname, "device_id": device.id,

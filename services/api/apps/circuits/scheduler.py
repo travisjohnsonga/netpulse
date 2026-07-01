@@ -9,6 +9,8 @@ import logging
 
 from django.utils import timezone
 
+from apps.alerts.gating import rule_enabled
+
 logger = logging.getLogger(__name__)
 
 _UTIL_RULE_NAME = "High WAN Utilization"
@@ -49,12 +51,15 @@ def _reconcile_util_alert(circuit, util: dict | None) -> bool:
         return False
     if open_qs.exists():
         return False
+    rule = _rule(_UTIL_RULE_NAME, AlertRule.Severity.MEDIUM,
+                 "A WAN circuit's utilization exceeded its alert threshold.",
+                 {"rule_type": "wan_utilization"})
+    if not rule_enabled(rule):
+        return False  # operator disabled the built-in → suppress new alerts
     rx = cur.get("rx_mbps")
     pct = max(pcts)
     AlertEvent.objects.create(
-        rule=_rule(_UTIL_RULE_NAME, AlertRule.Severity.MEDIUM,
-                   "A WAN circuit's utilization exceeded its alert threshold.",
-                   {"rule_type": "wan_utilization"}),
+        rule=rule,
         state=AlertEvent.State.FIRING,
         labels={"source": "circuits", "alert_type": "wan_utilization",
                 "circuit_id": circuit.id, "severity": "warning",
@@ -89,10 +94,13 @@ def check_contract_expiry(today=None) -> int:
             labels__days_bucket=str(bucket)).exists()
         if exists:
             continue
+        rule = _rule(_CONTRACT_RULE_NAME, AlertRule.Severity.MEDIUM,
+                     "A WAN circuit contract is approaching its end date.",
+                     {"rule_type": "wan_contract"})
+        if not rule_enabled(rule):
+            continue  # operator disabled the built-in → suppress new alerts
         AlertEvent.objects.create(
-            rule=_rule(_CONTRACT_RULE_NAME, AlertRule.Severity.MEDIUM,
-                       "A WAN circuit contract is approaching its end date.",
-                       {"rule_type": "wan_contract"}),
+            rule=rule,
             state=AlertEvent.State.FIRING,
             labels={"source": "circuits", "alert_type": "wan_contract",
                     "circuit_id": c.id, "days_bucket": str(bucket), "severity": "warning"},
