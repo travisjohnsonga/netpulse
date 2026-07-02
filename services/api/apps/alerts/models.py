@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from apps.core.models import TimestampedModel
@@ -66,6 +67,13 @@ class AlertRule(TimestampedModel):
     # alert engines skip creating events for this rule. NOTE: this stays the
     # protection flag for now — orthogonal to `kind`, which only classifies.
     is_system = models.BooleanField(default=False)
+    # Provenance (first landed by clone-to-custom): the user who created this
+    # rule. Null for seeded/engine/migration rules (no human author). A later
+    # provenance PR surfaces "created by/on" in the UI; the clone action sets it
+    # so a copied rule records who made it.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="created_alert_rules")
 
     def __str__(self):
         return self.name

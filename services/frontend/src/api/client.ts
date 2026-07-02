@@ -1313,6 +1313,10 @@ export interface AlertRule {
   // machinery (Tier 1), 'operational' = the customer's network/servers (Tier 2).
   kind: 'system' | 'operational'
   cooldown_minutes: number
+  // Provenance: who created the rule (null for seeded/engine rules). Set by the
+  // clone action; a later PR surfaces it in the UI.
+  created_by: number | null
+  created_by_username?: string | null
   created_at: string
   updated_at: string
 }
@@ -1344,6 +1348,14 @@ export async function updateAlertRule(id: number, payload: Partial<AlertRule>): 
 // operational rules are deletable.
 export async function deleteAlertRule(id: number): Promise<void> {
   await api.delete(`/alerts/rules/${id}/`)
+}
+
+// Clone any rule (system / built-in / user) into a new editable operational
+// rule the caller owns. The backend gives it a distinct non-engine name and
+// sets created_by; returns the new rule so the UI can open it for editing.
+export async function cloneAlertRule(id: number, name?: string): Promise<AlertRule> {
+  const { data } = await api.post<AlertRule>(`/alerts/rules/${id}/clone/`, name ? { name } : {})
+  return data
 }
 
 export async function fetchAlertChannels(): Promise<AlertChannel[]> {
