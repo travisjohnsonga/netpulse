@@ -9,3 +9,12 @@ export function compactAgo(iso: string | null | undefined): string {
   if (s < 86400) return `${Math.round(s / 3600)}h`
   return `${Math.round(s / 86400)}d`
 }
+
+// Absolute, human-readable date — "Jul 2, 2026". Used for provenance ("created
+// on …") where an at-a-glance calendar date reads better than "12d ago".
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}

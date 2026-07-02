@@ -540,3 +540,31 @@ class TestAlertRuleClone:
         auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/")
         assert AuditLog.objects.filter(
             event_type=AuditLog.EventType.ALERT_RULE_CREATED).exists()
+
+
+class TestAlertRuleProvenance:
+    """The expanded rule view surfaces "created by/on"; the API must expose
+    created_by_username + created_at for it, and stay null-safe for seeded/
+    engine rules with no human author."""
+
+    def test_user_rule_exposes_creator_username(self, auth_client, user, rule):
+        rule.created_by = user
+        rule.save(update_fields=["created_by"])
+        body = auth_client.get(f"/api/alerts/rules/{rule.pk}/").json()
+        assert body["created_by"] == user.id
+        assert body["created_by_username"] == user.username
+        assert body["created_at"]  # ISO timestamp present
+
+    def test_seeded_rule_null_creator_does_not_crash(self, auth_client):
+        # Seeded/engine rule: created_by is null → serializer returns null for
+        # the username (UI shows "System"/"Built-in") without erroring.
+        seeded = AlertRule.objects.create(
+            name="latency-threshold-exceeded", severity="medium",
+            condition={"source": "stream-processor", "metric": "latency_ms"},
+            is_system=True)
+        body = auth_client.get(f"/api/alerts/rules/{seeded.pk}/").json()
+        assert body["created_by"] is None
+        # DRF omits the traversed username when the FK is null — the UI treats
+        # absent/null identically ("System"/"Built-in"), never crashing.
+        assert body.get("created_by_username") is None
+        assert body["created_at"]
