@@ -104,11 +104,57 @@ class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         }
 
     def perform_create(self, serializer):
-        rule = serializer.save()
+        rule = serializer.save(created_by=self.request.user)
         from apps.core.audit import log_event
         from apps.core.models import AuditLog
         log_event(AuditLog.EventType.ALERT_RULE_CREATED, request=self.request, target=rule,
                   description=f'Alert rule "{rule.name}" created')
+
+    @staticmethod
+    def _unique_copy_name(source_name: str, requested: str = "") -> str:
+        """A distinct name for a clone. Never reuse the source name — an
+        engine-fired built-in fires BY NAME, so a clone that reused it would get
+        tangled with the engine's get_or_create. Start from ``requested`` (if
+        given) or "{name} (copy)" and add a numeric suffix until it collides with
+        no existing rule name."""
+        base = (requested or "").strip() or f"{source_name} (copy)"
+        candidate = base
+        n = 2
+        existing = set(AlertRule.objects.values_list("name", flat=True))
+        while candidate in existing:
+            candidate = f"{base} {n}"
+            n += 1
+        return candidate
+
+    @action(detail=True, methods=["post"], url_path="clone")
+    def clone(self, request, pk=None):
+        """Copy any rule (system / built-in / user) into a NEW editable custom
+        rule the caller owns — template off a built-in without touching the
+        original. The clone is always kind=operational, is_system=False (fully
+        deletable/editable, no engine recreation, no protection) and gets a
+        DISTINCT non-engine name so it can't collide with an engine-fired rule."""
+        source = self.get_object()
+        name = self._unique_copy_name(source.name, request.data.get("name", ""))
+        clone = AlertRule.objects.create(
+            name=name,
+            description=source.description,
+            severity=source.severity,
+            condition=source.condition,
+            cooldown_minutes=source.cooldown_minutes,
+            notify_enabled=source.notify_enabled,
+            # A clone is always a pristine user-owned operational rule.
+            kind=AlertRule.Kind.OPERATIONAL,
+            is_system=False,
+            is_active=True,
+            created_by=request.user,
+        )
+        clone.channels.set(source.channels.all())
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+        log_event(AuditLog.EventType.ALERT_RULE_CREATED, request=request, target=clone,
+                  description=f'Alert rule "{clone.name}" cloned from "{source.name}"')
+        serializer = self.get_serializer(clone)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         from apps.core.audit import describe_changes, diff_model_changes, log_event
