@@ -125,16 +125,26 @@ class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         return response
 
     def destroy(self, request, *args, **kwargs):
-        """Protection is KIND-aware (rule-management arc): Tier-1 SYSTEM rules
-        monitor spane's own health/machinery and can NEVER be deleted — disable
-        them instead. Tier-2 OPERATIONAL rules (the customer's network/servers)
-        are deletable; seed-once keeps those deletions from resurrecting on the
-        next reboot."""
+        """Three-category protection (rule-management arc):
+          • Tier-1 SYSTEM rules (kind=system) — spane's own health/machinery,
+            never deletable; disable (with a warning) instead.
+          • Engine-fired built-ins (is_system=True) — deleting is futile: the
+            engine re-creates the rule by name on the next event. Not deletable;
+            free disable actually stops the alerts (the engine finds the disabled
+            row and skips firing — see apps/alerts/gating.py).
+          • Pure user-created rules — deletable; seed-once keeps the deletion
+            from resurrecting on the next reboot."""
         rule = self.get_object()
         if rule.kind == AlertRule.Kind.SYSTEM:
             return Response(
                 {"error": "System rules monitor spane's own health and cannot be "
                           "deleted. Disable the rule instead."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if rule.is_system:
+            return Response(
+                {"error": "Built-in monitoring rules are re-created automatically by "
+                          "spane's engines. Disable it instead to stop its alerts."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         name = rule.name

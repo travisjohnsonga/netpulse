@@ -9,10 +9,10 @@ import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
 import { SectionHeader, Tabs } from '../Settings'
 
-// A rule is a built-in monitoring rule (spane ships it and an engine fires it by
-// name) when is_system is set. Deleting one of these has broader consequence than
-// deleting a user-authored custom rule, so the delete confirm warns about it.
-const isBuiltIn = (r: AlertRule) => r.is_system
+// Only pure user-created rules are deletable. Tier-1 system rules (kind=system)
+// and engine-fired built-ins (is_system — spane re-creates them by name) are
+// protected: no delete button, disable instead.
+const isDeletable = (r: AlertRule) => r.kind !== 'system' && !r.is_system
 
 const TABS = [
   { id: 'rules', label: 'Alert Rules' },
@@ -182,11 +182,11 @@ function RulesTab() {
                       </span>
                     </td>
                     <td className="px-5 py-3 text-right">
-                      {/* Delete is available only for Tier-2 operational rules. Tier-1
-                          system rules are protected (no button) — disable instead. */}
-                      {r.kind === 'system' ? (
-                        <span className="text-gray-300 dark:text-gray-600 text-xs" title="System rules cannot be deleted — disable them instead.">—</span>
-                      ) : (
+                      {/* Delete is offered ONLY for user-created rules. Both Tier-1
+                          system rules AND engine-fired built-ins (is_system) are
+                          protected — deleting a built-in is futile (the engine
+                          re-creates it), so disable it instead. */}
+                      {isDeletable(r) ? (
                         <button
                           onClick={() => setDeleting(r)}
                           className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
@@ -195,6 +195,13 @@ function RulesTab() {
                         >
                           <TrashIcon />
                         </button>
+                      ) : (
+                        <span
+                          className="text-gray-300 dark:text-gray-600 text-xs"
+                          title={r.kind === 'system'
+                            ? 'System rules monitor spane’s own health — disable them instead.'
+                            : 'Built-in monitoring rule — spane re-creates it automatically. Disable it to stop its alerts.'}
+                        >—</span>
                       )}
                     </td>
                   </tr>
@@ -218,14 +225,6 @@ function RulesTab() {
           <p className="text-sm text-gray-700 dark:text-gray-300">
             Delete rule <span className="font-semibold">“{deleting.name}”</span>? This can’t be undone.
           </p>
-          {isBuiltIn(deleting) && (
-            <p className="mt-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40 rounded px-3 py-2">
-              This is a built-in monitoring rule — deleting it stops{' '}
-              <span className="font-semibold">{deleting.name}</span> alerts. spane may re-create it
-              with default settings the next time the condition occurs; to stop these alerts for
-              good, disable the rule instead.
-            </p>
-          )}
         </ConfirmDialog>
       )}
 

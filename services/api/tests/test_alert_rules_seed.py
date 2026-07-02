@@ -171,7 +171,8 @@ class TestRuleKinds:
 
 
 class TestKindAwareProtection:
-    """Delete protection is KIND-aware: only Tier-1 system rules are blocked."""
+    """Three-category delete protection: Tier-1 system rules AND engine-fired
+    built-ins (is_system) are blocked; only pure user rules are deletable."""
 
     def test_system_kind_rule_cannot_be_deleted(self, auth_client):
         rule = AlertRule.objects.create(
@@ -182,29 +183,39 @@ class TestKindAwareProtection:
         assert resp.status_code == 403
         assert AlertRule.objects.filter(pk=rule.pk).exists()
 
-    def test_operational_seeded_rule_is_now_deletable(self, auth_client):
-        """The transition: a seeded built-in (is_system=True) that is Tier-2
-        OPERATIONAL is now deletable — protection follows kind, not is_system."""
+    def test_engine_fired_builtin_cannot_be_deleted(self, auth_client):
+        """Deleting an engine-fired built-in is futile (it resurrects), so the
+        backend blocks it — disable instead. Seeded rules are is_system=True."""
         call_command("seed_alert_rules")
         rule = AlertRule.objects.get(name="device-unreachable")
         assert rule.is_system is True and rule.kind == "operational"
         resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
-        assert resp.status_code == 204
-        assert not AlertRule.objects.filter(pk=rule.pk).exists()
+        assert resp.status_code == 403
+        assert "re-created automatically" in resp.json()["error"]
+        assert AlertRule.objects.filter(pk=rule.pk).exists()
 
-    def test_deleted_operational_rule_stays_deleted_after_seed(self, auth_client):
-        """Seed-once proof: a deleted rule does not resurrect on the next seed run."""
+    def test_builtin_disable_sticks_via_api(self, auth_client):
+        """The alternative to delete: disabling a built-in is allowed and sticks."""
         call_command("seed_alert_rules")
         rule = AlertRule.objects.get(name="High PoE Usage")
-        auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
-        call_command("seed_alert_rules")  # reboot
-        assert not AlertRule.objects.filter(name="High PoE Usage").exists()
+        resp = auth_client.patch(
+            f"/api/alerts/rules/{rule.pk}/", {"is_active": False}, format="json")
+        assert resp.status_code == 200
+        rule.refresh_from_db()
+        assert rule.is_active is False
 
     def test_custom_rule_can_be_deleted(self, auth_client):
         rule = AlertRule.objects.create(name="Custom rule", severity="low", condition={})
         resp = auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
         assert resp.status_code == 204
         assert not AlertRule.objects.filter(pk=rule.pk).exists()
+
+    def test_deleted_custom_rule_stays_deleted_after_seed(self, auth_client):
+        """Seed-once proof: a deleted user rule does not resurrect on re-seed."""
+        rule = AlertRule.objects.create(name="My Custom Rule", severity="low", condition={})
+        auth_client.delete(f"/api/alerts/rules/{rule.pk}/")
+        call_command("seed_alert_rules")  # reboot
+        assert not AlertRule.objects.filter(name="My Custom Rule").exists()
 
     def test_is_system_is_read_only_via_api(self, auth_client):
         rule = AlertRule.objects.create(name="Custom", severity="low", condition={})

@@ -31,6 +31,9 @@ def _system_rule():
             "severity": AlertRule.Severity.HIGH,
             "condition": {"rule_type": "interface_state_change"},
             "cooldown_minutes": 0,
+            # Engine-recreated built-in → mark is_system so it's protected from
+            # deletion (deleting it is futile; the engine re-creates it).
+            "is_system": True,
         },
     )
     return rule

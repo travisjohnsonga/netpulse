@@ -31,12 +31,15 @@ def _open(agent, url, alert_type):
 
 
 def _fire(agent, url, alert_type, severity, sev_label, title, message):
+    from apps.alerts.gating import rule_enabled
     from apps.alerts.models import AlertEvent, AlertRule
     rule, _ = AlertRule.objects.get_or_create(
         name=title.split(":")[0],
         defaults={"description": message, "severity": severity,
                   "condition": {"rule_type": alert_type}, "cooldown_minutes": 0,
                   "is_system": True})
+    if not rule_enabled(rule):
+        return  # operator disabled the built-in → suppress new alerts
     labels = {"source": "functional", "alert_type": alert_type,
               "agent_id": str(agent.id), "url": url, "hostname": agent.hostname,
               "severity": sev_label}

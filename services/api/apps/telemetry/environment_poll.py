@@ -201,10 +201,14 @@ def reconcile_poe_alert(device, poe: dict | None, threshold: float = POE_ALERT_T
         return
     if open_qs.exists():
         return  # already firing — don't spam
+    from apps.alerts.gating import rule_enabled
+    rule = _poe_rule()
+    if not rule_enabled(rule):
+        return  # operator disabled the built-in → suppress new alerts
     used = poe.get("used_watts")
     budget = poe.get("budget_watts")
     AlertEvent.objects.create(
-        rule=_poe_rule(),
+        rule=rule,
         state=AlertEvent.State.FIRING,
         labels={
             "source": "environment_poll", "device": device.hostname, "device_id": device.id,
