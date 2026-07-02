@@ -463,3 +463,80 @@ class TestAlertSubjectRouting:
         data = AlertEventSerializer(ev).data
         assert data["device_kind"] == "server"
         assert data["server_id"] == str(agent.id)
+
+
+# ── Clone-to-custom ───────────────────────────────────────────────────────────
+
+class TestAlertRuleClone:
+    def test_clone_system_rule_becomes_editable_operational(self, auth_client, user):
+        src = AlertRule.objects.create(
+            name="Notification Delivery Failed", severity="high",
+            condition={"meta": True}, kind=AlertRule.Kind.SYSTEM, is_system=True)
+        resp = auth_client.post(f"/api/alerts/rules/{src.pk}/clone/")
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["kind"] == "operational"
+        assert body["is_system"] is False
+        assert body["name"] != src.name
+        assert body["condition"] == src.condition
+        assert body["severity"] == src.severity
+        assert body["created_by"] == user.id
+        # Original untouched.
+        src.refresh_from_db()
+        assert src.kind == AlertRule.Kind.SYSTEM and src.is_system is True
+        # The clone is deletable (pure user rule).
+        assert auth_client.delete(f"/api/alerts/rules/{body['id']}/").status_code == 204
+
+    def test_clone_engine_builtin_gets_distinct_name(self, auth_client):
+        # Engine-fired built-in: fires BY NAME, so the clone MUST NOT reuse it.
+        src = AlertRule.objects.create(
+            name="Site down", severity="high", condition={"meta": True}, is_system=True)
+        resp = auth_client.post(f"/api/alerts/rules/{src.pk}/clone/")
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["name"] != "Site down"
+        assert body["is_system"] is False
+        # The engine's original still exists, unchanged.
+        assert AlertRule.objects.filter(name="Site down", is_system=True).count() == 1
+
+    def test_clone_user_rule_copies_fields_and_channels(self, auth_client, rule):
+        rule.notify_enabled = False
+        rule.cooldown_minutes = 15
+        rule.save()
+        resp = auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/")
+        assert resp.status_code == 201
+        clone = AlertRule.objects.get(pk=resp.json()["id"])
+        assert clone.condition == rule.condition
+        assert clone.cooldown_minutes == 15
+        assert clone.notify_enabled is False
+        assert list(clone.channels.values_list("pk", flat=True)) == \
+            list(rule.channels.values_list("pk", flat=True))
+
+    def test_clone_is_immediately_editable(self, auth_client, rule):
+        clone_id = auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/").json()["id"]
+        resp = auth_client.patch(f"/api/alerts/rules/{clone_id}/",
+                                 {"condition": {"metric": "latency", "threshold": 300}},
+                                 format="json")
+        assert resp.status_code == 200
+        assert AlertRule.objects.get(pk=clone_id).condition["threshold"] == 300
+
+    def test_clone_twice_dedupes_names(self, auth_client, rule):
+        first = auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/").json()["name"]
+        second = auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/").json()["name"]
+        assert first != second
+        assert first == f"{rule.name} (copy)"
+
+    def test_clone_honors_requested_name(self, auth_client, rule):
+        resp = auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/",
+                                {"name": "My Custom Latency Rule"}, format="json")
+        assert resp.json()["name"] == "My Custom Latency Rule"
+
+    def test_clone_requires_write_capability(self, viewer_client, rule):
+        resp = viewer_client.post(f"/api/alerts/rules/{rule.pk}/clone/")
+        assert resp.status_code == 403
+
+    def test_clone_is_audit_logged(self, auth_client, rule):
+        from apps.core.models import AuditLog
+        auth_client.post(f"/api/alerts/rules/{rule.pk}/clone/")
+        assert AuditLog.objects.filter(
+            event_type=AuditLog.EventType.ALERT_RULE_CREATED).exists()
