@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   fetchAlertRules, createAlertRule, updateAlertRule, deleteAlertRule, cloneAlertRule,
@@ -8,6 +8,8 @@ import { parseApiErrors } from '../../api/errors'
 import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
 import { SectionHeader, Tabs } from '../Settings'
+import { describeCondition } from '../../lib/alertCondition'
+import { formatDate } from '../../lib/time'
 
 // Only pure user-created rules are deletable. Tier-1 system rules (kind=system)
 // and engine-fired built-ins (is_system — spane re-creates them by name) are
@@ -51,6 +53,9 @@ function RulesTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  // Row expanded into its detail panel (condition + provenance + actions). One
+  // at a time — clicking another rule swaps focus.
+  const [expandedId, setExpandedId] = useState<number | null>(null)
   // Rule currently open in the edit modal (used after a clone so the user can
   // immediately customize the copy's values).
   const [editing, setEditing] = useState<AlertRule | null>(null)
@@ -164,10 +169,24 @@ function RulesTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {rules.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                {rules.map((r) => {
+                  const expanded = expandedId === r.id
+                  return (
+                  <Fragment key={r.id}>
+                  <tr
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                    onClick={() => setExpandedId(expanded ? null : r.id)}
+                  >
                     <td className="px-5 py-3">
                       <p className="font-medium text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : r.id) }}
+                          className="-my-1 -ml-1 p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          aria-expanded={expanded}
+                          aria-label={expanded ? `Collapse ${r.name}` : `Expand ${r.name}`}
+                        >
+                          <Chevron open={expanded} />
+                        </button>
                         {r.name}
                         {r.kind === 'system' ? (
                           <span
@@ -192,16 +211,16 @@ function RulesTab() {
                     </td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.cooldown_minutes}m</td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.channels.length}</td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <Toggle on={r.is_active} onClick={() => toggle(r)} />
                     </td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       {/* Dimmed when the rule is disabled — Notify is moot if it doesn't generate. */}
                       <span className={clsx(!r.is_active && 'opacity-40')} title={!r.is_active ? 'Rule is disabled' : undefined}>
                         <Toggle on={r.notify_enabled ?? true} onClick={() => toggleNotify(r)} />
                       </span>
                     </td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         {/* Clone is offered for EVERY rule — you can template off a
                             system or built-in rule to make your own editable copy;
@@ -239,7 +258,21 @@ function RulesTab() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  {expanded && (
+                    <tr className="bg-gray-50/70 dark:bg-gray-900/40">
+                      <td colSpan={7} className="px-5 pb-5 pt-1 border-b-2 border-blue-100 dark:border-blue-900/40">
+                        <RuleDetail
+                          rule={r}
+                          cloning={cloningId === r.id}
+                          onClone={() => clone(r)}
+                          onEdit={() => setEditing(r)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -307,6 +340,169 @@ function TrashIcon() {
     <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" />
     </svg>
+  )
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={clsx('w-4 h-4 transition-transform', open && 'rotate-90')}
+      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+  )
+}
+
+// ── Expanded rule detail ─────────────────────────────────────────────────────
+// The "understand this rule fully" panel: what it checks (friendly + raw JSON),
+// its classification + why it can/can't be deleted, who created it and when, and
+// the clone-to-customize action right where you're reading it.
+
+// Classification chip + one-line explanation, derived from kind/is_system/
+// created_by (the same signals the row's badge and delete-protection use).
+function classify(r: AlertRule): { label: string; badge: string; blurb: string } {
+  if (r.kind === 'system') {
+    return {
+      label: 'System',
+      badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+      blurb: 'Tier 1 — monitors spane’s own platform machinery. Load-bearing for spane’s reliability.',
+    }
+  }
+  if (r.is_system) {
+    return {
+      label: 'Built-in',
+      badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+      blurb: 'Engine-fired built-in — spane re-creates it automatically if removed.',
+    }
+  }
+  if (r.created_by != null) {
+    return {
+      label: 'User',
+      badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+      blurb: 'Created by a user. Fully editable and deletable.',
+    }
+  }
+  return {
+    label: 'Operational',
+    badge: 'bg-gray-100 text-gray-600 dark:bg-gray-700/50 dark:text-gray-300',
+    blurb: 'Tier 2 — monitors your network and servers.',
+  }
+}
+
+function protectionText(r: AlertRule): string {
+  if (isDeletable(r)) return 'Editable and deletable — it’s your rule.'
+  if (r.kind === 'system')
+    return 'Protected: you can disable it (with a warning) but not delete it — spane needs it to watch its own health.'
+  return 'Protected: deleting is futile — the engine re-creates it. Disable it instead to stop its alerts.'
+}
+
+// Provenance line, null-safe for rules that predate the created_by field or were
+// seeded/engine-created (no human author).
+function provenance(r: AlertRule): string {
+  if (r.created_by != null) {
+    return `Created by ${r.created_by_username || 'a user'} on ${formatDate(r.created_at)}`
+  }
+  if (r.kind === 'system' || r.is_system) return 'Provided by spane (built-in) — no individual author.'
+  return 'System — no recorded author (created before provenance tracking).'
+}
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-1.5">{title}</p>
+      {children}
+    </div>
+  )
+}
+
+function RuleDetail({
+  rule, cloning, onClone, onEdit,
+}: {
+  rule: AlertRule
+  cloning: boolean
+  onClone: () => void
+  onEdit: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const summary = describeCondition(rule.condition)
+  const rawJson = JSON.stringify(rule.condition ?? {}, null, 2)
+  const cls = classify(rule)
+
+  const copyJson = () => {
+    navigator.clipboard?.writeText(rawJson)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
+      .catch(() => {})
+  }
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-3 pt-3">
+      {/* What it checks — friendly summary on top, raw JSON below (teaching aid). */}
+      <div className="lg:col-span-2 space-y-3">
+        <DetailSection title="What it checks">
+          <p className="text-sm text-gray-700 dark:text-gray-200">{summary.text}</p>
+          {!summary.parsed && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              Custom condition shape — see the raw definition below.
+            </p>
+          )}
+          <div className="mt-2 relative">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500">Raw condition (JSON)</span>
+              <button
+                onClick={copyJson}
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                title="Copy the condition JSON"
+              >
+                <CopyIcon />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <pre className="text-xs font-mono bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">{rawJson}</pre>
+          </div>
+        </DetailSection>
+      </div>
+
+      {/* Right rail: classification, protection, provenance, actions. */}
+      <div className="space-y-4">
+        <DetailSection title="Classification">
+          <div className="flex items-center gap-2">
+            <span className={clsx('text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded', cls.badge)}>{cls.label}</span>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">{cls.blurb}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{protectionText(rule)}</p>
+        </DetailSection>
+
+        <DetailSection title="Provenance">
+          <p className="text-sm text-gray-700 dark:text-gray-200">{provenance(rule)}</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Last updated {formatDate(rule.updated_at)}</p>
+        </DetailSection>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            onClick={onClone}
+            disabled={cloning}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium"
+            title="Copy this rule into an editable operational rule"
+          >
+            <CopyIcon />
+            {cloning ? 'Cloning…' : 'Clone & customize'}
+          </button>
+          {isDeletable(rule) && (
+            <button
+              onClick={onEdit}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-gray-400 dark:text-gray-500">
+          Cloning leaves this rule untouched and drops you into an editable copy.
+        </p>
+      </div>
+    </div>
   )
 }
 
