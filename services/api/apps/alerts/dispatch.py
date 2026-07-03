@@ -212,12 +212,15 @@ def _fire_delivery_failure_alarm(failed_channel, payload) -> None:
         window = int(getattr(settings, "ALERT_DELIVERY_ALARM_WINDOW_S", 900))
         if not cache.add(f"notif_fail_alarm:{failed_channel.pk}", 1, window):
             return  # already alarmed for this channel within the window
+        from .gating import rule_enabled
         from .models import AlertEvent, AlertRule
         rule, _ = AlertRule.objects.get_or_create(
             name="Notification Delivery Failed",
             defaults={"severity": "high", "condition": {"meta": True}, "is_active": True,
                       # Tier-1 SYSTEM: spane monitoring its own dispatch machinery.
                       "kind": AlertRule.Kind.SYSTEM})
+        if not rule_enabled(rule):
+            return  # operator disabled the built-in → suppress the meta-alarm
         AlertEvent.objects.create(
             rule=rule, state=AlertEvent.State.FIRING,
             labels={"source": "alert_dispatch", "severity": "high",
