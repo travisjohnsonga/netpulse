@@ -258,7 +258,7 @@ LOGROTATE
     fi
     echo ""
     echo "Update history (last 10):"
-    tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
+    tail -n 10 /var/backups/netpulse/update-history.log 2>/dev/null || tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
     ;;
   rollback)
     # Roll the working tree back to a pre-update snapshot tag, then rebuild.
@@ -274,7 +274,7 @@ LOGROTATE
       echo "❌ Unknown snapshot: $SNAP"; exit 1
     fi
     echo "⚠️  Rolling back to $SNAP and rebuilding. The DB is NOT downgraded —"
-    echo "    restore a .update-db-backup-*.sql.gz manually if a migration must be reverted."
+    echo "    restore a /var/backups/netpulse/update-db-backup-*.sql.gz manually if a migration must be reverted."
     read -r -p "Continue? [y/N]: " c; case "${c:-}" in y|Y) ;; *) echo "Aborted."; exit 1 ;; esac
     git checkout "$SNAP"
     GIT_COMMIT="$(git rev-parse --short HEAD)" GIT_COUNT="$(git rev-list --count HEAD)" \

@@ -11,12 +11,62 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_DIR="$(pwd)"
-UPDATE_LOG="$REPO_DIR/.update-history.log"   # repo-local (no root needed)
+
+# Pre-update DB backups + the update history live OUTSIDE the git tree:
+#  * in-tree backups false-positived update.sh's own "uncommitted changes"
+#    guard on the next run (hit live on a customer box), and
+#  * a delete-and-reinstall of the repo directory would destroy the very
+#    backups meant to protect against needing one.
+# /var/backups/<product> is the conventional Linux location; the directory is
+# created on first use and chowned to the deploying user so later non-sudo
+# runs can write without help (see ensure_backup_dir).
+BACKUP_DIR="/var/backups/netpulse"
+UPDATE_LOG="$BACKUP_DIR/update-history.log"
 
 ts()   { date '+%H:%M:%S'; }
 log()  { echo "[$(ts)] $1"; }
 warn() { echo "[$(ts)] ⚠️  $1"; }
 err()  { echo "[$(ts)] ❌ $1" >&2; }
+
+ensure_backup_dir() {
+  # Create $BACKUP_DIR writable by the deploying user. NEVER falls back to an
+  # in-tree location and never silently skips — a permissions problem aborts
+  # the update with instructions (a silent fallback would quietly reintroduce
+  # the dirty-tree bug this fixes).
+  local owner="${SUDO_USER:-$(id -un)}"
+  if [ ! -d "$BACKUP_DIR" ]; then
+    if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+      # /var/backups is typically root-owned — try a non-interactive sudo.
+      if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n mkdir -p "$BACKUP_DIR" && sudo -n chown "$owner" "$BACKUP_DIR"
+      fi
+    fi
+  fi
+  # Running under sudo: hand the dir to the invoking user for future runs.
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ -d "$BACKUP_DIR" ]; then
+    chown "$SUDO_USER" "$BACKUP_DIR" 2>/dev/null || true
+  fi
+  if [ ! -d "$BACKUP_DIR" ] || [ ! -w "$BACKUP_DIR" ]; then
+    err "cannot write backups to $BACKUP_DIR — pre-create it as root:"
+    err "    sudo mkdir -p $BACKUP_DIR && sudo chown $owner $BACKUP_DIR"
+    err "then re-run the update."
+    exit 1
+  fi
+}
+ensure_backup_dir
+
+# One-time migration: sweep legacy in-tree backups/history into $BACKUP_DIR so
+# they stop polluting `git status` and survive a repo reinstall.
+for legacy in "$REPO_DIR"/.update-db-backup-*.sql.gz; do
+  [ -e "$legacy" ] || continue
+  mv "$legacy" "$BACKUP_DIR/$(basename "$legacy" | sed 's/^\.//')" \
+    && log "migrated legacy backup $(basename "$legacy") → $BACKUP_DIR/"
+done
+if [ -f "$REPO_DIR/.update-history.log" ]; then
+  cat "$REPO_DIR/.update-history.log" >> "$UPDATE_LOG" 2>/dev/null \
+    && rm -f "$REPO_DIR/.update-history.log" \
+    && log "migrated legacy .update-history.log → $UPDATE_LOG"
+fi
 
 ASSUME_YES=0
 { [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ]; } && ASSUME_YES=1
@@ -68,9 +118,13 @@ git pull --ff-only origin main
 CHANGED="$(git diff --name-only "$SNAPSHOT_TAG..HEAD" 2>/dev/null || echo '')"
 log "New version: $(version_str)"
 
-# Stamp the precise version into .env so /api/health/ reports it (the api also
-# reads the bind-mounted VERSION file as a fallback).
-NEW_VER="$(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+# Stamp the precise APP version into .env so /api/health/ reports it. MUST
+# match against app-v* tags only: a bare `git describe --tags` can resolve to
+# an AGENT tag (v1.5.0-…) and, since SPANE_VERSION is the runtime override
+# (see settings/base.py _app_version), a wrong stamp here would override the
+# correct build-baked version.
+NEW_VER="$(git describe --tags --match 'app-v*' 2>/dev/null | sed 's/^app-v//')"
+[ -n "$NEW_VER" ] || NEW_VER="$(git rev-parse --short HEAD)"
 if [ -f .env ]; then
   if grep -q '^SPANE_VERSION=' .env; then
     sed -i "s|^SPANE_VERSION=.*|SPANE_VERSION=${NEW_VER}|" .env
@@ -108,8 +162,9 @@ PG_USER="${POSTGRES_USER:-netpulse}"; PG_DB="${POSTGRES_DB:-netpulse}"
 # ── 4. Database backup before migrations ──────────────────────────────────────
 BACKUP_FILE=""
 if docker compose ps postgres --format '{{.Health}}' 2>/dev/null | grep -q healthy; then
-  BACKUP_FILE="$REPO_DIR/.update-db-backup-$(date +%Y%m%d_%H%M%S).sql.gz"
-  log "Backing up database → $(basename "$BACKUP_FILE")"
+  # Non-hidden name — it no longer lives in the repo, so visibility beats tidiness.
+  BACKUP_FILE="$BACKUP_DIR/update-db-backup-$(date +%Y%m%d_%H%M%S).sql.gz"
+  log "Backing up database → $BACKUP_FILE"
   if docker compose exec -T postgres pg_dump -U "$PG_USER" "$PG_DB" | gzip > "$BACKUP_FILE"; then
     log "  database backed up."
   else
