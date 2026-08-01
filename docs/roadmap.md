@@ -79,6 +79,27 @@ shipped work):
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
 
+## Dependency security follow-ups — deferred majors *(Near-term · scoped)*
+
+Two Dependabot alert groups were deliberately **not** force-fixed in the
+2026-08-01 security sweep (`fix/dependabot-alerts`) because the only remediation
+is a breaking **major** upgrade — same judgment call as the documented Vite-8
+caution. Both are dismissed-with-reason on GitHub, not silently ignored:
+
+- **react-router v7 migration** — fixes CVE-2026-53668/-53666/-53669 (alerts
+  #13/#15/#16, all *moderate*). Requires react-router-dom **6.30.4 → 7.18+**
+  (Dependabot PR #172 proposes 7.0.0 — if taken up, go straight to 7.18+, not
+  7.0.0): app-wide routing changes, needs its own branch + full build/smoke
+  test. Not blocking: #15 (SSR-hydration constructor injection) doesn't apply
+  to this SPA at all; #13/#16 are open-redirects requiring attacker-controlled
+  navigation targets — limited real exposure.
+- **immutable / swagger-ui-react** — alerts #11/#12 (*high*, DoS in
+  Immutable.js 3.8.3) are pulled **only** by swagger-ui-react, whose `^3.x`
+  constraint blocks the fixed immutable 4.3.9. Forcing the major risks breaking
+  the `/api-docs` page to close a DoS whose "attacker input" is our own OpenAPI
+  spec. **Revisit when swagger-ui-react ships a release on immutable 4.x**
+  (check its changelog on dep-update passes).
+
 ## v0.8.0 — the alerting ENGINE
 
 The next alerting milestone is the **engine** work designed in
