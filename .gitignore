@@ -109,3 +109,9 @@ mibs/vendor/**/*.txt
 
 # Claude Code session/worktree artifacts
 .claude/
+
+# Legacy in-tree update artifacts (now written to /var/backups/netpulse/ by
+# scripts/update.sh, which also migrates strays; ignored so old boxes' git
+# status stays clean until they run an update).
+.update-db-backup-*.sql.gz
+.update-history.log
