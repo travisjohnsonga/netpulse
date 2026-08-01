@@ -409,9 +409,23 @@ class TestSNMPv3Config:
 
     def test_juniper_v3(self, auth_client):
         cfg = self._gen(auth_client, "junos", "Juniper", self._v3_profile("SHA256", "AES128"))["sections"]["snmp"]["config"]
-        assert "authentication-sha256 authentication-key YOUR-AUTH-KEY-HERE" in cfg
-        assert "privacy-aes128 privacy-key YOUR-PRIV-KEY-HERE" in cfg
+        assert "authentication-sha256 authentication-password YOUR-AUTH-KEY-HERE" in cfg
+        assert "privacy-aes128 privacy-password YOUR-PRIV-KEY-HERE" in cfg
         assert "set snmp community" not in cfg  # no v2c when v3 active
+
+    def test_juniper_v3_sha1_keyword(self, auth_client):
+        # Junos SHA-1 keyword is "authentication-sha" — "authentication-sha1"
+        # does NOT exist and the device rejects the whole line at that token
+        # (verified live on vSRX 23.2R2.21 via CLI completion). Every SHA-2
+        # variant has its OWN keyword: downmapping (e.g. sha384→sha256) would
+        # configure a different protocol than the poller authenticates with.
+        cfg = self._gen(auth_client, "junos", "Juniper", self._v3_profile("SHA", "AES128"))["sections"]["snmp"]["config"]
+        assert "authentication-sha authentication-password" in cfg
+        assert "authentication-sha1" not in cfg
+
+    def test_juniper_v3_sha2_own_keywords(self, auth_client):
+        cfg = self._gen(auth_client, "junos", "Juniper", self._v3_profile("SHA384", "AES128"))["sections"]["snmp"]["config"]
+        assert "authentication-sha384 authentication-password" in cfg
 
     def test_fortios_v3(self, auth_client):
         cfg = self._gen(auth_client, "fortios", "Fortinet", self._v3_profile("SHA", "AES128"))["sections"]["snmp"]["config"]

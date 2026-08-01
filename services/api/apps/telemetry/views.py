@@ -306,7 +306,14 @@ class PushConfigView(APIView):
                     errors.append(f"{sec}: no pushable commands after stripping comments")
                     continue
                 try:
-                    out = conn.send_config_set(lines, read_timeout=30)
+                    if dtype.startswith("juniper"):
+                        # Junos: isolated private candidate + explicit commit —
+                        # plain send_config_set only LOADS the candidate and
+                        # silently no-ops (see config_templates.push.push_junos_private).
+                        from apps.config_templates.push import push_junos_private
+                        out = push_junos_private(conn, lines)
+                    else:
+                        out = conn.send_config_set(lines, read_timeout=30)
                     outputs.append(f"=== {sec} ===\n{out}")
                     pushed.append(sec)
                 except Exception as exc:
