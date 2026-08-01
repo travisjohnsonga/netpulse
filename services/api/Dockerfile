@@ -45,12 +45,17 @@ RUN mkdir -p /app/media/reports
 
 # Bake the version (git isn't present in the image). Supplied by the build —
 # see docker-compose api build.args / netpulse.sh; empty in plain builds.
+# Baked into SPANE_BUILD_VERSION — deliberately NOT SPANE_VERSION: compose sets
+# a runtime `SPANE_VERSION: ${SPANE_VERSION:-}` on every api-image service, and
+# an empty .env value would mask a baked SPANE_VERSION with "" (the
+# v0.0.0-badge bug). The runtime name stays the explicit operator override;
+# the build name is only ever written here, so it can't be shadowed.
 ARG GIT_COMMIT=""
 ARG BUILT_AT=""
 ARG SPANE_VERSION=""
 ENV NETPULSE_GIT_COMMIT=$GIT_COMMIT \
     NETPULSE_BUILT_AT=$BUILT_AT \
-    SPANE_VERSION=$SPANE_VERSION
+    SPANE_BUILD_VERSION=$SPANE_VERSION
 
 RUN useradd -m -u 1000 netpulse && chown -R netpulse:netpulse /app
 USER netpulse
