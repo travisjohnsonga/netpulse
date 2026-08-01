@@ -81,8 +81,37 @@ class TestOpenConfigPlatforms:
         cfg = gs.generate_junos_gnmi(d, "1.1.1.1", _ifaces(d, ["ge-0/0/0"]))
         assert "set services analytics streaming-server NetPulse" in cfg
         assert "remote-port 57400" in cfg
-        assert "/interfaces/interface[name='ge-0/0/0']/" in cfg
         assert "bgp/neighbors" in cfg
+
+    def test_junos_resource_paths_are_quoted(self):
+        # Junos CLI tokenizes an unquoted resource path at the space inside
+        # [name='Routing Engine'] and rejects the line (verified live on the
+        # vSRX: the sensor loaded WITHOUT its mandatory 'resource'). Every
+        # resource is double-quoted — required there, harmless elsewhere.
+        d = _device(platform="junos", hostname="j2", ip_address="10.0.0.17", management_ip="10.0.0.17")
+        cfg = gs.generate_junos_gnmi(d, "1.1.1.1", _ifaces(d, ["ge-0/0/0"]))
+        assert 'resource "/components/component[name=\'Routing Engine\']/state"' in cfg
+        assert 'resource "/interfaces/interface[name=\'ge-0/0/0\']/"' in cfg
+        # no unquoted resource lines remain
+        for line in cfg.splitlines():
+            if " resource " in line:
+                assert line.rstrip().endswith('"'), f"unquoted resource: {line}"
+
+    def test_junos_srx_gets_guidance_not_unpushable_config(self):
+        # SRX-family Junos has NO 'streaming-server' under services analytics
+        # and commit-check rejects sensors without one ("streaming-server
+        # shoud be defined" [sic]) — verified live on vSRX 23.2R2.21. JTI
+        # dial-out is un-configurable there, so the generator emits guidance
+        # comments; the push endpoint then reports "no pushable commands"
+        # instead of a cryptic Netmiko timeout.
+        d = _device(platform="junos", hostname="fw9", ip_address="10.0.0.18",
+                    management_ip="10.0.0.18", model="vSRX")
+        cfg = gs.generate_junos_gnmi(d, "1.1.1.1", _ifaces(d, ["ge-0/0/0"]))
+        # nothing pushable: every line is a comment (the quoted 'set services
+        # analytics ...' inside the guidance text is fine — it never pushes)
+        assert not [l for l in cfg.splitlines() if l.strip() and not l.startswith(("#", "!"))]
+        assert "does not support JTI gRPC dial-out" in cfg
+        assert "gNMI" in cfg                                # points at the dial-in path
 
     def test_eos_terminattr(self):
         d = _device(platform="eos", hostname="e1", ip_address="10.0.0.6")
