@@ -303,7 +303,15 @@ class PushConfigView(APIView):
                 # device prompt (Netmiko default) rather than a config comment.
                 lines = config_gen.section_lines(section["config"])
                 if not lines:
-                    errors.append(f"{sec}: no pushable commands after stripping comments")
+                    # A comment-only section is usually deliberate platform
+                    # guidance (e.g. SRX has no JTI dial-out) — surface its
+                    # first substantive comment line so the operator sees WHY
+                    # instead of a bare "nothing to push".
+                    reason = next(
+                        (l.lstrip("!# ").strip() for l in (section["config"] or "").splitlines()[3:]
+                         if l.strip().startswith(("!", "#"))),
+                        "no pushable commands after stripping comments")
+                    errors.append(f"{sec}: {reason}")
                     continue
                 try:
                     if dtype.startswith("juniper"):
