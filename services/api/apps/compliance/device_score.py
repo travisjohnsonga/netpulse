@@ -307,11 +307,16 @@ def run_and_store_compliance(device, role_cache=None) -> dict:
     from apps.compliance.models import DeviceComplianceScore
 
     result = calculate_device_compliance_score(device, role_cache=role_cache)
+    # score None → grade "N/A" (display value). The column is a 2-char letter
+    # grade with blank = "no applicable compliance data", so persist "" — a
+    # truthy "N/A" used to hit varchar(2) and fail the write on every config
+    # collection for devices with no compliance components (e.g. FortiGate).
+    grade = result["grade"] or ""
     DeviceComplianceScore.objects.update_or_create(
         device=device,
         defaults={
             "score": result["score"],
-            "grade": result["grade"] or "",
+            "grade": "" if grade == "N/A" else grade,
             "template_score": result.get("template_score"),
             "interface_score": result.get("interface_score"),
             "role_score": result.get("role_score"),

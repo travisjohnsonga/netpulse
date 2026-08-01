@@ -12,6 +12,17 @@
 #
 set -euo pipefail
 
+# When invoked from a piped installer (`curl … | bash` → install.sh →
+# ./scripts/setup.sh), stdin is the SCRIPT pipe — every interactive `read`
+# below would consume install.sh's remaining text as its "answers". This
+# actually happened: COLLECTOR_IP captured install.sh's "# ─── Done" banner
+# line and propagated it into REACT_APP_API_URL/WS_URL. Rebind stdin to the
+# real terminal when there is one; with no terminal at all every `read … ||
+# true` fails cleanly and the [bracketed] defaults are kept (non-interactive).
+if [ ! -t 0 ] && [ -e /dev/tty ] && (: < /dev/tty) 2>/dev/null; then
+  exec < /dev/tty
+fi
+
 # ── paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -342,6 +353,15 @@ echo "${BOLD}1. Basic configuration${N}"
 detected_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
 ask DJANGO_ALLOWED_HOSTS "Platform hostname / allowed hosts (comma-separated)" "$(env_get DJANGO_ALLOWED_HOSTS)"
 ask COLLECTOR_IP         "Collector IP (devices send telemetry here)" "$(env_get COLLECTOR_IP || true)"
+# Validate (same pattern as INTERNAL_DNS below): must look like an IP or
+# hostname — anything with spaces/#/quotes is junk (a piped install once wrote
+# a script banner here) and would propagate into the REACT_APP_* URLs. Clear it
+# so the detected-IP default below takes over.
+_ci="$(env_get COLLECTOR_IP)"
+if [ -n "$_ci" ] && ! echo "$_ci" | grep -qE '^[A-Za-z0-9.:_-]+$'; then
+  warn "COLLECTOR_IP '$_ci' is not a valid IP/hostname — clearing it"
+  env_set COLLECTOR_IP ""
+fi
 [ -z "$(env_get COLLECTOR_IP)" ] && [ -n "$detected_ip" ] && { env_set COLLECTOR_IP "$detected_ip"; info "defaulted collector IP to detected $detected_ip"; }
 # Point the browser-facing URLs at the collector IP for non-localhost installs.
 ci="$(env_get COLLECTOR_IP)"
