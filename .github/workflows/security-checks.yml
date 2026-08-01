@@ -50,8 +50,17 @@ jobs:
       # BLOCKING: services/api/requirements.txt is currently free of known CVEs
       # (verified locally when this job was added). A newly-disclosed CVE in a
       # pinned dependency fails the build so it gets triaged, not ignored.
+      #
+      # Accepted (documented) ignores — each needs a reason and a revisit path:
+      #   PYSEC-2026-1325 (ecdsa, transitive via python-jose): NO fixed release
+      #     exists — 0.19.2 is the latest and upstream declares timing-side-
+      #     channel-free operation out of scope. Exposure here is nil-to-low:
+      #     ecdsa only performs EC *signing* (the timeable secret path) for ES*
+      #     JWTs, and spane never signs with ES* (SimpleJWT=HS256, SSO validates
+      #     RS256 Google tokens). Revisit if python-jose swaps backends or an
+      #     ecdsa fix ships.
       - name: pip-audit (services/api dependencies)
-        run: pip-audit -r services/api/requirements.txt --progress-spinner off
+        run: pip-audit -r services/api/requirements.txt --progress-spinner off --ignore-vuln PYSEC-2026-1325
 
       # BLOCKING at medium+ severity. Every High/Medium finding in
       # services/api/apps has been triaged: each is either fixed or carries an
