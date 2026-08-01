@@ -730,7 +730,7 @@ function JobModal({ job, profiles, sites, onClose, onSaved }: { job?: DiscoveryJ
   const editing = !!job
   const [name, setName] = useState(job?.name ?? '')
   // Default to the production-safe Ping + SNMP (Active Scan's nmap probing
-  // tripped a firewall block in the wco2 lab — see CLAUDE.md).
+  // tripped a firewall block in a production lab — see CLAUDE.md).
   const [method, setMethod] = useState<DiscoveryMethod>(job?.method ?? 'ping_snmp')
   const [subnets, setSubnets] = useState(job?.subnets.join('\n') ?? '')
   const [allowed, setAllowed] = useState(job ? job.allowed_subnets.join('\n') : '10.0.0.0/8')

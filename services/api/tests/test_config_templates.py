@@ -25,7 +25,7 @@ def ssh_profile():
 @pytest.fixture
 def aoscx_device(ssh_profile):
     return Device.objects.create(
-        hostname="wco2-idf4-asw-01", ip_address="10.150.0.20", management_ip="10.150.0.20",
+        hostname="site1-idf3-asw-01", ip_address="192.0.2.20", management_ip="192.0.2.20",
         platform="aos_cx", vendor="HPE", status="active", credential_profile=ssh_profile)
 
 
@@ -60,11 +60,11 @@ class TestRender:
 
     def test_render_uses_device_and_settings(self, aoscx_device, monkeypatch):
         monkeypatch.setattr("apps.core.models.SystemSetting.get",
-                            classmethod(lambda cls, k, d="": "10.16.132.250" if k == "syslog_server" else d))
+                            classmethod(lambda cls, k, d="": "198.51.100.250" if k == "syslog_server" else d))
         out = render_template(
             "logging {{ settings.syslog_server }} host {{ device.hostname }}",
             aoscx_device, {})
-        assert out == "logging 10.16.132.250 host wco2-idf4-asw-01"
+        assert out == "logging 198.51.100.250 host site1-idf3-asw-01"
 
     def test_render_default_filter_and_conditional(self, aoscx_device):
         content = ("logging {{ syslog_server }} severity {{ syslog_severity | default('informational') }}\n"
@@ -98,13 +98,13 @@ class TestCrud:
         resp = admin_client.post("/api/config-templates/", {
             "name": "Custom SNMP", "category": "snmp", "platform": "aos_cx",
             "template_content": "snmpv3 user {{ snmp_user }} auth-pass {{ snmp_auth_pass }}",
-            "variables": {"snmp_user": "fpsrw", "snmp_auth_pass": "topsecret"},
+            "variables": {"snmp_user": "svc-snmp", "snmp_auth_pass": "topsecret"},
         }, format="json")
         assert resp.status_code == 201, resp.content
         obj = ConfigPushTemplate.objects.get(name="Custom SNMP")
         # Secret value must never be persisted to the DB.
         assert "snmp_auth_pass" not in obj.variables
-        assert obj.variables.get("snmp_user") == "fpsrw"
+        assert obj.variables.get("snmp_user") == "svc-snmp"
         # And the secret is masked (empty) in the API response.
         assert resp.json()["variables"].get("snmp_auth_pass", "") == ""
 
@@ -137,12 +137,12 @@ class TestPreview:
             template_content="snmpv3 user {{ snmp_user }} auth-pass {{ snmp_auth_pass }}")
         resp = admin_client.post(f"/api/config-templates/{tmpl.id}/preview/", {
             "device_id": aoscx_device.id,
-            "variables": {"snmp_user": "fpsrw", "snmp_auth_pass": "S3cret"},
+            "variables": {"snmp_user": "svc-snmp", "snmp_auth_pass": "S3cret"},
         }, format="json")
         assert resp.status_code == 200, resp.content
         body = resp.json()
-        assert body["device"] == "wco2-idf4-asw-01"
-        assert "fpsrw" in body["rendered"]
+        assert body["device"] == "site1-idf3-asw-01"
+        assert "svc-snmp" in body["rendered"]
         assert "S3cret" not in body["rendered"]  # secret masked
 
     def test_preview_bad_template_returns_400(self, admin_client, aoscx_device):
@@ -186,14 +186,14 @@ class TestPush:
         monkeypatch.setattr("netmiko.ConnectHandler", lambda **k: FakeConn())
         tmpl = self._template()
         resp = admin_client.post(f"/api/config-templates/{tmpl.id}/push/", {
-            "device_ids": [aoscx_device.id], "variables": {"snmp_user": "fpsrw"},
+            "device_ids": [aoscx_device.id], "variables": {"snmp_user": "svc-snmp"},
         }, format="json")
         assert resp.status_code == 200, resp.content
         body = resp.json()
         assert body["success"] is True
         assert body["succeeded"] == 1 and body["total"] == 1
         assert body["results"][0]["success"] is True
-        assert captured["lines"] == ["snmpv3 user fpsrw"]
+        assert captured["lines"] == ["snmpv3 user svc-snmp"]
 
     def test_push_platform_mismatch_skips_connection(self, admin_client, ssh_profile, settings, monkeypatch):
         settings.ALLOW_CONFIG_PUSH = True

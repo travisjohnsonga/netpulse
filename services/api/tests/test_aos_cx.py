@@ -189,11 +189,11 @@ class TestAOSCXClient:
                 "chassis_id": "40:5b:7f:66:05:e1"}},
             # a real IP after a MAC in the list → the IP wins
             "1/1/5": {"port": "1/1/5", "neighbor_info": {
-                "mgmt_ip_list": "40:5b:7f:66:05:e1, 10.150.0.15"}},
+                "mgmt_ip_list": "40:5b:7f:66:05:e1, 192.0.2.15"}},
         }})
         by = {n["local_port"]: n for n in client.get_lldp_neighbors()}
         assert by["1/1/4"]["neighbor_mgmt_ip"] == ""
-        assert by["1/1/5"]["neighbor_mgmt_ip"] == "10.150.0.15"
+        assert by["1/1/5"]["neighbor_mgmt_ip"] == "192.0.2.15"
 
     def test_aos_cx_interface_stats_captured(self):
         """depth-2 interfaces carry statistics + rate_statistics + mtu."""
@@ -231,7 +231,7 @@ class TestAOSCXClient:
         """get_system_info reads serial/base-MAC off the chassis product_info."""
         client = AOSCXClient("10.0.0.5")
         client._session = _FakeSession(get_json={
-            "system": {"hostname": "wco2-mdf-crt-01", "platform_name": "6300",
+            "system": {"hostname": "site1-core-01", "platform_name": "6300",
                        "software_version": "FL.10.13.1160"},
             "system/subsystems": {"chassis,1": "/rest/v10.09/system/subsystems/chassis,1",
                                   "fan_tray,1/1": "/uri"},
@@ -240,7 +240,7 @@ class TestAOSCXClient:
                 "product_name": "6300M 24SFP+ 4SFP56 Swch", "part_number": "JL658A"}},
         })
         info = client.get_system_info()
-        assert info["hostname"] == "wco2-mdf-crt-01"
+        assert info["hostname"] == "site1-core-01"
         assert info["os_version"] == "FL.10.13.1160"
         assert info["model"] == "6300"
         assert info["serial_number"] == "SG44LMP040"
@@ -253,15 +253,15 @@ class TestAOSCXClient:
         client._session = _FakeSession(get_json={
             "system/vrfs": {"default": "/uri", "mgmt": "/uri"},
             "system/vrfs/default/neighbors": {
-                "10.150.0.1,vlan1": {
-                    "address_family": "ipv4", "from": "dynamic", "ip_address": "10.150.0.1",
+                "192.0.2.1,vlan1": {
+                    "address_family": "ipv4", "from": "dynamic", "ip_address": "192.0.2.1",
                     "mac": "1a:c2:41:2c:0b:0c", "state": "reachable",
                     "port": {"vlan1": "/rest/v10.09/system/interfaces/vlan1"}},
                 "fe80::1,vlan1": {  # IPv6 ND — must be skipped
                     "address_family": "ipv6", "ip_address": "fe80::1",
                     "mac": "1a:c2:41:2c:0b:0d"},
-                "10.150.0.2,vlan5": {  # static
-                    "address_family": "ipv4", "from": "static", "ip_address": "10.150.0.2",
+                "192.0.2.2,vlan5": {  # static
+                    "address_family": "ipv4", "from": "static", "ip_address": "192.0.2.2",
                     "mac": "aa:bb:cc:dd:ee:ff",
                     "port": {"vlan5": "/rest/v10.09/system/interfaces/vlan5"}},
             },
@@ -269,13 +269,13 @@ class TestAOSCXClient:
         })
         rows = client.get_arp_table()
         by_ip = {r["ip_address"]: r for r in rows}
-        assert set(by_ip) == {"10.150.0.1", "10.150.0.2"}   # IPv6 excluded
-        assert by_ip["10.150.0.1"]["mac_address"] == "1a:c2:41:2c:0b:0c"  # raw
-        assert by_ip["10.150.0.1"]["interface"] == "vlan1"
-        assert by_ip["10.150.0.1"]["vlan"] == 1
-        assert by_ip["10.150.0.1"]["entry_type"] == "dynamic"
-        assert by_ip["10.150.0.2"]["entry_type"] == "static"
-        assert by_ip["10.150.0.2"]["vlan"] == 5
+        assert set(by_ip) == {"192.0.2.1", "192.0.2.2"}   # IPv6 excluded
+        assert by_ip["192.0.2.1"]["mac_address"] == "1a:c2:41:2c:0b:0c"  # raw
+        assert by_ip["192.0.2.1"]["interface"] == "vlan1"
+        assert by_ip["192.0.2.1"]["vlan"] == 1
+        assert by_ip["192.0.2.1"]["entry_type"] == "dynamic"
+        assert by_ip["192.0.2.2"]["entry_type"] == "static"
+        assert by_ip["192.0.2.2"]["vlan"] == 5
 
     def test_aos_cx_mac_table_from_vlans(self):
         """MAC table is read per-VLAN (GET /system/vlans/<id>/macs)."""
@@ -429,11 +429,11 @@ class TestAOSCXClient:
                         "chassis_id": "14:ab:ec:fb:e9:c0",
                         "port_id": "1/1/49",
                         "neighbor_info": {
-                            "chassis_name": "wco2-mdf-asw-01",
+                            "chassis_name": "site1-core-asw-01",
                             "chassis_description": "HPE ANW, ArubaOS-CX",
                             "chassis_id_subtype": "link_local_addr",
                             "port_description": "Connected to the Core Switch",
-                            "mgmt_ip_list": "10.150.0.12",
+                            "mgmt_ip_list": "192.0.2.12",
                             "chassis_capability_available": "Bridge, Router",
                             "vlan_id_list": "1,10,20,30",
                         },
@@ -471,10 +471,10 @@ class TestAOSCXClient:
         assert len(nbrs) == 1                      # only 1/1/49 has a neighbour
         nb = nbrs[0]
         assert nb["local_port"] == "1/1/49"
-        assert nb["neighbor_hostname"] == "wco2-mdf-asw-01"
+        assert nb["neighbor_hostname"] == "site1-core-asw-01"
         assert nb["neighbor_port"] == "1/1/49"
         assert nb["neighbor_port_description"] == "Connected to the Core Switch"
-        assert nb["neighbor_mgmt_ip"] == "10.150.0.12"
+        assert nb["neighbor_mgmt_ip"] == "192.0.2.12"
         assert nb["chassis_id"] == "14:ab:ec:fb:e9:c0"
         assert nb["chassis_id_type"] == "link_local_addr"
         assert nb["system_description"] == "HPE ANW, ArubaOS-CX"

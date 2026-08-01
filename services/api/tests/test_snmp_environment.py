@@ -1,12 +1,12 @@
 """Environment metric derivation (apps.telemetry.snmp_environment).
 
-Data mirrors the real HPE AOS-CX 6100 (wco2-idf5-asw-01, 10.150.0.21).
+Data mirrors the real HPE AOS-CX 6100 (site1-idf1-asw-01, 192.0.2.21).
 """
 from apps.telemetry import snmp_environment as env
 
 
 def _aos_cx_walk():
-    """Walk results captured from the real 6100 (10.150.0.21)."""
+    """Walk results captured from the real 6100 (192.0.2.21)."""
     w = {
         # hrProcessorLoad — two cores at vendor indexes (NOT .1).
         f"{env.HR_PROCESSOR_LOAD}.196608": "23",

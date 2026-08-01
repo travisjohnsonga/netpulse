@@ -83,18 +83,18 @@ the target device; `settings` comes from the platform's system-settings store
 
 | Variable                   | Value                       | Example            |
 |----------------------------|-----------------------------|--------------------|
-| `device.hostname`          | Device hostname             | wco2-idf4-asw-01   |
-| `device.management_ip`     | Management IP (or primary)  | 10.150.0.20        |
-| `device.ip_address`        | Primary/identity IP         | 10.150.0.20        |
+| `device.hostname`          | Device hostname             | site1-idf3-asw-01   |
+| `device.management_ip`     | Management IP (or primary)  | 192.0.2.20        |
+| `device.ip_address`        | Primary/identity IP         | 192.0.2.20        |
 | `device.platform`          | Platform slug               | aos_cx             |
 | `device.vendor`            | Vendor                      | HPE                |
-| `device.site.name`         | Site name                   | Waco 2/3           |
+| `device.site.name`         | Site name                   | Site One           |
 | `device.role.name`         | Device role name            | Access Switch      |
-| `settings.syslog_server`   | Configured syslog collector | 10.16.132.250      |
-| `settings.ntp_primary`     | Primary NTP server          | 10.16.0.1          |
+| `settings.syslog_server`   | Configured syslog collector | 198.51.100.250      |
+| `settings.ntp_primary`     | Primary NTP server          | 198.51.100.1          |
 | `settings.ntp_secondary`   | Secondary NTP server        |                    |
 | `settings.snmp_community`  | SNMP community              | public             |
-| `settings.dns_primary`     | Primary DNS server          | 10.16.0.10         |
+| `settings.dns_primary`     | Primary DNS server          | 198.51.100.10         |
 | `settings.domain_suffix`   | Domain suffix               | example.com        |
 
 Any other `{{ name }}` you reference becomes an editable variable field in the

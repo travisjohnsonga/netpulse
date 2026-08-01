@@ -1278,7 +1278,7 @@ living, authoritative status list lives in
 - **Platforms** — added SonicWall SonicOS, HPE AOS-CX, Aruba AOS (OIDs, field
   mapping, sysDescr/banner detection).
 - **HPE AOS-CX environment telemetry (SNMP-only)** — validated against a real
-  AOS-CX 6100 (wco2-idf5-asw-01). AOS-CX exposes environment metrics at
+  AOS-CX 6100 (site1-idf1-asw-01). AOS-CX exposes environment metrics at
   vendor-specific indexes, so the poller gained table **WALK** support
   (`walk_oids` in the device payload) alongside the existing GETs:
   - CPU: `hrProcessorLoad` (1.3.6.1.2.1.25.3.3.1.2) lives at vendor indexes

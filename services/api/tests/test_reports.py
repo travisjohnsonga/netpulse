@@ -18,7 +18,7 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def fleet():
-    site = Site.objects.create(name="WCO2")
+    site = Site.objects.create(name="Site1")
     role = DeviceRole.objects.create(name="Access Switch")
     d1 = Device.objects.create(hostname="sw-1", ip_address="10.0.0.1", platform="aos_cx",
                                site=site, role=role)
@@ -44,7 +44,7 @@ class TestComplianceSummary:
              startup_checked_at=timezone.now())
         data = build_compliance_summary()
         assert data["summary"]["total_devices"] == 2
-        assert {r["site"] for r in data["by_site"]} == {"WCO2"}
+        assert {r["site"] for r in data["by_site"]} == {"Site1"}
         assert {r["role"] for r in data["by_role"]} == {"Access Switch"}
         assert {r["platform"] for r in data["by_platform"]} == {"aos_cx", "ios"}
         assert any(m["hostname"] == "sw-1" for m in data["startup_mismatch"])
@@ -72,7 +72,7 @@ class TestDailyOps:
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
         when = timezone.now() - __import__("datetime").timedelta(days=1)
         log = AuditLog.objects.create(event_type=AuditLog.EventType.LOGIN_FAILED,
-                                      username="admin", ip_address="10.150.1.45")
+                                      username="admin", ip_address="192.0.2.45")
         AuditLog.objects.filter(pk=log.pk).update(created_at=when)
         data = dops.build_daily_ops(date=when.date().isoformat())
         assert data["spane_access_events"]["total_failures"] == 1
@@ -126,7 +126,7 @@ class TestDailyOps:
     def test_device_security_grouping_and_multi_device_flag(self, fleet, monkeypatch):
         when = timezone.now() - __import__("datetime").timedelta(days=1)
         hits = [{"_source": {"@timestamp": when.replace(hour=10, minute=m).isoformat(),
-                             "hostname": f"sw-{i}", "source_ip": "10.150.0.18",
+                             "hostname": f"sw-{i}", "source_ip": "192.0.2.18",
                              "message": f"%SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: travis-admin] dev {i}"}}
                 for i, m in enumerate((21, 22, 23), start=1)]
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": hits}})
@@ -404,7 +404,7 @@ class TestDailyOps:
         assert "+vlan 55" in change["diff"]
         assert change["previous_backup_at"] is not None
         assert change["current_backup_at"] is not None
-        assert change["site"] == "WCO2" and change["role"] == "Access Switch"
+        assert change["site"] == "Site1" and change["role"] == "Access Switch"
         assert "vlan 55" in change["diff_summary"]
 
 

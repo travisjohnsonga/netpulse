@@ -15,7 +15,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def circuit():
     return WanCircuit.objects.create(
-        name="WCO2 Primary Internet", provider="AT&T", circuit_type="dia",
+        name="Site1 Primary Internet", provider="AT&T", circuit_type="dia",
         bandwidth_mbps_download=1000, alert_threshold_pct=80)
 
 
@@ -43,7 +43,7 @@ class TestCrud:
         assert resp.status_code == 201
 
     def test_filter_by_site(self, auth_client, circuit):
-        site = Site.objects.create(name="WCO2")
+        site = Site.objects.create(name="Site1")
         circuit.site = site; circuit.save()
         WanCircuit.objects.create(name="Other", circuit_type="internet")
         r = auth_client.get(f"/api/circuits/?site={site.id}").json()

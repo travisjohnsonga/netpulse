@@ -3,7 +3,7 @@ from ingest import aos_cx
 from ingest.parser import SEVERITIES, parse
 
 
-def _parse(raw: str, *, ip: str = "10.150.0.21") -> dict:
+def _parse(raw: str, *, ip: str = "192.0.2.21") -> dict:
     return parse(raw.encode(), ip, 514, "udp")
 
 
@@ -83,7 +83,7 @@ class TestNormalize:
 class TestEndToEnd:
     def test_full_syslog_line(self):
         # PRI=190 → local7.info; RFC 3164 line from an AOS-CX switch.
-        raw = "<190>Jun  3 04:10:00 wco2-idf5-asw-01 hpe-restd: Event|4657|LOG_INFO|AMM|-|User admin logged out"
+        raw = "<190>Jun  3 04:10:00 site1-idf1-asw-01 hpe-restd: Event|4657|LOG_INFO|AMM|-|User admin logged out"
         msg = _parse(raw)
         assert msg["vendor"] == "aruba"
         assert "[hpe-restd/AMM] User admin logged out" == msg["message"]

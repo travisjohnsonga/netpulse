@@ -36,8 +36,8 @@ class TestResolveIps:
 
     def test_inventory_wins_over_dns(self, monkeypatch):
         from apps.devices.models import Device
-        Device.objects.create(hostname="sw-mdf-01", ip_address="10.150.0.15",
-                              management_ip="10.150.0.15")
+        Device.objects.create(hostname="sw-mdf-01", ip_address="192.0.2.15",
+                              management_ip="192.0.2.15")
         # DNS would say something else, but inventory must win (and no DNS call).
         called = {"n": 0}
 
@@ -45,8 +45,8 @@ class TestResolveIps:
             called["n"] += 1
             raise OSError("should not be called for inventory IP")
         monkeypatch.setattr(dns.socket, "gethostbyaddr", _boom)
-        out = dns.resolve_ips(["10.150.0.15"])
-        assert out["resolved"]["10.150.0.15"] == "sw-mdf-01"
+        out = dns.resolve_ips(["192.0.2.15"])
+        assert out["resolved"]["192.0.2.15"] == "sw-mdf-01"
         assert out["from_inventory"] == 1
         assert called["n"] == 0
 

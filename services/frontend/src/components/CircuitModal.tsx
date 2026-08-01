@@ -95,7 +95,7 @@ export default function CircuitModal({ onClose, onSaved, edit, prefillSite }: {
         {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</div>}
 
         <div className="grid sm:grid-cols-2 gap-3">
-          <div><label className={lbl}>Name *</label><input className={inp} value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="WCO2 Primary Internet" /></div>
+          <div><label className={lbl}>Name *</label><input className={inp} value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Site1 Primary Internet" /></div>
           <div><label className={lbl}>Circuit ID</label><input className={inp} value={f.circuit_id} onChange={(e) => set('circuit_id', e.target.value)} placeholder="ATTD-12345678" /></div>
           <div><label className={lbl}>Type</label><select className={inp} value={f.circuit_type} onChange={(e) => set('circuit_type', e.target.value)}>{CIRCUIT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select></div>
           <div><label className={lbl}>Status</label><select className={inp} value={f.status} onChange={(e) => set('status', e.target.value)}>{STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}</select></div>

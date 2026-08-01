@@ -509,7 +509,7 @@ multi-tier failure design (§3) wanted.
 2. **Critical takeover** — a critical (config: which severities) **interrupts
    `TVRotate`** and pins a full-screen alert until acked/resolved. **Grouping-aware:
    once grouping (§7) lands, the takeover pins the GROUP summary** ("CRITICAL: 12
-   unreachable at Waco"), not 12 separate takeovers. **→ depends on §7 (grouping).**
+   unreachable at Site One"), not 12 separate takeovers. **→ depends on §7 (grouping).**
 3. **Delivery-failure display** — reads the **`/api/alerts/notifications/delivery-health/`
    endpoint built in PR #152** (and `notification_delivery` on `/api/health/
    infrastructure/`): when push delivery is degraded, the wall shows a prominent

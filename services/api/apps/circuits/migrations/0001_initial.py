@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('name', models.CharField(help_text='e.g. "WCO2 Primary Internet"', max_length=128)),
+                ('name', models.CharField(help_text='e.g. "Site1 Primary Internet"', max_length=128)),
                 ('circuit_id', models.CharField(blank=True, help_text='Provider circuit ID', max_length=128)),
                 ('circuit_type', models.CharField(choices=[('mpls', 'MPLS'), ('internet', 'Internet'), ('dia', 'Dedicated Internet Access'), ('broadband', 'Broadband'), ('fiber', 'Fiber'), ('coax', 'Coax/Cable'), ('lte', 'LTE/Cellular'), ('sdwan', 'SD-WAN'), ('dark_fiber', 'Dark Fiber'), ('p2p', 'Point-to-Point'), ('other', 'Other')], default='internet', max_length=32)),
                 ('status', models.CharField(choices=[('active', 'Active'), ('inactive', 'Inactive'), ('pending', 'Pending Install'), ('cancelled', 'Cancelled')], default='active', max_length=20)),
