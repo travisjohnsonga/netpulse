@@ -78,6 +78,21 @@ shipped work):
   matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
+- **Junos JTI capability probe (replace the hardcoded SRX check)** — the gNMI
+  config generator currently special-cases models matching `srx` (live-verified
+  on vSRX 23.2R2.21: no `streaming-server` grammar, sensors can't commit). But
+  Juniper's own streaming-server CLI reference shows support is **line-card/FPC
+  granular**, not chassis-family granular (MX from 15.1F3 on MPC1–6E only,
+  MPC7E–9E from 15.1F5; PTX FPC3 from 15.1F3, FPC1/2 from 16.1R3; EX/QFX never
+  listed in that hierarchy) — so *any* model allowlist is wrong by construction;
+  even genuine MX support depends on which MPC is installed, which spane can't
+  know statically. The correct fix is a **live capability probe** before
+  generating push config (e.g. a lightweight CLI grammar check for
+  `services analytics streaming-server` on THIS device), making the SRX case
+  just one instance of a general mechanism. Interim rule: when MX/PTX/EX/QFX
+  hardware reaches the lab, live-test the gNMI push (same standard as the SRX
+  session) before assuming support; extend the hardcoded detection per
+  confirmed case only as a stopgap.
 
 ## Dependency security follow-ups — deferred majors *(Near-term · scoped)*
 
