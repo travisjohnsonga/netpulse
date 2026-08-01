@@ -61,10 +61,11 @@ version badge finally telling the truth.
   missing entirely, and the Junos SNMP entry ships the corrected syntax.
 
 ### Security
-- **Real-infrastructure fingerprint scrub** (#174) — the internal `wco2-*`
-  naming, real IPs, jump-host identity, SNMPv3 username, and site-name examples
-  replaced repo-wide with a generic `site1-*` / RFC5737 convention (engineering
-  knowledge kept; real values moved to gitignored `LOCAL_NOTES.md`).
+- **Real-infrastructure fingerprint scrub** (#174) — internal site-specific
+  hostnames, real IPs, the jump-host identity, an SNMPv3 username, and
+  site-name examples replaced repo-wide with a generic `site1-*` / RFC5737
+  convention (engineering knowledge kept; real values moved to gitignored
+  `LOCAL_NOTES.md`).
 - **Dependency CVEs cleared** (#173, #178, #180) — js-yaml 4.3.0,
   dompurify 3.4.12, brace-expansion 5.0.9, postcss 8.5.25, aiosmtplib 5.1
   (PYSEC-2026-2338), and the **dead `python-jose` dependency removed** —

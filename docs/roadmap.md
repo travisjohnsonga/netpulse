@@ -50,6 +50,14 @@ Moved out of this page because they're now in `main` (see the README/CLAUDE.md
   role-check config** (Custom web mode + service multi-select + stability link —
   kills the false role `not_found` count). *Phases 3–6 (escalation/grouping/flap)
   are the v0.8.0 engine work — see below.*
+- **app-v0.7.1 bug-fix release (2026-08-01, #173–#182)** — Junos config-push
+  private-candidate + explicit-commit chain (pushes silently no-opped before),
+  Junos gNMI quoting + SRX-has-no-JTI detection, FortiOS/Junos os_version
+  enrichment (REST + vendor-OID fallback), version-badge env-mask fix
+  (`SPANE_BUILD_VERSION`), SMTP-check `ehlo()` bugfix, update.sh backups →
+  `/var/backups/netpulse/`, curl|bash stdin-poisoning fix in setup.sh,
+  dependency CVE clearance (incl. removing the dead `python-jose`), and the
+  pre-open-source infrastructure-fingerprint scrub. See `CHANGELOG.md` §0.7.1.
 
 ---
 
@@ -78,6 +86,19 @@ shipped work):
   matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
+- **`netpulse.sh status`/health uses `http://localhost:8000`** — cosmetic bug
+  found during a customer incident: the CLI health/status output curls the api
+  on `:8000` directly; on installs where only 80/443 are reachable (or the api
+  port isn't bound to localhost the same way) the status output misleads. Point
+  it at the public HTTPS endpoint (or try both), matching how operators
+  actually reach the stack.
+- **nginx upstream caching / resolver behavior** — flagged during the same
+  customer incident: nginx resolves upstream container names at config load,
+  which can pin a stale upstream IP across container recreation until nginx
+  reloads (classic Docker-DNS + nginx `proxy_pass` caveat). Investigate whether
+  the frontend proxy needs an explicit `resolver` + variable-based
+  `proxy_pass` so api-container recreation never leaves nginx pointing at a
+  dead IP. Needs reproduction + confirmation before changing the proxy config.
 - **Junos JTI capability probe (replace the hardcoded SRX check)** — the gNMI
   config generator currently special-cases models matching `srx` (live-verified
   on vSRX 23.2R2.21: no `streaming-server` grammar, sensors can't commit). But

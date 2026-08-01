@@ -1,3 +1,92 @@
+# spane — Security Posture Update (2026-08-01, app-v0.7.1)
+
+Full-day remediation sweep shipped as the app-v0.7.1 patch release (PRs
+#173–#182). Full api suite (2567) green; security-checks CI gate green.
+
+## Dependency vulnerability posture
+
+- **Fixed (npm, #173/#178):** js-yaml → 4.3.0 (CVE-2026-59869, the previous
+  overrides pin had itself gone stale), brace-expansion → 5.0.9
+  (CVE-2026-13149), dompurify → 3.4.12, postcss → 8.5.25 (build-only;
+  GHSA-r28c-9q8g-f849, caught by npm-audit though absent from Dependabot),
+  plus the npm minor-patch group (swagger-ui-react 5.32.11, vite 7.3.6, …).
+- **Fixed (pip, #180):** aiosmtplib ~=3.0 → ~=5.1 (PYSEC-2026-2338). The
+  functional test for that bump exposed a REAL latent bug: `SMTP.ehlo()` is
+  keyword-only in 3.x AND 5.x, so every SMTP service check had been silently
+  TypeError-ing into a "down" result — fixed and now regression-tested.
+- **Eliminated rather than ignored (#180):** `python-jose` removed entirely —
+  it was a dead requirement (zero imports in spane; social-core's OIDC/JWT
+  work uses PyJWT, which SimpleJWT already provides; `pip show` Required-by
+  empty). Removing it took the unfixable **ecdsa** advisory (PYSEC-2026-1325,
+  no fixed release exists upstream) out of the dependency tree entirely — the
+  pip-audit gate now runs with **zero ignore flags**.
+- **Accepted-risk, documented, dismissed-with-reason on GitHub (#173):**
+  react-router 6.x moderates (fix = the v7 major; migration tracked in
+  `docs/roadmap.md`; the SSR-hydration CVE doesn't apply to this SPA at all)
+  and immutable 3.8.3 highs (pulled only by swagger-ui-react whose `^3.x`
+  constraint blocks the fix; the DoS "attacker input" is our own OpenAPI
+  spec; revisit when upstream moves to immutable 4.x).
+- **Bandit:** B104 audit found **zero real bind-to-all-interfaces issues**;
+  the single flagged `"0.0.0.0"` is a data literal (synthetic-IP matching in a
+  migration) carrying a targeted, justified `# nosec B104`. The CI gate
+  (medium+, `--skip B507` with its documented acceptance rationale) is clean.
+
+## Vulnerability class found & fixed: curl|bash stdin poisoning (#177)
+
+`install.sh` (run via `curl … | bash`) executes `setup.sh`, whose interactive
+`read` prompts inherited **stdin = the script pipe** — the prompts consumed the
+installer's own remaining text as their "answers". Found live: `COLLECTOR_IP`
+captured install.sh's `# ─── Done` banner line, and setup.sh propagated it into
+`REACT_APP_API_URL`/`REACT_APP_WS_URL`. This is a genuine installer-trusting-
+untrusted-stdin defect class (any content between `./scripts/setup.sh` and EOF
+of the piped script becomes prompt input).
+
+*Fix:* setup.sh rebinds stdin to `/dev/tty` when piped (one `exec` covers every
+prompt; truly headless runs keep the bracketed defaults), plus `COLLECTOR_IP`
+value validation mirroring the existing `INTERNAL_DNS` guard.
+
+*Blast-radius audit — contained:* `host_ip.py:_valid_ip()` already rejected the
+junk value (fell through to `NETPULSE_HOST_IP`); the `Collector` DB row was
+clean (built from `NETPULSE_HOST_IP`, which is written by `env_set`, never
+prompted); telemetry config generation resolves through the Collector row.
+Only display paths (`/api/health/`, Settings→System) ever surfaced the junk.
+
+## Authentication / access posture (as of 2026-08-01)
+
+- **Local auth:** JWT (SimpleJWT, HS256) + login rate-limiting + audit-logged
+  auth events. **TOTP MFA** is implemented (`MFADevice`, `apps/core/mfa.py`)
+  with per-user enrolment and an org-wide `mfa_required_all_local` system
+  setting; `reset_mfa` management command for recovery. Automation/service
+  accounts that must bypass interactive MFA are an operational convention
+  (dedicated service-account users), not an in-code MFA exemption.
+- **SSO:** social-auth backends wired for Google, Azure AD (tenant), Okta, and
+  GitHub — all via social-core's PyJWT-based validation (confirmed during the
+  python-jose removal); client secrets in OpenBao, never the DB; SSO users
+  minted the same JWT as local auth; local admin login always available.
+- **Secrets:** OpenBao for all credentials (device, integration, backup,
+  agent-PKI); write-only API fields; `LOCAL_NOTES.md` (gitignored) for
+  lab-specific identifiers after the #174 repo scrub.
+
+## Repo anonymization for open source (#174)
+
+Real internal hostnames, IPs, a jump-host identity, and an SNMPv3 username
+were scrubbed repo-wide (code, tests, docs, UI placeholders) to a generic
+`site1-*` / RFC5737 convention; a negative-assertion test guards the seed
+data. Engineering knowledge (firmware quirks, hardware behavior) retained.
+
+## Open / known security-relevant items
+
+- react-router v7 migration + immutable/swagger-ui-react (accepted-risk
+  majors, above; tracked in the roadmap with revisit criteria).
+- The Dependabot version-bump PR backlog (~30 pip pin-bumps for the ingest
+  services) awaits a batch refresh with per-service end-to-end verification —
+  version currency, not known-vulnerability, work.
+- Junos config-push hardening shipped in 0.7.1 also has a defensive angle:
+  pushes now use `configure private` (a concurrent operator's uncommitted
+  changes can no longer be silently swept into an automated commit).
+
+---
+
 # spane — Security Alert Remediation (2026-06-20)
 
 Scanner-flagged alert sweep (Dependabot + CodeQL). Full api suite (1850) passes
