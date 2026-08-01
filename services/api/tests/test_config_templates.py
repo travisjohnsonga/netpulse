@@ -195,6 +195,95 @@ class TestPush:
         assert body["results"][0]["success"] is True
         assert captured["lines"] == ["snmpv3 user svc-snmp"]
 
+    # ── Junos: private candidate + explicit commit ────────────────────────────
+    # send_config_set only LOADS the Junos candidate; without a commit the push
+    # silently no-ops (confirmed live on the vSRX). Other platforms apply lines
+    # immediately — test_push_success's FakeConn has NO commit/config-mode
+    # methods, so any commit attempt on a non-Junos push would fail that test.
+
+    class _FakeJunosConn:
+        def __init__(self, commit_fails=False):
+            self.commit_fails = commit_fails
+            self.calls = []
+            self.send_kwargs = None
+            self._in_cfg = False
+
+        def send_config_set(self, lines, **kw):
+            self.calls.append(("load", list(lines)))
+            self.send_kwargs = kw
+            if kw.get("exit_config_mode") is False:
+                self._in_cfg = True
+            return "loaded"
+
+        def commit(self, **kw):
+            self.calls.append(("commit", kw))
+            if self.commit_fails:
+                raise RuntimeError("error: configuration check-out failed")
+            return "commit complete"
+
+        def send_command(self, cmd, **kw):
+            self.calls.append(("cmd", cmd))
+            return ""
+
+        def check_config_mode(self):
+            return self._in_cfg
+
+        def exit_config_mode(self):
+            self.calls.append(("exit-cfg",))
+            self._in_cfg = False
+
+        def disconnect(self):
+            self.calls.append(("disconnect",))
+
+    def _junos_setup(self, ssh_profile, monkeypatch, conn):
+        dev = Device.objects.create(
+            hostname="vsrx-1", ip_address="192.0.2.60", platform="junos",
+            vendor="juniper", status="active", credential_profile=ssh_profile)
+        monkeypatch.setattr("netmiko.ConnectHandler", lambda **k: conn)
+        tmpl = ConfigPushTemplate.objects.create(
+            name="junos-snmp", category="snmp", platform="junos",
+            template_content="set snmp location {{ loc }}")
+        return dev, tmpl
+
+    def test_push_junos_uses_private_mode_and_commits(self, admin_client, ssh_profile,
+                                                      settings, monkeypatch):
+        settings.ALLOW_CONFIG_PUSH = True
+        conn = self._FakeJunosConn()
+        dev, tmpl = self._junos_setup(ssh_profile, monkeypatch, conn)
+        resp = admin_client.post(f"/api/config-templates/{tmpl.id}/push/", {
+            "device_ids": [dev.id], "variables": {"loc": "LAB"}}, format="json")
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["results"][0]["success"] is True
+        # isolated private candidate, load stays in config mode for the commit
+        assert conn.send_kwargs["config_mode_command"] == "configure private"
+        assert conn.send_kwargs["exit_config_mode"] is False
+        ops = [c[0] for c in conn.calls]
+        assert "commit" in ops                          # the actual fix
+        assert ops.index("load") < ops.index("commit")
+        assert "exit-cfg" in ops and "disconnect" in ops
+        commit_kw = next(c[1] for c in conn.calls if c[0] == "commit")
+        assert commit_kw.get("comment") == "spane config push"
+
+    def test_push_junos_commit_failure_is_real_failure(self, admin_client, ssh_profile,
+                                                       settings, monkeypatch):
+        settings.ALLOW_CONFIG_PUSH = True
+        conn = self._FakeJunosConn(commit_fails=True)
+        dev, tmpl = self._junos_setup(ssh_profile, monkeypatch, conn)
+        resp = admin_client.post(f"/api/config-templates/{tmpl.id}/push/", {
+            "device_ids": [dev.id], "variables": {"loc": "LAB"}}, format="json")
+        assert resp.status_code == 200
+        result = resp.json()["results"][0]
+        assert result["success"] is False               # NOT a silent false success
+        assert "commit failed" in result["error"] or "push/commit failed" in result["error"]
+        # candidate discarded + config mode exited, never left lingering
+        assert ("cmd", "rollback 0") in conn.calls
+        assert ("exit-cfg",) in conn.calls
+        # audit records the failure
+        from apps.core.models import AuditLog
+        row = AuditLog.objects.filter(
+            event_type=AuditLog.EventType.CONFIG_PUSHED).order_by("-id").first()
+        assert row.success is False
+
     def test_push_platform_mismatch_skips_connection(self, admin_client, ssh_profile, settings, monkeypatch):
         settings.ALLOW_CONFIG_PUSH = True
 

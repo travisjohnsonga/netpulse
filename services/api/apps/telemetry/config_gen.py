@@ -105,8 +105,14 @@ def _canon_priv(p: str) -> str:
 _AUTH_CLI = {
     "cisco_xe":      {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
     "cisco_nxos":    {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
-    "juniper_junos": {"md5": "authentication-md5", "sha": "authentication-sha1", "sha224": "authentication-sha224",
-                      "sha256": "authentication-sha256", "sha384": "authentication-sha256", "sha512": "authentication-sha256"},
+    # Junos keywords verified against a live vSRX (23.2R2.21) via CLI completion:
+    # SHA-1 is "authentication-sha" (NOT "authentication-sha1" — Junos rejects
+    # that token with a syntax error, silently truncating the rest of the line),
+    # and every SHA-2 variant has its OWN keyword — downmapping sha384/512 to
+    # sha256 would configure a different protocol than the poller authenticates
+    # with.
+    "juniper_junos": {"md5": "authentication-md5", "sha": "authentication-sha", "sha224": "authentication-sha224",
+                      "sha256": "authentication-sha256", "sha384": "authentication-sha384", "sha512": "authentication-sha512"},
     "arista_eos":    {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
     "fortinet_fortios": {"md5": "md5", "sha": "sha1", "sha224": "sha224", "sha256": "sha256", "sha384": "sha384", "sha512": "sha512"},
     "aruba_aoscx":   {"md5": "md5", "sha": "sha", "sha256": "sha", "sha384": "sha", "sha512": "sha", "sha224": "sha"},
