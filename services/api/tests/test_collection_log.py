@@ -160,7 +160,7 @@ class TestCollectionLogEndpoints:
 
 class TestUnsupportedPlatformSkip:
     def test_collect_one_skips_wireless_ap(self, monkeypatch):
-        ap = Device.objects.create(hostname="wco2-wh-ap-08", ip_address="10.16.1.8",
+        ap = Device.objects.create(hostname="site1-wh-ap-08", ip_address="192.0.2.8",
                                    status="active", platform="unifi_ap")
         # Should never attempt a fetch and must write NO collection-log row.
         called = {"fetch": False}
@@ -210,7 +210,7 @@ class TestInfraHostname:
 
     def test_real_hostnames_not_flagged(self):
         from apps.devices.management.commands.run_discovery import is_infra_hostname
-        assert not is_infra_hostname("wco2-mdf-crt-01")
+        assert not is_infra_hostname("site1-core-01")
         assert not is_infra_hostname("router1.dnstest.local")
         assert not is_infra_hostname("")
         assert not is_infra_hostname("core-sw-01")

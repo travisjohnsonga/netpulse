@@ -367,7 +367,7 @@ function RuleModal({ rule, roles, sites, onClose, onSaved }: {
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Test hostname</label>
           <div className="flex gap-2">
             <input className={inputCls} value={testHost} onChange={(e) => setTestHost(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') runTest() }} placeholder="wco2-mdf-crt-01" />
+              onKeyDown={(e) => { if (e.key === 'Enter') runTest() }} placeholder="site1-core-01" />
             <button onClick={runTest} disabled={testing || !pattern.trim() || !testHost.trim()}
               className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-white dark:hover:bg-gray-800 disabled:opacity-50 text-gray-700 dark:text-gray-300 whitespace-nowrap">Test</button>
           </div>

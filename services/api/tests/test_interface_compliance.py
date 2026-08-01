@@ -167,7 +167,7 @@ class TestCapabilityTrigger:
         sw = _switch()
         _config(sw, AOS_CONFIG)
         LLDPNeighbor.objects.create(seen_by=sw, local_interface="1/1/7",
-                                    system_name="wco2-wh-ap-05", capabilities=["bridge", "wlan"])
+                                    system_name="site1-wh-ap-05", capabilities=["bridge", "wlan"])
         out = ic.run_interface_compliance(self._rule())
         assert out["summary"]["matched"] == 1 and out["results"][0]["passed"]
 

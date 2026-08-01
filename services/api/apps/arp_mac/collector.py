@@ -67,7 +67,7 @@ MAC_COMMANDS = {
 }
 
 _INT_RE = re.compile(r"-?\d+")
-# FortiOS "get system arp": "10.150.0.1   0   aa:bb:cc:dd:ee:ff   port1"
+# FortiOS "get system arp": "192.0.2.1   0   aa:bb:cc:dd:ee:ff   port1"
 _FORTIOS_ARP_RE = re.compile(
     r"^\s*(\d{1,3}(?:\.\d{1,3}){3})\s+(\d+|-)\s+([0-9a-fA-F:]{17})\s+(\S+)")
 

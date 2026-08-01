@@ -627,7 +627,7 @@ aos_cx, aruba, sonicwall, plus aruba/aos.
   Aruba Central keepalive logs (`hpe-restd`) are normal noise. Central-managed config push: `aruba-central
   disable` → `sleep(2)` → push → re-enable (try/finally). gNMI on 8443 (OpenConfig) — planned.
   **REST API** (preferred enrichment when reachable; SNMP fallback) verified on FL.10.13 firmware
-  (`wco2-mdf-crt-01` 10.150.0.15). LLDP on FL.10.13 uses the **per-interface** API, not
+  (`site1-core-01` 192.0.2.15). LLDP on FL.10.13 uses the **per-interface** API, not
   `/lldp_neighbors_info`: `GET /system/interfaces/{port}` → `lldp_neighbors: {key: uri}`, then
   `GET /system/interfaces/{port}/lldp_neighbors/{key}` → `neighbor_info` (`chassis_id`,
   `chassis_name`, `chassis_capability_available` as comma string, `chassis_description`,
@@ -637,7 +637,7 @@ aos_cx, aruba, sonicwall, plus aruba/aos.
   session: migrate interfaces/ARP/environment/VLANs/PoE off SNMP to REST (see Pending).
 - **Discovery**: 4-tier (passive/topology-walk/active-scan/import); all land PENDING, never
   auto-activate. Default `ping_snmp` (production-safe). ⚠️ nmap Active Scan tripped a firewall block in
-  the wco2 lab — reserve for labs. OT/ICS WARNING: never auto-probe industrial subnets (excluded_subnets).
+  a production lab — reserve for labs. OT/ICS WARNING: never auto-probe industrial subnets (excluded_subnets).
 
 ## Docker NAT (Required)
 
@@ -654,9 +654,10 @@ Applied by `setup.sh`/`update.sh` (shared logic in `scripts/nat.sh`, idempotent)
 
 Local (192.168.98.x): router2 .152 ios_xe · router1.dnstest.local .100 ios · fortinet1 .155 fortios ·
 soniclab .160 sonicwall (NSv XS, SonicOSX 8.2.1, v8/443).
-Remote (host `azadmin@wco2lnxnetmon01`): wco2-idf5-asw-01 10.150.0.21 aos_cx (HPE 6100, verified) ·
-wco2-idf6-asw-01 10.150.0.25 aos_cx · wco2-mdf-fw-01 10.16.128.129 sonicwall (TZ 670, SonicOS 7.3.2,
-v7/4444, config backup needs built-in admin). AOS-CX SNMPv3 user `fpsrw` (authPriv SHA/AES).
+Remote (generic placeholders — REAL hostnames/IPs/jump-host live in gitignored `LOCAL_NOTES.md`):
+site1-idf1-asw-01 192.0.2.21 aos_cx (HPE 6100, verified) · site1-idf2-asw-01 192.0.2.25 aos_cx ·
+site1-core-fw-01 198.51.100.129 sonicwall (TZ 670, SonicOS 7.3.2, v7/4444, config backup needs
+built-in admin). AOS-CX SNMPv3 authPriv (SHA/AES); username in `LOCAL_NOTES.md`.
 
 ## Pinned Decisions
 
