@@ -58,6 +58,13 @@ Moved out of this page because they're now in `main` (see the README/CLAUDE.md
   `/var/backups/netpulse/`, curl|bash stdin-poisoning fix in setup.sh,
   dependency CVE clearance (incl. removing the dead `python-jose`), and the
   pre-open-source infrastructure-fingerprint scrub. See `CHANGELOG.md` §0.7.1.
+- **Post-0.7.1 fixes (#183, #185)** — EX-family PSU/fan *presence* inventory
+  (Junos was never given the environment walks; per-unit STATUS via
+  jnxOperatingTable stays pinned below) and the script health probes
+  (update.sh/netpulse.sh/factory-reset.sh) now hitting nginx
+  `https://localhost:443/api/health/` instead of gunicorn `:8000` — kills the
+  false "unreachable" verdicts (and bad rollback advice) that
+  `SECURE_SSL_REDIRECT`'s 301 caused.
 
 ---
 
@@ -86,19 +93,23 @@ shipped work):
   matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
-- **`netpulse.sh status`/health uses `http://localhost:8000`** — cosmetic bug
-  found during a customer incident: the CLI health/status output curls the api
-  on `:8000` directly; on installs where only 80/443 are reachable (or the api
-  port isn't bound to localhost the same way) the status output misleads. Point
-  it at the public HTTPS endpoint (or try both), matching how operators
-  actually reach the stack.
-- **nginx upstream caching / resolver behavior** — flagged during the same
+- **nginx upstream caching / resolver behavior** — flagged during a
   customer incident: nginx resolves upstream container names at config load,
   which can pin a stale upstream IP across container recreation until nginx
   reloads (classic Docker-DNS + nginx `proxy_pass` caveat). Investigate whether
   the frontend proxy needs an explicit `resolver` + variable-based
   `proxy_pass` so api-container recreation never leaves nginx pointing at a
   dead IP. Needs reproduction + confirmation before changing the proxy config.
+- **Junos PoE + real PSU/fan STATUS (jnxOperatingTable)** — the EX-family fix
+  shipped presence-only inventory (entPhysicalTable) because (a) the PoE budget
+  math hardcodes the AOS-CX half-watt divisor (`_POE_BUDGET_DIVISOR=2`), which
+  would halve a Juniper true-watt budget — needs a platform-aware divisor, and
+  the poller payload is platform-blind today; and (b) EX4100/4400 don't
+  implement ENTITY-SENSOR-MIB at all (verified live: "No Such Object" across
+  1.3.6.1.2.1.99.*), so per-unit status/readings need Juniper's proprietary
+  **jnxOperatingTable** (JUNIPER-MIB, 1.3.6.1.4.1.2636.3.1.13.1). Before
+  building: walk that OID on the real EX4100 to confirm it's populated — same
+  verify-first discipline that disproved the sensor-join-bug theory.
 - **Junos JTI capability probe (replace the hardcoded SRX check)** — the gNMI
   config generator currently special-cases models matching `srx` (live-verified
   on vSRX 23.2R2.21: no `streaming-server` grammar, sensors can't commit). But
