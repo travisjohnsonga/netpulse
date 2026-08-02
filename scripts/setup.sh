@@ -163,8 +163,12 @@ _clean_env_value() { printf '%s' "$1" | sed 's/[[:space:]]*#.*$//' | sed 's/^[[:
 # fall back to the first address from `hostname -I`.
 _detect_host_ip() {
   local ip
-  ip="$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)"
-  [ -z "$ip" ] && ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | head -1)"
+  # `|| true`: grep exits 1 on no-match (routeless box / no non-empty line),
+  # which `set -o pipefail` would propagate as a whole-pipeline failure and kill
+  # the script under `set -e` — even though an empty result is a valid outcome
+  # here (best-effort detection with its own fallbacks).
+  ip="$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1 || true)"
+  [ -z "$ip" ] && ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | head -1 || true)"
   printf '%s' "$ip"
 }
 
@@ -183,7 +187,7 @@ import os
 from django.contrib.auth import get_user_model
 u = get_user_model().objects.filter(username=os.environ["NP_ADMIN_USER"]).first()
 print("default" if (u and u.must_change_password) else ("custom" if u else "missing"))
-' 2>/dev/null | tr -d '\r' | grep -E '^(default|custom|missing)$' | tail -1)"
+' 2>/dev/null | tr -d '\r' | grep -E '^(default|custom|missing)$' | tail -1 || true)"
   printf '%s' "${out:-unknown}"
 }
 
@@ -212,7 +216,9 @@ verify_allowed_hosts() {
   local ip ah
   ip="$(_detect_host_ip)"
   [ -z "$ip" ] && return 0
-  ah="$($COMPOSE exec -T api python -c 'from django.conf import settings; print(",".join(settings.ALLOWED_HOSTS))' 2>/dev/null | tr -d '\r')"
+  # `|| true`: the api exec can fail (container not ready yet) — pipefail would
+  # otherwise kill this post-start check; an empty result is handled below.
+  ah="$($COMPOSE exec -T api python -c 'from django.conf import settings; print(",".join(settings.ALLOWED_HOSTS))' 2>/dev/null | tr -d '\r' || true)"
   case ",$ah," in
     *",*,"*|*",$ip,"*) ok "ALLOWED_HOSTS includes this server ($ip)";;
     *) warn "ALLOWED_HOSTS may not include this server's IP ($ip) — browser access by IP could be blocked."
@@ -412,7 +418,10 @@ fi
 # Auto-detected here; never overwrite an existing value. Skip the systemd-resolved
 # stub (127.0.0.53) — it's not reachable from inside a container.
 if [ -z "$(env_get INTERNAL_DNS)" ]; then
-  internal_dns="$(resolvectl status 2>/dev/null | grep 'DNS Servers' | awk '{print $3}' | head -1)"
+  # `|| true`: on a box whose `resolvectl status` has no "DNS Servers" line,
+  # grep exits 1 → pipefail → `set -e` kills the script here. An empty result is
+  # valid — the /etc/resolv.conf fallback on the next line handles it.
+  internal_dns="$(resolvectl status 2>/dev/null | grep 'DNS Servers' | awk '{print $3}' | head -1 || true)"
   [ -z "$internal_dns" ] && internal_dns="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)"
   if [ -n "$internal_dns" ] && [ "$internal_dns" != "127.0.0.53" ]; then
     env_set INTERNAL_DNS "$internal_dns"
@@ -435,7 +444,12 @@ fi
 if [ -z "$(env_get INTERNAL_DOMAIN)" ]; then
   # "DNS Domain: foo.local bar.local" — take the first as INTERNAL_DOMAIN and an
   # optional second as INTERNAL_DOMAIN2 (second dns_search entry).
-  domain_line="$(resolvectl status 2>/dev/null | grep 'DNS Domain' | head -1)"
+  # `|| true`: THE bug that silently killed non-interactive setup right after DNS
+  # detection — a box with no "DNS Domain" line (no search domain configured, the
+  # common case) makes grep exit 1, which pipefail propagates as a pipeline
+  # failure and `set -e` turns into a silent script death. An empty domain is
+  # valid and already handled by the `[ -n "$internal_domain" ]` guard below.
+  domain_line="$(resolvectl status 2>/dev/null | grep 'DNS Domain' | head -1 || true)"
   internal_domain="$(echo "$domain_line" | awk '{print $3}')"
   internal_domain2="$(echo "$domain_line" | awk '{print $4}')"
   if [ -n "$internal_domain" ]; then
