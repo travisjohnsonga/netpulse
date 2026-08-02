@@ -380,13 +380,14 @@ The update flow:
 2. Shows current vs latest version and what changed, then asks to confirm.
 3. Pulls `origin/main` (fast-forward only; refuses a dirty tree).
 4. **Back-fills new `.env` variables** from `.env.example` (warns which it added).
-5. **Backs up the database** (`pg_dump`) to `.update-db-backup-*.sql.gz`.
+5. **Backs up the database** (`pg_dump`) to `/var/backups/netpulse/update-db-backup-*.sql.gz`
+   (outside the repo, so it survives a full reinstall and never dirties `git status`).
 6. Rebuilds the changed services (version stamped into the image).
 7. **Applies migrations explicitly**, then re-applies the Docker NAT rule.
 8. **Verifies `/api/health/`** — on failure it prints the DB-backup path and the
    rollback command, and exits non-zero.
 
-Each run appends a line to `.update-history.log`.
+Each run appends a line to `/var/backups/netpulse/update-history.log`.
 
 ```bash
 ./netpulse.sh show-version     # running version + recent update history
@@ -394,7 +395,7 @@ Each run appends a line to `.update-history.log`.
 ```
 
 > Rollback reverts **code** (and rebuilds), not the database. If a migration
-> must be undone, restore the matching `.update-db-backup-*.sql.gz` first.
+> must be undone, restore the matching `/var/backups/netpulse/update-db-backup-*.sql.gz` first.
 
 The running version is also shown in the sidebar (a `v1.0.NNN` badge that turns
 amber with `↑` when an update is available — `GET /api/version/check/` compares

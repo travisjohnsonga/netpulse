@@ -33,7 +33,7 @@ export default function TVSites({ rotation }: { rotation?: Parameters<typeof TVL
               </div>
               <div className="mt-3 space-y-1 text-lg">
                 {e.down.slice(0, 5).map((d) => (
-                  <div key={d.id} style={{ color: TV.error }}>🔴 {d.display_hostname || d.hostname}</div>
+                  <div key={d.id} style={{ color: TV.error }}>DOWN · {d.display_hostname || d.hostname}</div>
                 ))}
                 {e.down.length === 0 && <div style={{ color: TV.success }}>All devices online</div>}
               </div>

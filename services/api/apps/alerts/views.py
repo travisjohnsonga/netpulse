@@ -10,8 +10,10 @@ from rest_framework.viewsets import GenericViewSet
 from apps.alerting.models import AlertAcknowledgement
 from apps.core.permissions import CapabilityViewSetMixin
 
-from .models import AlertChannel, AlertEvent, AlertRule
-from .serializers import AlertChannelSerializer, AlertEventSerializer, AlertRuleSerializer
+from .models import AlertChannel, AlertEvent, AlertRule, NotificationLog
+from .serializers import (
+    AlertChannelSerializer, AlertEventSerializer, AlertRuleSerializer, NotificationLogSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,43 @@ class AlertChannelViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     queryset = AlertChannel.objects.all()
     serializer_class = AlertChannelSerializer
     filterset_fields = ["channel_type", "is_active"]
+
+    def perform_create(self, serializer):
+        from .channel_secrets import store_channel_secrets
+        channel = serializer.save()
+        store_channel_secrets(channel)
+
+    def perform_update(self, serializer):
+        from .channel_secrets import store_channel_secrets
+        channel = serializer.save()
+        store_channel_secrets(channel)
+
+    def perform_destroy(self, instance):
+        from .channel_secrets import delete_channel_secrets
+        delete_channel_secrets(instance.pk)
+        instance.delete()
+
+    @action(detail=True, methods=["post"], url_path="test")
+    def test(self, request, pk=None):
+        """Send a synthetic test notification through this one channel so an
+        operator can verify it's wired (email arrives / Teams card posts)."""
+        from django.conf import settings
+
+        from .dispatch import send_to_channel
+        from .payload import AlertPayload
+
+        channel = self.get_object()
+        base = (getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
+        payload = AlertPayload(
+            event_id=None, transition="firing", severity="info",
+            title="spane test alert",
+            message=f"This is a test notification from spane for channel '{channel.name}'.",
+            rule_name="Channel Test",
+            link=f"{base}/alerts" if base else "",
+        )
+        ok, detail = send_to_channel(channel, payload)
+        return Response({"ok": ok, "detail": detail},
+                        status=status.HTTP_200_OK if ok else status.HTTP_502_BAD_GATEWAY)
 
 
 class AlertRuleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
@@ -193,11 +232,16 @@ class AlertEventViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMix
         note = request.data.get("resolution_note", "") or request.data.get("note", "") or ""
         if not ids:
             return Response({"error": "No IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
-        updated = (AlertEvent.objects
-                   .filter(id__in=ids).exclude(state=AlertEvent.State.RESOLVED)
-                   .update(state=AlertEvent.State.RESOLVED,
-                           resolved_at=timezone.now(), resolved_by="user",
-                           resolution_note=note, updated_at=timezone.now()))
+        target = (AlertEvent.objects
+                  .filter(id__in=ids).exclude(state=AlertEvent.State.RESOLVED))
+        pks = list(target.values_list("pk", flat=True))
+        updated = target.update(state=AlertEvent.State.RESOLVED,
+                                resolved_at=timezone.now(), resolved_by="user",
+                                resolution_note=note, updated_at=timezone.now())
+        if pks:
+            # .update() bypasses the post_save dispatch signal → notify explicitly.
+            from .resolve import notify_resolved
+            notify_resolved(pks)
         return Response({"updated": updated, "failed": len(ids) - updated, "errors": []})
 
     @action(detail=True, methods=["post"])
@@ -249,3 +293,32 @@ class AlertEventViewSet(CapabilityViewSetMixin, ListModelMixin, RetrieveModelMix
         minutes = request.data.get("minutes") or request.data.get("snooze_minutes") or 30
         ack, _ = self._record_ack(event, request.user, request.data.get("note"), minutes)
         return Response(AlertAcknowledgementSerializer(ack).data)
+
+
+class NotificationLogViewSet(CapabilityViewSetMixin, ListModelMixin, GenericViewSet):
+    """
+    Notification delivery log + delivery-health — the source of truth for "did the
+    alert actually get delivered." Dispatch writes a row per attempt (sent/failed)
+    so a silent send failure is visible here, in `delivery-health/`, and (when
+    persistent) via a cross-channel meta-alarm.
+
+    `GET /api/alerts/notifications/` — recent deliveries (filter `status`,
+    `channel`, `channel_type`). `GET /api/alerts/notifications/delivery-health/` —
+    per-channel health summary (last success/failure, currently-failing).
+    """
+
+    view_capability = "alert:view"
+    write_capability = "alert:manage"
+    queryset = NotificationLog.objects.select_related("event", "event__rule", "channel").all()
+    serializer_class = NotificationLogSerializer
+    filterset_fields = ["status", "channel", "channel_type"]
+    ordering = ["-created_at"]
+
+    @action(detail=False, methods=["get"], url_path="delivery-health")
+    def delivery_health(self, request):
+        from .delivery_health import delivery_health
+        try:
+            window = int(request.query_params.get("window_minutes", 60))
+        except (TypeError, ValueError):
+            window = 60
+        return Response(delivery_health(window_minutes=max(1, min(window, 1440))))

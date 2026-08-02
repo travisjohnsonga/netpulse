@@ -20,13 +20,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/travisjohnsonga/netpulse/agent/internal/collector"
 	"github.com/travisjohnsonga/netpulse/agent/internal/config"
 )
 
 type enrollRequest struct {
 	EnrollmentToken string `json:"enrollment_token"`
 	Hostname        string `json:"hostname"`
-	OS              string `json:"os"`
+	OS              string `json:"os"`         // os_family (runtime.GOOS)
+	OSName          string `json:"os_name"`    // display, e.g. "Ubuntu 22.04.3 LTS"
+	OSVersion       string `json:"os_version"` // version id, e.g. "22.04"
+	Kernel          string `json:"kernel"`     // kernel / build
 	Arch            string `json:"arch"`
 	Version         string `json:"version"`
 	CSR             string `json:"csr"`
@@ -76,9 +80,11 @@ func Enroll(serverURL, token, configPath, version string, insecure bool) error {
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
+	osInfo := collector.CollectOSInfo()
 	reqBody, _ := json.Marshal(enrollRequest{
 		EnrollmentToken: token, Hostname: hostname,
-		OS: runtime.GOOS, Arch: runtime.GOARCH, Version: version, CSR: string(csrPEM),
+		OS: runtime.GOOS, OSName: osInfo.Name, OSVersion: osInfo.Version, Kernel: osInfo.Kernel,
+		Arch: runtime.GOARCH, Version: version, CSR: string(csrPEM),
 	})
 	httpResp, err := httpClient.Post(serverURL+"/api/agents/enroll/", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
@@ -116,9 +122,14 @@ func Enroll(serverURL, token, configPath, version string, insecure bool) error {
 	if interval == 0 {
 		interval = 30
 	}
-	serverOut := result.ServerURL
+	// Prefer the operator's --server flag: the agent just completed a successful
+	// HTTPS enrollment against it, so it's a known-good address. The server's
+	// self-reported server_url can be wrong for remote agents (the server can't
+	// know how each client reaches it). Fall back to the server value only if
+	// the flag was somehow empty (it can't be — Enroll() requires it above).
+	serverOut := serverURL
 	if serverOut == "" {
-		serverOut = serverURL
+		serverOut = result.ServerURL
 	}
 	cfg := config.Config{
 		ServerURL: serverOut, AgentID: result.AgentID,

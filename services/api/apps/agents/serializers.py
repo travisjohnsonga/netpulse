@@ -1,6 +1,121 @@
 from rest_framework import serializers
 
-from .models import Agent, AgentEnrollmentToken, AgentRole, AgentRoleStatus, ServerRole
+from .models import (
+    DEFAULT_AGENT_CONFIG, LOG_PATH_ALLOWLIST_ROOT, Agent, AgentEnrollmentToken,
+    AgentRole, AgentRoleStatus, ServerRole, is_allowed_log_path,
+)
+
+
+class _DiskConfigSerializer(serializers.Serializer):
+    exclude_mounts = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False)
+    include_mounts = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False)
+
+
+class _LogsConfigSerializer(serializers.Serializer):
+    security_profile = serializers.BooleanField(required=False)
+    additional_paths = serializers.ListField(
+        child=serializers.CharField(max_length=512), required=False)
+
+    def validate_additional_paths(self, value):
+        # Allowlist guardrail: the agent runs as root, so an operator-added path
+        # must stay under /var/log/ and never name a secret — reject otherwise
+        # (mirrored agent-side as defense in depth).
+        bad = [p for p in value if not is_allowed_log_path(p)]
+        if bad:
+            raise serializers.ValidationError(
+                f"Log paths must be under {LOG_PATH_ALLOWLIST_ROOT} and contain no "
+                f"secret/traversal names. Rejected: {bad}")
+        return value
+
+
+class _StabilityConfigSerializer(serializers.Serializer):
+    services = serializers.ListField(
+        child=serializers.CharField(max_length=128), required=False)
+
+    def validate_services(self, value):
+        # De-dupe, validate each name against the safe charset, and cap the list.
+        from .models import STABILITY_MAX_SERVICES, is_valid_service_name
+        cleaned = list(dict.fromkeys(v.strip() for v in value if v and v.strip()))
+        bad = [v for v in cleaned if not is_valid_service_name(v)]
+        if bad:
+            raise serializers.ValidationError(
+                f"Invalid service name(s): {bad}. Allowed characters: letters, "
+                f"digits, and . _ @ : + - .")
+        if len(cleaned) > STABILITY_MAX_SERVICES:
+            raise serializers.ValidationError(
+                f"Too many watched services ({len(cleaned)}); max {STABILITY_MAX_SERVICES}.")
+        return cleaned
+
+
+class _FunctionalWebSerializer(serializers.Serializer):
+    urls = serializers.ListField(child=serializers.CharField(max_length=512), required=False)
+
+    def validate_urls(self, value):
+        # SSRF guardrail: functional-check URLs must be http(s) to the host itself
+        # (the agent checks its own site). Mirrored agent-side incl. redirects.
+        from .models import FUNCTIONAL_MAX_URLS, is_allowed_self_url
+        cleaned = list(dict.fromkeys(v.strip() for v in value if v and v.strip()))
+        bad = [v for v in cleaned if not is_allowed_self_url(v)]
+        if bad:
+            raise serializers.ValidationError(
+                "Functional-check URLs must be http(s) to the host itself "
+                f"(localhost / 127.0.0.1 / ::1). Rejected: {bad}")
+        if len(cleaned) > FUNCTIONAL_MAX_URLS:
+            raise serializers.ValidationError(f"Too many URLs; max {FUNCTIONAL_MAX_URLS}.")
+        return cleaned
+
+
+class _FunctionalConfigSerializer(serializers.Serializer):
+    web = _FunctionalWebSerializer(required=False)
+
+
+class AgentConfigSerializer(serializers.Serializer):
+    """Validates a (partial) desired-config PATCH. Unknown collection keys are
+    rejected so a typo can't silently disable nothing; log paths are allowlisted;
+    watched service names are charset-validated + capped; functional-check URLs
+    are SSRF-constrained to the host itself."""
+    collection = serializers.DictField(child=serializers.BooleanField(), required=False)
+    interval_seconds = serializers.IntegerField(min_value=10, max_value=3600, required=False)
+    disk = _DiskConfigSerializer(required=False)
+    logs = _LogsConfigSerializer(required=False)
+    stability = _StabilityConfigSerializer(required=False)
+    functional = _FunctionalConfigSerializer(required=False)
+    # {role_type: [service names this server runs]} — the per-server role-service
+    # subset. Names validated/de-duped; empty list = count all the role's services.
+    role_services = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()), required=False)
+
+    def validate_role_services(self, value):
+        from .models import is_valid_service_name
+        cleaned = {}
+        for role_type, names in value.items():
+            uniq = list(dict.fromkeys(n.strip() for n in (names or []) if n and n.strip()))
+            bad = [n for n in uniq if not is_valid_service_name(n)]
+            if bad:
+                raise serializers.ValidationError(
+                    f"Invalid service name(s) for role {role_type}: {bad}. Allowed "
+                    f"characters: letters, digits, and . _ @ : + -.")
+            cleaned[str(role_type)] = uniq
+        return cleaned
+
+    def validate_collection(self, value):
+        allowed = set(DEFAULT_AGENT_CONFIG["collection"])
+        unknown = set(value) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f"Unknown collection keys: {sorted(unknown)}. Allowed: {sorted(allowed)}.")
+        return value
+
+
+class AgentLivenessSerializer(serializers.Serializer):
+    """Writable per-agent liveness-alert config (PATCH /api/servers/{id}/liveness/).
+    offline_threshold_seconds=null → use the global default; liveness_alerts_enabled
+    =False suppresses the offline alert for a host that legitimately sleeps."""
+    offline_threshold_seconds = serializers.IntegerField(
+        min_value=30, max_value=86400, required=False, allow_null=True)
+    liveness_alerts_enabled = serializers.BooleanField(required=False)
 
 
 class ServerRoleSerializer(serializers.ModelSerializer):
@@ -20,13 +135,23 @@ class AgentSerializer(serializers.ModelSerializer):
     device_id = serializers.IntegerField(source="device.id", read_only=True, default=None)
     site_name = serializers.CharField(source="device.site.name", read_only=True, default=None)
     role_types = serializers.SerializerMethodField()
+    # Authoritative online state (same threshold the liveness alert uses) so the
+    # UI badge agrees with alerting instead of computing its own window.
+    is_online = serializers.BooleanField(read_only=True)
+    # Per-device alert silencing (lives on the agent's Device; set via the
+    # /servers/{id}/alerting/ action). Read-only here.
+    alerting_enabled = serializers.BooleanField(source="device.alerting_enabled", read_only=True, default=True)
+    silenced_until = serializers.DateTimeField(source="device.silenced_until", read_only=True, default=None)
 
     class Meta:
         model = Agent
         fields = (
-            "id", "hostname", "device_id", "site_name", "os", "arch", "version",
+            "id", "hostname", "device_id", "site_name", "os", "os_name",
+            "os_version", "os_kernel", "arch", "version",
             "cert_serial", "cert_expires_at", "status", "collection_interval",
-            "role_types", "last_seen", "created_at",
+            "role_types", "last_seen", "is_online",
+            "offline_threshold_seconds", "liveness_alerts_enabled",
+            "alerting_enabled", "silenced_until", "created_at",
         )
         read_only_fields = fields
 
@@ -42,18 +167,52 @@ class ServerSerializer(serializers.ModelSerializer):
     site = serializers.SerializerMethodField()
     roles = serializers.SerializerMethodField()
     latest_metrics = serializers.SerializerMethodField()
+    is_online = serializers.BooleanField(read_only=True)
+    # General running-services list (Agent.reported_services), populated only when
+    # the 'services' collection toggle is on. services_collected reflects that
+    # toggle so the UI can distinguish "toggle off" from "on, no data yet".
+    # Normalized to rich dicts {name,running,state,start_type} regardless of how
+    # they were stored (older agents sent bare name strings).
+    services_collected = serializers.SerializerMethodField()
+    reported_services = serializers.SerializerMethodField()
+    # Per-device alert silencing (on the agent's Device; set via /servers/{id}/alerting/).
+    alerting_enabled = serializers.BooleanField(source="device.alerting_enabled", read_only=True, default=True)
+    silenced_until = serializers.DateTimeField(source="device.silenced_until", read_only=True, default=None)
 
     class Meta:
         model = Agent
         fields = (
-            "id", "hostname", "os", "os_version", "arch", "status", "last_seen",
+            "id", "hostname", "os", "os_name", "os_version", "os_kernel", "arch",
+            "status", "last_seen", "is_online",
+            "offline_threshold_seconds", "liveness_alerts_enabled",
+            "alerting_enabled", "silenced_until",
             "agent_version", "cert_expires_at", "collection_interval",
-            "device_id", "site", "roles", "latest_metrics", "created_at",
+            "device_id", "last_ip", "site", "roles", "latest_metrics",
+            "reported_services", "services_collected", "created_at",
         )
         read_only_fields = fields
 
+    def get_services_collected(self, obj) -> bool:
+        return bool(obj.effective_config().get("collection", {}).get("services", False))
+
+    def get_reported_services(self, obj) -> list:
+        out = []
+        for s in (obj.reported_services or []):
+            if isinstance(s, dict) and s.get("name"):
+                out.append({"name": s["name"], "display_name": s.get("display_name", ""),
+                            "running": bool(s.get("running", True)),
+                            "state": s.get("state", ""), "start_type": s.get("start_type", "")})
+            elif isinstance(s, str) and s:  # stale names-only data
+                out.append({"name": s, "display_name": "", "running": True,
+                            "state": "", "start_type": ""})
+        return out
+
     def get_os_version(self, obj) -> str:
-        return getattr(getattr(obj, "device", None), "os_version", "") or ""
+        # Prefer the AGENT's own reported OS version (OS-detail); fall back to the
+        # linked Device's firmware field (blank for agent-created devices), then "".
+        return (obj.os_version
+                or getattr(getattr(obj, "device", None), "os_version", "")
+                or "")
 
     def get_site(self, obj):
         site = getattr(getattr(obj, "device", None), "site", None)
@@ -93,13 +252,22 @@ class AssignedRoleSerializer(serializers.ModelSerializer):
         if not st:
             return None
         services = st.services or []
+        # Per-server role-service subset: if the operator picked which of this
+        # role's services this server actually runs, count/show ONLY those — an
+        # unselected service isn't a failing "not_found". Empty/absent = all.
+        sel = ((obj.agent.desired_config or {}).get("role_services") or {}).get(obj.role.role_type)
+        if sel:
+            selset = set(sel)
+            services = [s for s in services if isinstance(s, dict) and s.get("name") in selset]
         ports = st.ports or []
+        custom = st.custom or []
         ok = (sum(1 for s in services if isinstance(s, dict) and s.get("running"))
               + sum(1 for p in ports if isinstance(p, dict) and p.get("open")))
         total = len(services) + len(ports)
         return {
             "checks_passed": ok, "checks_total": total,
-            "services": services, "ports": ports,
+            "services": services, "ports": ports, "custom": custom,
+            "functional": st.functional or [],
             "collected_at": st.collected_at,
         }
 
@@ -128,6 +296,10 @@ class EnrollRequestSerializer(serializers.Serializer):
     enrollment_token = serializers.CharField()
     hostname = serializers.CharField(max_length=255)
     os = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    # OS-detail (additive; older agents omit these → default "").
+    os_name = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
+    os_version = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    kernel = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
     arch = serializers.CharField(max_length=32, required=False, allow_blank=True, default="")
     version = serializers.CharField(max_length=32, required=False, allow_blank=True, default="")
     csr = serializers.CharField()

@@ -153,6 +153,19 @@ class TestStoredWeightedScore:
         assert row.template_score == updated["template_score"]   # avg(40,90)=65
         assert row.score == updated["score"]
 
+    def test_run_and_store_no_data_persists_blank_grade(self, device):
+        # No applicable compliance components → score None, display grade
+        # "N/A". The persisted grade column is a 2-char letter grade, so the
+        # store must write "" (blank = no data) — "N/A" is 3 chars and used to
+        # fail the write with "value too long for type character varying(2)"
+        # on every config collection (the live FortiGate-VM64 case).
+        from apps.compliance.models import DeviceComplianceScore
+        result = device_score.run_and_store_compliance(device)
+        assert result["grade"] == "N/A"          # API/display value unchanged
+        row = DeviceComplianceScore.objects.get(device=device)
+        assert row.score is None
+        assert row.grade == ""                   # persisted as absence, fits varchar(2)
+
     def test_device_list_annotates_weighted_not_template_score(self, db):
         """The device list subquery reads DeviceComplianceScore.score (weighted),
         which can differ from the template-only ComplianceTemplateResult.score."""

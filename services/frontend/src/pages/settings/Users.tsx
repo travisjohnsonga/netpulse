@@ -5,7 +5,7 @@ import EmptyState from '../../components/EmptyState'
 import { useAuthStore, useCapabilities, useHasCapability } from '../../store/authStore'
 import { SectionHeader, Tabs } from '../Settings'
 import {
-  fetchUsers, createUser, updateUser, deleteUser,
+  fetchUsers, createUser, updateUser, deleteUser, resetUserMfa,
   fetchRbacRoles, assignUserRbacRole,
   type AdminUser, type UserRole as RoleId, type RbacRole,
 } from '../../api/client'
@@ -56,12 +56,14 @@ export default function Users() {
 function UsersTab() {
   const { username: me } = useAuthStore()
   const canAssignRoles = useHasCapability('rbac:manage')
+  const canManageUsers = useHasCapability('user:manage')
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [inviting, setInviting] = useState(false)
   const [editing, setEditing] = useState<AdminUser | null>(null)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)
+  const [resettingMfa, setResettingMfa] = useState<AdminUser | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
 
   const load = useCallback(() => {
@@ -165,6 +167,9 @@ function UsersTab() {
                       <button disabled={busyId === u.id} onClick={() => toggleActive(u)} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300 disabled:opacity-50">
                         {u.is_active ? 'Deactivate' : 'Reactivate'}
                       </button>
+                      {canManageUsers && (
+                        <button onClick={() => setResettingMfa(u)} title="Clear this user's two-factor so they can re-enroll" className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Reset 2FA</button>
+                      )}
                       <button
                         disabled={isSelf}
                         title={isSelf ? 'You cannot delete your own account.' : 'Delete user'}
@@ -204,7 +209,54 @@ function UsersTab() {
           onDeleted={() => { setDeleting(null); load() }}
         />
       )}
+      {resettingMfa && (
+        <ResetMfaModal
+          user={resettingMfa}
+          onClose={() => setResettingMfa(null)}
+        />
+      )}
     </div>
+  )
+}
+
+function ResetMfaModal({ user, onClose }: { user: AdminUser; onClose: () => void }) {
+  const [saving, setSaving] = useState(false)
+  const [done, setDone] = useState<{ had_mfa: boolean } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    setSaving(true); setError(null)
+    try {
+      setDone(await resetUserMfa(user.id))
+    } catch (e: unknown) {
+      setError(apiError(e, 'Failed to reset two-factor.'))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal onClose={onClose} title="Reset two-factor authentication">
+      {done ? (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            {done.had_mfa
+              ? <>Two-factor was cleared for <b>{user.username}</b>. They&apos;ll be prompted to set it up again on next sign-in if their account requires it.</>
+              : <><b>{user.username}</b> didn&apos;t have two-factor enabled — nothing to clear.</>}
+          </p>
+          <button onClick={onClose} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Done</button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {error && <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</div>}
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Clear two-factor for <b>{user.username}</b> — use this when they&apos;ve lost their authenticator. They can re-enroll afterward. This never reveals their secret, and the action is recorded in the audit log.
+          </p>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+            <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Resetting…' : 'Reset 2FA'}</button>
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }
 

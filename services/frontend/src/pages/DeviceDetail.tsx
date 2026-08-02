@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useTabParam } from '../lib/useTabParam'
 import clsx from 'clsx'
 import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, reachabilityOf, fetchCollectors, setDeviceCollector, type Collector, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
@@ -38,6 +39,10 @@ const TABS = [
   { id: 'lifecycle', label: 'Lifecycle' },
 ] as const
 
+// string[] (not the literal union) so setTab stays compatible with child props
+// typed (t: string) => void (e.g. Overview's onTab).
+const TAB_IDS: string[] = TABS.map((t) => t.id)
+
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
   inactive: 'bg-gray-100 text-gray-600',
@@ -49,14 +54,12 @@ export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
   const deviceId = Number(id)
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const [device, setDevice] = useState<Device | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const initialTab = searchParams.get('tab')
-  const [tab, setTab] = useState<string>(
-    TABS.some((t) => t.id === initialTab) ? (initialTab as string) : 'overview',
-  )
+  // Active tab lives in the URL (?tab=…) so a refresh restores it and the URL is
+  // shareable; clicking a tab now writes the URL (was state-only → lost on refresh).
+  const [tab, setTab] = useTabParam(TAB_IDS, 'overview')
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)

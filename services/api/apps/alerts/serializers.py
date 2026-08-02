@@ -1,6 +1,20 @@
 from rest_framework import serializers
 
-from .models import AlertChannel, AlertEvent, AlertRule
+from .models import AlertChannel, AlertEvent, AlertRule, NotificationLog
+
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    """A delivery attempt (the operator-facing status/log view)."""
+    event_title = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NotificationLog
+        fields = ("id", "event", "event_title", "channel", "channel_name", "channel_type",
+                  "transition", "status", "attempts", "detail", "created_at")
+        read_only_fields = fields
+
+    def get_event_title(self, obj):
+        return (obj.event.annotations or {}).get("title") or (obj.event.rule.name if obj.event_id else "")
 
 
 class AlertChannelSerializer(serializers.ModelSerializer):
@@ -42,6 +56,11 @@ class AlertEventSerializer(serializers.ModelSerializer):
     # UI can render the expanded panel appropriately.
     details = serializers.SerializerMethodField()
     alert_type = serializers.SerializerMethodField()
+    # Subject classification so the UI links to the right detail page:
+    # network_device → /devices/{device_id}; server → /servers/{server_id}
+    # (the Agent UUID — /servers/:id is keyed by Agent, not Device id).
+    device_kind = serializers.SerializerMethodField()
+    server_id = serializers.SerializerMethodField()
 
     class Meta:
         model = AlertEvent
@@ -86,10 +105,56 @@ class AlertEventSerializer(serializers.ModelSerializer):
             or (obj.labels or {}).get("alert_type") or ""
 
     def get_device(self, obj):
-        return (obj.labels or {}).get("device") or ""
+        # Prefer the explicit "device" label (set by some alert types). Otherwise
+        # resolve device_id → the real Device hostname so the Alerts Device column
+        # shows a name (e.g. "NetPulseW25Test"/"router1") rather than the raw
+        # "device {id}" the frontend would fall back to. Genuinely device-less
+        # alerts (e.g. log anomalies) return "" (shown as "–").
+        labels = obj.labels or {}
+        name = labels.get("device")
+        if name:
+            return name
+        device_id = labels.get("device_id")
+        if device_id is not None:
+            from apps.devices.models import Device
+            hostname = (Device.objects.filter(id=device_id)
+                        .values_list("hostname", flat=True).first())
+            if hostname:
+                return hostname
+        return ""
 
     def get_device_id(self, obj):
         return (obj.labels or {}).get("device_id")
+
+    def _subject_meta(self, obj):
+        """Resolve device_id → {kind, server_id} once per event (shared by
+        get_device_kind + get_server_id). server_id is the Agent UUID for a
+        server subject (else None)."""
+        cached = getattr(obj, "_subject_meta_cache", None)
+        if cached is not None:
+            return cached
+        meta = {"kind": "", "server_id": None}
+        device_id = (obj.labels or {}).get("device_id")
+        if device_id is not None:
+            from apps.devices.models import Device
+            kind = (Device.objects.filter(id=device_id)
+                    .values_list("device_kind", flat=True).first())
+            if kind:
+                meta["kind"] = kind
+                if kind == "server":
+                    from apps.agents.models import Agent
+                    aid = (Agent.objects.filter(device_id=device_id)
+                           .exclude(status=Agent.Status.REVOKED)
+                           .values_list("id", flat=True).first())
+                    meta["server_id"] = str(aid) if aid else None
+        obj._subject_meta_cache = meta
+        return meta
+
+    def get_device_kind(self, obj):
+        return self._subject_meta(obj)["kind"]
+
+    def get_server_id(self, obj):
+        return self._subject_meta(obj)["server_id"]
 
     def get_interface(self, obj):
         return (obj.labels or {}).get("interface") or ""

@@ -12,7 +12,7 @@ drf-spectacular~=0.27
 # WebSocket / async
 daphne~=4.1
 channels~=4.1
-channels-redis~=4.2
+channels-redis~=4.3
 
 # Task queue
 celery[redis]~=5.3
@@ -33,17 +33,17 @@ opensearch-py[async]~=2.7
 aiohttp~=3.10
 icmplib~=3.0     # ICMP ping (raw socket — needs NET_RAW/NET_ADMIN)
 aiodns~=3.2      # async DNS resolution
-aiosmtplib~=3.0  # async SMTP connect/EHLO
+aiosmtplib~=5.1  # async SMTP connect/EHLO (5.1.1+ clears PYSEC-2026-2338)
 pyrad>=2.4       # RADIUS Access-Request health check
 
 # Secrets
 hvac~=2.1
 bcrypt>=4.0  # per-collector API-key / enrollment-token hashing (already a transitive dep; pinned for hygiene)
+argon2-cffi~=23.1  # Argon2id password hashing (PASSWORD_HASHERS[0]); user login hashes at rest
 
 # SSO / Single Sign-On (OAuth2). >=5.9 declares Django 6.0 support (Framework ::
 # Django :: 6.0); 5.4.x predates it. Pulls social-auth-core (<5.0,>=4.8.3).
 social-auth-app-django~=5.9
-python-jose~=3.3       # JWT/JWS ID-token validation for SSO
 PyNaCl~=1.5            # Ed25519 verification for Discord interaction webhooks (apps.core.chatops)
 
 # Device access (config collection / interface discovery) — imported lazily
@@ -58,6 +58,13 @@ pysnmp~=7.1
 defusedxml~=0.7        # XXE/entity-expansion-safe XML parsing (apps.devices run_discovery nmap output)
 requests~=2.32       # AOS-CX REST API client (apps.devices.aos_cx_client)
 Jinja2~=3.1
+
+# TOTP multi-factor auth (RFC 6238) for local password accounts (apps.core.mfa).
+# pyotp = the standard, audited TOTP lib; qrcode renders the provisioning QR as
+# an SVG data-URI (no Pillow needed). cryptography (Fernet, secret-at-rest) is
+# already present transitively via paramiko/hvac.
+pyotp~=2.9
+qrcode~=8.0
 
 # PDF evidence packages (apps.frameworks regulatory reports) — pure-Python, no system libs
 reportlab~=4.2

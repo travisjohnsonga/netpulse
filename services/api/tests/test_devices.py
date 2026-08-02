@@ -92,7 +92,85 @@ class TestDeviceGroupEndpoints:
         assert resp.status_code == 204
 
 
+# ── Device list summary endpoints ─────────────────────────────────────────────
+
+class TestDeviceStatusSummary:
+    """status-summary feeds the count-based Devices cards (Total/Up/Down). Counts
+    the network-device set from the DB (the list is paginated). up = reachable &
+    not unreachable; down = the complement — matching the Up/Down badge."""
+
+    def test_counts_up_down_over_network_devices(self, auth_client, site):
+        Device.objects.create(hostname="up1", ip_address="10.0.0.1", status="active", is_reachable=True)
+        Device.objects.create(hostname="up2", ip_address="10.0.0.2", status="active", is_reachable=True)
+        Device.objects.create(hostname="down1", ip_address="10.0.0.3", status="unreachable", is_reachable=False)
+        # An agent-backed server must NOT be counted (not a network device).
+        Device.objects.create(hostname="srv", ip_address="127.0.0.1", status="active",
+                              device_kind=Device.DeviceKind.SERVER)
+        body = auth_client.get("/api/devices/status-summary/").json()
+        assert body == {"total": 3, "up": 2, "down": 1}
+
+    def test_site_scoped(self, auth_client, site):
+        other = Site.objects.create(name="DC-2")
+        Device.objects.create(hostname="a", ip_address="10.1.0.1", status="active", is_reachable=True, site=site)
+        Device.objects.create(hostname="b", ip_address="10.1.0.2", status="unreachable", is_reachable=False, site=other)
+        body = auth_client.get(f"/api/devices/status-summary/?site={site.pk}").json()
+        assert body == {"total": 1, "up": 1, "down": 0}
+
+    def test_metrics_summary_endpoint_ok(self, auth_client, device):
+        # InfluxDB isn't available in tests → returns an empty list, not a 500.
+        r = auth_client.get("/api/devices/metrics-summary/")
+        assert r.status_code == 200 and isinstance(r.json(), list)
+
+
 # ── Device CRUD ───────────────────────────────────────────────────────────────
+
+class TestServerDevicesExcludedFromList:
+    """device_kind is the single source of truth (replacing the agent__isnull/
+    synthetic-IP heuristic): SERVER devices (agent-backed) live on the Servers
+    page and are excluded from the Devices LIST, but still resolve via retrieve.
+    Set authoritatively at creation, never re-inferred at query time."""
+
+    def test_server_kind_excluded_network_kind_included(self, auth_client, device):
+        # core-rtr-01 (default network_device) stays; a server is hidden — even
+        # with a perfectly real IP (no IP heuristic involved anymore).
+        Device.objects.create(hostname="srv-01", ip_address="172.18.0.24",
+                              device_kind=Device.DeviceKind.SERVER)
+        resp = auth_client.get("/api/devices/")
+        assert resp.status_code == 200
+        hostnames = {r["hostname"] for r in resp.json()["results"]}
+        assert "core-rtr-01" in hostnames
+        assert "srv-01" not in hostnames
+        assert resp.json()["count"] == 1
+
+    def test_server_device_still_retrievable(self, auth_client):
+        dev = Device.objects.create(hostname="srv-02", ip_address="10.5.5.5",
+                                    device_kind=Device.DeviceKind.SERVER)
+        assert auth_client.get(f"/api/devices/{dev.id}/").status_code == 200
+
+    def test_list_endpoint_200_real_and_no_servers(self, auth_client, device):
+        # Guards the #136 regression: the actual endpoint must return 200 with the
+        # right contents (not just the filter logic in isolation).
+        Device.objects.create(hostname="real-sw", ip_address="192.168.1.2")
+        Device.objects.create(hostname="agent-host", ip_address="10.9.9.9",
+                              device_kind=Device.DeviceKind.SERVER)
+        resp = auth_client.get("/api/devices/")
+        assert resp.status_code == 200
+        hostnames = {r["hostname"] for r in resp.json()["results"]}
+        assert {"core-rtr-01", "real-sw"} <= hostnames and "agent-host" not in hostnames
+
+    def test_ensure_agent_device_tags_server_at_creation(self):
+        # The #118 self-heal authoritatively classifies the created Device.
+        from apps.agents.models import Agent
+        from apps.agents.device_link import ensure_agent_device
+        a = Agent.objects.create(hostname="newsrv", status=Agent.Status.ACTIVE)
+        dev = ensure_agent_device(a)
+        assert dev.device_kind == Device.DeviceKind.SERVER
+
+    def test_manual_created_device_defaults_network_device(self, auth_client):
+        resp = auth_client.post("/api/devices/", {"hostname": "sw-99", "ip_address": "10.7.7.7"})
+        assert resp.status_code == 201
+        assert Device.objects.get(hostname="sw-99").device_kind == Device.DeviceKind.NETWORK_DEVICE
+
 
 class TestDeviceEndpoints:
     def test_list_devices(self, auth_client, device):
@@ -652,8 +730,8 @@ def fw_role():
 
 
 @pytest.fixture
-def wco2_site():
-    return Site.objects.create(name="WCO2", location="West")
+def site1_site():
+    return Site.objects.create(name="Site1", location="West")
 
 
 def _make_rule(**kwargs):
@@ -664,8 +742,8 @@ def _make_rule(**kwargs):
 class TestHostnameRuleModel:
     def test_matches_case_insensitive(self):
         from apps.devices.models import HostnameRule
-        rule = HostnameRule(name="x", pattern=r"-(crt|mdf)-")
-        assert rule.matches("WCO2-MDF-CRT-01")
+        rule = HostnameRule(name="x", pattern=r"-(crt|core)-")
+        assert rule.matches("SITE1-CORE-01")
         assert not rule.matches("router1.local")
 
     def test_invalid_regex_never_matches(self):
@@ -675,19 +753,19 @@ class TestHostnameRuleModel:
 
 
 class TestApplyHostnameRules:
-    def test_assigns_role_and_site(self, core_role, wco2_site):
+    def test_assigns_role_and_site(self, core_role, site1_site):
         from apps.devices.hostname_rules import apply_hostname_rules
         from apps.devices.models import HostnameRule
-        _make_rule(name="site", pattern=r"^wco2-", rule_type=HostnameRule.RuleType.SITE,
-                   site=wco2_site, priority=10)
-        _make_rule(name="core", pattern=r"-(crt|mdf)-", rule_type=HostnameRule.RuleType.ROLE,
+        _make_rule(name="site", pattern=r"^site1-", rule_type=HostnameRule.RuleType.SITE,
+                   site=site1_site, priority=10)
+        _make_rule(name="core", pattern=r"-(crt|core)-", rule_type=HostnameRule.RuleType.ROLE,
                    role=core_role, priority=20)
-        dev = Device.objects.create(hostname="wco2-mdf-crt-01", ip_address="10.9.0.1")
+        dev = Device.objects.create(hostname="site1-core-01", ip_address="10.9.0.1")
         role_assigned, site_assigned = apply_hostname_rules(dev)
         assert role_assigned and site_assigned
         dev.refresh_from_db()
         assert dev.role_id == core_role.id
-        assert dev.site_id == wco2_site.id
+        assert dev.site_id == site1_site.id
 
     def test_does_not_override_existing(self, core_role, fw_role, site):
         from apps.devices.hostname_rules import apply_hostname_rules
@@ -766,12 +844,12 @@ class TestHostnameRuleEndpoints:
 
     def test_pattern_test_endpoint(self, auth_client):
         resp = auth_client.post("/api/devices/hostname-rules/test/", {
-            "pattern": r"-(crt|mdf)-",
-            "hostnames": ["wco2-mdf-crt-01", "wco2-idf5-asw-01", "router1.local"],
+            "pattern": r"-(crt|core)-",
+            "hostnames": ["site1-core-01", "site1-idf1-asw-01", "router1.local"],
         }, format="json")
         assert resp.status_code == 200
         results = {r["hostname"]: r["matches"] for r in resp.json()}
-        assert results["wco2-mdf-crt-01"] is True
+        assert results["site1-core-01"] is True
         assert results["router1.local"] is False
 
     def test_pattern_test_invalid_regex(self, auth_client):
@@ -790,30 +868,30 @@ class TestHostnameRuleEndpoints:
         assert resp.json()["role_assigned"] is True
         assert resp.json()["device"]["role"]["id"] == core_role.id
 
-    def test_bulk_apply(self, auth_client, core_role, wco2_site):
+    def test_bulk_apply(self, auth_client, core_role, site1_site):
         from apps.devices.models import HostnameRule
-        _make_rule(name="site", pattern=r"^wco2-", rule_type=HostnameRule.RuleType.SITE,
-                   site=wco2_site, priority=10)
-        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+        _make_rule(name="site", pattern=r"^site1-", rule_type=HostnameRule.RuleType.SITE,
+                   site=site1_site, priority=10)
+        _make_rule(name="core", pattern=r"-(crt|core)-", rule_type=HostnameRule.RuleType.ROLE,
                    role=core_role, priority=20)
-        Device.objects.create(hostname="wco2-mdf-crt-01", ip_address="10.9.0.7")
-        Device.objects.create(hostname="wco2-mdf-crt-02", ip_address="10.9.0.8")
+        Device.objects.create(hostname="site1-core-01", ip_address="10.9.0.7")
+        Device.objects.create(hostname="site1-core-02", ip_address="10.9.0.8")
         Device.objects.create(hostname="nomatch-host", ip_address="10.9.0.9")
         resp = auth_client.post("/api/devices/apply-rules/", {}, format="json")
         assert resp.status_code == 200
         assert resp.json()["updated"] == 2
         assert resp.json()["skipped"] == 1
 
-    def test_preview(self, auth_client, core_role, fw_role, wco2_site):
+    def test_preview(self, auth_client, core_role, fw_role, site1_site):
         from apps.devices.models import HostnameRule
-        _make_rule(name="site", pattern=r"^wco2-", rule_type=HostnameRule.RuleType.SITE,
-                   site=wco2_site, priority=10)
-        _make_rule(name="core", pattern=r"-crt-", rule_type=HostnameRule.RuleType.ROLE,
+        _make_rule(name="site", pattern=r"^site1-", rule_type=HostnameRule.RuleType.SITE,
+                   site=site1_site, priority=10)
+        _make_rule(name="core", pattern=r"-(crt|core)-", rule_type=HostnameRule.RuleType.ROLE,
                    role=core_role, priority=20)
-        d1 = Device.objects.create(hostname="wco2-mdf-crt-01", ip_address="10.9.0.7")
+        d1 = Device.objects.create(hostname="site1-core-01", ip_address="10.9.0.7")
         Device.objects.create(hostname="nomatch-host", ip_address="10.9.0.9")
         # Already has a role → role blocked, but site still applies → updated.
-        Device.objects.create(hostname="wco2-edge-crt-9", ip_address="10.9.0.10", role=fw_role)
+        Device.objects.create(hostname="site1-edge-crt-9", ip_address="10.9.0.10", role=fw_role)
 
         resp = auth_client.post("/api/devices/hostname-rules/preview/", {}, format="json")
         assert resp.status_code == 200
@@ -821,10 +899,10 @@ class TestHostnameRuleEndpoints:
         assert body["summary"] == {"total_devices": 3, "would_update": 2, "would_skip": 1}
 
         upd = {u["hostname"]: u for u in body["would_update"]}
-        assert upd["wco2-mdf-crt-01"]["new_role"]["id"] == core_role.id
-        assert upd["wco2-mdf-crt-01"]["new_role"]["color"] == core_role.color
-        assert upd["wco2-mdf-crt-01"]["new_site"]["name"] == "WCO2"
-        assert upd["wco2-mdf-crt-01"]["current_role"] is None
+        assert upd["site1-core-01"]["new_role"]["id"] == core_role.id
+        assert upd["site1-core-01"]["new_role"]["color"] == core_role.color
+        assert upd["site1-core-01"]["new_site"]["name"] == "Site1"
+        assert upd["site1-core-01"]["current_role"] is None
 
         skip = {s["hostname"]: s["reason"] for s in body["would_skip"]}
         assert skip["nomatch-host"] == "no matching rules"
@@ -844,7 +922,7 @@ class TestHostnameRuleEndpoints:
         assert body["summary"]["would_update"] == 0
         assert body["would_skip"][0]["reason"] == "role already assigned"
 
-    def test_seed_hostname_rules_idempotent(self, core_role, wco2_site):
+    def test_seed_hostname_rules_idempotent(self, core_role, site1_site):
         from django.core.management import call_command
         from apps.devices.models import HostnameRule
         call_command("seed_hostname_rules")

@@ -165,7 +165,10 @@ function numParam(params: URLSearchParams, key: string): number | null {
 }
 
 function label(devices: Device[], deviceId: number | null, cfg?: ConfigRow): string {
-  const host = devices.find((d) => d.id === deviceId)?.hostname ?? `device ${deviceId ?? '?'}`
+  // devices is fetched at page_size 500, so the fallback only hits for a deleted
+  // or >500th device — show a tidy "Device #<id>" rather than "device {id}".
+  const host = devices.find((d) => d.id === deviceId)?.hostname
+    ?? (deviceId != null ? `Device #${deviceId}` : 'Unknown device')
   if (!cfg) return host
   return `${host} @ ${new Date(cfg.collected_at).toLocaleString()}`
 }

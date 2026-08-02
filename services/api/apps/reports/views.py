@@ -106,11 +106,12 @@ class ScheduleListCreateView(APIView):
 
     def get(self, request):
         qs = ReportSchedule.objects.filter(report_type=self.report_type)
-        return Response(ReportScheduleSerializer(qs, many=True).data)
+        # Pass request context so the serializer can convert UTC→user-local time.
+        return Response(ReportScheduleSerializer(qs, many=True, context={"request": request}).data)
 
     def post(self, request):
         data = {**request.data, "report_type": self.report_type}
-        ser = ReportScheduleSerializer(data=data)
+        ser = ReportScheduleSerializer(data=data, context={"request": request})
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ser.data, status=status.HTTP_201_CREATED)

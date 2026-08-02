@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  fetchLogs, fetchDevices, fetchSites,
-  type LogEntry, type Device, type Site,
+  fetchLogs, fetchDevices, fetchSites, fetchServers,
+  type LogEntry, type Device, type Site, type Server,
 } from '../api/client'
 import { SEVERITY_ORDER, TIME_RANGES, rangeFrom, severityBadge } from '../lib/severity'
 import { usePreferencesStore } from '../store/preferencesStore'
@@ -14,9 +14,13 @@ const selCls = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 
 
 export default function Logs() {
   const navigate = useNavigate()
+  // Seed the device filter from ?device_hostname= so a "View all in Logs →" link
+  // (e.g. from a server-detail Logs tab) lands pre-filtered to that host.
+  const [searchParams] = useSearchParams()
   const [devices, setDevices] = useState<Device[]>([])
+  const [servers, setServers] = useState<Server[]>([])
   const [sites, setSites] = useState<Site[]>([])
-  const [deviceHost, setDeviceHost] = useState('')
+  const [deviceHost, setDeviceHost] = useState(searchParams.get('device_hostname') || '')
   const [site, setSite] = useState('')
   const [role, setRole] = useState('')
   const [severities, setSeverities] = useState<Set<string>>(new Set())
@@ -48,10 +52,47 @@ export default function Logs() {
 
   useEffect(() => {
     fetchDevices({ page_size: '500' }).then((d) => setDevices(d.results)).catch(() => {})
+    fetchServers().then(setServers).catch(() => {})
     fetchSites().then(setSites).catch(() => {})
   }, [])
 
-  const hostToId = useMemo(() => Object.fromEntries(devices.map((d) => [d.hostname, d.id])), [devices])
+  // Resolve a log's identifier → device. A Cisco device sends its IP as the
+  // syslog hostname, so map BOTH the device hostname AND its ip_address to the
+  // friendly name / id; logs then show "router1", not "192.168.98.100", and
+  // clicking an IP-identified row still navigates to the right device.
+  const ipOrHostToName = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const d of devices) {
+      if (d.hostname) m[d.hostname] = d.hostname
+      if (d.ip_address) m[d.ip_address] = d.hostname
+    }
+    return m
+  }, [devices])
+  const hostToId = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const d of devices) {
+      if (d.hostname) m[d.hostname] = d.id
+      if (d.ip_address) m[d.ip_address] = d.id
+    }
+    return m
+  }, [devices])
+  // Servers (agent hosts) aren't in the Devices list, so map their hostnames →
+  // the Agent UUID for /servers/{id}. Checked BEFORE hostToId so a server log row
+  // lands on the server detail page, not a device page.
+  const hostToServer = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const s of servers) {
+      if (s.hostname) m[s.hostname] = s.id
+      if (s.hostname) m[s.hostname.split('.')[0]] = s.id  // short hostname too
+    }
+    return m
+  }, [servers])
+  const goToSubject = useCallback((hostname: string) => {
+    const sid = hostToServer[hostname]
+    if (sid) { navigate(`/servers/${sid}?tab=Logs`); return }
+    const did = hostToId[hostname]
+    if (did) navigate(`/devices/${did}`)
+  }, [hostToServer, hostToId, navigate])
 
   const load = useCallback(async (pg: number, append: boolean) => {
     setLoading(true); setError(null)
@@ -99,7 +140,7 @@ export default function Logs() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Network Logs</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Logs</h1>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Auto-refresh 30s</label>
           <button onClick={exportCsv} disabled={!rows.length} className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 dark:text-gray-300">Export</button>
@@ -189,8 +230,8 @@ export default function Logs() {
                     <tr onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer align-top">
                       <td className="px-4 py-1.5 text-gray-500 dark:text-gray-400 font-mono text-xs whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
                       <td className="px-4 py-1.5">
-                        <button onClick={(e) => { e.stopPropagation(); const id = hostToId[r.hostname]; if (id) navigate(`/devices/${id}`) }}
-                          className="text-blue-600 hover:text-blue-800 font-medium">{r.hostname}</button>
+                        <button onClick={(e) => { e.stopPropagation(); goToSubject(r.hostname) }}
+                          className="text-blue-600 hover:text-blue-800 font-medium">{ipOrHostToName[r.hostname] || r.hostname}</button>
                       </td>
                       <td className="px-4 py-1.5"><span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', severityBadge(r.severity))}>{r.severity}</span></td>
                       <td className="px-4 py-1.5 text-gray-700 dark:text-gray-300 truncate max-w-0">{r.program && <span className="text-gray-400 dark:text-gray-500">{r.program}: </span>}{r.message}</td>

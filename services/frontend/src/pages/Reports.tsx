@@ -6,6 +6,7 @@ import {
   fetchReportSchedules, createReportSchedule, deleteReportSchedule,
   type GeneratedReportRow, type ReportScheduleRow,
 } from '../api/client'
+import { usePreferencesStore } from '../store/preferencesStore'
 
 type Endpoint = 'compliance-summary' | 'daily-ops'
 
@@ -32,6 +33,24 @@ const REPORTS: ReportDef[] = [
   },
 ]
 
+const DOW_PLURAL = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays']
+
+/** Human cadence for a schedule, e.g. "Weekly · Mondays @ 19:00 America/Chicago".
+ *  hour/day_* are already in the user's tz (converted by the backend). */
+function formatCadence(s: ReportScheduleRow, fallbackTz: string): string {
+  const at = `@ ${String(s.hour).padStart(2, '0')}:00 ${s.timezone ?? fallbackTz}`
+  switch (s.frequency) {
+    case 'weekly':
+      return `Weekly · ${DOW_PLURAL[s.day_of_week] ?? `day ${s.day_of_week}`} ${at}`
+    case 'monthly':
+      return `Monthly · day ${s.day_of_month} ${at}`
+    case 'quarterly':
+      return `Quarterly · day ${s.day_of_month} (Jan/Apr/Jul/Oct) ${at}`
+    default:
+      return `Daily ${at}`
+  }
+}
+
 function fmtBytes(n: number | null): string {
   if (!n) return '—'
   if (n < 1024) return `${n} B`
@@ -51,7 +70,7 @@ export default function Reports() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Reports</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400">Generate on-demand reports or schedule recurring email delivery.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Generate &amp; download on-demand reports, or schedule recurring delivery (email or store-only).</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -488,25 +507,37 @@ function GenerateModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
 
 function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () => void; onDone: () => void }) {
   const qc = useQueryClient()
+  // Hour is entered/shown in the user's own timezone; the backend stores it as
+  // UTC and converts at the boundary (see apps.reports.schedule_tz).
+  const userTz = usePreferencesStore((s) => s.prefs?.timezone) || 'UTC'
   const schedQ = useQuery({ queryKey: ['report-schedules', def.endpoint], queryFn: () => fetchReportSchedules(def.endpoint) })
-  const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly' | 'quarterly'>('daily')
   const [hour, setHour] = useState(8)
   const [dayOfWeek, setDayOfWeek] = useState(0)
+  const [dayOfMonth, setDayOfMonth] = useState(1)
   const [fmt, setFmt] = useState(def.formats[0])
+  const [delivery, setDelivery] = useState<'email' | 'store_only' | 'both'>('email')
   const [recipients, setRecipients] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  const emailNeeded = delivery === 'email' || delivery === 'both'
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['report-schedules', def.endpoint] })
 
   const save = async () => {
     const list = recipients.split(',').map((s) => s.trim()).filter(Boolean)
-    if (list.length === 0) { setErr('Add at least one recipient email.'); return }
+    if (emailNeeded && list.length === 0) { setErr('Add at least one recipient email.'); return }
     setBusy(true); setErr(null)
     try {
-      await createReportSchedule(def.endpoint, {
-        frequency, hour, day_of_week: dayOfWeek, fmt, recipients: list,
-      })
+      // Send only the cadence field the chosen frequency uses (weekly → day_of_week,
+      // monthly/quarterly → day_of_month); daily needs neither.
+      const body: Record<string, unknown> = {
+        frequency, hour, fmt, delivery, recipients: emailNeeded ? list : [],
+      }
+      if (frequency === 'weekly') body.day_of_week = dayOfWeek
+      if (frequency === 'monthly' || frequency === 'quarterly') body.day_of_month = dayOfMonth
+      await createReportSchedule(def.endpoint, body)
       refresh(); onDone()
     } catch {
       setErr('Failed to save schedule.'); setBusy(false)
@@ -521,12 +552,16 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Frequency</label>
-            <select className={inputCls} value={frequency} onChange={(e) => setFrequency(e.target.value as 'daily' | 'weekly' | 'monthly')}>
-              <option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+            <select className={inputCls} value={frequency}
+              onChange={(e) => setFrequency(e.target.value as 'daily' | 'weekly' | 'monthly' | 'quarterly')}>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Hour (UTC)</label>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Hour ({userTz})</label>
             <select className={inputCls} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
               {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
             </select>
@@ -540,6 +575,19 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
             </select>
           </div>
         )}
+        {(frequency === 'monthly' || frequency === 'quarterly') && (
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Day of month</label>
+            <select className={inputCls} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))}>
+              {Array.from({ length: 28 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              {frequency === 'quarterly'
+                ? 'Fires in Jan, Apr, Jul & Oct on this day. Capped at 28 so no month is skipped.'
+                : 'Capped at 28 so no month is skipped.'}
+            </p>
+          </div>
+        )}
         <div>
           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Format</label>
           <select className={inputCls} value={fmt} onChange={(e) => setFmt(e.target.value)}>
@@ -547,9 +595,23 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Email recipients (comma-separated)</label>
-          <input className={inputCls} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="admin@company.com, noc@company.com" />
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Delivery</label>
+          <select className={inputCls} value={delivery}
+            onChange={(e) => setDelivery(e.target.value as 'email' | 'store_only' | 'both')}>
+            <option value="email">Email</option>
+            <option value="store_only">Store only (download from history)</option>
+            <option value="both">Email + Store</option>
+          </select>
+          {delivery === 'store_only' && (
+            <p className="text-xs text-gray-400 mt-1">Generated and saved to Recent Reports — no email sent.</p>
+          )}
         </div>
+        {emailNeeded && (
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Email recipients (comma-separated)</label>
+            <input className={inputCls} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="admin@company.com, noc@company.com" />
+          </div>
+        )}
         {err && <p className="text-xs text-red-600">{err}</p>}
         <button onClick={save} disabled={busy} className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
           {busy ? 'Saving…' : 'Save Schedule'}
@@ -562,7 +624,11 @@ function ScheduleModal({ def, onClose, onDone }: { def: ReportDef; onClose: () =
               {schedQ.data!.map((s: ReportScheduleRow) => (
                 <li key={s.id} className="flex items-center justify-between text-sm">
                   <span className="text-gray-700 dark:text-gray-300">
-                    {s.frequency} @ {String(s.hour).padStart(2, '0')}:00 · {s.fmt.toUpperCase()} → {s.recipients.join(', ')}
+                    {formatCadence(s, userTz)} · {s.fmt.toUpperCase()}
+                    {' → '}
+                    {s.delivery === 'store_only'
+                      ? 'Store only'
+                      : `${s.delivery === 'both' ? 'Store + email ' : 'Email '}${s.recipients.join(', ')}`}
                   </span>
                   <button onClick={() => remove(s.id)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>
                 </li>

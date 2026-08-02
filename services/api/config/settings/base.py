@@ -195,6 +195,15 @@ EMAIL_BACKEND = os.environ.get(
     else "django.core.mail.backends.console.EmailBackend",
 )
 
+# ── Alert dispatch ────────────────────────────────────────────────────────────
+# Whether the alerts dispatch layer (apps/alerts/dispatch.py) delivers fired /
+# resolved AlertEvents to their configured channels. Off in the test suite so
+# the broad suite never makes real SMTP/webhook calls (dispatch tests re-enable
+# it via override_settings). Per-channel send retry/backoff are tunable.
+ALERT_DISPATCH_ENABLED = os.environ.get("ALERT_DISPATCH_ENABLED", "true").lower() in ("1", "true", "yes")
+ALERT_DISPATCH_MAX_ATTEMPTS = int(os.environ.get("ALERT_DISPATCH_MAX_ATTEMPTS", "2"))
+ALERT_DISPATCH_BACKOFF_S = float(os.environ.get("ALERT_DISPATCH_BACKOFF_S", "2.0"))
+
 # ── OpenBao ───────────────────────────────────────────────────────────────────
 
 OPENBAO_ADDR = os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
@@ -221,6 +230,12 @@ SSL_DIR = os.environ.get("SSL_DIR", str(BASE_DIR / "ssl"))
 # built by CI. Defaults to the in-repo `agent/` dir; in container deployments set
 # AGENT_DIR to a mounted volume populated with the CI artifacts.
 AGENT_DIR = os.environ.get("AGENT_DIR", str(BASE_DIR.parent.parent / "agent"))
+
+# Optional explicit public base URL agents should use (e.g. https://spane.example.com).
+# When unset, the enrollment/download responses derive it from the request Host
+# header (how the agent actually reached the server). Set this only for split-DNS
+# / published-hostname setups where the Host header isn't the reachable address.
+AGENT_SERVER_URL = os.environ.get("AGENT_SERVER_URL", "")
 
 # Agent PKI CA cert, written by setup_agent_pki onto the shared ssl-certs volume
 # so the nginx (frontend) container can use it as ssl_client_certificate to
@@ -254,9 +269,48 @@ def _git(args, default=""):
         return default
 
 GIT_COMMIT = os.environ.get("NETPULSE_GIT_COMMIT") or _git(["rev-parse", "--short", "HEAD"], "unknown")
-_GIT_COUNT = os.environ.get("NETPULSE_GIT_COUNT") or _git(["rev-list", "--count", "HEAD"], "0")
-VERSION = f"1.0.{_GIT_COUNT}"
 BUILT_AT = os.environ.get("NETPULSE_BUILT_AT", "")
+
+
+def _app_version() -> str:
+    """The SINGLE canonical app version — Option C semver from APP tags (not a
+    commit count). The app and agent version independently in one repo, so they
+    use DISTINGUISHABLE tag prefixes that never collide:
+
+        app:   app-vX.Y.Z   (this)
+        agent: vX.Y.Z        (agent/build.sh, scoped to its own prefix)
+
+    Priority:
+      1. runtime override ``SPANE_VERSION``/``NETPULSE_VERSION`` (explicit,
+         VISIBLE deploy-env override; empty/``dev`` ignored). NOTE compose sets
+         ``SPANE_VERSION: ${SPANE_VERSION:-}`` on every api-image service, so
+         with an empty .env this arrives as ``""`` — which must fall through.
+      2. ``SPANE_BUILD_VERSION`` baked at build (docker build-arg → ENV; the
+         host build runs `git describe --match 'app-v*'` — see netpulse.sh).
+         The container has no .git, so this is how a built image knows its
+         version. A DIFFERENT env name than the runtime override on purpose:
+         when they shared the name, compose's empty runtime value masked the
+         baked one and the badge fell all the way to ``0.0.0+sha``.
+      3. a live `git describe` against app tags (dev checkouts on the host).
+      4. ``0.0.0+<short-sha>`` — clearly pre-release, used until the first
+         ``app-v*`` tag exists (so the badge never silently shows a bare hash).
+
+    A released image reports its tag (e.g. ``0.5.0``); a dev build between tags
+    reports ``0.5.0-3-gabc123``. NOTE: the build MUST have full history + tags
+    (fetch-depth: 0, fetch-tags: true) or describe falls back to a bare hash —
+    the agent's #114 bug; don't repeat it in any future image CI.
+    """
+    for var in ("SPANE_VERSION", "NETPULSE_VERSION", "SPANE_BUILD_VERSION"):
+        v = (os.environ.get(var) or "").strip()
+        if v and v.lower() != "dev":
+            return v.lstrip("v")
+    desc = _git(["describe", "--tags", "--match", "app-v*", "--always", "--dirty"], "")
+    if desc.startswith("app-v"):
+        return desc[len("app-v"):]
+    return f"0.0.0+{GIT_COMMIT}" if GIT_COMMIT and GIT_COMMIT != "unknown" else "0.0.0+unknown"
+
+
+VERSION = _app_version()
 
 # Update-check source. Repo is public, so no token is required; GITHUB_TOKEN is
 # only needed for a private repo. VERSION_CHECK_ENABLED=false disables the check.
@@ -353,6 +407,42 @@ SIMPLE_JWT = {
     # Include role + username in every access token
     "TOKEN_OBTAIN_SERIALIZER": "apps.core.serializers.NetPulseTokenObtainPairSerializer",
 }
+
+# ── Multi-factor authentication (TOTP, RFC 6238) ─────────────────────────────
+# Applies to LOCAL password accounts only; SSO accounts are covered by their
+# provider's MFA (no app-level double-MFA). See docs/security/authentication.md.
+MFA_ISSUER = os.environ.get("MFA_ISSUER", "spane")
+# TTL for the single-purpose login-challenge / forced-enrollment intermediate
+# tokens (signed blobs, never JWTs, never usable as access tokens).
+MFA_INTERMEDIATE_TOKEN_TTL_S = int(os.environ.get("MFA_INTERMEDIATE_TOKEN_TTL_S", "300"))
+MFA_RECOVERY_CODE_COUNT = int(os.environ.get("MFA_RECOVERY_CODE_COUNT", "10"))
+# Capabilities whose LOCAL holders MUST have MFA (ISO A.8.2 privileged access).
+# Such a user without MFA is forced through enrollment at login before any full
+# token is issued. Tunable via env (comma-separated).
+MFA_REQUIRED_FOR_CAPABILITIES = [
+    c.strip() for c in os.environ.get(
+        "MFA_REQUIRED_FOR_CAPABILITIES", "user:manage,rbac:manage").split(",") if c.strip()
+]
+# Org-wide: require MFA for ALL local accounts. Default off; the runtime
+# ``mfa_required_all_local`` system setting (admin toggle) overrides this.
+MFA_REQUIRED_FOR_ALL_LOCAL = os.environ.get(
+    "MFA_REQUIRED_FOR_ALL_LOCAL", "false").lower() == "true"
+
+# ── Compliance framework scope ────────────────────────────────────────────────
+# Which regulatory frameworks THIS environment is actually subject to. Frameworks
+# outside this scope are excluded from EVERY compliance surface (API, /compliance
+# page, TV/NOC screen, fleet-coverage averages, "N frameworks" counts, and PDF
+# evidence) so a framework you aren't subject to can never read as failing/partial/
+# non-compliant to a compliance/audit/management viewer. Comma-separated framework
+# keys (see apps.frameworks.models.RegulatoryFramework.Key:
+# sox, iso27001, nist_csf, pci_dss, hipaa, cis). UNSET/empty = ALL frameworks
+# apply (back-compat — you opt INTO scoping). Operator-controlled here (env), not a
+# web toggle, so compliance scope can't be changed casually from the UI; restart
+# to apply. See apps.frameworks.scope.
+APPLICABLE_COMPLIANCE_FRAMEWORKS = [
+    k.strip().lower() for k in os.environ.get(
+        "APPLICABLE_COMPLIANCE_FRAMEWORKS", "").split(",") if k.strip()
+]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -453,6 +543,20 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+# Password storage — set EXPLICITLY (don't rely on Django's silent default).
+# Argon2id (memory-hard, the modern OWASP-recommended standard) is FIRST, so new
+# and changed passwords hash with Argon2; the PBKDF2/Scrypt entries remain so
+# any password hashed under Django's prior default (PBKDF2-SHA256) still verifies
+# and is transparently upgraded to Argon2 on the user's next login — no reset
+# needed. Requires argon2-cffi (in requirements.txt). The test settings override
+# this with the fast MD5 hasher (test-only speed; never reaches production).
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
 # ── SSO / Single Sign-On (social-auth-app-django) ─────────────────────────────

@@ -75,7 +75,7 @@ export default function NetworkLookup() {
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="e.g. 10.150.0.50 or aa:bb:cc:dd:ee:ff"
+            placeholder="e.g. 192.0.2.50 or aa:bb:cc:dd:ee:ff"
             className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button type="submit" disabled={loading || !q.trim()}

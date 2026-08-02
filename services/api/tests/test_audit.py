@@ -25,10 +25,14 @@ class TestLogEvent:
         assert ev.username == "ghost" and ev.success is False
 
     def test_client_ip_from_forwarded_header(self, rf):
+        # Spoof-resistant: with NUM_PROXIES=1, the trusted hop is the RIGHT-most
+        # entry (appended by our own proxy), not the client-supplied leading one.
+        # "203.0.113.9" is the forged/untrusted prefix and must NOT be recorded.
         req = rf.post("/x", HTTP_X_FORWARDED_FOR="203.0.113.9, 10.0.0.1")
         req.user = type("U", (), {"is_authenticated": False})()
         ev = log_event(ET.LOGIN_SUCCESS, request=req, username="a")
-        assert ev.ip_address == "203.0.113.9"
+        assert ev.ip_address == "10.0.0.1"
+        assert ev.ip_address != "203.0.113.9"
 
 
 class TestInstrumentation:
@@ -146,7 +150,7 @@ class TestFieldLevelDeviceDiff:
 class TestExtendedInstrumentation:
     def test_site_update_audited_with_diff(self, auth_client):
         from apps.devices.models import Site
-        site = Site.objects.create(name="WCO2", description="old")
+        site = Site.objects.create(name="Site1", description="old")
         resp = auth_client.patch(f"/api/sites/{site.pk}/", {"description": "new"}, format="json")
         assert resp.status_code == 200, resp.content
         ev = AuditLog.objects.get(event_type=ET.SITE_UPDATED, target_id=str(site.pk))

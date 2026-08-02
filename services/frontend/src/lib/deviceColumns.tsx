@@ -1,22 +1,31 @@
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
-import { type Device, type PingSummary, reachabilityOf, reachabilityReason } from '../api/client'
-import { sshUrl, sshTooltip } from './ssh'
+import { type Device, type PingSummary } from '../api/client'
 import PingSparkline, { pingColor } from '../components/PingSparkline'
 import RoleBubble from '../components/RoleBubble'
 import VendorLogo from '../components/VendorLogo'
+import StatusBadge from '../components/StatusBadge'
+import { compactAgo } from './time'
 
-const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-700',
-  inactive: 'bg-gray-100 text-gray-600',
-  pending: 'bg-yellow-100 text-yellow-700',
-  unreachable: 'bg-red-100 text-red-700',
+// A device is "up" for the shared Up/Down badge when it's reachable (matches the
+// Servers binary). Unreachable / is_reachable=false → Down.
+function deviceUp(d: Device): boolean {
+  return d.is_reachable !== false && d.status !== 'unreachable'
 }
 
-const REACH_DOT: Record<string, string> = {
-  reachable: 'bg-green-500',
-  degraded: 'bg-yellow-500',
-  unreachable: 'bg-red-500',
+// Inline % bar matching the Servers list CPU/Memory cells; "—" when no value
+// (device down or no SNMP/gNMI metric for it).
+function MetricBar({ pct }: { pct: number | null | undefined }) {
+  if (pct == null) return <span className="text-xs text-gray-300 dark:text-gray-500">—</span>
+  const c = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-green-500'
+  return (
+    <span className="inline-flex items-center gap-2 min-w-[6rem]">
+      <span className="flex-1 h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
+        <span className={clsx('block h-full', c)} style={{ width: `${Math.min(100, pct)}%` }} />
+      </span>
+      <span className="text-xs tabular-nums w-9 text-right text-gray-600 dark:text-gray-300">{Math.round(pct)}%</span>
+    </span>
+  )
 }
 
 const GRADE_COLORS: Record<string, string> = {
@@ -41,6 +50,8 @@ export interface ColCtx {
   credNames: Record<number, string>
   // Per-device ping summary, fetched in the background after the list renders.
   ping?: Record<number, PingSummary>
+  // Per-device current CPU%/memory% (InfluxDB telemetry), fetched alongside ping.
+  metrics?: Record<number, { cpu_pct: number | null; memory_pct: number | null }>
 }
 
 export interface DeviceColumn {
@@ -63,52 +74,26 @@ function relTime(iso: string | null): string {
   return `${Math.round(s / 86400)}d ago`
 }
 
-/** Compact downtime since the device went unreachable, e.g. "4m", "2h", "3d". */
-function downtime(iso: string | null | undefined): string | null {
-  if (!iso) return null
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  if (s < 86400) return `${Math.round(s / 3600)}h`
-  return `${Math.round(s / 86400)}d`
-}
-
 const dash = (v: string | null | undefined): ReactNode => (v ? v : <span className="text-gray-300">—</span>)
 
 export const DEVICE_COLUMNS: DeviceColumn[] = [
   {
     key: 'hostname', label: 'Hostname', locked: true, default: true, sortKey: 'hostname',
+    // The SSH/connect action moved to the right-aligned actions column (rendered
+    // by Devices.tsx) where row actions belong.
     render: (d) => (
-      <span className="inline-flex items-center gap-2">
-        <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
-        <a
-          href={sshUrl(d)}
-          onClick={(e) => e.stopPropagation()}
-          target="_blank" rel="noopener noreferrer"
-          title={sshTooltip(d.hostname, d)}
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border border-blue-200 text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
-        >
-          <span aria-hidden>⌨</span> Connect
-        </a>
-      </span>
+      <span className="font-medium text-gray-800 dark:text-gray-100" title={d.hostname}>{d.display_hostname || d.hostname}</span>
     ),
   },
+  // ── Canonical shared order: Status → IP Address → Ping → CPU → Memory →
+  // Last Change (mirrored on the Servers list; first three are always
+  // Hostname | Status | IP Address). ─────────────────────────────────────────
   {
+    // Shared Up/Down badge (no duration in the pill — that's the Last Change column).
     key: 'status', label: 'Status', default: true, sortKey: 'status',
-    render: (d) => {
-      const reach = reachabilityOf(d)
-      const down = d.status === 'unreachable' ? downtime(d.unreachable_since) : null
-      return (
-        <span className="inline-flex items-center gap-1.5">
-          <span className={clsx('w-2 h-2 rounded-full', REACH_DOT[reach])} title={reachabilityReason(d)} />
-          <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600')}>
-            {d.status}{down ? ` · ${down}` : ''}
-          </span>
-        </span>
-      )
-    },
+    render: (d) => <StatusBadge up={deviceUp(d)} />,
   },
-  { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600">{d.ip_address}</span> },
+  { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{d.ip_address}</span> },
   {
     key: 'ping', label: 'Ping', default: true,
     render: (d, ctx) => {
@@ -118,7 +103,7 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
       return (
         <span className="inline-flex items-center gap-2">
           <span className="text-xs tabular-nums w-12" style={ms != null ? { color } : undefined}>
-            {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-600">—</span>}
+            {ms != null ? `${ms}ms` : <span className="text-gray-300 dark:text-gray-500">—</span>}
           </span>
           {/* Sparkline hidden on small screens; ms value always shown. */}
           {p?.sparkline?.length ? (
@@ -128,6 +113,24 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
       )
     },
   },
+  {
+    key: 'cpu', label: 'CPU', default: true,
+    render: (d, ctx) => <MetricBar pct={ctx.metrics?.[d.id]?.cpu_pct} />,
+  },
+  {
+    key: 'memory', label: 'Memory', default: true,
+    render: (d, ctx) => <MetricBar pct={ctx.metrics?.[d.id]?.memory_pct} />,
+  },
+  {
+    // Down → how long down (unreachable_since); Up → how long since last contact
+    // (last_seen). Matches the Servers "Last Change" column.
+    key: 'last_change', label: 'Last Change', default: true, sortKey: 'unreachable_since',
+    render: (d) => {
+      const iso = !deviceUp(d) && d.unreachable_since ? d.unreachable_since : d.last_seen
+      return <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">{compactAgo(iso)}</span>
+    },
+  },
+  // ── Device-specific columns (slotted after the shared set) ──────────────────
   {
     key: 'vendor', label: 'Vendor', default: true, sortKey: 'vendor',
     render: (d) => (
@@ -155,7 +158,10 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
   { key: 'notes', label: 'Notes', default: false, render: (d) => <span className="text-gray-500 text-xs line-clamp-1 max-w-xs">{dash(d.notes?.trim())}</span> },
 ]
 
-export const COLUMN_STORAGE_KEY = 'netpulse.devices.columns'
+// v2: bumped when the canonical column ORDER changed (IP Address moved to 3rd).
+// A new key invalidates pre-existing saved layouts so everyone picks up the new
+// default order; users re-customise from there.
+export const COLUMN_STORAGE_KEY = 'netpulse.devices.columns.v2'
 
 export function defaultColumnKeys(): string[] {
   return DEVICE_COLUMNS.filter((c) => c.locked || c.default).map((c) => c.key)

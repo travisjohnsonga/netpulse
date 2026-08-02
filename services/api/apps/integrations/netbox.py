@@ -91,7 +91,7 @@ class NetBoxClient:
         if self._ssl_ctx is not None:
             kwargs["context"] = self._ssl_ctx
         try:
-            with urllib.request.urlopen(req, **kwargs) as resp:
+            with urllib.request.urlopen(req, **kwargs) as resp:  # nosec B310 — URL scheme allowlisted (http/https) by validate_outbound_url() earlier in this method
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             raise NetBoxError(f"NetBox returned HTTP {exc.code} for {path}") from exc

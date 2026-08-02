@@ -282,6 +282,10 @@ class LogQueryView(APIView):
                     "proc_id": src.get("proc_id"),
                     "message": src.get("message"),
                     "source_ip": src.get("source_ip"),
+                    # source distinguishes origin: device syslog carries the device
+                    # identifier; agent-forwarded logs carry the profile (auth/
+                    # service/kernel/custom). Lets the Logs UI tell them apart.
+                    "source": src.get("source"),
                     "raw": src.get("raw"),
                 }
             )

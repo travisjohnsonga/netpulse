@@ -48,6 +48,11 @@ class ReportSchedule(TimestampedModel):
         MONTHLY = "monthly", "Monthly"
         QUARTERLY = "quarterly", "Quarterly"
 
+    class Delivery(models.TextChoices):
+        EMAIL = "email", "Email"
+        STORE_ONLY = "store_only", "Store only"
+        BOTH = "both", "Email + Store"
+
     report_type = models.CharField(max_length=32, choices=ReportType.choices)
     frequency = models.CharField(max_length=16, choices=Frequency.choices, default=Frequency.DAILY)
     hour = models.PositiveSmallIntegerField(default=8, help_text="Hour of day (UTC), 0-23")
@@ -56,7 +61,13 @@ class ReportSchedule(TimestampedModel):
     day_of_month = models.PositiveSmallIntegerField(
         default=1, help_text="1-28 (monthly only)")
     fmt = models.CharField(max_length=10, default="pdf")
-    recipients = models.JSONField(default=list, help_text="Email addresses")
+    # How the generated report is delivered. Every run still generates + stores a
+    # downloadable GeneratedReport; `delivery` only controls whether it is ALSO
+    # emailed. Defaults to EMAIL so existing schedules keep emailing (back-compat).
+    delivery = models.CharField(
+        max_length=16, choices=Delivery.choices, default=Delivery.EMAIL,
+        help_text="email | store_only | both")
+    recipients = models.JSONField(default=list, help_text="Email addresses (required for email/both)")
     parameters = models.JSONField(default=dict, help_text="Report build params (site_ids, group_by, …)")
     enabled = models.BooleanField(default=True)
     last_run = models.DateTimeField(null=True, blank=True)
@@ -67,3 +78,8 @@ class ReportSchedule(TimestampedModel):
 
     def __str__(self):
         return f"{self.get_report_type_display()} — {self.frequency} @ {self.hour:02d}:00"
+
+    @property
+    def email_enabled(self) -> bool:
+        """Whether this schedule should email the report (vs store-only)."""
+        return self.delivery in (self.Delivery.EMAIL, self.Delivery.BOTH)

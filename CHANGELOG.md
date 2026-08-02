@@ -1,12 +1,171 @@
 # Changelog
 
-All notable changes to spane (NetPulse) are documented here. Versions follow the
-`1.0.<commit-count>` scheme reported by `./netpulse.sh show-version` and
-`GET /api/health/`.
+All notable changes to spane (NetPulse) are documented here. Versions follow
+**`app-vX.Y.Z` semver** — the app's own tag prefix (distinct from the agent's
+`vX.Y.Z`), reported (stripped to `X.Y.Z`) by `./netpulse.sh show-version` and
+`GET /api/health/`. Minor = features, patch = fixes; dev builds between tags
+report `X.Y.Z-<n>-g<sha>`.
 
-## Unreleased
+## 0.7.1 — 2026-08-01
+
+Patch release: a day of live-diagnosed bug fixes and hardening — zero new
+features. Highlights: the Junos config-push chain (pushes silently no-opped for
+weeks), the pre-open-source scrub of real-infrastructure fingerprints, and the
+version badge finally telling the truth.
+
+### Fixed
+- **Junos config push actually commits** (#179) — `send_config_set` only LOADS
+  Junos `set` lines into the candidate; without a commit nothing activated,
+  while Netmiko + the audit log reported success. Pushes now use an isolated
+  **`configure private`** candidate + explicit `commit` (comment "spane config
+  push"); commit failure is a REAL surfaced failure with the candidate
+  discarded, and Junos load errors (printed, not raised) fail the push instead
+  of committing a partial config. Wired into both the config-template and
+  telemetry push paths. Plus the keyword chain the silent no-op had hidden:
+  `authentication-sha` (not `-sha1`), 1:1 SHA-2 mappings, the missing
+  `message-processing-model`, and `authentication-password` (not `-key`, which
+  broke SNMPv3 polling with "Wrong PDU digest").
+- **Junos gNMI telemetry generation** (#182) — resource paths are double-quoted
+  (the CLI tokenized `[name='Routing Engine']` at the space and dropped the
+  line), and SRX-family models get honest guidance instead of unpushable
+  config: SRX has **no** `services analytics streaming-server` grammar and
+  sensors cannot commit without one (live-verified on vSRX 23.2R2.21).
+- **FortiOS / Junos `os_version` enrichment** (#175) — FortiOS REST
+  (`/api/v2/monitor/system/status`, bearer token via the existing HTTPS
+  credential) with `fgSysVersion` SNMP fallback (FortiGate VMs report an empty
+  sysDescr); Junos sysDescr parser (`23.4R1.9`-style). Cisco/Arista audited OK;
+  PAN-OS gap noted for later.
+- **Version badge showed v0.0.0-dev** (#176) — compose's runtime
+  `SPANE_VERSION: ${SPANE_VERSION:-}` masked the image's baked ENV with an
+  empty string; the build now bakes `SPANE_BUILD_VERSION` (a name compose never
+  sets). `update.sh`'s version stamp also now matches `app-v*` tags only (a
+  bare `git describe` could stamp an agent tag).
+- **Silently-broken SMTP service check** (#180) — `SMTP.ehlo()` is keyword-only
+  in aiosmtplib 3.x AND 5.x; the positional call raised `TypeError` on every
+  run, swallowed into a "down" result. First-ever SMTP handler test added.
+- **Three incidental fixes** (#177) — the alerts `NotificationLog` index-rename
+  drift (PR #163's fix had merged into the arc branch, never main; arc-merge
+  note in the migration header), the compliance grade `"N/A"`-vs-`varchar(2)`
+  write failure on no-data devices, and `/api/health/` `collector_ip` showing a
+  script banner (curl|bash left setup.sh's prompts reading the installer's own
+  text as answers — stdin now rebinds to /dev/tty, plus value validation).
+- **Pre-update DB backups moved out of the git tree** (#181) —
+  `/var/backups/netpulse/` (in-tree backups false-positived update.sh's own
+  dirty-tree guard and died with the repo dir); permission-aware dir creation
+  with a loud abort (no silent fallback), and a one-time sweep migrates legacy
+  in-tree backups automatically.
 
 ### Added
+- **Junos + FortiOS entries in the Configuration Push Templates library**
+  (#179) — SNMP v3 / Syslog (+ NTP / Banner for Junos); both platforms were
+  missing entirely, and the Junos SNMP entry ships the corrected syntax.
+
+### Security
+- **Real-infrastructure fingerprint scrub** (#174) — internal site-specific
+  hostnames, real IPs, the jump-host identity, an SNMPv3 username, and
+  site-name examples replaced repo-wide with a generic `site1-*` / RFC5737
+  convention (engineering knowledge kept; real values moved to gitignored
+  `LOCAL_NOTES.md`).
+- **Dependency CVEs cleared** (#173, #178, #180) — js-yaml 4.3.0,
+  dompurify 3.4.12, brace-expansion 5.0.9, postcss 8.5.25, aiosmtplib 5.1
+  (PYSEC-2026-2338), and the **dead `python-jose` dependency removed** —
+  eliminating the unfixable ecdsa advisory (PYSEC-2026-1325) instead of
+  ignoring it. The npm minor-patch group (#178) rides along. Deliberately
+  parked with documented rationale: react-router v7 (migration tracked in the
+  roadmap) and immutable/swagger-ui-react (no upstream fix path).
+
+## 0.7.0 — 2026-06-30
+
+The **alerting reliability + control** release: makes notification delivery
+observable and correct, and adds the generation-vs-notification controls
+(min-severity, per-rule, per-device silencing) on top of the 0.6.0 dispatch
+substrate. Plus the per-server role-check correctness fix and UI polish. Shipped
+as nine PRs (#151–#160) so each lands with its own review + changelog.
+
+### Added
+- **Delivery reliability** (#152) — every notification attempt is now recorded in
+  a new **`NotificationLog`** (per-channel status, attempts, detail, timestamp),
+  so delivery is observable instead of fire-and-forget. A **cross-channel
+  meta-alarm** raises an alert when a channel fails and routes that warning
+  through the **surviving** channels (a dead Teams webhook is reported via email,
+  and vice-versa). New **delivery-health** endpoints, integrated into
+  `GET /api/health/` (per-channel health summary). Per-channel **retry/backoff**
+  and **failure isolation** (one bad channel never blocks the others).
+- **Delivery-health UI** (#154) — a degraded-delivery **banner**, a
+  **`/notifications`** delivery-log page, and a delivery-health row on
+  **PlatformStatus**.
+- **Notification control — generation-vs-notification split at every level**
+  (#151, #155) — the `AlertEvent` is always generated (for the UI), but
+  *notification* is gated independently: per-channel **`min_severity`**, per-type
+  **UI-only** types (audit-style events like `config_changed` never page), and a
+  per-rule **notify toggle** (observe-only rules).
+- **Per-device/server silencing** (#156) — **`alerting_enabled`** (permanent
+  observe-only, e.g. a dev/test box) and **`silenced_until`** (timed,
+  auto-expiring mute) for **both** network devices and agent servers. Neither
+  suppresses the `AlertEvent` record — only the notification.
+- **Per-server role-check config** (#157, #159) — a **Custom functional-web mode**
+  (specify exact on-host URLs/ports), per-server **service multi-select** (count
+  only the services this host actually runs → kills the false `not_found` in a
+  role's X/Y service-check count), and a **stability-link checkbox** (watch a role
+  service for down/flap from the role card).
+
+### Changed
+- **Alert/log subject routing by `device_kind`** (#153) — alert and log subjects
+  link to **`/servers/`** for agent servers and **`/devices/`** for network
+  devices (previously always `/devices/`).
+- **TV/NOC dashboard emoji cleanup** (#160) — TV dashboards use colored text
+  status labels (UP/DOWN) and text affordances instead of emoji, for a clean
+  NOC-wall aesthetic (matches the text-only sidebar direction).
+
+### Fixed
+- **"Ask spane" FAB overlapped the last list row** (#158) — added bottom padding
+  to the global scroll container so the floating chat button no longer covers
+  bottom-of-list content (e.g. the final Alert Rules row's Notify/Enabled
+  toggles).
+- **Custom web-check mode was unreachable** (#159) — the functional mode was
+  derived purely from the URL list, so picking "Custom" snapped back to HTTP-only
+  and the input never opened; an explicit mode-intent state now keeps the Custom
+  input open regardless of URL values.
+- **Stale Services/Roles tab after a config write** (#159) — the server-config tab
+  now re-fetches the server on save, so watched-service and role-status changes
+  reflect immediately without a hard refresh.
+
+## 0.6.0 — 2026-06-28
+
+### Added
+- **Alert dispatch layer + email/Teams notifiers** — AlertEvents now deliver to
+  the configured `AlertChannel`s (previously fired/showed in the UI but sent
+  nothing). A single `apps/alerts/dispatch.py` choke point is wired via an
+  AlertEvent `post_save` signal (+ the `.update()`-based resolve paths), so every
+  alert source (interface/reachability/stability/liveness/functional/environment/
+  circuits/compliance/…) routes through the same dispatch. Pluggable notifier
+  registry: **email** (HTML + text, recipients from channel config) and
+  **Microsoft Teams** (Adaptive Card or legacy MessageCard, severity-coloured,
+  "View in spane" button, green recovery card on resolve), plus webhook/slack/
+  PagerDuty notifiers. Fire/resolve **debounce** (notify once per FIRING + once
+  per RESOLVED via `fired_notified_at`/`resolved_notified_at`, atomic claim — a
+  flapping alert can't spam), per-channel **retry/backoff**, and **failure
+  isolation** (one bad channel never blocks the others or crashes the engine).
+  Severity-threshold + label-routing channel matching; `config.all_alerts` global
+  channels. Channel secrets (Teams/webhook URLs, PagerDuty routing keys) stored in
+  OpenBao. New `TEAMS` channel type (alerts migration 0004). `POST /api/alerts/
+  channels/{id}/test/` and `manage.py fire_test_alert` for verification.
+  `tests/test_alert_dispatch.py` (33). Disabled in the test suite via
+  `ALERT_DISPATCH_ENABLED`.
+- **Service stability monitoring** (role-independent): operator-watched services
+  (`desired_config.stability.services`), `WatchedServiceStatus`, **Service Down**
+  + **Service Flapping** alerts (debounce + auto-resolve).
+- **Agent liveness alerting**: an **Agent Offline** alert when an agent stops
+  reporting past its threshold (`run_scheduler` `agent_liveness`, 60s; per-agent
+  suppress for lab boxes).
+- **Web-role functional health check** (agent v1.5.0): HTTP/cert probe with any-of
+  health resolution; the web-role card headline leads with the functional verdict
+  ("✓ Healthy · cert Nd") instead of a service-count. Loopback-only SSRF allowlist.
+- **Agent log forwarding — Stage 1**: agent tails curated security logs → mTLS →
+  NATS → OpenSearch. *(Under-flowing; open diagnosis.)*
+- **Agent OS detail + rich service detail**; ServerDetail Services-tab table.
+- **Shared `useTabParam` hook**: tab-in-URL persistence across ServerDetail,
+  DeviceDetail, SiteDetail, Settings, and the Sites view toggle.
 - **WAN circuit tracking** (`apps.circuits`): provider/bandwidth/contract details,
   ISP IP assignment (IPv4/IPv6 block, gateway, BGP ASNs), device+interface
   binding, per-circuit alert threshold. Utilization from InfluxDB interface
@@ -38,10 +197,30 @@ All notable changes to spane (NetPulse) are documented here. Versions follow the
   reports the real version (was "unknown"); shown in Settings → System + TV footer.
 
 ### Fixed
+- **Stream-processor log/flow durability**: logs/flows are now acked only after a
+  successful OpenSearch write (was acked-on-receipt → silent loss on an OpenSearch
+  blip); NAK→redeliver on failure, with a poison-message drop after
+  `STREAM_PROCESSOR_MAX_DELIVER` (5) attempts so a doc OpenSearch always rejects
+  can't wedge the consumer. Transient outages never drop (durable in the stream).
+- **Agent device records no longer pollute the network views**: agent-backed
+  servers (synthetic/loopback Device records) are excluded from the **Devices
+  list** and the **reachability monitor** (they belong on the Servers page and
+  report their own liveness); resolved the resulting stale false
+  `device-unreachable` alerts.
+- **Devices list**: the row Connect button moved to a right-aligned plain-text
+  **SSH** action column.
+- **CI**: `agent-latest` rolling release is republished only on tag pushes, so
+  main-branch pushes no longer clobber it.
 - flow-threshold alert: exporter IP was truncated to the first octet; throughput
   units (a 0-duration record read as 100s of Gbps); + device/top-talker context.
 - Compliance score on the device list showed template-only instead of the
   weighted combined score.
+
+### Changed
+- **Text-only left-nav sidebar** — emoji nav icons removed (cleaner enterprise
+  tone); badges/collapse/active-state/capability gating retained.
+- **Alerts page** defaults to **actionable-only** (firing + unacknowledged) with a
+  "show resolved & acknowledged" toggle.
 
 ### Security
 - Dependabot: **form-data** CRLF (#8) → 4.0.6, **js-yaml** DoS (#7) → 4.2.0
@@ -50,7 +229,7 @@ All notable changes to spane (NetPulse) are documented here. Versions follow the
   `tests/test_security.py`, `scripts/check_exception_exposure.py`, a pre-commit
   hook and a CI workflow.
 
-## v0.1.0 — 2026-06-01
+## 0.1.0 — 2026-06-01
 
 - Initial release.
 - Push-first telemetry (gRPC/gNMI, SNMP fallback), NetFlow/sFlow/IPFIX flow

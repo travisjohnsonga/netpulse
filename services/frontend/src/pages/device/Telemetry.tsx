@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
+import TimeRangeSelector, { type TimeRange } from '../../components/TimeRangeSelector'
 import {
   fetchTelemetryConfig, saveTelemetryConfig, fetchMonitoredInterfaces,
   discoverInterfaces, saveMonitoredInterfaces,
@@ -653,7 +654,6 @@ function GeneratedConfigSection({ device }: { device: DeviceDetail }) {
 // ── Live telemetry view (default export = the Telemetry tab) ──────────────────
 
 const liveCard = 'bg-white dark:bg-gray-900 rounded-lg shadow-sm border border-gray-200 dark:border-gray-800'
-const TRAFFIC_RANGES = ['1h', '6h', '24h', '7d'] as const
 // A static, faded bar pattern standing in for a sparkline until InfluxDB queries land.
 const FLAT_SPARK = [3, 4, 3, 5, 4, 3, 4, 5, 6, 5, 4, 3, 4, 5, 4]
 
@@ -691,7 +691,7 @@ function utilColor(pct: number | null): string {
 export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { device: DeviceDetail; onConfigure?: () => void; refreshSignal?: number }) {
   const [ifaces, setIfaces] = useState<MonitoredInterface[] | null>(null)
   const [cfg, setCfg] = useState<TelemetryConfig | null>(null)
-  const [range, setRange] = useState<(typeof TRAFFIC_RANGES)[number]>('1h')
+  const [range, setRange] = useState<TimeRange>('1h')
   const [metrics, setMetrics] = useState<DeviceMetrics | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -793,16 +793,7 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Device Health</h3>
           <div className="flex items-center gap-2">
-            <div className="flex gap-1">
-              {TRAFFIC_RANGES.map((r) => (
-                <button key={r} onClick={() => setRange(r)}
-                  className={clsx('px-2 py-1 text-xs rounded-md border',
-                    range === r ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
-                      : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800')}>
-                  {r}
-                </button>
-              ))}
-            </div>
+            <TimeRangeSelector value={range} onChange={setRange} />
             <button onClick={pollNow} disabled={polling}
               className="px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
               {polling ? '↻ Polling…' : '↻ Poll Now'}
@@ -844,16 +835,7 @@ export default function Telemetry({ device, onConfigure, refreshSignal = 0 }: { 
               </span>
             )}
           </h3>
-          <div className="flex gap-1">
-            {TRAFFIC_RANGES.map((r) => (
-              <button key={r} onClick={() => setRange(r)}
-                className={clsx('px-2 py-1 text-xs rounded-md border',
-                  range === r ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950'
-                    : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800')}>
-                {r}
-              </button>
-            ))}
-          </div>
+          <TimeRangeSelector value={range} onChange={setRange} />
         </div>
         {ifaces === null ? (
           <div className="py-10 text-center text-sm text-gray-400">Loading…</div>

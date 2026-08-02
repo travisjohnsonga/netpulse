@@ -176,7 +176,24 @@ class Device(TimestampedModel):
         MIST_GW = "mist_gw", "Mist Gateway"
         OTHER = "other", "Other"
 
+    class DeviceKind(models.TextChoices):
+        # The authoritative network-device-vs-server distinction (single source of
+        # truth — replaces the old agent__isnull/synthetic-IP query heuristic that
+        # was duplicated across the Devices list and the reachability monitor and
+        # was fragile on Postgres inet columns). Set at CREATION: the agent
+        # self-heal (#118) tags SERVER; discovery / manual-add default to
+        # NETWORK_DEVICE. Values mirror DiscoveredDevice.Category.
+        NETWORK_DEVICE = "network_device", "Network Device"
+        SERVER = "server", "Server"  # agent-backed host (shown on the Servers page)
+
     hostname = models.CharField(max_length=255, unique=True, db_index=True)
+    # Authoritative classification (see DeviceKind). Network devices appear in the
+    # Devices list + central reachability monitor; servers appear on the Servers
+    # page + get ping/RTT via the agent-IP path.
+    device_kind = models.CharField(
+        max_length=20, choices=DeviceKind.choices,
+        default=DeviceKind.NETWORK_DEVICE, db_index=True,
+    )
     # When the hostname was last verified against the network (SNMP sysName / DNS)
     # by apps.devices.hostname_check. Null until the first verification.
     hostname_verified_at = models.DateTimeField(null=True, blank=True)
@@ -206,6 +223,17 @@ class Device(TimestampedModel):
     # When the device first transitioned to 'unreachable' (cleared on recovery).
     # Drives the downtime duration shown in the device-list status badge.
     unreachable_since = models.DateTimeField(null=True, blank=True)
+    # Per-device alert silencing (applies to BOTH network devices and servers —
+    # a server's alerts carry this Device's id). NOTIFICATION-only suppression:
+    # the AlertEvent is still generated (UI shows truth), only dispatch is skipped.
+    # Enforced in apps/alerts/dispatch.py:dispatch_event.
+    #   alerting_enabled=False → permanent observe-only (dev/test/qa boxes). The
+    #     broad generalization of Agent.liveness_alerts_enabled (which stays as the
+    #     liveness-specific *creation* suppressor and is NOT replaced).
+    #   silenced_until → timed mute; suppresses until the timestamp passes, then
+    #     AUTO-RESUMES (the safety property — a patch-mute can't become permanent).
+    alerting_enabled = models.BooleanField(default=True)
+    silenced_until = models.DateTimeField(null=True, blank=True)
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name="devices")
     role = models.ForeignKey(
         "devices.DeviceRole",

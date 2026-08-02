@@ -30,9 +30,16 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        # Full history + tags so build.sh's `git describe --tags` resolves the
+        # version. The default shallow checkout (depth 1, no tags) made describe
+        # fall back to a bare commit hash, so CI-built binaries reported e.g.
+        # "525bb42" instead of "v1.3.0" — a real release reported a hash.
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           # go.sum lives in agent/, not the repo root — point the dep cache at it.
@@ -53,7 +60,7 @@ jobs:
           ./scripts/build.sh
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-binaries
           path: agent/dist/
@@ -61,23 +68,26 @@ jobs:
   release:
     # Publish the built binaries as GitHub Release assets so download_views.py
     # can redirect to a public, auth-free URL when local dist/ binaries are
-    # absent. Only on main pushes / tags / manual runs (never on PRs, which
-    # can't write to the repo and shouldn't mutate the release).
+    # absent. ONLY on tag pushes (a real release): the rolling `agent-latest`
+    # must track tagged releases, not every main commit — otherwise a routine
+    # main merge overwrites agent-latest with a `vX.Y.Z-N-gSHA` dev build and the
+    # update scripts (which pull agent-latest) would roll hosts to a dev commit.
+    # (main still BUILDS via the build job above; it just doesn't publish.)
     needs: build
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       # Releases require write access to repo contents.
       contents: write
     steps:
       - name: Download built binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: agent-binaries
           path: agent/dist
 
       - name: Create/update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: agent-latest
           name: NetPulse Agent (latest)

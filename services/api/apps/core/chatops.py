@@ -38,9 +38,9 @@ from rest_framework.decorators import (
     throttle_classes,
 )
 from rest_framework.permissions import AllowAny
-from rest_framework.throttling import SimpleRateThrottle
 
 from apps.chatops.enforcement import enforce_policy, platform_live
+from apps.core.client_ip import TrustedProxySimpleRateThrottle
 from apps.chatops.format import deny_response, format_for
 from apps.chatops.pipeline import classify
 from apps.chatops.resolve import resolve
@@ -60,15 +60,16 @@ def _chatops_disabled_response() -> JsonResponse:
     return JsonResponse({"error": "not found"}, status=404)
 
 
-class WebhookThrottle(SimpleRateThrottle):
+class WebhookThrottle(TrustedProxySimpleRateThrottle):
     """Per-client rate limit on the inbound webhook endpoints (scope "chatops").
 
     Blunts brute-force of the signature/token checks below and caps NLP-call
-    amplification from a flood of unknown-intent queries. Keyed on the real
-    client IP via X-Forwarded-For (DRF NUM_PROXIES). The rate comes from
-    settings DEFAULT_THROTTLE_RATES["chatops"]; with the scope fixed on the class
-    (rather than read from a view's throttle_scope, which the function-based
-    webhook views don't set) it applies uniformly across all five endpoints."""
+    amplification from a flood of unknown-intent queries. Keyed on the real,
+    spoof-resistant client IP (shared get_client_ip / NUM_PROXIES — counted from
+    the right of X-Forwarded-For). The rate comes from settings
+    DEFAULT_THROTTLE_RATES["chatops"]; with the scope fixed on the class (rather
+    than read from a view's throttle_scope, which the function-based webhook views
+    don't set) it applies uniformly across all five endpoints."""
     scope = "chatops"
 
     def get_cache_key(self, request, view):

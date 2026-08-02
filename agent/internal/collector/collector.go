@@ -5,7 +5,91 @@
 // CPUCollector/NetworkCollector Collect methods).
 package collector
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// normalizeMount canonicalizes a mount/drive identifier so an operator's list
+// entry matches what the collector emits as DiskStat.Mount across OSes:
+//   - trailing path separators are stripped ("/var/"→"/var", "D:\\"→"D:"),
+//     but a bare root ("/" or "\\") is preserved as "/";
+//   - a two-char Windows drive ("d:") is upper-cased ("D:") — Windows drive
+//     letters are case-insensitive. Linux paths keep their case (case-sensitive).
+//
+// So "D:", "D:\\" and "d:" all match the Windows collector's "D:\\".
+func normalizeMount(m string) string {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return ""
+	}
+	trimmed := strings.TrimRight(m, `/\`)
+	if trimmed == "" {
+		return "/" // a bare root mount
+	}
+	m = trimmed
+	if len(m) == 2 && m[1] == ':' { // drive letter, e.g. "C:"
+		m = strings.ToUpper(m)
+	}
+	return m
+}
+
+// Windows GetDriveType return values (winbase.h). Defined here (not importing
+// x/sys/windows) so the skip policy is testable on any platform.
+const (
+	driveRemovable = 2 // USB / floppy
+	driveFixed     = 3 // hard disk — kept
+	driveRemote    = 4 // network/mapped drive — kept by default
+	driveCDROM     = 5 // optical / DVD / mounted ISO
+)
+
+// skipWindowsDriveType reports whether a GetDriveType result is removable or
+// optical media (DVD/ISO/USB) — inherently noisy (a full, read-only disc reports
+// 100% forever) and not worth monitoring by default. DRIVE_FIXED and DRIVE_REMOTE
+// (network drives) are kept. Auto-skip runs BEFORE the manual exclude_mounts
+// filter, so an operator never has to exclude a DVD by hand.
+func skipWindowsDriveType(dt uint32) bool {
+	return dt == driveRemovable || dt == driveCDROM
+}
+
+func normalizeSet(items []string) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, it := range items {
+		if n := normalizeMount(it); n != "" {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// FilterDisks applies an operator's include/exclude mount filter to collected
+// disk stats. Rules (cross-OS, via normalizeMount):
+//   - empty include AND empty exclude → all disks (the default; must NOT regress
+//     to "monitor nothing");
+//   - non-empty include → only listed mounts;
+//   - exclude drops a mount and takes PRECEDENCE over include.
+//
+// The OS collectors are unchanged; this runs on their output so Linux and
+// Windows share one filtering rule.
+func FilterDisks(stats []DiskStat, include, exclude []string) []DiskStat {
+	inc := normalizeSet(include)
+	exc := normalizeSet(exclude)
+	if len(inc) == 0 && len(exc) == 0 {
+		return stats
+	}
+	out := make([]DiskStat, 0, len(stats))
+	for _, d := range stats {
+		n := normalizeMount(d.Mount)
+		if exc[n] {
+			continue
+		}
+		if len(inc) > 0 && !inc[n] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
 
 type CPUStat struct {
 	Core   string  `json:"core"`
@@ -15,6 +99,24 @@ type CPUStat struct {
 	IOWait float64 `json:"iowait"`
 	Steal  float64 `json:"steal"`
 	Usage  float64 `json:"usage_pct"`
+}
+
+// AggregateCPUCore is the Core name the server treats as the whole-host CPU
+// aggregate (vs. a per-core entry) — the chart and Overview stat key off it (see
+// the server's metrics_read.py: r.core == "cpu"). Linux uses it directly (the
+// /proc/stat "cpu" line); Windows maps its "_Total" WMI row to it.
+const AggregateCPUCore = "cpu"
+
+// normalizeCPUCore maps a platform CPU identifier to the cross-platform Core
+// name. Win32_PerfFormattedData_PerfOS_Processor returns "_Total" for the
+// aggregate row; renaming it to the aggregate key makes Windows emit the same
+// shape as Linux (one aggregate + N per-core entries) so the aggregate feeds the
+// chart/Overview and isn't drawn as a spurious per-core bar.
+func normalizeCPUCore(name string) string {
+	if name == "_Total" {
+		return AggregateCPUCore
+	}
+	return name
 }
 
 type MemoryStat struct {

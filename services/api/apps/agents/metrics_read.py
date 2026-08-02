@@ -30,8 +30,36 @@ def _bucket() -> str:
     return getattr(settings, "INFLUXDB_BUCKET", "metrics")
 
 
+# Volumes smaller than this are excluded from the "worst disk" summary: EFI /
+# recovery / system-reserved partitions are 100% full by design and aren't
+# actionable, so they shouldn't dominate the headline stat (or drive alerts).
+# The Disk tab still lists every mount. (PR: agent-config drive selection will
+# make this operator-configurable.)
+MIN_DISK_SUMMARY_BYTES = 10 * 1024 * 1024 * 1024  # 10 GiB
+
+
+def _worst_disk(disk_by_mount: dict) -> tuple[float | None, str | None]:
+    """Pick the highest-utilization mount, ignoring volumes below
+    MIN_DISK_SUMMARY_BYTES (EFI/recovery/system-reserved partitions). A mount
+    with unknown size is NOT excluded — better to show it than hide a real disk.
+    disk_by_mount: {mount: {"usage_pct": float, "total_bytes": float|None}}."""
+    best_pct: float | None = None
+    best_mount: str | None = None
+    for mount, fields in disk_by_mount.items():
+        pct = fields.get("usage_pct")
+        if pct is None:
+            continue
+        total = fields.get("total_bytes")
+        if total is not None and total < MIN_DISK_SUMMARY_BYTES:
+            continue
+        if best_pct is None or pct > best_pct:
+            best_pct, best_mount = pct, mount
+    return best_pct, best_mount
+
+
 def latest_metrics(device_id: str) -> dict:
-    """Summary for the Servers list: cpu/memory/load + worst disk mount."""
+    """Summary for the Servers list: cpu/memory/load + worst disk mount
+    (excluding tiny system/recovery partitions — see MIN_DISK_SUMMARY_BYTES)."""
     out = {"cpu_pct": None, "memory_pct": None, "load_1": None,
            "disk_max_pct": None, "disk_max_mount": None}
     try:
@@ -44,10 +72,12 @@ from(bucket: "{_bucket()}")
        (r._measurement == "cpu" and r.core == "cpu" and r._field == "usage_pct") or
        (r._measurement == "memory" and r._field == "usage_pct") or
        (r._measurement == "load" and r._field == "load1") or
-       (r._measurement == "disk" and r._field == "usage_pct"))
+       (r._measurement == "disk" and (r._field == "usage_pct" or r._field == "total_bytes")))
   |> last()
 '''
-        disk_max = None
+        # Collect disk usage + size per mount so we can drop tiny volumes before
+        # picking the worst one.
+        disk_by_mount: dict[str, dict] = {}
         for table in qa.query(flux):
             for rec in table.records:
                 m, f, val = rec.get_measurement(), rec.get_field(), rec.get_value()
@@ -60,10 +90,12 @@ from(bucket: "{_bucket()}")
                 elif m == "load":
                     out["load_1"] = round(val, 2)
                 elif m == "disk":
-                    if disk_max is None or val > disk_max:
-                        disk_max = val
-                        out["disk_max_pct"] = round(val, 1)
-                        out["disk_max_mount"] = rec.values.get("mount")
+                    disk_by_mount.setdefault(rec.values.get("mount"), {})[f] = val
+
+        worst_pct, worst_mount = _worst_disk(disk_by_mount)
+        if worst_pct is not None:
+            out["disk_max_pct"] = round(worst_pct, 1)
+            out["disk_max_mount"] = worst_mount
     except Exception as exc:  # noqa: BLE001
         logger.debug("latest server metrics failed for %s: %s", device_id, exc)
     return out

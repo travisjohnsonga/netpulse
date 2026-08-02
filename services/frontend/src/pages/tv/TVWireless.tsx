@@ -21,7 +21,7 @@ export default function TVWireless({ rotation }: { rotation?: Parameters<typeof 
               const online = ap.state === 1
               return (
                 <div key={ap.device_id} className="flex items-center justify-between">
-                  <span>{online ? '✅' : '🔴'} {ap.hostname}</span>
+                  <span><span style={{ color: online ? TV.success : TV.error }}>{online ? 'UP' : 'DOWN'}</span> {ap.hostname}</span>
                   <span style={{ color: TV.muted }}>
                     {online ? `${ap.client_count ?? 0} clients` : 'OFFLINE'}
                     {online && ap.satisfaction != null ? `  ·  ${ap.satisfaction}%` : ''}

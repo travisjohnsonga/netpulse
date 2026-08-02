@@ -45,7 +45,7 @@ class TestCrud:
     def test_filter_by_device_and_site(self, auth_client, devices):
         from apps.devices.models import Site
         a, b = devices
-        site = Site.objects.create(name="WCO2")
+        site = Site.objects.create(name="Site1")
         a.site = site; a.save()
         c = Device.objects.create(hostname="other", ip_address="10.0.0.3")
         ManualTopologyLink.objects.create(device_a=a, device_b=b, link_type="ethernet")

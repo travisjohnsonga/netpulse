@@ -5,8 +5,8 @@ from ingest.parser import SEVERITIES, parse
 # Representative UniFi CEF lines (extension values may contain spaces).
 _CONNECT = (
     "CEF:0|Ubiquiti|UniFi Network|9.0.0|400|WiFi Client Connected|3|"
-    "UNIFIhost=UDM-Pro UNIFIclientHostname=iPad UNIFIclientIp=10.150.1.77 "
-    "UNIFIclientMac=aa:bb:cc:dd:ee:ff UNIFIconnectedToDeviceName=wco2-wld-ap-01 "
+    "UNIFIhost=UDM-Pro UNIFIclientHostname=iPad UNIFIclientIp=192.0.2.77 "
+    "UNIFIclientMac=aa:bb:cc:dd:ee:ff UNIFIconnectedToDeviceName=site1-annex-ap-01 "
     "UNIFIconnectedToDeviceModel=U6-Pro UNIFIwifiName=Vantran Office "
     "UNIFIwifiChannel=104 UNIFIwifiBand=na UNIFIwifiChannelWidth=20 "
     "UNIFIWiFiRssi=-76 UNIFInetworkVlan=1"
@@ -26,12 +26,12 @@ _CONFIG = (
 )
 _DEVICE = (
     "CEF:0|Ubiquiti|UniFi Network|9.0.0|500|Device Connected|3|"
-    "UNIFIdeviceName=wco2-idf5-asw UNIFIdeviceMac=11:22:33:44:55:66 "
+    "UNIFIdeviceName=site1-idf1-asw UNIFIdeviceMac=11:22:33:44:55:66 "
     "UNIFIdeviceModel=USW-Pro UNIFIdeviceVersion=6.5.59"
 )
 
 
-def _parse(raw: str, *, ip: str = "10.150.1.1") -> dict:
+def _parse(raw: str, *, ip: str = "192.0.2.1") -> dict:
     return parse(raw.encode(), ip, 514, "udp")
 
 
@@ -96,7 +96,7 @@ class TestNormalizeWifiConnect:
         assert result["vendor"] == "ubiquiti"
         assert result["program"] == "WIRELESS"
         assert result["severity"] == 5 and result["severity_name"] == "notice"
-        assert "iPad connected to wco2-wld-ap-01" in result["message"]
+        assert "iPad connected to site1-annex-ap-01" in result["message"]
         assert "Ch.104 5 GHz 20MHz" in result["message"]
         assert "RSSI -76 dBm fair" in result["message"]
         assert "SSID Vantran Office" in result["message"]
@@ -104,7 +104,7 @@ class TestNormalizeWifiConnect:
         assert ex["unifi_event_type"] == "wifi_client_connected"
         assert ex["unifi_event_id"] == "400"
         assert ex["unifi_client_hostname"] == "iPad"
-        assert ex["unifi_ap_name"] == "wco2-wld-ap-01"
+        assert ex["unifi_ap_name"] == "site1-annex-ap-01"
         assert ex["unifi_ssid"] == "Vantran Office"
         assert ex["unifi_rssi_dbm"] == -76
         assert ex["unifi_signal_quality"] == "fair"
@@ -145,7 +145,7 @@ class TestNormalizeDevice:
         result = {"raw": _DEVICE, "message": ""}
         unifi.normalize(result, SEVERITIES)
         assert result["program"] == "DEVICE"
-        assert result["message"] == "wco2-idf5-asw connected"
+        assert result["message"] == "site1-idf1-asw connected"
         ex = result["extras"]
         assert ex["unifi_event_type"] == "device_connected"
         assert ex["unifi_device_model"] == "USW-Pro"
@@ -185,7 +185,7 @@ class TestEndToEnd:
         assert msg["vendor"] == "ubiquiti"
         assert msg["program"] == "WIRELESS"
         assert msg["severity"] == 5  # CEF sev 3 → notice
-        assert "iPad connected to wco2-wld-ap-01" in msg["message"]
+        assert "iPad connected to site1-annex-ap-01" in msg["message"]
         assert msg["raw"] == raw  # original preserved
         assert msg["extras"]["unifi_event_id"] == "400"
         assert msg["extras"]["unifi_ssid"] == "Vantran Office"

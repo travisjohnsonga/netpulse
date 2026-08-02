@@ -90,8 +90,8 @@ export default function TVLayout({
         </div>
         <div className="flex items-center gap-6 text-xl" style={{ color: TV.muted }}>
           {rotation && <span>next: {rotation.current} in {rotation.nextCountdown}s</span>}
-          <span>↻ {countdown}s</span>
-          <Link to="/dashboard" className="text-base px-3 py-1 rounded-lg" style={{ background: TV.card, color: TV.text }}>← App</Link>
+          <span>refresh {countdown}s</span>
+          <Link to="/dashboard" className="text-base px-3 py-1 rounded-lg" style={{ background: TV.card, color: TV.text }}>Back</Link>
         </div>
       </header>
 

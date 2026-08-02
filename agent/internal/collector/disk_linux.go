@@ -9,12 +9,16 @@ import (
 	"syscall"
 )
 
-// Virtual/pseudo filesystems we never report on.
+// Virtual/pseudo filesystems + removable/optical media we never report on by
+// default. iso9660/udf are optical (DVD/ISO), squashfs is snap loop mounts, bpf
+// is /sys/fs/bpf (it leaked through before). The manual exclude_mounts filter
+// (Stage B) runs AFTER this, on the remaining real drives.
 var skipFSTypes = map[string]bool{
 	"tmpfs": true, "devtmpfs": true, "sysfs": true, "proc": true,
 	"devpts": true, "cgroup": true, "cgroup2": true, "pstore": true,
 	"debugfs": true, "hugetlbfs": true, "mqueue": true, "overlay": true,
 	"securityfs": true, "tracefs": true, "configfs": true, "fusectl": true,
+	"bpf": true, "iso9660": true, "udf": true, "squashfs": true,
 }
 
 type mountEntry struct {

@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { Tabs } from '../pages/Settings'
+import { useTabParam } from '../lib/useTabParam'
 
 export interface SettingsTab {
   id: string
@@ -14,15 +14,9 @@ export interface SettingsTab {
  * first tab when the param is missing or unknown.
  */
 export default function TabbedSettingsPage({ tabs }: { tabs: SettingsTab[] }) {
-  const [params, setParams] = useSearchParams()
-  const requested = params.get('tab')
-  const active = tabs.some((t) => t.id === requested) ? requested! : tabs[0].id
-
-  const setActive = (id: string) => {
-    const next = new URLSearchParams(params)
-    next.set('tab', id)
-    setParams(next, { replace: true })
-  }
+  // Shared hook: active tab in ?tab=…, restored on refresh, default tab omits
+  // the param (clean URL), invalid param falls back to the first tab.
+  const [active, setActive] = useTabParam(tabs.map((t) => t.id), tabs[0].id)
 
   return (
     <div>

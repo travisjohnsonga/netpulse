@@ -78,6 +78,8 @@ export interface HealthStatus {
   db?: boolean
   collector_ip?: string
   ssl_cert_days_remaining?: number | null
+  // Authoritative server wall-clock (UTC, ISO 8601); anchors the footer clock.
+  server_time?: string
 }
 
 export interface InfraServiceHealth {
@@ -200,6 +202,10 @@ export interface Alert {
   title: string
   device: string
   device_id: number | null
+  // Subject routing: 'server' → link to /servers/{server_id} (Agent UUID);
+  // 'network_device' (or absent) → /devices/{device_id}.
+  device_kind?: 'network_device' | 'server' | ''
+  server_id?: string | null
   interface: string
   transition: '' | 'up' | 'down'
   downtime_seconds: number | null
@@ -649,12 +655,79 @@ export async function fetchConfigDiff(
 
 // ── API calls ────────────────────────────────────────────────────────────────
 
-export async function login(
-  username: string,
-  password: string,
-): Promise<{ access: string; refresh: string; must_change_password?: boolean }> {
-  const { data } = await api.post<{ access: string; refresh: string; must_change_password?: boolean }>(
-    '/auth/token/', { username, password },
+// ── Auth + MFA (TOTP) ──────────────────────────────────────────────────────
+export interface TokenPair { access: string; refresh: string; must_change_password?: boolean }
+/** /api/auth/token/ returns ONE of these: the JWT pair, a second-factor
+ *  challenge, or a forced-enrollment ticket (privileged local account). */
+export type LoginResult =
+  | TokenPair
+  | { mfa_required: true; methods?: string[]; challenge_token: string }
+  | { mfa_enrollment_required: true; enrollment_token: string; detail?: string }
+
+export async function login(username: string, password: string): Promise<LoginResult> {
+  const { data } = await api.post<LoginResult>('/auth/token/', { username, password })
+  return data
+}
+
+/** Exchange the login challenge + a TOTP or recovery code for the real JWT pair. */
+export async function loginMfa(
+  challengeToken: string,
+  opts: { code?: string; recovery_code?: string },
+): Promise<TokenPair> {
+  const { data } = await api.post<TokenPair>('/auth/token/mfa/', {
+    challenge_token: challengeToken, ...opts,
+  })
+  return data
+}
+
+export interface MfaStatus {
+  mfa_enabled: boolean
+  confirmed_at: string | null
+  recovery_codes_remaining: number
+  required: boolean
+}
+export interface MfaSetup { otpauth_uri: string; qr_code: string; secret: string }
+export interface MfaConfirmResult {
+  recovery_codes: string[]
+  mfa_enabled: boolean
+  // present only on the forced-enrollment path (the user had no full token yet)
+  tokens?: TokenPair
+}
+
+// The forced-enrollment ticket isn't a JWT, so it's passed via header — never as
+// a Bearer. When present, the request carries no normal auth (the user has none).
+function enrollHeaders(enrollmentToken?: string) {
+  return enrollmentToken ? { headers: { 'X-MFA-Enrollment-Token': enrollmentToken } } : undefined
+}
+
+export async function fetchMfaStatus(): Promise<MfaStatus> {
+  const { data } = await api.get<MfaStatus>('/auth/mfa/')
+  return data
+}
+
+/** Begin enrollment — returns the otpauth URI + QR + manual-entry secret (pending). */
+export async function mfaSetup(enrollmentToken?: string): Promise<MfaSetup> {
+  const { data } = await api.post<MfaSetup>('/auth/mfa/setup/', {}, enrollHeaders(enrollmentToken))
+  return data
+}
+
+/** Confirm a code → activates MFA + returns one-time recovery codes (and, on the
+ *  forced path, the JWT pair). */
+export async function mfaConfirm(code: string, enrollmentToken?: string): Promise<MfaConfirmResult> {
+  const { data } = await api.post<MfaConfirmResult>(
+    '/auth/mfa/confirm/', { code }, enrollHeaders(enrollmentToken),
+  )
+  return data
+}
+
+export async function mfaDisable(code: string): Promise<void> {
+  await api.post('/auth/mfa/disable/', { code })
+}
+
+/** Admin: clear a user's MFA (user:manage). Never returns a secret. */
+export async function resetUserMfa(userId: number): Promise<{ had_mfa: boolean; username: string }> {
+  const { data } = await api.post<{ had_mfa: boolean; username: string }>(
+    `/users/${userId}/reset-mfa/`, {},
   )
   return data
 }
@@ -951,6 +1024,27 @@ export async function fetchPingSummary(): Promise<PingSummary[]> {
   return data
 }
 
+// Per-device current CPU% / memory% for the device-list CPU/Mem columns (from
+// InfluxDB telemetry; absent when a device reports none — list renders "—").
+export interface DeviceMetricsSummary {
+  device_id: number
+  cpu_pct: number | null
+  memory_pct: number | null
+}
+export async function fetchDeviceMetricsSummary(): Promise<DeviceMetricsSummary[]> {
+  const { data } = await api.get<DeviceMetricsSummary[]>('/devices/metrics-summary/')
+  return data
+}
+
+// Total/up/down counts for the Devices summary cards (DB counts over the network
+// -device set; the list is paginated so these aren't derivable client-side).
+export interface DeviceStatusSummary { total: number; up: number; down: number }
+export async function fetchDeviceStatusSummary(site?: string): Promise<DeviceStatusSummary> {
+  const { data } = await api.get<DeviceStatusSummary>('/devices/status-summary/',
+    { params: site ? { site } : {} })
+  return data
+}
+
 // ── ARP / MAC tables ──────────────────────────────────────────────────────────
 export interface ArpEntry {
   id: number
@@ -1211,6 +1305,9 @@ export interface AlertRule {
   condition: Record<string, unknown>
   channels: number[]
   is_active: boolean
+  // Generation-vs-notification split at the rule level: false → still generates
+  // AlertEvents (UI) but does not dispatch notifications (observe-only).
+  notify_enabled: boolean
   is_system: boolean
   cooldown_minutes: number
   created_at: string
@@ -1220,7 +1317,7 @@ export interface AlertRule {
 export interface AlertChannel {
   id: number
   name: string
-  channel_type: 'slack' | 'email' | 'pagerduty' | 'webhook'
+  channel_type: 'slack' | 'email' | 'pagerduty' | 'webhook' | 'teams'
   config: Record<string, unknown>
   is_active: boolean
 }
@@ -1243,6 +1340,31 @@ export async function updateAlertRule(id: number, payload: Partial<AlertRule>): 
 export async function fetchAlertChannels(): Promise<AlertChannel[]> {
   const { data } = await api.get<AlertChannel[] | Paginated<AlertChannel>>('/alerts/channels/')
   return unwrap(data)
+}
+
+export async function createAlertChannel(payload: Partial<AlertChannel>): Promise<AlertChannel> {
+  const { data } = await api.post<AlertChannel>('/alerts/channels/', payload)
+  return data
+}
+
+export async function updateAlertChannel(id: number, payload: Partial<AlertChannel>): Promise<AlertChannel> {
+  const { data } = await api.patch<AlertChannel>(`/alerts/channels/${id}/`, payload)
+  return data
+}
+
+export async function deleteAlertChannel(id: number): Promise<void> {
+  await api.delete(`/alerts/channels/${id}/`)
+}
+
+/** Send a synthetic test notification through one channel. Returns {ok, detail}. */
+export async function testAlertChannel(id: number): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const { data } = await api.post<{ ok: boolean; detail: string }>(`/alerts/channels/${id}/test/`, {})
+    return data
+  } catch (e) {
+    const err = e as { response?: { data?: { ok?: boolean; detail?: string } } }
+    return { ok: false, detail: err.response?.data?.detail ?? 'send failed' }
+  }
 }
 
 // ── Collectors ───────────────────────────────────────────────────────────────
@@ -1344,6 +1466,9 @@ export interface Agent {
   device_id: number | null
   site_name: string | null
   os: string
+  os_name?: string
+  os_version?: string
+  os_kernel?: string
   arch: string
   version: string
   cert_serial: string
@@ -1352,6 +1477,9 @@ export interface Agent {
   collection_interval: number
   role_types: string[]
   last_seen: string | null
+  is_online?: boolean
+  offline_threshold_seconds?: number | null
+  liveness_alerts_enabled?: boolean
   created_at: string
 }
 
@@ -1416,21 +1544,46 @@ export interface ServerLatestMetrics {
   disk_max_mount: string | null
 }
 
+export interface ReportedService {
+  name: string
+  display_name: string
+  running: boolean
+  state: string
+  start_type: string
+}
 export interface Server {
   id: string
   hostname: string
   os: string
+  os_name?: string
   os_version: string
+  os_kernel?: string
   arch: string
   status: string
   last_seen: string | null
+  // Authoritative online state (server-computed with the same threshold the
+  // liveness alert uses). Prefer this over a client-side last_seen window.
+  is_online?: boolean
+  offline_threshold_seconds?: number | null
+  liveness_alerts_enabled?: boolean
+  // Per-device alert silencing (on the agent's Device; set via /servers/{id}/alerting/).
+  alerting_enabled?: boolean
+  silenced_until?: string | null
   agent_version: string
   cert_expires_at: string | null
   collection_interval: number
   device_id: number | null
+  // The agent's real source IP (for collector-originated ping/RTT); distinct
+  // from the synthetic Device IP. Null/loopback → "not network-probed".
+  last_ip?: string | null
   site: { id: number; name: string } | null
   roles: string[]
   latest_metrics: ServerLatestMetrics
+  // General running-services list (the 'services' collection toggle's data);
+  // services_collected = whether that toggle is on. Rich entries (name + state +
+  // start_type) from newer agents; the API normalizes older names-only data too.
+  reported_services?: ReportedService[]
+  services_collected?: boolean
   created_at: string
 }
 
@@ -1447,9 +1600,31 @@ export interface ServerAlert {
   id: number; name: string; severity: string; state: string; summary: string; created_at: string
 }
 
+export interface WatchedServiceStatus {
+  name: string
+  display_name?: string
+  running: boolean
+  state: string
+  last_change_at: string | null
+  down_since: string | null
+  restarts_24h: number
+  collected_at: string | null
+}
+export interface ServerNetworkState {
+  // Collector-originated network reachability (distinct from agent self-report).
+  probed: boolean            // false = no routable host IP → "not network-probed"
+  reachable: boolean | null  // null when not probed
+  ip?: string | null
+  rtt_ms?: number | null
+  reason?: string
+}
 export interface ServerDetail extends Server {
   detail_metrics: ServerDetailMetrics
   recent_alerts: ServerAlert[]
+  // Service stability: the configured watch list + per-service health.
+  watched_services?: { configured: string[]; statuses: WatchedServiceStatus[] }
+  // Collector-originated network reachability for the "Network" chip.
+  network?: ServerNetworkState
 }
 
 export interface MetricHistory {
@@ -1460,6 +1635,13 @@ export interface MetricHistory {
 
 export async function fetchServers(): Promise<Server[]> {
   const { data } = await api.get<Server[] | Paginated<Server>>('/servers/')
+  return unwrap(data)
+}
+
+// Servers located at a site (Agent.device → Device.site); mirrors the site
+// server-count logic on the backend (?site=<id> filters on device__site).
+export async function fetchSiteServers(siteId: number): Promise<Server[]> {
+  const { data } = await api.get<Server[] | Paginated<Server>>('/servers/', { params: { site: String(siteId) } })
   return unwrap(data)
 }
 
@@ -1487,8 +1669,10 @@ export interface AssignedRole {
   assigned_at: string
   status: {
     checks_passed: number; checks_total: number
-    services: { name: string; running?: boolean; state?: string }[]
-    ports: { port: number; proto: string; open: boolean }[]
+    services: { name: string; running?: boolean; state?: string; start_type?: string }[]
+    ports: { name?: string; port: number; proto: string; open: boolean; latency_ms?: number }[]
+    custom?: { name?: string; passed?: boolean; ok?: boolean }[]
+    functional?: { url: string; health: string; status_code?: number; latency_ms?: number; cert_days_remaining?: number; error?: string }[]
     collected_at: string | null
   } | null
 }
@@ -1515,6 +1699,67 @@ export async function removeServerRole(id: string, roleId: number): Promise<void
 export async function detectServerRoles(id: string): Promise<DetectedRole[]> {
   const { data } = await api.post<{ detected: DetectedRole[] }>(`/servers/${id}/detect-roles/`)
   return data.detected
+}
+
+// Reassign a server to a different site (siteId null = unassign). The site lives
+// on the linked device; gated by agent:edit and audit-logged server-side.
+export async function changeServerSite(id: string, siteId: number | null): Promise<ServerDetail> {
+  const { data } = await api.post<ServerDetail>(`/servers/${id}/site/`, { site_id: siteId })
+  return data
+}
+
+// Agent desired-config (Stage A/B). The agent pulls this on its next ~30s
+// check-in and applies it — edits are NOT instant.
+export interface AgentDesiredConfig {
+  collection: Record<string, boolean>
+  interval_seconds: number
+  disk: { exclude_mounts: string[]; include_mounts: string[] }
+  stability?: { services: string[] }
+  // Per-server functional web check override. Empty/undefined urls = derive from
+  // the role's ports (HTTP :80 + HTTPS :443); set explicit on-host URLs to match
+  // what this host actually serves (e.g. HTTP-only → ["http://localhost/"], so the
+  // agent's webTargets() skips the 443 probe). SSRF-constrained server-side.
+  functional?: { web?: { urls: string[] } }
+  // Per-server role-service selection: role_type → the subset of that role's
+  // services this host actually runs. Empty/absent for a role = count them all
+  // (the default). Set a subset so an unselected service isn't a failing
+  // "not_found" in the role's X/Y-pass count.
+  role_services?: Record<string, string[]>
+}
+// Per-agent liveness-alert config (PATCH; gated by agent:edit + audit-logged).
+// offline_threshold_seconds=null → global default; liveness_alerts_enabled=false
+// suppresses the offline alert for a host that legitimately sleeps.
+export async function updateServerLiveness(
+  id: string,
+  patch: { offline_threshold_seconds?: number | null; liveness_alerts_enabled?: boolean },
+): Promise<ServerDetail> {
+  const { data } = await api.patch<ServerDetail>(`/servers/${id}/liveness/`, patch)
+  return data
+}
+
+// Per-device/server alert silencing (generate-but-don't-notify). alerting_enabled
+// = observe-only; silenced_until = timed mute (ISO, or null to un-silence).
+// Gated by device:edit / agent:edit + audited server-side.
+export type AlertingPatch = { alerting_enabled?: boolean; silenced_until?: string | null }
+export async function updateDeviceAlerting(id: number, patch: AlertingPatch): Promise<DeviceDetail> {
+  const { data } = await api.patch<DeviceDetail>(`/devices/${id}/alerting/`, patch)
+  return data
+}
+export async function updateServerAlerting(id: string, patch: AlertingPatch): Promise<ServerDetail> {
+  const { data } = await api.patch<ServerDetail>(`/servers/${id}/alerting/`, patch)
+  return data
+}
+
+export async function fetchServerConfig(id: string): Promise<AgentDesiredConfig> {
+  const { data } = await api.get<AgentDesiredConfig>(`/servers/${id}/config/`)
+  return data
+}
+// PATCH is gated by agent:edit + audit-logged server-side (403 without the cap).
+export async function updateServerConfig(
+  id: string, patch: Partial<AgentDesiredConfig>,
+): Promise<AgentDesiredConfig> {
+  const { data } = await api.patch<AgentDesiredConfig>(`/servers/${id}/config/`, patch)
+  return data
 }
 
 export async function fetchAgentTokens(): Promise<AgentToken[]> {
@@ -1901,12 +2146,17 @@ export interface ReportScheduleRow {
   id: number
   report_type: ReportTypeKey
   report_type_display: string
-  frequency: 'daily' | 'weekly' | 'monthly'
+  frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly'
   hour: number
   day_of_week: number
   day_of_month: number
   fmt: string
+  delivery: 'email' | 'store_only' | 'both'
+  delivery_display?: string
   recipients: string[]
+  // IANA tz the hour/day_of_week/day_of_month fields are expressed in (the
+  // requester's UserPreferences.timezone). The backend stores them in UTC.
+  timezone?: string
   parameters: Record<string, unknown>
   enabled: boolean
   last_run: string | null
@@ -2724,11 +2974,17 @@ export interface Site {
   devices_up: number
   devices_down: number
   devices_unknown: number
+  server_count: number
+  servers_up: number
+  servers_down: number
+  check_count: number
+  checks_up: number
+  checks_down: number
   created_at: string
   updated_at: string
 }
 
-export type SitePayload = Partial<Omit<Site, 'id' | 'slug' | 'parent_site_name' | 'device_count' | 'devices_up' | 'devices_down' | 'devices_unknown' | 'created_at' | 'updated_at'>> & { name: string }
+export type SitePayload = Partial<Omit<Site, 'id' | 'slug' | 'parent_site_name' | 'device_count' | 'devices_up' | 'devices_down' | 'devices_unknown' | 'server_count' | 'servers_up' | 'servers_down' | 'check_count' | 'checks_up' | 'checks_down' | 'created_at' | 'updated_at'>> & { name: string }
 
 export async function fetchSites(): Promise<Site[]> {
   const { data } = await api.get<Site[] | Paginated<Site>>('/sites/')
@@ -2785,6 +3041,9 @@ export interface DeviceDetail {
   is_reachable?: boolean
   consecutive_failures?: number
   last_reachability_check?: string | null
+  // Per-device alert silencing (set via /devices/{id}/alerting/).
+  alerting_enabled?: boolean
+  silenced_until?: string | null
   collector_name?: string | null
   collector_ip?: string | null
   collector_status?: string | null
@@ -2822,9 +3081,11 @@ export async function createDevice(payload: DeviceCreatePayload): Promise<Device
 }
 
 export interface VersionCheck {
-  current_version: string
+  current_version: string        // full git-describe (debugging)
+  display_version?: string       // clean release semver (UI)
+  is_dev_build?: boolean
   current_commit: string
-  latest_commit: string | null
+  latest_commit?: string | null
   latest_version: string | null
   update_available: boolean
   commits_behind: number
@@ -3755,6 +4016,53 @@ export async function fetchAlertNotifications(eventId: number): Promise<AlertNot
   const { data } = await api.get<AlertNotificationRecord[] | Paginated<AlertNotificationRecord>>(
     '/alerting/notifications/', { params: { alert_event: eventId, ordering: 'created_at' } })
   return unwrap(data)
+}
+
+// ── Notification delivery log + health (apps/alerts NotificationLog, PR #152) ──
+// Distinct from the escalation AlertNotification above: this is the #149-dispatch
+// delivery source of truth (one row per send attempt, sent/failed).
+export interface NotificationDelivery {
+  id: number
+  event: number
+  event_title: string
+  channel: number | null
+  channel_name: string
+  channel_type: string
+  transition: string
+  status: 'sent' | 'failed'
+  attempts: number
+  detail: string
+  created_at: string
+}
+export interface DeliveryHealthChannel {
+  channel_id: number | null
+  channel_name: string
+  channel_type: string
+  sent: number
+  failed: number
+  last_success: string | null
+  last_failure: string | null
+  healthy: boolean
+}
+export interface DeliveryHealth {
+  healthy: boolean
+  channels_failing: number
+  recent_failures: number
+  window_minutes: number
+  channels: DeliveryHealthChannel[]
+}
+
+export async function fetchNotificationDeliveries(
+  params: { status?: string; channel?: string; page_size?: string } = {},
+): Promise<NotificationDelivery[]> {
+  const { data } = await api.get<NotificationDelivery[] | Paginated<NotificationDelivery>>(
+    '/alerts/notifications/', { params: { page_size: '100', ...params } })
+  return unwrap(data)
+}
+
+export async function fetchDeliveryHealth(): Promise<DeliveryHealth> {
+  const { data } = await api.get<DeliveryHealth>('/alerts/notifications/delivery-health/')
+  return data
 }
 
 export async function acknowledgeAlertEvent(eventId: number, note?: string, snoozeMinutes?: number): Promise<void> {

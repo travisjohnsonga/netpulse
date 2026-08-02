@@ -70,14 +70,14 @@ def test_exporter_ip_is_full_not_truncated():
     cmd = _make_command()
     # 200 MB over a 1s window = 1600 Mbps > 1000 Mbps default threshold.
     _run(cmd._on_flow(FakeMsg(
-        "netpulse.flows.10.150.0.12.netflow5",
-        {"exporter_ip": "10.150.0.12", "bytes": 200_000_000, "duration_ms": 1000,
+        "netpulse.flows.192.0.2.12.netflow5",
+        {"exporter_ip": "192.0.2.12", "bytes": 200_000_000, "duration_ms": 1000,
          "src_ip": "10.0.0.5", "dst_ip": "8.8.8.8"},
     )))
     alerts = [p for s, p in cmd._nc.published if s == "netpulse.alerts.high"]
     assert len(alerts) == 1
     labels = alerts[0]["labels"]
-    assert labels["exporter_ip"] == "10.150.0.12"   # not "10"
+    assert labels["exporter_ip"] == "192.0.2.12"   # not "10"
     assert labels["source"] == "flow_monitor"
     # top-talker context surfaced
     assert labels["top_source"] == "10.0.0.5"
@@ -91,8 +91,8 @@ def test_zero_duration_record_does_not_explode():
     cmd = _make_command()
     # 40 bytes, no duration → previously /1ms = ~0.32 Mbps*1000 phantom Gbps.
     _run(cmd._on_flow(FakeMsg(
-        "netpulse.flows.10.150.0.12.netflow5",
-        {"exporter_ip": "10.150.0.12", "bytes": 40, "duration_ms": 0},
+        "netpulse.flows.192.0.2.12.netflow5",
+        {"exporter_ip": "192.0.2.12", "bytes": 40, "duration_ms": 0},
     )))
     assert [p for s, p in cmd._nc.published if s.startswith("netpulse.alerts.")] == []
     # still indexed to OpenSearch buffer
@@ -104,8 +104,8 @@ def test_zero_duration_record_does_not_explode():
 def test_latency_subject_routed_despite_dotted_ip():
     cmd = _make_command()
     _run(cmd._on_flow(FakeMsg(
-        "netpulse.flows.10.150.0.12.latency",
-        {"src_device": "10.150.0.12", "dst_device": "10.150.0.20", "latency_ms": 999},
+        "netpulse.flows.192.0.2.12.latency",
+        {"src_device": "192.0.2.12", "dst_device": "192.0.2.20", "latency_ms": 999},
     )))
     # latency path does NOT buffer a flow doc; it fires a latency alert.
     assert cmd._os_buffer == []
@@ -119,20 +119,20 @@ def test_alert_enriched_with_device_hostname(monkeypatch):
     cmd = _make_command()
 
     async def _fake(ip):
-        assert ip == "10.150.0.15"
-        return {"id": 42, "hostname": "wco2-mdf-crt-01"}
+        assert ip == "192.0.2.15"
+        return {"id": 42, "hostname": "site1-core-01"}
     monkeypatch.setattr(sp, "_device_for_ip", _fake)
 
     _run(cmd._on_flow(FakeMsg(
-        "netpulse.flows.10.150.0.15.netflow5",
-        {"exporter_ip": "10.150.0.15", "bytes": 300_000_000, "duration_ms": 1000},
+        "netpulse.flows.192.0.2.15.netflow5",
+        {"exporter_ip": "192.0.2.15", "bytes": 300_000_000, "duration_ms": 1000},
     )))
     alert = [p for s, p in cmd._nc.published if s == "netpulse.alerts.high"][0]
-    assert alert["labels"]["hostname"] == "wco2-mdf-crt-01"
-    assert alert["labels"]["device"] == "wco2-mdf-crt-01"
+    assert alert["labels"]["hostname"] == "site1-core-01"
+    assert alert["labels"]["device"] == "site1-core-01"
     assert alert["labels"]["device_id"] == "42"
-    assert alert["annotations"]["title"] == "High flow volume from wco2-mdf-crt-01"
-    assert "wco2-mdf-crt-01 (10.150.0.15)" in alert["annotations"]["message"]
+    assert alert["annotations"]["title"] == "High flow volume from site1-core-01"
+    assert "site1-core-01 (192.0.2.15)" in alert["annotations"]["message"]
 
 
 def test_device_lookup_helper_resolves_by_either_ip(db):

@@ -10,20 +10,19 @@ import { TV } from './TVLayout'
 export interface TVScreen {
   key: string
   path: string
-  icon: string
   title: string
   blurb: string
   interval: number
 }
 
 export const TV_SCREENS: TVScreen[] = [
-  { key: 'network', path: '/tv/network', icon: '📡', title: 'Network Overview', blurb: 'Devices, alerts, status', interval: 45 },
-  { key: 'wireless', path: '/tv/wireless-mist', icon: '📶', title: 'Wireless (Mist)', blurb: 'APs, SLE, floor map, clients', interval: 30 },
-  { key: 'security', path: '/tv/security', icon: '🔒', title: 'Security Events', blurb: 'Auth failures, alerts, threats', interval: 30 },
-  { key: 'ops', path: '/tv/ops', icon: '📊', title: 'Operations Status', blurb: 'Collection, agents, services', interval: 60 },
-  { key: 'sites', path: '/tv/sites', icon: '📍', title: 'Site Status', blurb: 'Per-site device up/down', interval: 45 },
-  { key: 'servers', path: '/tv/servers', icon: '🖥️', title: 'Server Health', blurb: 'CPU, mem, disk across servers', interval: 30 },
-  { key: 'compliance', path: '/tv/compliance', icon: '✅', title: 'Compliance Status', blurb: 'Framework coverage, gaps', interval: 300 },
+  { key: 'network', path: '/tv/network', title: 'Network Overview', blurb: 'Devices, alerts, status', interval: 45 },
+  { key: 'wireless', path: '/tv/wireless-mist', title: 'Wireless (Mist)', blurb: 'APs, SLE, floor map, clients', interval: 30 },
+  { key: 'security', path: '/tv/security', title: 'Security Events', blurb: 'Auth failures, alerts, threats', interval: 30 },
+  { key: 'ops', path: '/tv/ops', title: 'Operations Status', blurb: 'Collection, agents, services', interval: 60 },
+  { key: 'sites', path: '/tv/sites', title: 'Site Status', blurb: 'Per-site device up/down', interval: 45 },
+  { key: 'servers', path: '/tv/servers', title: 'Server Health', blurb: 'CPU, mem, disk across servers', interval: 30 },
+  { key: 'compliance', path: '/tv/compliance', title: 'Compliance Status', blurb: 'Framework coverage, gaps', interval: 300 },
 ]
 
 export default function TVLauncher() {
@@ -47,15 +46,14 @@ export default function TVLauncher() {
             <h1 className="text-5xl font-bold" style={{ color: TV.accent }}>spane</h1>
             <p className="mt-1 text-2xl" style={{ color: TV.muted }}>TV Dashboard Mode</p>
           </div>
-          <Link to="/dashboard" className="rounded-lg px-4 py-2 text-lg" style={{ background: TV.card }}>← Back to app</Link>
+          <Link to="/dashboard" className="rounded-lg px-4 py-2 text-lg" style={{ background: TV.card }}>Back to app</Link>
         </div>
 
         <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {TV_SCREENS.map((s) => (
             <Link key={s.key} to={s.path} className="group rounded-2xl p-7 transition-transform hover:scale-[1.02]"
               style={{ background: TV.card }}>
-              <div className="text-5xl">{s.icon}</div>
-              <div className="mt-4 text-2xl font-semibold">{s.title}</div>
+              <div className="text-2xl font-semibold">{s.title}</div>
               <div className="mt-1 text-lg" style={{ color: TV.muted }}>{s.blurb}</div>
             </Link>
           ))}
@@ -69,7 +67,7 @@ export default function TVLauncher() {
               <label key={s.key} className="flex items-center gap-3 text-xl">
                 <input type="checkbox" className="h-5 w-5" checked={!!selected[s.key]}
                   onChange={(e) => setSelected((p) => ({ ...p, [s.key]: e.target.checked }))} />
-                {s.icon} {s.title}
+                {s.title}
               </label>
             ))}
           </div>

@@ -56,10 +56,10 @@ function SleRing({ label, value }: { label: string; value: number | null }) {
   )
 }
 
-function Tile({ icon, label, value, sub, color }: { icon: string; label: string; value: string; sub?: string; color: string }) {
+function Tile({ label, value, sub, color }: { label: string; value: string; sub?: string; color: string }) {
   return (
     <div className="flex flex-col justify-center rounded-xl px-5 py-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-      <div className="text-sm uppercase tracking-widest" style={{ color: C.muted }}>{icon} {label}</div>
+      <div className="text-sm uppercase tracking-widest" style={{ color: C.muted }}>{label}</div>
       <div className="font-bold tabular-nums leading-none" style={{ fontSize: 64, color }}>{value}</div>
       {sub && <div className="text-base" style={{ color: C.muted }}>{sub}</div>}
     </div>
@@ -184,7 +184,7 @@ export default function TVWirelessMist() {
     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: C.bg, color: C.text, fontFamily: 'system-ui, Inter, sans-serif' }}>
       <header className="flex items-center justify-between px-6 py-2" style={{ borderBottom: `1px solid ${C.border}` }}>
         <div className="text-xl font-semibold"><span style={{ color: C.blue }}>spane</span> · {siteName} · Wireless</div>
-        <div className="flex items-center gap-4 text-base tabular-nums" style={{ color: C.muted }}>↻ {countdown}s | {now}</div>
+        <div className="flex items-center gap-4 text-base tabular-nums" style={{ color: C.muted }}>refresh {countdown}s · {now}</div>
       </header>
 
       {!data ? (
@@ -194,9 +194,9 @@ export default function TVWirelessMist() {
           <FloorMap data={data} />
           <div className="grid grid-rows-[auto_auto_1fr] gap-4 overflow-hidden">
             <div className="grid grid-cols-3 gap-3">
-              <Tile icon="📱" label="Clients" value={String(s?.clients_online ?? 0)} sub={`of ${s?.clients_total ?? 0}`} color={handheldsOk ? C.green : C.yellow} />
-              <Tile icon="📡" label="APs Up" value={`${s?.aps_online ?? 0}/${s?.aps_total ?? 0}`} sub={apsOk ? 'all up' : `${(s?.aps_total ?? 0) - (s?.aps_online ?? 0)} offline ⚠️`} color={apsOk ? C.green : C.orange} />
-              <Tile icon="📶" label="Throughput" value={`${s?.throughput_mbps ?? 0}`} sub="Mbps" color={C.text} />
+              <Tile label="Clients" value={String(s?.clients_online ?? 0)} sub={`of ${s?.clients_total ?? 0}`} color={handheldsOk ? C.green : C.yellow} />
+              <Tile label="APs Up" value={`${s?.aps_online ?? 0}/${s?.aps_total ?? 0}`} sub={apsOk ? 'all up' : `${(s?.aps_total ?? 0) - (s?.aps_online ?? 0)} offline`} color={apsOk ? C.green : C.orange} />
+              <Tile label="Throughput" value={`${s?.throughput_mbps ?? 0}`} sub="Mbps" color={C.text} />
             </div>
             <div className="grid grid-cols-2 grid-rows-2 gap-2 rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
               <SleRing label="Roaming" value={sle?.roaming ?? null} />

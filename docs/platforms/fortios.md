@@ -3,6 +3,17 @@
 spane supports Fortinet FortiGate firewalls (platform `fortios`). FortiOS has
 **no gNMI** — telemetry is SNMP + Syslog + NetFlow.
 
+**Enrichment (v0.7.1+) is REST-first:** `GET /api/v2/monitor/system/status`
+with a **bearer token** from a read-only REST API admin (`config system
+accprofile` with `sysgrp read` → `config system api-user` → `execute api-user
+generate-key …`; note both api-user creation and key generation re-prompt for
+the admin password). The token is stored as the credential profile's HTTPS
+**Bearer Token** (`https_token`, OpenBao). `version`/`serial`/`build` are
+top-level envelope fields on every monitor response. SNMP fallback:
+**`fgSysVersion`** (`1.3.6.1.4.1.12356.101.4.1.1.0`) — required because
+FortiGate **VMs commonly report an EMPTY sysDescr**, so no sysDescr parsing
+can work there; `os_version` is stored vendor-native (`v7.4.5,build2662`).
+
 > 🔒 This guide contains **no credentials**. Store device credentials in OpenBao
 > (Settings → Credentials) or, for local lab reference, in the gitignored
 > `LOCAL_NOTES.md`.

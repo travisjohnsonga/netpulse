@@ -48,6 +48,13 @@ import tempfile as _tempfile  # noqa: E402
 
 MEDIA_ROOT = _tempfile.mkdtemp(prefix="netpulse-test-media-")
 
+# Don't deliver alerts to external channels during the broad suite — dispatch
+# tests opt back in via override_settings(ALERT_DISPATCH_ENABLED=True) and mock
+# the actual notifier I/O. Zero backoff so any test that does run is instant.
+ALERT_DISPATCH_ENABLED = False
+ALERT_DISPATCH_MAX_ATTEMPTS = 1
+ALERT_DISPATCH_BACKOFF_S = 0
+
 # No NATS in the unit-test environment — don't publish device configs on save.
 SNMP_DEVICE_PUBLISH = False
 

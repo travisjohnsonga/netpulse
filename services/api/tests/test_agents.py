@@ -116,6 +116,25 @@ class TestEnroll:
         t.refresh_from_db()
         assert t.use_count == 1 and t.is_active is False
 
+    def test_enroll_stores_os_detail(self, api_client, fake_pki):
+        t = _token()
+        resp = _enroll(api_client, t.token, hostname="ubu-01",
+                       os_name="Ubuntu 22.04.3 LTS", os_version="22.04", kernel="6.8.0-31")
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.os == "linux"          # os_family unchanged
+        assert agent.os_name == "Ubuntu 22.04.3 LTS"
+        assert agent.os_version == "22.04"
+        assert agent.os_kernel == "6.8.0-31"
+
+    def test_enroll_old_agent_without_os_detail(self, api_client, fake_pki):
+        # Backward-compat: a pre-OS-detail agent omits os_name/os_version/kernel.
+        t = _token()
+        resp = _enroll(api_client, t.token, hostname="old-01")  # no os_* extras
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.os == "linux" and agent.os_name == "" and agent.os_version == ""
+
     def test_enroll_invalid_token_403(self, api_client, fake_pki):
         assert _enroll(api_client, "nope").status_code == 403
 
@@ -130,14 +149,20 @@ class TestEnroll:
         t = _token()
         assert _enroll(api_client, t.token).status_code == 502
 
-    def test_second_agent_same_ip_enrolls_without_device(self, api_client, fake_pki):
+    def test_second_agent_same_ip_still_gets_a_device(self, api_client, fake_pki):
+        # Agents behind one shared source IP (e.g. through nginx) must EACH get a
+        # linked Device — the second falls back to a unique synthetic ULA instead
+        # of being left device-less (which blocked site-assign).
         t = _token(max_uses=0)
         _enroll(api_client, t.token, hostname="host-a")
         resp = _enroll(api_client, t.token, hostname="host-b")
         assert resp.status_code == 201
-        # IP already owned by host-a → host-b enrolls but gets no auto device.
-        assert Agent.objects.get(hostname="host-b").device is None
-        assert Device.objects.filter(hostname="host-b").count() == 0
+        b = Agent.objects.get(hostname="host-b")
+        assert b.device is not None
+        assert Device.objects.filter(hostname="host-b").count() == 1
+        # host-a kept the real IP; host-b got a distinct (synthetic) one.
+        a = Agent.objects.get(hostname="host-a")
+        assert a.device.ip_address != b.device.ip_address
 
     def test_reenroll_same_host_reuses_agent(self, api_client, fake_pki, monkeypatch):
         # Re-running the installer on an already-enrolled host updates the same
@@ -257,6 +282,28 @@ class TestServerRoleAssignment:
         assert auth_client.delete(f"/api/servers/{s.id}/roles/{dns.id}/").status_code == 204
         assert auth_client.get(f"/api/servers/{s.id}/roles/").json() == []
 
+    def test_roles_action_returns_per_check_detail(self, auth_client):
+        from apps.agents.models import AgentRole, AgentRoleStatus
+        from django.utils import timezone
+        s = self._server()
+        web = ServerRole.objects.get(role_type="web")
+        AgentRole.objects.create(agent=s, role=web)
+        AgentRoleStatus.objects.create(
+            agent=s, role_type="web",
+            services=[{"name": "nginx", "running": True, "state": "active"},
+                      {"name": "apache2", "running": False, "state": "not_found"}],
+            ports=[{"name": "HTTP", "port": 80, "proto": "tcp", "open": True}],
+            custom=[{"name": "tls-cert-valid", "passed": True}],
+            collected_at=timezone.now())
+        st = next(r for r in auth_client.get(f"/api/servers/{s.id}/roles/").json()
+                  if r["role_type"] == "web")["status"]
+        # X/Y counts services+ports (not custom); per-check detail is present.
+        assert st["checks_passed"] == 2 and st["checks_total"] == 3
+        assert {x["name"]: x["running"] for x in st["services"]} == {"nginx": True, "apache2": False}
+        assert st["ports"][0]["open"] is True and st["ports"][0]["port"] == 80
+        assert st["custom"][0]["name"] == "tls-cert-valid"
+        assert st["collected_at"] is not None
+
     def test_assign_unknown_role_400(self, auth_client):
         s = self._server()
         assert auth_client.post(f"/api/servers/{s.id}/roles/", {"role_id": 999999}, format="json").status_code == 400
@@ -282,7 +329,9 @@ class TestServerRoleAssignment:
         api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"services": ["named", "nginx"]}},
                         format="json", HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
         a.refresh_from_db()
-        assert a.reported_services == ["named", "nginx"]
+        # Stored as normalized rich dicts now (names-only input → running=true).
+        assert [s["name"] for s in a.reported_services] == ["named", "nginx"]
+        assert all(s["running"] for s in a.reported_services)
 
     def test_server_roles_require_auth(self, api_client):
         s = self._server()
@@ -318,6 +367,461 @@ class TestServersApi:
         assert api_client.get("/api/servers/").status_code == 401
 
 
+# ── OS-detail: refresh-on-push + serializer exposure + backward-compat ────────────
+
+class TestOSDetail:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _agent(self, **kw):
+        return Agent.objects.create(hostname="srv-os", cert_serial="ab:cd:ef:01", **kw)
+
+    def test_metrics_refreshes_os_detail(self, api_client, monkeypatch):
+        # An in-place OS upgrade self-corrects: the push carries metrics.system.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(os="linux", os_name="Ubuntu 20.04.6 LTS", os_version="20.04")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"system": {
+            "os": "linux", "os_name": "Ubuntu 22.04.3 LTS", "os_version": "22.04",
+            "kernel": "6.8.0-31"}}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.os_name == "Ubuntu 22.04.3 LTS" and a.os_version == "22.04"
+        assert a.os_kernel == "6.8.0-31"
+
+    def test_metrics_without_system_keeps_os_detail(self, api_client, monkeypatch):
+        # Older agent (no system block / no os_name) must not blank good data.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(os="linux", os_name="Ubuntu 22.04.3 LTS", os_version="22.04")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}},
+                            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.os_name == "Ubuntu 22.04.3 LTS"  # not blanked
+
+    def test_agent_serializer_exposes_os_detail(self, auth_client):
+        Agent.objects.create(hostname="ser-os", cert_serial="s1",
+                             os="linux", os_name="AlmaLinux 9.4", os_version="9.4")
+        rows = auth_client.get("/api/agents/").json()
+        rows = rows.get("results", rows)
+        row = next(a for a in rows if a["hostname"] == "ser-os")
+        assert row["os"] == "linux" and row["os_name"] == "AlmaLinux 9.4"
+        assert row["os_version"] == "9.4"
+
+    def test_server_serializer_prefers_agent_os(self, auth_client):
+        # ServerSerializer.os_version prefers the agent's own value (not Device).
+        Agent.objects.create(hostname="srv-detail", cert_serial="s2",
+                             os="linux", os_name="Debian 12", os_version="12")
+        servers = auth_client.get("/api/servers/").json()
+        servers = servers.get("results", servers)
+        row = next(s for s in servers if s["hostname"] == "srv-detail")
+        assert row["os_name"] == "Debian 12" and row["os_version"] == "12"
+
+    def test_old_agent_serializes_with_blank_os_detail(self, auth_client):
+        # Pre-OS-detail agent: os_name/os_version blank, os still present → UI falls back.
+        Agent.objects.create(hostname="legacy-os", cert_serial="s3", os="linux")
+        rows = auth_client.get("/api/agents/").json()
+        rows = rows.get("results", rows)
+        row = next(a for a in rows if a["hostname"] == "legacy-os")
+        assert row["os"] == "linux" and row["os_name"] == "" and row["os_version"] == ""
+
+
+# ── Device linking: every active agent gets a Device (self-heal + on-demand) ──────
+
+class TestAgentDeviceLink:
+    def test_ensure_agent_device_creates_when_missing(self):
+        from apps.agents.device_link import ensure_agent_device
+        from apps.devices.models import Device
+        a = Agent.objects.create(hostname="orphan-1", cert_serial="o1")
+        assert a.device_id is None
+        dev = ensure_agent_device(a)  # no request → synthetic placeholder IP
+        assert dev is not None
+        a.refresh_from_db()
+        assert a.device_id == dev.id
+        assert Device.objects.filter(hostname="orphan-1").count() == 1
+
+    def test_ensure_is_idempotent(self):
+        from apps.agents.device_link import ensure_agent_device
+        a = Agent.objects.create(hostname="orphan-2", cert_serial="o2")
+        d1 = ensure_agent_device(a)
+        d2 = ensure_agent_device(a)
+        assert d1.id == d2.id  # already linked → no duplicate
+
+    def test_placeholder_ip_unique_and_valid(self):
+        import ipaddress
+        from apps.agents.device_link import placeholder_ip
+        a = Agent.objects.create(hostname="ph-a", cert_serial="pa")
+        b = Agent.objects.create(hostname="ph-b", cert_serial="pb")
+        ip_a, ip_b = placeholder_ip(a), placeholder_ip(b)
+        assert ipaddress.ip_address(ip_a).version == 6  # valid IPv6
+        assert ip_a != ip_b                              # unique per agent
+
+    def test_metrics_self_heals_device_less_agent(self, api_client, monkeypatch):
+        # A device-less agent (enrolled behind a shared-IP proxy before the fix)
+        # gets a Device created on its next metrics check-in.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="heal-1", cert_serial="ab:cd:ef:01")
+        assert a.device_id is None
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json",
+                            HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.device_id is not None
+
+    def test_change_site_autocreates_device_instead_of_400(self, auth_client):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="HQ-link")
+        a = Agent.objects.create(hostname="nodev-1", cert_serial="nd1")
+        assert a.device_id is None
+        r = auth_client.post(f"/api/servers/{a.id}/site/", {"site_id": site.id}, format="json")
+        assert r.status_code == 200, r.content  # was 400 "no linked device"
+        a.refresh_from_db()
+        assert a.device_id is not None and a.device.site_id == site.id
+
+
+# ── Agent liveness alerting (offline detection via the existing alert plumbing) ───
+
+class TestAgentLiveness:
+    def _agent(self, secs_ago=None, **kw):
+        from django.utils import timezone
+        from datetime import timedelta
+        last = None if secs_ago is None else timezone.now() - timedelta(seconds=secs_ago)
+        return Agent.objects.create(hostname="srv-live", cert_serial="lv1",
+                                    last_seen=last, **kw)
+
+    def _fire_count(self):
+        from apps.alerts.models import AlertEvent
+        return AlertEvent.objects.filter(state=AlertEvent.State.FIRING,
+                                         labels__alert_type="agent_offline").count()
+
+    def test_offline_alert_links_device_id(self):
+        # Regression: agent-offline must carry labels.device_id for device-scoped
+        # views (same fix as stability).
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        from apps.devices.models import Device
+        a = self._agent(secs_ago=600)
+        d = Device.objects.create(hostname="srv-live", ip_address="10.4.5.6",
+                                  platform=Device.Platform.OTHER, status=Device.Status.ACTIVE)
+        a.device = d
+        a.save(update_fields=["device"])
+        reconcile_agent_liveness()
+        ev = AlertEvent.objects.get(labels__alert_type="agent_offline")
+        assert ev.labels.get("device_id") == d.id
+
+    def test_stale_agent_fires_offline_alert(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        self._agent(secs_ago=600)  # > 300s default
+        res = reconcile_agent_liveness()
+        assert res["fired"] == 1
+        ev = AlertEvent.objects.get(labels__alert_type="agent_offline")
+        # Reuses the existing AlertEvent/AlertRule plumbing (not a parallel system).
+        assert ev.state == AlertEvent.State.FIRING
+        assert ev.rule.name == "Agent Offline"
+        assert ev.labels["source"] == "agent_liveness"
+        assert ev.labels["hostname"] == "srv-live"
+
+    def test_fresh_agent_does_not_fire(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        self._agent(secs_ago=30)  # well within 300s
+        assert reconcile_agent_liveness()["fired"] == 0
+        assert self._fire_count() == 0
+
+    def test_auto_resolves_when_agent_reports_again(self):
+        from django.utils import timezone
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        a = self._agent(secs_ago=600)
+        reconcile_agent_liveness()
+        assert self._fire_count() == 1
+        a.last_seen = timezone.now()      # agent resumes reporting
+        a.save(update_fields=["last_seen"])
+        res = reconcile_agent_liveness()
+        assert res["resolved"] == 1 and self._fire_count() == 0
+        ev = AlertEvent.objects.get(labels__alert_type="agent_offline")
+        assert ev.state == AlertEvent.State.RESOLVED and ev.resolved_at is not None
+
+    def test_debounce_no_duplicate_while_down(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        from apps.alerts.models import AlertEvent
+        self._agent(secs_ago=600)
+        reconcile_agent_liveness()
+        reconcile_agent_liveness()  # still down → must NOT re-fire
+        reconcile_agent_liveness()
+        assert AlertEvent.objects.filter(labels__alert_type="agent_offline").count() == 1
+        assert self._fire_count() == 1
+
+    def test_threshold_is_configurable_per_agent(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        # 120s silent: fires under a tight 60s per-agent override...
+        self._agent(secs_ago=120, offline_threshold_seconds=60)
+        assert reconcile_agent_liveness()["fired"] == 1
+
+    def test_default_threshold_not_tripped_by_short_blip(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        # ...but 120s silent does NOT fire under the 300s global default.
+        self._agent(secs_ago=120)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_suppressed_agent_does_not_fire_and_resolves(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        a = self._agent(secs_ago=600)
+        reconcile_agent_liveness()
+        assert self._fire_count() == 1
+        a.liveness_alerts_enabled = False  # e.g. the napping lab box
+        a.save(update_fields=["liveness_alerts_enabled"])
+        res = reconcile_agent_liveness()
+        assert res["resolved"] == 1 and self._fire_count() == 0
+        # A suppressed agent never fires in the first place either.
+        Agent.objects.filter(id=a.id).update(liveness_alerts_enabled=False)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_revoked_agent_ignored(self):
+        from apps.agents.liveness import reconcile_agent_liveness
+        self._agent(secs_ago=600, status=Agent.Status.REVOKED)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_never_reported_new_agent_has_grace(self):
+        # last_seen=None but freshly created → grace (uses created_at), no alert.
+        from apps.agents.liveness import reconcile_agent_liveness
+        self._agent(secs_ago=None)
+        assert reconcile_agent_liveness()["fired"] == 0
+
+    def test_liveness_patch_action_sets_override(self, auth_client):
+        a = self._agent(secs_ago=30)
+        r = auth_client.patch(f"/api/servers/{a.id}/liveness/",
+                              {"offline_threshold_seconds": 120, "liveness_alerts_enabled": False},
+                              format="json")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.offline_threshold_seconds == 120 and a.liveness_alerts_enabled is False
+
+
+# ── Service stability monitoring (watched services → down/flap alerts) ────────────
+
+class TestServiceStability:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _agent(self):
+        return Agent.objects.create(hostname="srv-stab", cert_serial="ab:cd:ef:01")
+
+    def _open(self, agent, alert_type, service):
+        from apps.alerts.models import AlertEvent
+        return AlertEvent.objects.filter(
+            state=AlertEvent.State.FIRING, labels__alert_type=alert_type,
+            labels__agent_id=str(agent.id), labels__service=service).first()
+
+    def test_down_alert_links_device_id(self):
+        # Regression: the alert must carry labels.device_id so it shows in the
+        # Device column / server Recent Alerts (labels__device_id queries).
+        from apps.agents.stability import reconcile_watched_services
+        from apps.devices.models import Device
+        a = self._agent()
+        d = Device.objects.create(hostname="srv-stab", ip_address="10.1.2.3",
+                                  platform=Device.Platform.OTHER, status=Device.Status.ACTIVE)
+        a.device = d
+        a.save(update_fields=["device"])
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        ev = self._open(a, "service_down", "docker")
+        assert ev is not None and ev.labels.get("device_id") == d.id
+
+    # --- config validation (charset + cap), via the audited /config/ PATCH ---
+    def test_config_accepts_valid_watched_services(self, auth_client):
+        a = self._agent()
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"stability": {"services": ["docker", "postgresql", "sshd"]}},
+                              format="json")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.effective_config()["stability"]["services"] == ["docker", "postgresql", "sshd"]
+
+    def test_config_rejects_bad_service_name(self, auth_client):
+        a = self._agent()
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"stability": {"services": ["ok", "bad; rm -rf"]}}, format="json")
+        assert r.status_code == 400
+
+    def test_config_rejects_too_many(self, auth_client):
+        a = self._agent()
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"stability": {"services": [f"svc{i}" for i in range(60)]}}, format="json")
+        assert r.status_code == 400
+
+    def test_config_change_is_audited(self, auth_client):
+        from apps.core.models import AuditLog
+        a = self._agent()
+        auth_client.patch(f"/api/servers/{a.id}/config/",
+                          {"stability": {"services": ["docker"]}}, format="json")
+        assert AuditLog.objects.filter(event_type=AuditLog.EventType.AGENT_CONFIG_CHANGED).exists()
+
+    # --- transition detection + alerts ---
+    def test_down_fires_and_recovery_resolves(self):
+        from apps.agents.stability import reconcile_watched_services
+        from apps.alerts.models import AlertEvent
+        a = self._agent()
+        reconcile_watched_services(a, [{"name": "docker", "running": True, "state": "active"}])
+        assert self._open(a, "service_down", "docker") is None
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        ev = self._open(a, "service_down", "docker")
+        assert ev is not None and ev.rule.name == "Service Down"
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        assert AlertEvent.objects.filter(labels__alert_type="service_down",
+                                         labels__service="docker").count() == 1  # debounced
+        reconcile_watched_services(a, [{"name": "docker", "running": True, "state": "active"}])
+        assert self._open(a, "service_down", "docker") is None  # auto-resolved
+
+    def test_flap_fires_on_repeated_restarts(self):
+        from django.utils import timezone
+        from apps.agents.stability import reconcile_watched_services
+        from apps.agents.models import WatchedServiceStatus
+        a = self._agent()
+        reconcile_watched_services(a, [{"name": "nginx", "running": True, "state": "active"}])
+        ws = WatchedServiceStatus.objects.get(agent=a, name="nginx")
+        ws.restarts = [timezone.now().isoformat() for _ in range(3)]  # within flap window
+        ws.save(update_fields=["restarts"])
+        reconcile_watched_services(a, [{"name": "nginx", "running": True, "state": "active"}])
+        assert self._open(a, "service_flapping", "nginx") is not None
+
+    def test_dewatching_resolves_and_removes(self):
+        from apps.agents.stability import reconcile_watched_services
+        from apps.agents.models import WatchedServiceStatus
+        a = self._agent()
+        reconcile_watched_services(a, [{"name": "docker", "running": False, "state": "inactive"}])
+        assert self._open(a, "service_down", "docker") is not None
+        reconcile_watched_services(a, [])  # docker removed from the watch list
+        assert self._open(a, "service_down", "docker") is None
+        assert not WatchedServiceStatus.objects.filter(agent=a, name="docker").exists()
+
+    def test_metrics_payload_drives_stability(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent()
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"metrics": {"watched_services": [
+                                {"name": "docker", "running": False, "state": "inactive"}]}},
+                            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        assert self._open(a, "service_down", "docker") is not None
+
+
+# ── Rich general-service detail (state/start-type, not just names) ─────────────────
+
+class TestRichServiceDetail:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _rich(self, obj):
+        from apps.agents.serializers import ServerSerializer
+        return ServerSerializer(obj).data["reported_services"]
+
+    def test_metrics_stores_rich_services(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="srv-rich", cert_serial="ab:cd:ef:01")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {"services": [
+            {"name": "spooler", "display_name": "Print Spooler", "running": True,
+             "state": "active", "start_type": "enabled"},
+            {"name": "cron", "running": True, "state": "active", "start_type": "static"}]}},
+            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        rich = self._rich(a)
+        sp = next(s for s in rich if s["name"] == "spooler")
+        assert sp["state"] == "active" and sp["start_type"] == "enabled" and sp["running"]
+        assert sp["display_name"] == "Print Spooler"  # friendly name flows through
+
+    def test_names_only_agent_normalized(self, api_client, monkeypatch):
+        # Backward-compat: an older agent sends bare name strings.
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="srv-old", cert_serial="ab:cd:ef:01")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"metrics": {"services": ["docker", "sshd"]}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        rich = self._rich(a)
+        assert {s["name"] for s in rich} == {"docker", "sshd"}
+        assert all(s["running"] and s["state"] == "" for s in rich)
+
+    def test_serializer_normalizes_stale_string_data(self):
+        # A pre-existing names-only reported_services (stored before this change).
+        a = Agent.objects.create(hostname="srv-stale", cert_serial="s",
+                                 reported_services=["docker"])
+        rich = self._rich(a)
+        assert rich == [{"name": "docker", "display_name": "", "running": True,
+                         "state": "", "start_type": ""}]
+
+    def test_auto_detect_handles_rich_dicts(self):
+        from apps.agents.detection import auto_detect_roles
+        a = Agent.objects.create(hostname="srv-det", cert_serial="s", os="linux",
+                                 reported_services=[{"name": "nginx", "running": True}])
+        detected = {d["role_type"] for d in auto_detect_roles(a)}
+        assert "web" in detected  # seeded Web role lists nginx
+
+
+# ── Web role functional health (HTTP gradient + cert + SSRF) ──────────────────────
+
+class TestWebFunctional:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ab:cd:ef:01")
+
+    def _agent_with_device(self):
+        from apps.devices.models import Device
+        a = Agent.objects.create(hostname="web-fn", cert_serial="ab:cd:ef:01")
+        d = Device.objects.create(hostname="web-fn", ip_address="10.9.9.9",
+                                  platform=Device.Platform.OTHER, status=Device.Status.ACTIVE)
+        a.device = d
+        a.save(update_fields=["device"])
+        return a
+
+    def _open(self, agent, alert_type, url):
+        from apps.alerts.models import AlertEvent
+        return AlertEvent.objects.filter(
+            state=AlertEvent.State.FIRING, labels__alert_type=alert_type,
+            labels__agent_id=str(agent.id), labels__url=url).first()
+
+    def test_config_rejects_offhost_url(self, auth_client):
+        a = Agent.objects.create(hostname="w1", cert_serial="s")
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"functional": {"web": {"urls": ["http://example.com/"]}}}, format="json")
+        assert r.status_code == 400  # SSRF: off-host rejected
+
+    def test_config_accepts_localhost_url(self, auth_client):
+        a = Agent.objects.create(hostname="w2", cert_serial="s")
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"functional": {"web": {"urls": ["https://localhost/health"]}}}, format="json")
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.effective_config()["functional"]["web"]["urls"] == ["https://localhost/health"]
+
+    def test_role_check_functional_stored_and_alerts(self, api_client, auth_client):
+        a = self._agent_with_device()
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "services": [], "ports": [], "functional": [
+                {"url": "https://localhost/", "health": "down", "error": "timeout"}]}]},
+            format="json", **self._HDR)
+        ev = self._open(a, "site_down", "https://localhost/")
+        # device_id label set (the linkage key for Device column / Recent Alerts).
+        assert ev is not None and ev.labels.get("device_id") == a.device_id
+        st = next(r for r in auth_client.get(f"/api/servers/{a.id}/roles/").json()
+                  if r["role_type"] == "web")["status"]
+        assert st["functional"][0]["health"] == "down"
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "services": [], "ports": [], "functional": [
+                {"url": "https://localhost/", "health": "healthy", "status_code": 200}]}]},
+            format="json", **self._HDR)
+        assert self._open(a, "site_down", "https://localhost/") is None  # auto-resolved
+
+    def test_cert_expiring_alert(self, api_client):
+        a = self._agent_with_device()
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "functional": [{"url": "https://localhost/", "health": "healthy",
+                            "status_code": 200, "cert_days_remaining": 7}]}]},
+            format="json", **self._HDR)
+        assert self._open(a, "cert_expiring", "https://localhost/") is not None
+
+    def test_degraded_5xx_alert(self, api_client):
+        a = self._agent_with_device()
+        api_client.post(f"/api/agents/{a.id}/role-checks/", {"roles": [{"role": "web",
+            "functional": [{"url": "http://localhost/", "health": "degraded", "status_code": 502}]}]},
+            format="json", **self._HDR)
+        assert self._open(a, "site_degraded", "http://localhost/") is not None
+
+
 # ── Agent management ────────────────────────────────────────────────────────────
 
 class TestAgentManagement:
@@ -333,6 +837,35 @@ class TestAgentManagement:
     def test_download_info(self, auth_client):
         body = auth_client.get("/api/agents/download/").json()
         assert "windows-amd64" in body["platforms"] and "install_linux" in body
+
+
+# ── Update-script serve routes (public, top-level /agent/update[.ps1]) ────────────
+
+class TestUpdateScriptServe:
+    def _seed(self, settings, tmp_path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "update-agent.sh").write_text("#!/usr/bin/env bash\necho linux-updater\n")
+        (scripts / "Update-Agent.ps1").write_text("# windows updater\nWrite-Host hi\n")
+        settings.AGENT_DIR = str(tmp_path)
+
+    def test_serves_linux_updater_as_text(self, api_client, settings, tmp_path):
+        self._seed(settings, tmp_path)
+        resp = api_client.get("/agent/update")  # public, no auth
+        assert resp.status_code == 200
+        assert resp["Content-Type"].startswith("text/plain")
+        assert b"linux-updater" in resp.getvalue()
+
+    def test_serves_windows_updater_as_text(self, api_client, settings, tmp_path):
+        self._seed(settings, tmp_path)
+        resp = api_client.get("/agent/update.ps1")  # public, no auth
+        assert resp.status_code == 200
+        assert resp["Content-Type"].startswith("text/plain")
+        assert b"windows updater" in resp.getvalue()
+
+    def test_missing_script_is_404(self, api_client, settings, tmp_path):
+        settings.AGENT_DIR = str(tmp_path)  # no scripts/ dir → file absent
+        assert api_client.get("/agent/update").status_code == 404
 
 
 # ── Metric point building (pure) ────────────────────────────────────────────────
@@ -357,3 +890,363 @@ class TestBuildPoints:
     def test_drops_empty_and_nonnumeric(self):
         pts = build_points(1, "h", {"memory": {"total_bytes": "n/a"}, "cpu": []})
         assert pts == []  # non-numeric dropped → empty fields → no point
+
+
+# ── Site assignment at enrollment + reassignment on the server detail ─────────
+
+class TestServerSiteAssignment:
+    def test_enroll_assigns_device_site_from_token(self, api_client, fake_pki):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="DC-enroll")
+        t = _token(max_uses=1, site=site)
+        resp = _enroll(api_client, t.token, hostname="srv-a")
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.device is not None and agent.device.site_id == site.id
+
+    def test_enroll_without_site_leaves_device_unassigned(self, api_client, fake_pki):
+        t = _token(max_uses=1)  # no site
+        resp = _enroll(api_client, t.token, hostname="srv-b")
+        assert resp.status_code == 201, resp.content
+        agent = Agent.objects.get(id=resp.json()["agent_id"])
+        assert agent.device is not None and agent.device.site_id is None
+
+    def test_change_site_reassigns_and_audits(self, api_client, auth_client, fake_pki):
+        from apps.core.models import AuditLog
+        from apps.devices.models import Site
+        dest = Site.objects.create(name="DC-dest")
+        t = _token(max_uses=1)
+        agent_id = _enroll(api_client, t.token, hostname="srv-c").json()["agent_id"]
+
+        resp = auth_client.post(f"/api/servers/{agent_id}/site/", {"site_id": dest.id}, format="json")
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["site"]["id"] == dest.id
+        agent = Agent.objects.get(id=agent_id)
+        assert agent.device.site_id == dest.id
+        assert AuditLog.objects.filter(
+            event_type=AuditLog.EventType.AGENT_SITE_CHANGED).exists()
+
+    def test_change_site_unassign_with_null(self, api_client, auth_client, fake_pki):
+        from apps.devices.models import Site
+        site = Site.objects.create(name="DC-start")
+        t = _token(max_uses=1, site=site)
+        agent_id = _enroll(api_client, t.token, hostname="srv-d").json()["agent_id"]
+
+        resp = auth_client.post(f"/api/servers/{agent_id}/site/", {"site_id": None}, format="json")
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["site"] is None
+        assert Agent.objects.get(id=agent_id).device.site_id is None
+
+    def test_change_site_requires_capability(self, api_client, viewer_client, fake_pki):
+        from apps.devices.models import Site
+        dest = Site.objects.create(name="DC-noauth")
+        t = _token(max_uses=1)
+        agent_id = _enroll(api_client, t.token, hostname="srv-e").json()["agent_id"]
+        resp = viewer_client.post(f"/api/servers/{agent_id}/site/", {"site_id": dest.id}, format="json")
+        assert resp.status_code == 403, resp.content
+
+    def test_change_site_autocreates_device_when_missing(self, auth_client):
+        # A device-less agent used to 400 here; now site-assign creates/links a
+        # Device on demand and succeeds (see TestAgentDeviceLink for detail).
+        from apps.devices.models import Site
+        dest = Site.objects.create(name="DC-nodev")
+        agent = Agent.objects.create(hostname="srv-nodev", status=Agent.Status.ACTIVE)
+        resp = auth_client.post(f"/api/servers/{agent.id}/site/", {"site_id": dest.id}, format="json")
+        assert resp.status_code == 200, resp.content
+        agent.refresh_from_db()
+        assert agent.device_id is not None and agent.device.site_id == dest.id
+
+
+# ── Agent version refresh from metrics payload (API-side; agent unchanged) ────
+
+class TestAgentVersionRefresh:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def _agent(self, version="1.0.0"):
+        return Agent.objects.create(hostname="srv-ver", cert_serial="ab:cd:ef:01", version=version)
+
+    def test_metrics_updates_version(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.0.0")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"version": "1.2.3", "metrics": {}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.version == "1.2.3"
+
+    def test_metrics_omitting_version_keeps_existing(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.2.3")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"metrics": {}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.version == "1.2.3"  # not blanked
+
+    def test_metrics_empty_version_doesnt_blank(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.2.3")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/",
+                            {"version": "  ", "metrics": {}}, format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        a.refresh_from_db()
+        assert a.version == "1.2.3"
+
+    def test_updated_version_surfaces_via_serializer(self, api_client, auth_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = self._agent(version="1.0.0")
+        api_client.post(f"/api/agents/{a.id}/metrics/",
+                        {"version": "2.0.0", "metrics": {}}, format="json", **self._HDR)
+        body = auth_client.get(f"/api/servers/{a.id}/").json()
+        assert body["agent_version"] == "2.0.0"
+
+
+# ── Servers list filtered by site (?site=) for the site-detail Servers tab ────
+
+class TestServerSiteFilter:
+    def _server_in_site(self, site, host, ip):
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname=host, ip_address=ip,
+                                    platform=Device.Platform.IOS_XE, site=site)
+        return Agent.objects.create(hostname=host, device=dev, status=Agent.Status.ACTIVE)
+
+    @staticmethod
+    def _rows(resp):
+        body = resp.json()
+        return body["results"] if isinstance(body, dict) else body
+
+    def test_servers_filtered_by_site(self, auth_client):
+        from apps.devices.models import Site
+        s1 = Site.objects.create(name="SF-1")
+        s2 = Site.objects.create(name="SF-2")
+        self._server_in_site(s1, "srv-a", "10.0.0.1")
+        self._server_in_site(s1, "srv-b", "10.0.0.2")
+        self._server_in_site(s2, "srv-c", "10.0.0.3")
+        Agent.objects.create(hostname="srv-nodev", status=Agent.Status.ACTIVE)  # no device → no site
+
+        resp = auth_client.get(f"/api/servers/?site={s1.pk}")
+        assert resp.status_code == 200, resp.content
+        hosts = {r["hostname"] for r in self._rows(resp)}
+        assert hosts == {"srv-a", "srv-b"}
+
+    def test_empty_site_returns_empty_not_error(self, auth_client):
+        from apps.devices.models import Site
+        s = Site.objects.create(name="SF-empty")
+        resp = auth_client.get(f"/api/servers/?site={s.pk}")
+        assert resp.status_code == 200, resp.content
+        assert self._rows(resp) == []
+
+    def test_no_site_param_lists_all(self, auth_client):
+        from apps.devices.models import Site
+        s1 = Site.objects.create(name="SF-all")
+        self._server_in_site(s1, "srv-x", "10.0.1.1")
+        Agent.objects.create(hostname="srv-y", status=Agent.Status.ACTIVE)
+        resp = auth_client.get("/api/servers/")
+        assert resp.status_code == 200, resp.content
+        hosts = {r["hostname"] for r in self._rows(resp)}
+        assert {"srv-x", "srv-y"}.issubset(hosts)
+
+
+# ── Enrollment server_url: echo the request host, never localhost ─────────────
+
+class TestEnrollServerUrl:
+    def test_response_echoes_request_host_not_localhost(self, api_client, fake_pki, settings):
+        settings.AGENT_SERVER_URL = ""  # request-derived path
+        settings.ALLOWED_HOSTS = ["netpulse.example.com", "testserver", "localhost", "127.0.0.1"]
+        t = _token(max_uses=1)
+        resp = api_client.post(
+            "/api/agents/enroll/",
+            {"enrollment_token": t.token, "hostname": "win-1", "os": "windows",
+             "arch": "amd64", "version": "1.0.0", "csr": CSR},
+            format="json", secure=True, HTTP_HOST="netpulse.example.com")
+        assert resp.status_code == 201, resp.content
+        url = resp.json()["server_url"]
+        assert url == "https://netpulse.example.com", url
+        assert "localhost" not in url
+
+    def test_explicit_setting_overrides_request_host(self, api_client, fake_pki, settings):
+        settings.AGENT_SERVER_URL = "https://pinned.example.com"
+        t = _token(max_uses=1)
+        resp = _enroll(api_client, t.token, hostname="win-2")
+        assert resp.status_code == 201, resp.content
+        assert resp.json()["server_url"] == "https://pinned.example.com"
+
+    def test_colocated_enroll_still_works(self, api_client, fake_pki, settings):
+        settings.AGENT_SERVER_URL = ""
+        t = _token(max_uses=1)
+        resp = _enroll(api_client, t.token, hostname="win-3")  # default Host=testserver
+        assert resp.status_code == 201, resp.content
+        url = resp.json()["server_url"]
+        assert url and "localhost" not in url  # request-derived, reachable
+
+
+# ── Cache-Control: no-store on secret-bearing responses ───────────────────────
+
+class TestNoStoreHeaders:
+    def test_token_generation_is_no_store(self, auth_client):
+        resp = auth_client.post("/api/agents/tokens/",
+                                {"description": "x", "max_uses": 1}, format="json")
+        assert resp.status_code == 201, resp.content
+        assert resp.get("Cache-Control") == "no-store"
+
+    def test_enroll_response_is_no_store(self, api_client, fake_pki):
+        t = _token(max_uses=1)
+        resp = _enroll(api_client, t.token, hostname="nostore-host")
+        assert resp.status_code == 201, resp.content
+        assert resp.get("Cache-Control") == "no-store"
+
+
+# ── Stage A: desired-config view/edit + pull delivery via metrics response ────
+
+class TestAgentDesiredConfig:
+    def test_get_returns_effective_defaults(self, auth_client):
+        a = Agent.objects.create(hostname="cfg-1", status=Agent.Status.ACTIVE)
+        resp = auth_client.get(f"/api/servers/{a.id}/config/")
+        assert resp.status_code == 200, resp.content
+        cfg = resp.json()
+        assert cfg["collection"]["cpu"] is True
+        assert cfg["interval_seconds"] == 30
+        assert cfg["disk"] == {"exclude_mounts": [], "include_mounts": []}
+
+    def test_patch_requires_agent_edit(self, viewer_client):
+        a = Agent.objects.create(hostname="cfg-2", status=Agent.Status.ACTIVE)
+        resp = viewer_client.patch(f"/api/servers/{a.id}/config/",
+                                   {"interval_seconds": 60}, format="json")
+        assert resp.status_code == 403, resp.content
+
+    def test_patch_persists_and_audits(self, auth_client):
+        from apps.core.models import AuditLog
+        a = Agent.objects.create(hostname="cfg-3", status=Agent.Status.ACTIVE)
+        resp = auth_client.patch(
+            f"/api/servers/{a.id}/config/",
+            {"collection": {"network": False}, "interval_seconds": 120,
+             "disk": {"exclude_mounts": ["D:"]}}, format="json")
+        assert resp.status_code == 200, resp.content
+        cfg = resp.json()
+        assert cfg["collection"]["network"] is False
+        assert cfg["collection"]["cpu"] is True  # untouched keys keep defaults
+        assert cfg["interval_seconds"] == 120
+        assert cfg["disk"]["exclude_mounts"] == ["D:"]
+        a.refresh_from_db()
+        assert a.desired_config["disk"]["exclude_mounts"] == ["D:"]
+        assert AuditLog.objects.filter(
+            event_type=AuditLog.EventType.AGENT_CONFIG_CHANGED).exists()
+
+    def test_patch_rejects_bad_input(self, auth_client):
+        a = Agent.objects.create(hostname="cfg-4", status=Agent.Status.ACTIVE)
+        # interval below the floor
+        assert auth_client.patch(f"/api/servers/{a.id}/config/",
+                                 {"interval_seconds": 1}, format="json").status_code == 400
+        # unknown collection key
+        assert auth_client.patch(f"/api/servers/{a.id}/config/",
+                                 {"collection": {"bogus": True}}, format="json").status_code == 400
+
+    def test_metrics_response_carries_desired_config(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.views.write_agent_metrics", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="cfg-5", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE,
+                                 desired_config={"disk": {"exclude_mounts": ["D:"]}})
+        hdr = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+        r = api_client.post(f"/api/agents/{a.id}/metrics/", {"metrics": {}}, format="json", **hdr)
+        assert r.status_code == 200, r.content
+        dc = r.json()["desired_config"]
+        assert dc["disk"]["exclude_mounts"] == ["D:"]
+        assert dc["collection"]["cpu"] is True  # merged with defaults
+
+
+# ── Stage 1 log forwarding: relay endpoint + allowlist (security profile) ──────
+
+class TestLogForwarding:
+    _HDR = dict(HTTP_X_AGENT_VERIFIED="SUCCESS", HTTP_X_AGENT_CERT_SERIAL="ABCDEF01")
+
+    def test_logs_endpoint_relays_to_publisher(self, api_client, monkeypatch):
+        captured = {}
+
+        def fake_publish(source, host, lines):
+            captured.update(source=source, host=host, lines=list(lines))
+            return len(list(lines))
+        monkeypatch.setattr("apps.agents.log_publish.publish_log_lines", fake_publish)
+        a = Agent.objects.create(hostname="loghost", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE)
+        r = api_client.post(
+            f"/api/agents/{a.id}/logs/",
+            {"source": "auth", "lines": ["sshd[1]: Failed password for root from 10.0.0.9",
+                                         "sudo: pam_unix session opened"]},
+            format="json", **self._HDR)
+        assert r.status_code == 200, r.content
+        assert r.json()["published"] == 2
+        assert captured["source"] == "auth" and captured["host"] == "loghost"
+        assert len(captured["lines"]) == 2
+
+    def test_logs_endpoint_rejects_unknown_source(self, api_client, monkeypatch):
+        monkeypatch.setattr("apps.agents.log_publish.publish_log_lines", lambda *a, **k: 0)
+        a = Agent.objects.create(hostname="loghost2", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE)
+        r = api_client.post(f"/api/agents/{a.id}/logs/",
+                            {"source": "/etc/passwd", "lines": ["x"]}, format="json", **self._HDR)
+        assert r.status_code == 400, r.content
+
+    def test_logs_endpoint_requires_mtls(self, api_client):
+        a = Agent.objects.create(hostname="loghost3", cert_serial="ab:cd:ef:01",
+                                 status=Agent.Status.ACTIVE)
+        # No mTLS headers → 403 (same gate as metrics).
+        assert api_client.post(f"/api/agents/{a.id}/logs/",
+                               {"source": "auth", "lines": ["x"]}, format="json").status_code == 403
+
+    def test_config_default_security_profile_on(self, auth_client):
+        a = Agent.objects.create(hostname="loghost4", status=Agent.Status.ACTIVE)
+        cfg = auth_client.get(f"/api/servers/{a.id}/config/").json()
+        assert cfg["logs"]["security_profile"] is True
+        assert cfg["logs"]["additional_paths"] == []
+
+    def test_config_allowlist_rejects_bad_path(self, auth_client):
+        a = Agent.objects.create(hostname="loghost5", status=Agent.Status.ACTIVE)
+        for bad in ("/etc/shadow", "/root/.ssh/id_rsa", "/var/log/../etc/passwd",
+                    "/var/log/server.key", "/home/u/app.log"):
+            r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                                  {"logs": {"additional_paths": [bad]}}, format="json")
+            assert r.status_code == 400, f"{bad} should be rejected, got {r.status_code}"
+
+    def test_config_allowlist_accepts_var_log(self, auth_client):
+        a = Agent.objects.create(hostname="loghost6", status=Agent.Status.ACTIVE)
+        r = auth_client.patch(f"/api/servers/{a.id}/config/",
+                              {"logs": {"security_profile": False,
+                                        "additional_paths": ["/var/log/myapp/app.log"]}},
+                              format="json")
+        assert r.status_code == 200, r.content
+        assert r.json()["logs"]["additional_paths"] == ["/var/log/myapp/app.log"]
+        assert r.json()["logs"]["security_profile"] is False
+
+
+@pytest.mark.django_db
+class TestRoleServiceSubset:
+    """Per-server role-service selection filters the role-status count so an
+    unselected service isn't a failing 'not_found' (item 3, PART 2)."""
+
+    def test_subset_counts_only_selected(self):
+        from apps.agents.models import Agent, AgentRole, AgentRoleStatus, ServerRole
+        from apps.agents.serializers import AssignedRoleSerializer
+        role = ServerRole.objects.create(name="Web T", role_type="webt",
+                                         linux_services=["nginx", "apache2", "httpd"])
+        agent = Agent.objects.create(hostname="web-sel",
+                                     desired_config={"role_services": {"webt": ["apache2"]}})
+        ar = AgentRole.objects.create(agent=agent, role=role)
+        AgentRoleStatus.objects.create(agent=agent, role_type="webt", services=[
+            {"name": "apache2", "running": True},
+            {"name": "nginx", "running": False},
+            {"name": "httpd", "running": False}])
+        st = AssignedRoleSerializer(ar).data["status"]
+        assert st["checks_total"] == 1 and st["checks_passed"] == 1   # only apache2
+        assert [s["name"] for s in st["services"]] == ["apache2"]
+
+    def test_no_selection_counts_all(self):
+        from apps.agents.models import Agent, AgentRole, AgentRoleStatus, ServerRole
+        from apps.agents.serializers import AssignedRoleSerializer
+        role = ServerRole.objects.create(name="Web T2", role_type="webt2",
+                                         linux_services=["nginx", "apache2"])
+        agent = Agent.objects.create(hostname="web-sel2", desired_config={})
+        ar = AgentRole.objects.create(agent=agent, role=role)
+        AgentRoleStatus.objects.create(agent=agent, role_type="webt2", services=[
+            {"name": "apache2", "running": True}, {"name": "nginx", "running": False}])
+        st = AssignedRoleSerializer(ar).data["status"]
+        assert st["checks_total"] == 2 and st["checks_passed"] == 1   # all counted

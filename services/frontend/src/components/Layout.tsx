@@ -9,11 +9,13 @@ import { usePreferencesStore } from '../store/preferencesStore'
 import { useSite, useSiteStore } from '../store/siteStore'
 import ErrorBoundary from './ErrorBoundary'
 import VersionBadge from './VersionBadge'
+import ServerClock from './ServerClock'
 import HeaderSearch from './HeaderSearch'
 import SiteSelector from './SiteSelector'
 import LogoMark from './LogoMark'
 import ChatOpsPanel from './ChatOpsPanel'
 import ForbiddenNotice from './ForbiddenNotice'
+import DeliveryHealthBanner from './DeliveryHealthBanner'
 
 // Drop nav leaves the user lacks the capability for (groups with no remaining
 // children are dropped too). Convenience gating; the API 403 is the boundary.
@@ -72,12 +74,14 @@ const navEntries: NavEntry[] = [
   {
     label: 'Servers', icon: '🖥️', children: [
       { label: 'All Servers', href: '/servers', icon: '🖥️', requiredCapability: 'agent:view' },
-      { label: 'Agents', href: '/settings/agents', icon: '🛰️', requiredCapability: 'agent:view' },
+      // Agent enrollment/management lives under Settings → Agents (its home);
+      // the duplicate entry here was removed.
     ],
   },
   { label: 'Alerts', href: '/alerts', icon: '⚠', divider: true, requiredCapability: 'alert:view' },
+  { label: 'Notifications', href: '/notifications', icon: '📨', requiredCapability: 'alert:view' },
   { label: 'Logs', href: '/logs', icon: '🧾', requiredCapability: 'log:view' },
-  { label: 'Checks', href: '/checks', icon: '✓', requiredCapability: 'check:view' },
+  { label: 'Service Checks', href: '/checks', icon: '✓', requiredCapability: 'check:view' },
   { label: 'CVE', href: '/cve', icon: '🛡', divider: true, requiredCapability: 'cve:view' },
   { label: 'Lifecycle', href: '/lifecycle', icon: '📅', requiredCapability: 'lifecycle:view' },
   { label: 'Compliance', href: '/compliance', icon: '📋', requiredCapability: 'compliance:view' },
@@ -103,7 +107,6 @@ function NavLeaf({ item, nested, badge, onNavigate }: {
         )
       }
     >
-      <span className="text-base w-5 text-center" aria-hidden>{item.icon}</span>
       <span className="flex-1">{item.label}</span>
       {badge > 0 && (
         <span
@@ -135,7 +138,6 @@ function NavGroupItem({ group, badgeFor, onNavigate }: {
           active ? 'text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white',
         )}
       >
-        <span className="text-base w-5 text-center" aria-hidden>{group.icon}</span>
         <span className="flex-1 text-left">{group.label}</span>
         {childBadges > 0 && !open && (
           <span className="min-w-[1.25rem] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-center rounded-full bg-red-500 text-white">
@@ -302,6 +304,9 @@ export default function Layout({ children }: Props) {
             </span>
             <VersionBadge />
           </div>
+          <div className="mt-1.5 flex justify-center">
+            <ServerClock />
+          </div>
         </div>
       </aside>
 
@@ -351,8 +356,15 @@ export default function Layout({ children }: Props) {
           </div>
         )}
 
+        {/* Notification-delivery degraded banner — the always-present failure tier */}
+        <DeliveryHealthBanner />
+
         {/* Page content — the only scroll region; sidebar + header stay fixed */}
-        <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6">
+        {/* Extra bottom padding (pb-24) clears the fixed "Ask spane" FAB
+            (bottom-6 + button height ≈ 70px) so the last row of any long list —
+            e.g. the Alert Rules table toggles — stays fully clickable, not
+            covered. Global here so every scrollable page gets the same clearance. */}
+        <main className="flex-1 min-h-0 overflow-auto p-4 lg:p-6 pb-24 lg:pb-24">
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>

@@ -90,18 +90,26 @@ def run_due_schedules(now=None) -> int:
         if not _is_due(schedule, now):
             continue
         try:
+            # Every due schedule generates + stores a downloadable GeneratedReport;
+            # email is an optional delivery layer on top (see ReportSchedule.delivery).
             report, content, data = generate(
                 schedule.report_type, schedule.fmt, schedule.parameters or {},
                 user=None, source="scheduled")
-            subject, body = email_content(schedule.report_type, data, now)
-            sent = email_report(
-                schedule.recipients, subject=subject, body=body,
-                attachment=content, filename=download_filename(report), fmt=schedule.fmt)
+            if schedule.email_enabled:
+                subject, body = email_content(schedule.report_type, data, now)
+                sent = email_report(
+                    schedule.recipients, subject=subject, body=body,
+                    attachment=content, filename=download_filename(report), fmt=schedule.fmt)
+                status = "sent" if sent else "generated (email not sent — SMTP?)"
+            else:
+                sent = False
+                status = "stored (no email — store-only)"
             schedule.last_run = now
-            schedule.last_status = "sent" if sent else "generated (email not sent — SMTP?)"
+            schedule.last_status = status
             schedule.save(update_fields=["last_run", "last_status", "updated_at"])
             fired += 1
-            logger.info("scheduled report %s fired (emailed=%s)", schedule.report_type, sent)
+            logger.info("scheduled report %s fired (delivery=%s, emailed=%s)",
+                        schedule.report_type, schedule.delivery, sent)
         except Exception as exc:  # noqa: BLE001 — one bad schedule must not stop the rest
             logger.error("scheduled report %s failed: %s", schedule.report_type, exc)
             schedule.last_run = now

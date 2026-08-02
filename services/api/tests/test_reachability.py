@@ -20,6 +20,27 @@ def device():
     return Device.objects.create(hostname="r1", ip_address="10.0.0.1", status="active")
 
 
+class TestFetchDevicesExclusions:
+    """The monitor probes NETWORK devices only (device_kind — the single source of
+    truth). SERVER devices report their own liveness + get ping/RTT via the agent
+    -IP path, so they're never in the device-probe set (no false 'unreachable')."""
+
+    def test_excludes_server_kind_includes_network_kind(self):
+        from apps.devices.models import Device
+        real = Device.objects.create(hostname="real", ip_address="10.0.0.1", status="active")
+        srv = Device.objects.create(hostname="srv", ip_address="10.0.0.2", status="active",
+                                    device_kind=Device.DeviceKind.SERVER)
+        ids = {d["id"] for d in _cmd()._fetch_devices()}
+        assert real.id in ids          # network_device (default)
+        assert srv.id not in ids       # server → excluded
+
+    def test_server_with_unreachable_status_still_excluded(self):
+        from apps.devices.models import Device
+        srv = Device.objects.create(hostname="s2", ip_address="10.0.0.5", status="unreachable",
+                                    device_kind=Device.DeviceKind.SERVER)
+        assert srv.id not in {d["id"] for d in _cmd()._fetch_devices()}
+
+
 class TestReachabilityApply:
     def test_reachable_updates_heartbeat(self, device):
         cmd = _cmd()

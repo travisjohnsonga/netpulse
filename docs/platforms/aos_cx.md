@@ -1,7 +1,7 @@
 # HPE AOS-CX Integration Guide
 
 spane supports HPE Aruba Networking **AOS-CX** switches (platform `aos_cx`),
-validated against a real **HPE 6100** (`wco2-idf5-asw-01`). AOS-CX is one of the
+validated against a real **HPE 6100** (`site1-idf1-asw-01`). AOS-CX is one of the
 few platforms with full **environment telemetry** (CPU/memory/temperature/fans/
 PSU) in spane — all over SNMP.
 
@@ -81,7 +81,7 @@ Stream-processor emits scalars `cpu_pct`, `memory_used_pct`, `memory_*_bytes`,
   (`entPhySensorOperStatus`). Higher-end models (8xxx) may expose more.
 - **REST API** is **not** supported on the 6100 running **PL.10.16** (login
   400/401) — SNMP only. Switches on **FL.10.13** firmware (e.g.
-  `wco2-mdf-crt-01`, 10.150.0.15) **do** expose the REST API and are the
+  `site1-core-01`, 192.0.2.15) **do** expose the REST API and are the
   preferred enrichment path — see below.
 
 ---
@@ -93,7 +93,7 @@ that supports REST; SNMP remains the automatic fallback. REST availability and
 endpoint shape vary by firmware:
 
 - **PL.10.16** (HPE 6100): login returns 400/401 — **no REST**, SNMP only.
-- **FL.10.13** (verified on `wco2-mdf-crt-01`): REST works.
+- **FL.10.13** (verified on `site1-core-01`): REST works.
 
 **Confirmed working endpoints (FL.10.13):**
 

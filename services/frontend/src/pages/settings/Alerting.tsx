@@ -67,6 +67,19 @@ function RulesTab() {
     }
   }
 
+  // Notify toggle (separate from Enabled): off → the rule still generates
+  // AlertEvents (UI) but never notifies (observe-only).
+  const toggleNotify = async (rule: AlertRule) => {
+    const next = !(rule.notify_enabled ?? true)
+    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, notify_enabled: next } : r)))
+    try {
+      await updateAlertRule(rule.id, { notify_enabled: next })
+    } catch {
+      setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, notify_enabled: !next } : r)))
+      setError('Failed to update rule.')
+    }
+  }
+
   return (
     <div>
       <div className="flex justify-end mb-3">
@@ -90,7 +103,8 @@ function RulesTab() {
                   <th className="px-5 py-3 font-medium">Severity</th>
                   <th className="px-5 py-3 font-medium">Cooldown</th>
                   <th className="px-5 py-3 font-medium">Channels</th>
-                  <th className="px-5 py-3 font-medium text-right">Enabled</th>
+                  <th className="px-5 py-3 font-medium text-right" title="Generate AlertEvents (UI) — the whole rule on/off">Enabled</th>
+                  <th className="px-5 py-3 font-medium text-right" title="Send notifications (email/Teams). Off = observe-only: still shows in the UI, pages no one.">Notify</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -117,6 +131,12 @@ function RulesTab() {
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.channels.length}</td>
                     <td className="px-5 py-3 text-right">
                       <Toggle on={r.is_active} onClick={() => toggle(r)} />
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      {/* Dimmed when the rule is disabled — Notify is moot if it doesn't generate. */}
+                      <span className={clsx(!r.is_active && 'opacity-40')} title={!r.is_active ? 'Rule is disabled' : undefined}>
+                        <Toggle on={r.notify_enabled ?? true} onClick={() => toggleNotify(r)} />
+                      </span>
                     </td>
                   </tr>
                 ))}

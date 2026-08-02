@@ -390,7 +390,7 @@ async def check_smtp(check: dict) -> dict:
     client = aiosmtplib.SMTP(hostname=host, port=port, timeout=timeout, start_tls=False)
     try:
         banner_resp = await client.connect()
-        await client.ehlo(helo)
+        await client.ehlo(hostname=helo)
         starttls_supported = client.supports_extension("starttls")
         if use_starttls and starttls_supported:
             await client.starttls()

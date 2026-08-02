@@ -18,7 +18,7 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def fleet():
-    site = Site.objects.create(name="WCO2")
+    site = Site.objects.create(name="Site1")
     role = DeviceRole.objects.create(name="Access Switch")
     d1 = Device.objects.create(hostname="sw-1", ip_address="10.0.0.1", platform="aos_cx",
                                site=site, role=role)
@@ -44,7 +44,7 @@ class TestComplianceSummary:
              startup_checked_at=timezone.now())
         data = build_compliance_summary()
         assert data["summary"]["total_devices"] == 2
-        assert {r["site"] for r in data["by_site"]} == {"WCO2"}
+        assert {r["site"] for r in data["by_site"]} == {"Site1"}
         assert {r["role"] for r in data["by_role"]} == {"Access Switch"}
         assert {r["platform"] for r in data["by_platform"]} == {"aos_cx", "ios"}
         assert any(m["hostname"] == "sw-1" for m in data["startup_mismatch"])
@@ -72,7 +72,7 @@ class TestDailyOps:
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": []}})
         when = timezone.now() - __import__("datetime").timedelta(days=1)
         log = AuditLog.objects.create(event_type=AuditLog.EventType.LOGIN_FAILED,
-                                      username="admin", ip_address="10.150.1.45")
+                                      username="admin", ip_address="192.0.2.45")
         AuditLog.objects.filter(pk=log.pk).update(created_at=when)
         data = dops.build_daily_ops(date=when.date().isoformat())
         assert data["spane_access_events"]["total_failures"] == 1
@@ -126,7 +126,7 @@ class TestDailyOps:
     def test_device_security_grouping_and_multi_device_flag(self, fleet, monkeypatch):
         when = timezone.now() - __import__("datetime").timedelta(days=1)
         hits = [{"_source": {"@timestamp": when.replace(hour=10, minute=m).isoformat(),
-                             "hostname": f"sw-{i}", "source_ip": "10.150.0.18",
+                             "hostname": f"sw-{i}", "source_ip": "192.0.2.18",
                              "message": f"%SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: travis-admin] dev {i}"}}
                 for i, m in enumerate((21, 22, 23), start=1)]
         monkeypatch.setattr("apps.logs.views._execute", lambda body: {"hits": {"hits": hits}})
@@ -404,7 +404,7 @@ class TestDailyOps:
         assert "+vlan 55" in change["diff"]
         assert change["previous_backup_at"] is not None
         assert change["current_backup_at"] is not None
-        assert change["site"] == "WCO2" and change["role"] == "Access Switch"
+        assert change["site"] == "Site1" and change["role"] == "Access Switch"
         assert "vlan 55" in change["diff_summary"]
 
 
@@ -507,6 +507,257 @@ class TestScheduling:
         fired = run_due_schedules(now=now)
         assert fired == 1
         assert GeneratedReport.objects.filter(source="scheduled").count() == 1
+
+
+# ── Schedule timezone conversion (stored UTC, entered/shown in user's tz) ──────
+
+class TestScheduleTimezone:
+    """hour/day_* are stored UTC and the scheduler compares UTC; conversion to/from
+    the user's tz happens only at the API boundary (mirrors temperature_unit)."""
+
+    def _set_tz(self, user, tz):
+        from apps.core.models import UserPreferences
+        prefs = UserPreferences.for_user(user)
+        prefs.timezone = tz
+        prefs.save(update_fields=["timezone"])
+
+    # ── pure helper (deterministic, DST-explicit) ──────────────────────────────
+    def test_helper_local_to_utc_dst_aware(self):
+        import datetime as dt
+        from apps.reports.schedule_tz import local_to_utc
+        # Chicago is UTC-6 in winter (CST) and UTC-5 in summer (CDT): 19:00 local
+        # maps to DIFFERENT UTC hours, proving the IANA offset (not a fixed -6).
+        h_winter, _, _ = local_to_utc(19, 0, 15, "America/Chicago", ref_date=dt.date(2026, 1, 15))
+        h_summer, _, _ = local_to_utc(19, 0, 15, "America/Chicago", ref_date=dt.date(2026, 7, 15))
+        assert h_winter == 1   # 19 + 6
+        assert h_summer == 0   # 19 + 5
+        assert h_winter != h_summer
+
+    def test_helper_day_rollover_weekly(self):
+        import datetime as dt
+        from apps.reports.schedule_tz import local_to_utc
+        # 19:00 Mon CDT = 00:00 Tue UTC → hour 0, day_of_week Mon(0)→Tue(1).
+        h, dow, dom = local_to_utc(19, 0, 15, "America/Chicago", ref_date=dt.date(2026, 7, 15))
+        assert h == 0 and dow == 1 and dom == 16
+
+    def test_helper_utc_user_passthrough(self):
+        from apps.reports.schedule_tz import local_to_utc, utc_to_local
+        assert local_to_utc(19, 3, 10, "UTC") == (19, 3, 10)
+        assert utc_to_local(19, 3, 10, "UTC") == (19, 3, 10)
+
+    def test_helper_roundtrip(self):
+        import datetime as dt
+        from apps.reports.schedule_tz import local_to_utc, utc_to_local
+        ref = dt.date(2026, 7, 15)
+        u = local_to_utc(19, 2, 14, "America/Chicago", ref_date=ref)
+        back = utc_to_local(*u, "America/Chicago", ref_date=ref)
+        assert back == (19, 2, 14)
+
+    def test_invalid_tz_falls_back_to_utc(self):
+        from apps.reports.schedule_tz import local_to_utc
+        assert local_to_utc(19, 0, 1, "Not/AZone") == (19, 0, 1)
+
+    # ── API boundary ───────────────────────────────────────────────────────────
+    def test_create_stores_utc_reads_back_local(self, auth_client, user):
+        self._set_tz(user, "America/Chicago")
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 19, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 201
+        sched = ReportSchedule.objects.latest("id")
+        # Stored hour is UTC (converted away from the entered local 19).
+        assert sched.hour != 19
+        from apps.reports.schedule_tz import local_to_utc
+        assert sched.hour == local_to_utc(19, 0, 1, "America/Chicago")[0]
+        # Read back in the user's tz → the 19 they intended, labeled with their tz.
+        body = auth_client.get("/api/reports/compliance-summary/schedule/").json()
+        assert body[0]["hour"] == 19
+        assert body[0]["timezone"] == "America/Chicago"
+
+    def test_utc_user_unaffected(self, auth_client, user):
+        self._set_tz(user, "UTC")
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 19, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 201
+        assert ReportSchedule.objects.latest("id").hour == 19   # 19 stays 19
+        body = auth_client.get("/api/reports/compliance-summary/schedule/").json()
+        assert body[0]["hour"] == 19 and body[0]["timezone"] == "UTC"
+
+    def test_scheduler_fires_on_stored_utc_hour(self, fleet, auth_client, user):
+        """End-to-end: a Chicago 19:00 schedule fires when UTC now == its stored
+        UTC hour, NOT at 19:00 UTC — proving the scheduler core stays UTC."""
+        from datetime import datetime
+        from apps.reports.tasks import _is_due
+        self._set_tz(user, "America/Chicago")
+        auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 19, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        sched = ReportSchedule.objects.latest("id")
+        fires_at = timezone.make_aware(datetime(2026, 7, 1, sched.hour, 1))
+        not_at_19_utc = timezone.make_aware(datetime(2026, 7, 1, 19, 1))
+        assert _is_due(sched, fires_at) is True
+        assert _is_due(sched, not_at_19_utc) is False
+
+
+# ── Schedule frequency UI support (weekly/monthly/quarterly) ──────────────────
+
+class TestScheduleFrequencyValidation:
+    """The serializer accepts every Frequency the backend supports and requires
+    the matching cadence-day field (UI exposes daily/weekly/monthly/quarterly)."""
+
+    def _post(self, auth_client, **body):
+        body.setdefault("fmt", "pdf")
+        body.setdefault("delivery", "store_only")
+        body.setdefault("recipients", [])
+        return auth_client.post("/api/reports/compliance-summary/schedule/", body, format="json")
+
+    def test_weekly_with_day_of_week_accepted(self, auth_client):
+        resp = self._post(auth_client, frequency="weekly", hour=8, day_of_week=2)
+        assert resp.status_code == 201
+        sched = ReportSchedule.objects.latest("id")
+        assert sched.frequency == "weekly" and sched.day_of_week == 2
+
+    def test_monthly_with_day_of_month_accepted(self, auth_client):
+        resp = self._post(auth_client, frequency="monthly", hour=8, day_of_month=15)
+        assert resp.status_code == 201
+        sched = ReportSchedule.objects.latest("id")
+        assert sched.frequency == "monthly" and sched.day_of_month == 15
+
+    def test_quarterly_with_day_of_month_accepted(self, auth_client):
+        resp = self._post(auth_client, frequency="quarterly", hour=8, day_of_month=1)
+        assert resp.status_code == 201
+        assert ReportSchedule.objects.latest("id").frequency == "quarterly"
+
+    def test_weekly_without_day_of_week_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="weekly", hour=8)
+        assert resp.status_code == 400 and "day_of_week" in resp.json()
+
+    def test_monthly_without_day_of_month_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="monthly", hour=8)
+        assert resp.status_code == 400 and "day_of_month" in resp.json()
+
+    def test_day_of_month_out_of_range_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="monthly", hour=8, day_of_month=31)
+        assert resp.status_code == 400 and "day_of_month" in resp.json()
+
+    def test_day_of_week_out_of_range_rejected(self, auth_client):
+        resp = self._post(auth_client, frequency="weekly", hour=8, day_of_week=9)
+        assert resp.status_code == 400 and "day_of_week" in resp.json()
+
+    def test_daily_needs_no_day_field(self, auth_client):
+        resp = self._post(auth_client, frequency="daily", hour=8)
+        assert resp.status_code == 201
+
+    def test_quarterly_fires_only_in_quarter_months(self, fleet):
+        """Backend cadence sanity: quarterly fires on day_of_month in Jan/Apr/Jul/Oct."""
+        from datetime import datetime
+        from apps.reports.tasks import _is_due
+        sched = ReportSchedule(report_type=ReportType.DAILY_OPS, frequency="quarterly",
+                               hour=8, day_of_month=1)
+        assert _is_due(sched, timezone.make_aware(datetime(2026, 7, 1, 8, 1))) is True   # Jul
+        assert _is_due(sched, timezone.make_aware(datetime(2026, 8, 1, 8, 1))) is False  # Aug
+
+
+# ── Report delivery: store-only schedules + ad-hoc download (no email) ─────────
+
+class TestDeliveryModes:
+    """Email is one delivery option; a report can be generated + stored without it."""
+
+    def _due_now(self):
+        from datetime import datetime
+        return timezone.make_aware(datetime(2026, 6, 14, 8, 1))
+
+    def test_store_only_schedule_stores_and_sends_no_email(self, fleet, monkeypatch):
+        from apps.reports import tasks
+        calls = []
+        monkeypatch.setattr(tasks, "email_report",
+                            lambda *a, **k: calls.append((a, k)) or True)
+        sched = ReportSchedule.objects.create(
+            report_type=ReportType.COMPLIANCE_SUMMARY, frequency="daily", hour=8,
+            fmt="pdf", delivery=ReportSchedule.Delivery.STORE_ONLY, recipients=[])
+        fired = tasks.run_due_schedules(now=self._due_now())
+        assert fired == 1
+        # A downloadable artifact was produced...
+        stored = GeneratedReport.objects.filter(source="scheduled")
+        assert stored.count() == 1 and stored.first().file_path
+        # ...and NO email was sent.
+        assert calls == []
+        sched.refresh_from_db()
+        assert "no email" in sched.last_status
+
+    def test_email_schedule_still_emails_backcompat(self, fleet, monkeypatch):
+        from apps.reports import tasks
+        calls = []
+        monkeypatch.setattr(tasks, "email_report",
+                            lambda recipients, **k: calls.append(recipients) or True)
+        # Created without `delivery` → defaults to EMAIL (existing-schedule behavior).
+        ReportSchedule.objects.create(
+            report_type=ReportType.COMPLIANCE_SUMMARY, frequency="daily", hour=8,
+            fmt="pdf", recipients=["admin@example.com"])
+        fired = tasks.run_due_schedules(now=self._due_now())
+        assert fired == 1
+        assert calls == [["admin@example.com"]]  # email attempted with recipients
+
+    def test_both_delivery_stores_and_emails(self, fleet, monkeypatch):
+        from apps.reports import tasks
+        calls = []
+        monkeypatch.setattr(tasks, "email_report",
+                            lambda recipients, **k: calls.append(recipients) or True)
+        ReportSchedule.objects.create(
+            report_type=ReportType.COMPLIANCE_SUMMARY, frequency="daily", hour=8,
+            fmt="pdf", delivery=ReportSchedule.Delivery.BOTH, recipients=["a@b.com"])
+        tasks.run_due_schedules(now=self._due_now())
+        assert GeneratedReport.objects.filter(source="scheduled").count() == 1
+        assert calls == [["a@b.com"]]
+
+    def test_create_store_only_schedule_without_recipients(self, auth_client):
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 8, "fmt": "pdf",
+            "delivery": "store_only", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 201
+        assert resp.json()["delivery"] == "store_only"
+
+    def test_create_email_schedule_without_recipients_rejected(self, auth_client):
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 8, "fmt": "pdf",
+            "delivery": "email", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 400
+        assert "recipients" in resp.json()
+
+    def test_both_schedule_without_recipients_rejected(self, auth_client):
+        resp = auth_client.post("/api/reports/compliance-summary/schedule/", {
+            "frequency": "daily", "hour": 8, "fmt": "pdf",
+            "delivery": "both", "recipients": [],
+        }, format="json")
+        assert resp.status_code == 400
+
+    def test_ad_hoc_generate_now_downloadable_without_recipients(self, fleet, auth_client):
+        """On-demand generation takes no recipients and yields a downloadable report."""
+        resp = auth_client.post("/api/reports/compliance-summary/",
+                                {"format": "pdf"}, format="json")
+        assert resp.status_code == 200
+        assert resp["Content-Type"] == "application/pdf"
+        # It was also stored as on-demand history and is re-downloadable.
+        report = GeneratedReport.objects.filter(source="on-demand").latest("generated_at")
+        dl = auth_client.get(f"/api/reports/{report.id}/download/")
+        assert dl.status_code == 200
+        assert b"".join(dl.streaming_content)[:5] == b"%PDF-"
+
+    def test_download_endpoint_still_rbac_gated(self, fleet, auth_client, api_client):
+        """Store-only / ad-hoc reports download ONLY through the RBAC-gated endpoint."""
+        auth_client.post("/api/reports/compliance-summary/", {"format": "pdf"}, format="json")
+        report = GeneratedReport.objects.latest("generated_at")
+        # Unauthenticated download is rejected (no anonymous/shareable links).
+        anon = api_client.get(f"/api/reports/{report.id}/download/")
+        assert anon.status_code in (401, 403)
+        # An authenticated holder of report:view can download.
+        assert auth_client.get(f"/api/reports/{report.id}/download/").status_code == 200
 
 
 # ── Reporting periods (weekly/monthly/quarterly) ─────────────────────────────

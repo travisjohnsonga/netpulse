@@ -530,6 +530,79 @@ from(bucket: "{bucket}")
     return out
 
 
+def query_metrics_summary() -> list:
+    """Per-device CURRENT cpu_pct + memory_used_pct for the device-list CPU/Mem
+    columns. One batched ``last()`` over the telemetry measurement for all
+    devices (mirrors query_ping_summary's single-query design), then the SAME
+    cpu/mem normalisation precedence query_device_metrics uses, applied per
+    device in Python. Blank (absent from the list / null) when a device reports
+    no CPU/mem (down, or no SNMP/gNMI for it). View caches this 60s.
+    """
+    from collections import defaultdict
+    bucket = getattr(settings, "INFLUXDB_BUCKET", "metrics")
+    out: list = []
+    try:
+        client = _client()
+    except Exception as exc:
+        logger.warning("InfluxDB client unavailable: %s", exc)
+        return out
+    try:
+        qa = client.query_api()
+        flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "telemetry")
+  |> last()
+'''
+        # device_id -> {friendly_field: value} (FIELD_MAP-normalised), like _latest_snapshot.
+        snap = defaultdict(dict)
+        for table in qa.query(flux):
+            for rec in table.records:
+                did = rec.values.get("device_id")
+                val = rec.get_value()
+                if did is None or not isinstance(val, (int, float)):
+                    continue
+                snap[did][FIELD_MAP.get(rec.get_field(), rec.get_field())] = val
+
+        for did, s in snap.items():
+            # CPU precedence (matches query_device_metrics).
+            cpu = s.get("cpu_pct")
+            for key in ("cpu_5sec_pct", "cpu_1min_pct", "cpu_5min_pct"):
+                if cpu is None:
+                    cpu = s.get(key)
+            if not cpu and s.get("cpu_pct_alt") is not None:
+                cpu = s.get("cpu_pct_alt")
+            # Memory precedence: direct % → bytes-derived → KB-derived.
+            mem = s.get("memory_used_pct")
+            if mem is None:
+                mem = _mem_used_pct(s.get("memory_used_bytes"), s.get("memory_free_bytes"),
+                                    s.get("memory_total_bytes"))
+            if not mem:
+                used_kb, total_kb = s.get("memory_used_kb"), s.get("memory_total_kb")
+                if (isinstance(used_kb, (int, float)) and isinstance(total_kb, (int, float))
+                        and total_kb > 0):
+                    mem = round(used_kb / total_kb * 100, 1)
+            if cpu is None and mem is None:
+                continue  # nothing to show → omit (list renders "—")
+            try:
+                did_val = int(did)
+            except (TypeError, ValueError):
+                did_val = did
+            out.append({
+                "device_id": did_val,
+                "cpu_pct": round(cpu, 1) if isinstance(cpu, (int, float)) else None,
+                "memory_pct": round(mem, 1) if isinstance(mem, (int, float)) else None,
+            })
+    except Exception as exc:
+        logger.warning("metrics summary query failed: %s", exc)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    return out
+
+
 def _reachability(query_api, bucket, device_id, period) -> dict:
     """
     rtt_ms + is_reachable from the device_reachability measurement: current

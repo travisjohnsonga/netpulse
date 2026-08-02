@@ -20,8 +20,9 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 
+from apps.core.client_ip import TrustedProxyScopedRateThrottle, get_client_ip
+from apps.core.http import add_no_store
 from apps.core.permissions import CapabilityViewSetMixin
 from apps.devices.serializers import DeviceListSerializer
 
@@ -64,7 +65,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     def get_throttles(self):
         # Brute-force guard on the unauthenticated bootstrap endpoints.
         if self.action in ("enroll", "heartbeat"):
-            t = ScopedRateThrottle()
+            t = TrustedProxyScopedRateThrottle()
             t.scope = "auth"
             return [t]
         return super().get_throttles()
@@ -85,7 +86,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         data = self.get_serializer(collector).data
         # Returned exactly once — the agent needs it to bootstrap.
         data["enrollment_token"] = token
-        return Response(data, status=status.HTTP_201_CREATED)
+        return add_no_store(Response(data, status=status.HTTP_201_CREATED))
 
     @action(detail=False, methods=["post"])
     def enroll(self, request):
@@ -118,10 +119,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                 setattr(candidate, field, str(request.data[field])[:255])
         if isinstance(request.data.get("capabilities"), dict):
             candidate.capabilities = request.data["capabilities"]
-        candidate.remote_ip = (
-            request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-            or request.META.get("REMOTE_ADDR")
-        )
+        candidate.remote_ip = get_client_ip(request)
         candidate.save()
 
         # mTLS cert — best-effort; collector is cert-pending if PKI isn't up yet.
@@ -140,7 +138,8 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                 "issuing_ca": cert["issuing_ca"],
             })
         logger.info("collector %s enrolled (cert_issued=%s)", candidate.id, cert is not None)
-        return Response(body, status=status.HTTP_200_OK)
+        # no-store: carries the one-time API key + the mTLS private key.
+        return add_no_store(Response(body, status=status.HTTP_200_OK))
 
     @action(detail=False, methods=["post"])
     def heartbeat(self, request):
@@ -155,10 +154,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
             collector.version = str(request.data["version"])[:50]
         if isinstance(request.data.get("capabilities"), dict):
             collector.capabilities = request.data["capabilities"]
-        collector.remote_ip = (
-            request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-            or request.META.get("REMOTE_ADDR")
-        )
+        collector.remote_ip = get_client_ip(request)
         collector.save(update_fields=[
             "last_seen_at", "status", "version", "capabilities", "remote_ip", "updated_at",
         ])
@@ -172,7 +168,7 @@ class CollectorViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         collector.enrollment_token_hash = auth.hash_secret(token)
         collector.enrolled_at = None
         collector.save(update_fields=["enrollment_token_hash", "enrolled_at", "updated_at"])
-        return Response({"enrollment_token": token})
+        return add_no_store(Response({"enrollment_token": token}))
 
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):

@@ -17,12 +17,15 @@ nav:
   - Security:
     - Overview: security/overview.md
     - Authentication: security/authentication.md
+    - Multi-Factor Authentication: security/mfa.md
     - Authorization (RBAC): security/authorization.md
     - Secrets Management: security/secrets.md
     - Transport & Hardening: security/transport-and-hardening.md
     - Input Hardening: security/input-hardening.md
     - Audit Logging: security/audit-logging.md
     - Supply Chain: security/supply-chain.md
+    - Compliance Overview: security/compliance-overview.md
+    - Compliance Control Mapping: security/compliance-mapping.md
   - Setup:
     - Deployment: setup/deployment.md
     - NAT Configuration: setup/nat.md
@@ -32,6 +35,7 @@ nav:
   - Agent:
     - Overview: agents/overview.md
     - Installation: agents/installation.md
+    - Updating: agents/updating.md
     - Configuration: agents/configuration.md
     - Security: agents/security.md
   - Platforms:
@@ -40,6 +44,7 @@ nav:
     - FortiOS: platforms/fortios.md
   - Compliance:
     - Overview: compliance/overview.md
+    - Applicable Frameworks (scope): compliance/applicable-frameworks.md
     - Interface & Role Rules: compliance/interface-rules.md
   - Reports: reports.md
   - Metrics & Alerting: metrics-and-alerting.md
@@ -52,6 +57,7 @@ nav:
     - Wireless Monitoring: integrations/wireless.md
     - NetBox: integrations/netbox.md
     - Email / SMTP: integrations/email.md
+  - Roadmap: roadmap.md
   - Testing: TESTING_PLAN.md
 
 markdown_extensions:

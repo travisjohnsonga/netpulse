@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, Fragment } from 'react'
 import clsx from 'clsx'
 import { SectionHeader } from '../Settings'
 import {
   fetchAgents, revokeAgent, fetchAgentTokens, createAgentToken, deleteAgentToken,
-  fetchServerRoles, deleteServerRole,
-  type Agent, type AgentToken, type ServerRole, type TargetOS,
+  fetchServerRoles, deleteServerRole, fetchSites,
+  type Agent, type AgentToken, type ServerRole, type TargetOS, type Site,
 } from '../../api/client'
 
 const EXPIRY_OPTS = [
@@ -21,17 +21,26 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   const [maxUses, setMaxUses] = useState(1)
   const [expiryHours, setExpiryHours] = useState(168)
   const [targetOs, setTargetOs] = useState<TargetOS>('linux')
+  const [siteId, setSiteId] = useState<number | ''>('')
+  const [sites, setSites] = useState<Site[]>([])
   const [created, setCreated] = useState<AgentToken | null>(null)
   const [selfSigned, setSelfSigned] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Agents enrolled with this token inherit this site (optional — leave blank to
+  // enroll unassigned and set the site later on the server's detail page).
+  useEffect(() => { fetchSites().then(setSites).catch(() => {}) }, [])
 
   const generate = async () => {
     setBusy(true); setError(null)
     try {
       const expires_at = expiryHours
         ? new Date(Date.now() + expiryHours * 3600_000).toISOString() : null
-      setCreated(await createAgentToken({ description, max_uses: maxUses, expires_at, target_os: targetOs }))
+      setCreated(await createAgentToken({
+        description, max_uses: maxUses, expires_at, target_os: targetOs,
+        site: siteId === '' ? null : siteId,
+      }))
       onCreated()
     } catch { setError('Failed to generate token.') } finally { setBusy(false) }
   }
@@ -42,12 +51,26 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
   const linuxCmd = created
     ? `curl -fsSL${selfSigned ? ' -k' : ''} ${serverUrl}/agent/install | sudo bash -s -- --server ${serverUrl} --token ${created.token}${selfSigned ? ' --insecure' : ''}`
     : ''
+  // Use curl.exe (built into Win10/Server2019+), NOT Invoke-WebRequest: on stock
+  // PowerShell 5.1 IWR (.NET HttpWebRequest) can't speak HTTP/2 and fails against
+  // the HTTP/2 nginx front door. `curl` in PS 5.1 is an ALIAS for IWR, so we call
+  // curl.exe explicitly. -f fails on an HTTP error (so a 404 page isn't saved as
+  // the script), -L follows redirects, -k handles a self-signed cert.
   const windowsCmd = created
-    ? `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n`
-      + `Invoke-WebRequest -Uri "${serverUrl}/agent/install.ps1" -OutFile "$env:TEMP\\install.ps1"\n`
+    ? `curl.exe -fL${selfSigned ? ' -k' : ''} -o "$env:TEMP\\install.ps1" "${serverUrl}/agent/install.ps1"\n`
       + `powershell -ExecutionPolicy Bypass -File "$env:TEMP\\install.ps1" `
       + `-Server "${serverUrl}" -Token "${created.token}"${selfSigned ? ' -Insecure' : ''}`
     : ''
+  // Update commands — no token (update is for already-enrolled hosts). They pull
+  // the updater from the server and run it; it verifies the new binary before
+  // swapping, backs up, and auto-rolls-back if the service doesn't restart. Same
+  // self-signed (-k / -Insecure) handling as install. (install.sh/.ps1 also leave
+  // a persistent local copy, so an enrolled host can just run that with no args.)
+  const linuxUpdateCmd = `curl -fsSL${selfSigned ? ' -k' : ''} ${serverUrl}/agent/update | sudo bash -s -- --server ${serverUrl}${selfSigned ? ' --insecure' : ''}`
+  const windowsUpdateCmd =
+    `curl.exe -fL${selfSigned ? ' -k' : ''} -o "$env:TEMP\\update.ps1" "${serverUrl}/agent/update.ps1"\n`
+    + `powershell -ExecutionPolicy Bypass -File "$env:TEMP\\update.ps1" `
+    + `-Server "${serverUrl}"${selfSigned ? ' -Insecure' : ''}`
   // 'any' = "Both" → show both blocks.
   const showLinux = targetOs === 'linux' || targetOs === 'any'
   const showWindows = targetOs === 'windows' || targetOs === 'any'
@@ -96,6 +119,17 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                 ))}
               </div>
             </div>
+            <label className="block text-sm">
+              <span className="text-gray-700 dark:text-gray-300">Site <span className="text-gray-400">(optional)</span></span>
+              <select className="mt-1 w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-900 dark:border-gray-600"
+                value={siteId} onChange={(e) => setSiteId(e.target.value === '' ? '' : Number(e.target.value))}>
+                <option value="">Unassigned — set later</option>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                Agents enrolled with this token are assigned to this site automatically.
+              </span>
+            </label>
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg dark:border-gray-600 dark:text-gray-300">Cancel</button>
               <button onClick={generate} disabled={busy} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50">
@@ -127,6 +161,12 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                   <button onClick={() => copy(linuxCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Supports linux/amd64, linux/arm64 — auto-detected during install.</p>
+                <p className="mt-2 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Linux update command:</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg break-all">{linuxUpdateCmd}</code>
+                  <button onClick={() => copy(linuxUpdateCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Already-enrolled hosts can instead run <code>sudo /usr/local/bin/netpulse-agent-update.sh</code> (no args). Verifies, backs up, and auto-rolls-back.</p>
               </div>
             )}
             {showWindows && (
@@ -137,6 +177,12 @@ function GenerateTokenModal({ onClose, onCreated, serverUrl }: {
                   <button onClick={() => copy(windowsCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Supports windows/amd64 — run PowerShell as Administrator.</p>
+                <p className="mt-2 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Windows update command (PowerShell):</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 rounded-lg whitespace-pre-wrap break-all">{windowsUpdateCmd}</code>
+                  <button onClick={() => copy(windowsUpdateCmd)} className="px-3 py-2 text-xs border rounded-lg dark:border-gray-600 dark:text-gray-300">Copy</button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">ℹ️ Already-enrolled hosts can instead run <code>&amp; 'C:\Program Files\NetPulse\Update-Agent.ps1'</code> (no args, elevated).</p>
               </div>
             )}
             <div className="flex justify-end pt-2">
@@ -154,11 +200,56 @@ function statusDot(status: string) {
     status === 'active' ? 'bg-green-500' : status === 'revoked' ? 'bg-red-500' : 'bg-gray-400')
 }
 
+// Expanded role-profile detail: what the role monitors + the exact services /
+// ports / custom checks it runs (reference for each built-in role).
+function RoleDetail({ role }: { role: ServerRole }) {
+  const chip = 'inline-block px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-mono'
+  const heading = 'text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1'
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-700 dark:text-gray-300">
+        {role.description || <span className="text-gray-400 dark:text-gray-500">No description.</span>}
+      </p>
+      <div className="grid sm:grid-cols-2 gap-4">
+        <div>
+          <div className={heading}>Windows services</div>
+          {role.windows_services.length
+            ? <div className="flex flex-wrap gap-1">{role.windows_services.map((s) => <span key={s} className={chip}>{s}</span>)}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+        <div>
+          <div className={heading}>Linux services</div>
+          {role.linux_services.length
+            ? <div className="flex flex-wrap gap-1">{role.linux_services.map((s) => <span key={s} className={chip}>{s}</span>)}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+        <div>
+          <div className={heading}>Port checks</div>
+          {role.port_checks.length
+            ? <div className="flex flex-wrap gap-1">{role.port_checks.map((p, i) => (
+                <span key={i} className={chip}>{p.proto.toUpperCase()} {p.port} ({p.name}){p.optional ? ' ·opt' : ''}</span>
+              ))}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+        <div>
+          <div className={heading}>Custom checks</div>
+          {role.custom_checks.length
+            ? <div className="flex flex-wrap gap-1">{role.custom_checks.map((c, i) => (
+                <span key={i} className={chip}>{String((c as { name?: string }).name ?? `check ${i + 1}`)}</span>
+              ))}</div>
+            : <span className="text-xs text-gray-400 dark:text-gray-500">—</span>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Agents() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tokens, setTokens] = useState<AgentToken[]>([])
   const [roles, setRoles] = useState<ServerRole[]>([])
   const [showModal, setShowModal] = useState(false)
+  const [expandedRole, setExpandedRole] = useState<number | null>(null)
 
   const load = useCallback(() => {
     fetchAgents().then(setAgents).catch(() => {})
@@ -212,7 +303,7 @@ export default function Agents() {
               {agents.map((a) => (
                 <tr key={a.id} className="text-gray-700 dark:text-gray-300">
                   <td className="px-3 py-2 font-medium">{a.hostname}</td>
-                  <td className="px-3 py-2">{a.os} {a.arch}</td>
+                  <td className="px-3 py-2">{a.os_name ? `${a.os_name} · ${a.arch}` : `${a.os} ${a.arch}`}</td>
                   <td className="px-3 py-2">{a.version || '—'}</td>
                   <td className="px-3 py-2">{a.role_types.join(', ') || '—'}</td>
                   <td className="px-3 py-2"><span className={statusDot(a.status)} />{a.status}</td>
@@ -232,19 +323,34 @@ export default function Agents() {
         <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
-              <tr><th className="text-left px-3 py-2 font-medium">Role</th><th className="text-left px-3 py-2 font-medium">Services</th><th className="text-left px-3 py-2 font-medium">Agents</th><th className="px-3 py-2"></th></tr>
+              <tr><th className="px-3 py-2 w-6"></th><th className="text-left px-3 py-2 font-medium">Role</th><th className="text-left px-3 py-2 font-medium">Services</th><th className="text-left px-3 py-2 font-medium">Agents</th><th className="px-3 py-2"></th></tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {roles.map((r) => (
-                <tr key={r.id} className="text-gray-700 dark:text-gray-300">
-                  <td className="px-3 py-2 font-medium">{r.name}{r.is_builtin && <span className="ml-2 text-xs text-gray-400">built-in</span>}</td>
-                  <td className="px-3 py-2 text-xs">{r.windows_services.length} Win · {r.linux_services.length} Lin</td>
-                  <td className="px-3 py-2">{r.agent_count}</td>
-                  <td className="px-3 py-2 text-right">
-                    {!r.is_builtin && <button onClick={() => deleteServerRole(r.id).then(load)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>}
-                  </td>
-                </tr>
-              ))}
+              {roles.map((r) => {
+                const open = expandedRole === r.id
+                return (
+                <Fragment key={r.id}>
+                  <tr className="text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40 cursor-pointer"
+                    onClick={() => setExpandedRole(open ? null : r.id)}>
+                    <td className="px-3 py-2 text-gray-400">{open ? '▾' : '▸'}</td>
+                    <td className="px-3 py-2 font-medium">{r.name}{r.is_builtin && <span className="ml-2 text-xs text-gray-400">built-in</span>}</td>
+                    <td className="px-3 py-2 text-xs">{r.windows_services.length} Win · {r.linux_services.length} Lin</td>
+                    <td className="px-3 py-2">{r.agent_count}</td>
+                    <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                      {!r.is_builtin && <button onClick={() => deleteServerRole(r.id).then(load)} className="text-red-600 hover:text-red-800 text-xs">Delete</button>}
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr className="bg-gray-50/60 dark:bg-gray-900/30">
+                      <td></td>
+                      <td colSpan={4} className="px-3 py-3">
+                        <RoleDetail role={r} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>

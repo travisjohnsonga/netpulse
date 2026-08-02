@@ -6,8 +6,9 @@ import UnifiSettingsModal from '../../components/UnifiSettingsModal'
 import MistSettingsModal from '../../components/MistSettingsModal'
 import {
   fetchMist, fetchUnifiCloud, fetchUnifiControllers, fetchNetboxImports, fetchEmailSettings,
+  fetchAlertChannels, createAlertChannel, updateAlertChannel, deleteAlertChannel, testAlertChannel,
   type MistIntegration, type UnifiCloudAccount, type UnifiController,
-  type NetBoxImportRecord, type EmailSettings,
+  type NetBoxImportRecord, type EmailSettings, type AlertChannel,
 } from '../../api/client'
 import { SectionHeader } from '../Settings'
 
@@ -71,9 +72,44 @@ function emailStatus(e: EmailSettings): IntegStatus {
   return { status: 'configured', summary: `${e.host} · disabled` }
 }
 
-// Integration catalog. Connection state isn't persisted to a backend yet — the
-// integrations service (ingest-api-poller / alert channels) is a later phase —
-// so status here is local and illustrative of the intended UX.
+// ── Alert-channel integrations (slack/teams/pagerduty/webhook) ─────────────────
+// These map onto the real AlertChannel API (validate → save → secret-to-OpenBao).
+// Each defines its AlertChannel.channel_type, the form field carrying its secret,
+// and how to build the channel config from the modal's field values.
+interface AlertChannelDef {
+  type: AlertChannel['channel_type']
+  secretField: string
+  config: (v: Record<string, string>) => Record<string, unknown>
+  summary: string
+}
+const ALERT_CHANNELS: Record<string, AlertChannelDef> = {
+  slack: { type: 'slack', secretField: 'webhook', summary: 'Incoming webhook configured',
+    config: (v) => ({ webhook_url: v.webhook }) },
+  teams: { type: 'teams', secretField: 'webhook', summary: 'Incoming webhook configured',
+    config: (v) => ({ webhook_url: v.webhook, card_format: 'adaptive' }) },
+  pagerduty: { type: 'pagerduty', secretField: 'routing_key', summary: 'Routing key configured',
+    config: (v) => ({ routing_key: v.routing_key }) },
+  webhook: { type: 'webhook', secretField: 'url', summary: 'Endpoint configured',
+    config: (v) => ({ url: v.url, ...(v.secret ? { token: v.secret } : {}) }) },
+}
+
+function channelStatus(def: AlertChannelDef, ch?: AlertChannel): IntegStatus {
+  if (!ch) return { status: 'not_configured', summary: 'Not configured' }
+  return { status: ch.is_active ? 'connected' : 'configured', summary: def.summary }
+}
+
+function errMsg(e: unknown): string {
+  const data = (e as { response?: { data?: unknown } }).response?.data
+  if (data && typeof data === 'object') {
+    const vals = Object.values(data as Record<string, unknown>).flat()
+    if (vals.length) return String(vals[0])
+  }
+  return 'Request failed'
+}
+
+// Integration catalog. Cloud/email/alert-channel cards now reflect real backend
+// state; the remaining placeholder cards (meraki, cradlepoint, ChatOps bots) use
+// local state until their backends land.
 
 interface Integration {
   id: string
@@ -130,16 +166,17 @@ const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100'
 
 export default function Integrations() {
-  // id → summary string when connected (local-only for now).
+  // id → summary string when connected (local-only; placeholder cards).
   const [connected, setConnected] = useState<Record<string, string>>({})
   const [setup, setSetup] = useState<Integration | null>(null)
   const [netboxOpen, setNetboxOpen] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
   const [unifiOpen, setUnifiOpen] = useState(false)
   const [mistOpen, setMistOpen] = useState(false)
-  // Real backend status per integration (unifi, mist, netbox, email). Other
-  // cards (alert channels / ChatOps) still use the local placeholder state.
+  // Real backend status per integration (unifi, mist, netbox, email, alert channels).
   const [statuses, setStatuses] = useState<Record<string, IntegStatus>>({})
+  // Existing AlertChannel per alert-channel integration id (for update/test/disconnect).
+  const [channels, setChannels] = useState<Record<string, AlertChannel>>({})
   const setStatus = (id: string, s: IntegStatus) => setStatuses((prev) => ({ ...prev, [id]: s }))
 
   const loadAll = () => {
@@ -148,15 +185,72 @@ export default function Integrations() {
       .then(([cloud, controllers]) => setStatus('unifi', unifiStatus(cloud, controllers))).catch(() => {})
     fetchNetboxImports().then((rows) => setStatus('netbox', netboxStatus(rows))).catch(() => {})
     fetchEmailSettings().then((e) => setStatus('email', emailStatus(e))).catch(() => {})
+    fetchAlertChannels().then((chs) => {
+      // First active (else first) channel per type backs each alert-channel card.
+      const byType: Record<string, AlertChannel> = {}
+      for (const ch of chs) {
+        if (!byType[ch.channel_type] || (ch.is_active && !byType[ch.channel_type].is_active)) byType[ch.channel_type] = ch
+      }
+      const nextChannels: Record<string, AlertChannel> = {}
+      setStatuses((prev) => {
+        const s = { ...prev }
+        for (const [id, def] of Object.entries(ALERT_CHANNELS)) {
+          const ch = byType[def.type]
+          if (ch) nextChannels[id] = ch
+          s[id] = channelStatus(def, ch)
+        }
+        return s
+      })
+      setChannels(nextChannels)
+    }).catch(() => {})
   }
   useEffect(() => { loadAll() }, [])
 
-  // Per-card status + summary. unifi/mist/netbox/email reflect real backend
-  // state; the rest use the local placeholder state until their backends land.
+  // Per-card status. Backend-backed cards use `statuses`; placeholder cards fall
+  // back to local `connected` state.
   const cardState = (id: string): IntegStatus => {
     if (statuses[id]) return statuses[id]
     const connectedNow = id in connected
     return { status: connectedNow ? 'connected' : 'not_configured', summary: connectedNow ? connected[id] : 'Not configured' }
+  }
+
+  // Create/update the AlertChannel + send a live test through it. Returns a
+  // result the modal renders inline (this is the real "Test & Connect").
+  const submitAlertChannel = async (integration: Integration, values: Record<string, string>):
+    Promise<{ ok: boolean; message: string }> => {
+    const def = ALERT_CHANNELS[integration.id]
+    const existing = channels[integration.id]
+    const secret = (values[def.secretField] || '').trim()
+    const minSeverity = values.min_severity || 'medium'
+    try {
+      let ch: AlertChannel
+      if (!existing) {
+        if (!secret) return { ok: false, message: `Please enter the ${integration.fields[0]?.label || 'required field'}.` }
+        ch = await createAlertChannel({ name: integration.name, channel_type: def.type, is_active: true,
+          config: { ...def.config(values), min_severity: minSeverity } })
+      } else {
+        // Update: with a new secret, rebuild config (the backend moves the secret to
+        // OpenBao); without one, keep the existing config (incl. the OpenBao secret
+        // marker) and only update min_severity. Always PATCH config so severity saves.
+        const config = secret
+          ? { ...def.config(values), min_severity: minSeverity }
+          : { ...(existing.config || {}), min_severity: minSeverity }
+        ch = await updateAlertChannel(existing.id, { is_active: true, config })
+      }
+      const test = await testAlertChannel(ch.id)
+      loadAll()
+      return test.ok
+        ? { ok: true, message: `Connected — test ${def.type === 'pagerduty' ? 'event enqueued' : 'notification sent'}. ${test.detail}` }
+        : { ok: false, message: `Saved, but the test send failed: ${test.detail}` }
+    } catch (e) {
+      return { ok: false, message: errMsg(e) }
+    }
+  }
+
+  const disconnectAlertChannel = async (integration: Integration): Promise<void> => {
+    const existing = channels[integration.id]
+    if (existing) { try { await deleteAlertChannel(existing.id) } catch { /* ignore */ } }
+    loadAll()
   }
 
   return (
@@ -213,14 +307,19 @@ export default function Integrations() {
       {setup && (
         <SetupModal
           integration={setup}
-          connected={setup.id in connected}
+          isAlertChannel={setup.id in ALERT_CHANNELS}
+          hasChannel={Boolean(channels[setup.id])}
+          currentMinSeverity={(channels[setup.id]?.config?.min_severity as string) || 'medium'}
           onClose={() => setSetup(null)}
-          onConnect={() => {
+          onSubmit={async (values) => {
+            if (setup.id in ALERT_CHANNELS) return submitAlertChannel(setup, values)
+            // Placeholder integrations (no backend yet): keep local connected state.
             setConnected((c) => ({ ...c, [setup.id]: setup.summary ?? 'Configured' }))
-            setSetup(null)
+            return { ok: true, message: 'Saved.' }
           }}
-          onDisconnect={() => {
-            setConnected((c) => { const n = { ...c }; delete n[setup.id]; return n })
+          onDisconnect={async () => {
+            if (setup.id in ALERT_CHANNELS) await disconnectAlertChannel(setup)
+            else setConnected((c) => { const n = { ...c }; delete n[setup.id]; return n })
             setSetup(null)
           }}
         />
@@ -234,13 +333,32 @@ export default function Integrations() {
   )
 }
 
-function SetupModal({ integration, connected, onClose, onConnect, onDisconnect }: {
+const SEVERITY_OPTIONS = ['info', 'low', 'medium', 'high', 'critical'] as const
+
+function SetupModal({ integration, isAlertChannel, hasChannel, currentMinSeverity, onClose, onSubmit, onDisconnect }: {
   integration: Integration
-  connected: boolean
+  isAlertChannel: boolean
+  hasChannel: boolean
+  currentMinSeverity: string
   onClose: () => void
-  onConnect: () => void
+  onSubmit: (values: Record<string, string>) => Promise<{ ok: boolean; message: string }>
   onDisconnect: () => void
 }) {
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [minSeverity, setMinSeverity] = useState(currentMinSeverity)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const connected = hasChannel
+
+  const submit = async () => {
+    setBusy(true)
+    setResult(null)
+    // Carry the per-channel min_severity alongside the field values.
+    const r = await onSubmit({ ...values, min_severity: minSeverity })
+    setResult(r)
+    setBusy(false)
+  }
+
   return (
     <Modal
       title={`${integration.icon} ${integration.name}`}
@@ -248,12 +366,12 @@ function SetupModal({ integration, connected, onClose, onConnect, onDisconnect }
       footer={
         <>
           {connected ? (
-            <button onClick={onDisconnect} className="flex-1 py-2.5 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-50 dark:hover:bg-red-900/30">Disconnect</button>
+            <button disabled={busy} onClick={onDisconnect} className="flex-1 py-2.5 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-50">Disconnect</button>
           ) : (
-            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+            <button disabled={busy} onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">Cancel</button>
           )}
-          <button onClick={onConnect} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
-            {connected ? 'Save' : 'Test & Connect'}
+          <button disabled={busy} onClick={submit} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+            {busy ? 'Working…' : connected ? 'Save & Test' : 'Test & Connect'}
           </button>
         </>
       }
@@ -263,10 +381,40 @@ function SetupModal({ integration, connected, onClose, onConnect, onDisconnect }
         {integration.fields.map((f) => (
           <div key={f.key}>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{f.label}</label>
-            <input type={f.secret ? 'password' : 'text'} placeholder={f.placeholder} className={inputCls} autoComplete="off" />
+            <input
+              type={f.secret ? 'password' : 'text'}
+              placeholder={connected && f.secret ? '•••••••• stored in OpenBao (leave blank to keep)' : f.placeholder}
+              value={values[f.key] ?? ''}
+              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+              className={inputCls}
+              autoComplete="off"
+            />
           </div>
         ))}
+        {isAlertChannel && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Minimum severity to notify</label>
+            <select value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)} className={inputCls}>
+              {SEVERITY_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}{s === 'medium' ? ' (default)' : ''}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+              Only alerts at this severity or above notify here. Everything still shows in the Alerts list — this gates the notification, not the alert. (Audit/visibility types like config-change never notify unless opted in.)
+            </p>
+          </div>
+        )}
+        {result && (
+          <p className={`text-xs rounded-md px-3 py-2 ${result.ok
+            ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+            : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+            {result.ok ? '✅ ' : '⚠️ '}{result.message}
+          </p>
+        )}
         <p className="text-xs text-gray-400 dark:text-gray-500">🔒 Credentials are stored securely in OpenBao.</p>
+        {isAlertChannel && (
+          <p className="text-[11px] text-gray-400 dark:text-gray-500">“Test &amp; Connect” saves the channel and sends a live test notification through it.</p>
+        )}
       </div>
     </Modal>
   )

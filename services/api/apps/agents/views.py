@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.errors import safe_detail
+from apps.core.http import NoStoreResponseMixin, add_no_store
 from apps.core.permissions import CapabilityViewSetMixin, HasCapability
 
 from . import pki
@@ -29,10 +30,29 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
-def _server_url() -> str:
+def _server_url(request=None) -> str:
+    """Public base URL an agent should use to reach this server.
+
+    Derived from how the agent ACTUALLY reached us — the request Host header,
+    honoring nginx's X-Forwarded-Proto via SECURE_PROXY_SSL_HEADER — so it
+    reflects the operator-supplied address rather than guessing from
+    ALLOWED_HOSTS. An explicit AGENT_SERVER_URL setting overrides it for
+    split-DNS / published-hostname setups. NEVER returns localhost: that is
+    useless to a remote agent (the bug this fixes)."""
+    explicit = (getattr(settings, "AGENT_SERVER_URL", "") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    if request is not None:
+        host = request.get_host()
+        if host:
+            # Always https: agents reach the platform over TLS only (nginx
+            # redirects 80→443 and the mTLS metrics push requires it). The bug
+            # was the host (localhost), not the scheme — echo the real host.
+            return f"https://{host}"
+    # Fallback only when there's no request (e.g. a management command): a real
+    # configured host, never localhost.
     hosts = [h for h in getattr(settings, "ALLOWED_HOSTS", []) if h not in ("*", "localhost", "127.0.0.1")]
-    host = hosts[0] if hosts else "localhost"
-    return f"https://{host}"
+    return f"https://{hosts[0]}" if hosts else ""
 
 
 class ServerRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
@@ -51,8 +71,9 @@ class ServerRoleViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-class AgentEnrollmentTokenViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
-    """Create/list/revoke enrollment tokens. Token value shown once on create."""
+class AgentEnrollmentTokenViewSet(NoStoreResponseMixin, CapabilityViewSetMixin, viewsets.ModelViewSet):
+    """Create/list/revoke enrollment tokens. Token value shown once on create.
+    no-store on every response: the create response carries the one-time token."""
     view_capability = "agent:view"
     write_capability = "agent:edit"
 
@@ -76,7 +97,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     PUBLIC_ACTIONS = ("enroll", "ca_certificate")
     # mTLS-authed ingestion: authenticated by the nginx-verified client-cert
     # serial via AgentCertAuthentication (request.user is the Agent).
-    CERT_ACTIONS = ("metrics", "role_checks")
+    CERT_ACTIONS = ("metrics", "role_checks", "logs")
 
     def _resolved_action(self):
         # get_authenticators() runs inside initialize_request(), BEFORE
@@ -154,6 +175,10 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         if created:
             agent = Agent(hostname=data["hostname"], collection_interval=30)
         agent.os = data["os"]
+        # OS-detail (additive; "" for older agents that don't send it).
+        agent.os_name = data.get("os_name", "")
+        agent.os_version = data.get("os_version", "")
+        agent.os_kernel = data.get("kernel", "")
         agent.arch = data["arch"]
         agent.version = data["version"]
         agent.enrollment_token = token
@@ -187,43 +212,21 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
         ca = issued.get("ca_chain") or []
-        return Response({
+        # no-store: this response carries the signed client certificate.
+        return add_no_store(Response({
             "agent_id": str(agent.id),
             "certificate": issued["certificate"],
             "ca_certificate": "\n".join(ca) if isinstance(ca, list) else ca,
             "collection_interval": agent.collection_interval,
-            "server_url": _server_url(),
+            "server_url": _server_url(request),
             "re_enrolled": not created,
-        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK))
 
     def _link_device(self, agent, request, token):
-        from apps.devices.models import Device
-        ip = request.META.get("REMOTE_ADDR") or None
-        device = Device.objects.filter(hostname=agent.hostname).first()
-        if device is None:
-            # ip_address is required+unique; only create when we have a usable IP
-            # that isn't already owned (agents behind one NAT share a source IP —
-            # the agent still enrolls, just without an auto-created device row).
-            if not ip or Device.objects.filter(ip_address=ip).exists():
-                return
-            device = Device.objects.create(
-                hostname=agent.hostname, ip_address=ip, management_ip=ip,
-                platform=Device.Platform.OTHER, status=Device.Status.ACTIVE,
-                site=token.site, notes="Monitored by spane Agent",
-            )
-        elif token.site_id and not device.site_id:
-            device.site = token.site
-            device.save(update_fields=["site"])
-        if agent.device_id == device.id:
-            return
-        # device.agent is a OneToOne — transfer it off any prior agent (e.g. a
-        # revoked enrollment for this host) so the re-enrolling agent can claim it.
-        prior = Agent.objects.filter(device=device).exclude(pk=agent.pk).first()
-        if prior:
-            prior.device = None
-            prior.save(update_fields=["device", "updated_at"])
-        agent.device = device
-        agent.save(update_fields=["device", "updated_at"])
+        # Always link a Device (real client IP, else a unique synthetic ULA) so an
+        # enrolled agent is never device-less — even behind a shared-IP proxy/NAT.
+        from .device_link import ensure_agent_device
+        ensure_agent_device(agent, request=request, site=token.site)
 
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
@@ -234,25 +237,85 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         agent = request.user
         payload = request.data or {}
         metrics = payload.get("metrics") or {}
+        # Self-heal a device-less agent (e.g. one enrolled behind a shared-IP
+        # proxy before this fix) on its next check-in — best-effort.
+        if agent.device_id is None:
+            try:
+                from .device_link import ensure_agent_device
+                ensure_agent_device(agent, request=request)
+            except Exception as exc:  # never break ingestion over a link failure
+                logger.warning("device auto-link failed for agent %s: %s", agent.id, exc)
         device_id = agent.device_id or agent.id
         written = write_agent_metrics(device_id, agent.hostname, metrics, ts=payload.get("timestamp"))
         update_fields = ["last_seen", "status", "updated_at"]
-        # Capture running service names (when the agent collects them) for role
-        # auto-detection. Accept a list of names or {name, running?} dicts.
+        # Capture the general running-services list (when the agent collects it).
+        # Newer agents send RICH dicts {name,state,start_type,running}; older ones
+        # send bare name strings — store a normalized rich list either way (capped),
+        # so the Services tab can show state. Role auto-detection reads the names
+        # back out (detection.py handles both shapes).
         services = metrics.get("services")
         if isinstance(services, list):
-            names = []
-            for s in services:
+            norm = []
+            for s in services[:500]:
                 if isinstance(s, str):
-                    names.append(s)
-                elif isinstance(s, dict) and s.get("name") and s.get("running", True):
-                    names.append(s["name"])
-            agent.reported_services = names
+                    norm.append({"name": s[:128], "running": True, "state": "", "start_type": ""})
+                elif isinstance(s, dict) and s.get("name"):
+                    norm.append({
+                        "name": str(s["name"])[:128],
+                        "display_name": str(s.get("display_name", ""))[:255],
+                        "running": bool(s.get("running", True)),
+                        "state": str(s.get("state", ""))[:32],
+                        "start_type": str(s.get("start_type", ""))[:32],
+                    })
+            agent.reported_services = norm
             update_fields.append("reported_services")
+        # Keep the stored version in sync with the CURRENTLY RUNNING agent — the
+        # agent reports its build in every payload (top-level "version"), and
+        # upgrades happen after enrollment. Only update on a non-empty value so a
+        # payload that omits it never blanks a good stored version.
+        reported_version = (payload.get("version") or "").strip()
+        if reported_version and reported_version != agent.version:
+            agent.version = reported_version
+            update_fields.append("version")
+        # Refresh OS-detail from the push (metrics["system"]) so an in-place OS
+        # upgrade self-corrects — set-once-at-enrollment would go stale (same
+        # reasoning as version + the hostname-doesn't-auto-refresh finding). Only
+        # overwrite on a non-empty value so a payload omitting it (older agent)
+        # never blanks good data.
+        system = metrics.get("system") or {}
+        for model_field, payload_key in (
+            ("os_name", "os_name"), ("os_version", "os_version"),
+            ("os_kernel", "kernel"),
+        ):
+            val = system.get(payload_key)
+            val = val.strip() if isinstance(val, str) else ""
+            if val and val != getattr(agent, model_field):
+                setattr(agent, model_field, val)
+                update_fields.append(model_field)
         agent.last_seen = timezone.now()
+        # Capture the agent's real source IP for collector-originated ping/RTT
+        # (distinct from the synthetic Device IP). Spoof-resistant get_client_ip;
+        # only update on a usable, changed value so a missing XFF never blanks it.
+        try:
+            from apps.core.client_ip import get_client_ip
+            client_ip = get_client_ip(request)
+            if client_ip and client_ip != agent.last_ip:
+                agent.last_ip = client_ip
+                update_fields.append("last_ip")
+        except Exception:
+            pass
         if agent.status == Agent.Status.INACTIVE:
             agent.status = Agent.Status.ACTIVE
         agent.save(update_fields=update_fields)
+        # Service-stability: track watched-service transitions + fire/resolve
+        # down/flap alerts (role-independent). Best-effort — never break ingestion.
+        watched = metrics.get("watched_services")
+        if isinstance(watched, list):
+            try:
+                from .stability import reconcile_watched_services
+                reconcile_watched_services(agent, watched)
+            except Exception as exc:
+                logger.warning("watched-service reconcile failed for agent %s: %s", agent.id, exc)
         # Push the server-authoritative role assignments back in the response so
         # the agent can auto-enable role checks without a manual config edit.
         # de-dup while preserving assignment order.
@@ -272,6 +335,9 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
                 # Turn role checks on as soon as at least one role is assigned.
                 "role_checks_enabled": bool(assigned_roles),
             },
+            # Operator-set DESIRED config the agent applies on this cycle (pull
+            # delivery — Stage B teaches the agent to read + apply this).
+            "desired_config": agent.effective_config(),
         })
 
     @extend_schema(request=None, responses=None)
@@ -285,11 +351,20 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         for r in results if isinstance(results, list) else []:
             if not isinstance(r, dict) or not r.get("role"):
                 continue
+            functional = r.get("functional") or []
             AgentRoleStatus.objects.update_or_create(
                 agent=agent, role_type=r["role"],
                 defaults={"services": r.get("services") or [], "ports": r.get("ports") or [],
-                          "custom": r.get("custom") or [], "collected_at": now},
+                          "custom": r.get("custom") or [], "functional": functional,
+                          "collected_at": now},
             )
+            # Functional health → site down/degraded + cert-expiry alerts.
+            if functional:
+                try:
+                    from .functional import reconcile_functional_health
+                    reconcile_functional_health(agent, r["role"], functional)
+                except Exception as exc:
+                    logger.warning("functional reconcile failed for agent %s: %s", agent.id, exc)
             # Method 3: roles declared in the agent's config (it's reporting checks
             # for them) auto-create the assignment so they show on the Roles tab.
             role = ServerRole.objects.filter(role_type=r["role"]).first()
@@ -299,6 +374,30 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
         agent.last_seen = now
         agent.save(update_fields=["last_seen", "updated_at"])
         return Response({"accepted": True, "roles": len(results)})
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["post"], url_path="logs")
+    def logs(self, request, pk=None):
+        """Relay raw log lines the agent tailed (security profile: auth/service/
+        kernel, + allowlisted additional_paths) onto NATS netpulse.logs.<source>.
+        <host>, where the existing stream-processor → OpenSearch → Logs UI pipeline
+        ingests them. mTLS cert authed (request.user is the Agent). The agent ships
+        RAW lines only — all parsing is server-side (Stage 2)."""
+        from .log_publish import ALLOWED_LOG_SOURCES, publish_log_lines
+
+        agent = request.user
+        payload = request.data or {}
+        source = str(payload.get("source", "")).strip().lower()
+        if source not in ALLOWED_LOG_SOURCES:
+            return Response({"detail": f"source must be one of {sorted(ALLOWED_LOG_SOURCES)}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        lines = payload.get("lines") or []
+        if not isinstance(lines, list):
+            return Response({"detail": "lines must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+        published = publish_log_lines(source, agent.hostname, lines[:1000])  # cap per request
+        agent.last_seen = timezone.now()
+        agent.save(update_fields=["last_seen", "updated_at"])
+        return Response({"accepted": True, "published": published, "source": source})
 
     @extend_schema(responses=None)
     @action(detail=True, methods=["get"])
@@ -325,7 +424,7 @@ class AgentViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=["get"])
     def download(self, request):
         """Agent install info + per-platform download paths (binaries served by CI/static)."""
-        base = _server_url()
+        base = _server_url(request)
         platforms = ["linux-amd64", "linux-arm64", "windows-amd64"]
         return Response({
             "platforms": platforms,

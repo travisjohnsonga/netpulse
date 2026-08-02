@@ -98,8 +98,29 @@ def _aos_cx_walk_bases() -> list[str]:
     return list(WALK_BASES)
 
 
+def _junos_walk_bases() -> list[str]:
+    # Everything except the PoE table: snmp_environment's PoE budget math
+    # carries the AOS-CX half-watt divisor (_POE_BUDGET_DIVISOR=2), which would
+    # HALVE a Juniper budget (pethMainPsePower reads true watts there). PoE for
+    # junos needs a platform-aware divisor first — see the roadmap pin.
+    #
+    # The point of walking junos at all: EX-family PSU/fan inventory. Verified
+    # against a real EX4100-24MP capture (JUNOS 23.4R2-S4.11): entPhysicalTable
+    # carries the PSUs (class 6, "JPSU-920W-AC-AFO") and fans (class 7), while
+    # ENTITY-SENSOR-MIB (1.3.6.1.2.1.99.*) is ENTIRELY ABSENT on that platform
+    # ("No Such Object") — so units appear presence-only (reading/status None),
+    # which _units() already handles. Walking the absent sensor bases is a
+    # harmless no-op; on Junos platforms that DO expose them, readings overlay.
+    from apps.telemetry.snmp_environment import PETH_MAIN_PSE_ENTRY, WALK_BASES
+    return [o for o in WALK_BASES if o != PETH_MAIN_PSE_ENTRY]
+
+
 PLATFORM_WALK_OIDS = {
     "aos_cx": _aos_cx_walk_bases(),
+    # junos previously got NO environment walks at all — entPhysicalTable was
+    # never collected, so derive_environment saw an empty walk and EX-family
+    # PSU/fan units silently vanished (the _units() overlay logic was fine).
+    "junos": _junos_walk_bases(),
 }
 
 

@@ -12,8 +12,12 @@ API_SERVICES="api websocket config-manager scheduler alert-engine cve-engine lif
 # Exported so docker-compose's api build.args pick them up on any build below.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
   export GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"
-  export GIT_COUNT="$(git rev-list --count HEAD 2>/dev/null)"
   export BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Canonical app version (Option C): git describe against app-v* tags, app-v
+  # stripped → semver (e.g. 0.5.0, or 0.5.0-3-gSHA for a dev build between tags).
+  # Baked into the image so a built container reports its version with no .git
+  # inside; the host repo has full history+tags so describe never bare-hashes.
+  export SPANE_VERSION="$(git describe --tags --match 'app-v*' --always --dirty 2>/dev/null | sed 's/^app-v//')"
 fi
 
 case "$1" in
@@ -100,12 +104,20 @@ case "$1" in
     ;;
   status)
     docker compose ps
+    # Probe via nginx on :443 (self-signed → -k), NOT gunicorn's :8000: with
+    # SECURE_SSL_REDIRECT=true (shipped production default) plain HTTP to
+    # :8000 returns an empty 301 → json.tool printed "Expecting value" on a
+    # perfectly healthy stack. This is the endpoint customers actually use.
+    _hp="$(grep -E '^FRONTEND_HTTPS_PORT=' .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//')"
+    _hp="${_hp:-443}"
     echo ""
     echo "--- Health ---"
-    curl -s http://localhost:8000/api/health/ | python3 -m json.tool
+    curl -sk --max-time 5 "https://localhost:${_hp}/api/health/" | python3 -m json.tool \
+      || echo "  (api not reachable via https://localhost:${_hp} — is the stack up?)"
     echo ""
     echo "--- Infrastructure ---"
-    curl -s http://localhost:8000/api/health/infrastructure/ | python3 -m json.tool
+    curl -sk --max-time 5 "https://localhost:${_hp}/api/health/infrastructure/" | python3 -m json.tool \
+      || echo "  (infrastructure health not reachable)"
     ;;
   logs)
     docker compose logs -f ${2:-api}
@@ -242,15 +254,19 @@ LOGROTATE
     bash "$(dirname "$0")/scripts/update.sh" "${2:-}"
     ;;
   show-version)
-    if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-      VER_FILE="$(cat VERSION 2>/dev/null || echo '')"
-      echo "spane version: ${VER_FILE:+$VER_FILE — }1.0.$(git rev-list --count HEAD) ($(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD))"
+    # Canonical app version: env override else git-describe against app-v* tags
+    # (matches settings.VERSION / _app_version exactly).
+    if [ -n "${SPANE_VERSION:-}" ]; then
+      echo "spane version: ${SPANE_VERSION} (app-tag derived)"
+    elif command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+      APP_VER="$(git describe --tags --match 'app-v*' --always --dirty 2>/dev/null | sed 's/^app-v//')"
+      echo "spane version: ${APP_VER:-0.0.0+$(git rev-parse --short HEAD)} (agent: $(git describe --tags --match 'v[0-9]*' --always 2>/dev/null || echo n/a))"
     else
-      echo "spane version: $(cat VERSION 2>/dev/null || echo unknown)"
+      echo "spane version: unknown"
     fi
     echo ""
     echo "Update history (last 10):"
-    tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
+    tail -n 10 /var/backups/netpulse/update-history.log 2>/dev/null || tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
     ;;
   rollback)
     # Roll the working tree back to a pre-update snapshot tag, then rebuild.
@@ -266,7 +282,7 @@ LOGROTATE
       echo "❌ Unknown snapshot: $SNAP"; exit 1
     fi
     echo "⚠️  Rolling back to $SNAP and rebuilding. The DB is NOT downgraded —"
-    echo "    restore a .update-db-backup-*.sql.gz manually if a migration must be reverted."
+    echo "    restore a /var/backups/netpulse/update-db-backup-*.sql.gz manually if a migration must be reverted."
     read -r -p "Continue? [y/N]: " c; case "${c:-}" in y|Y) ;; *) echo "Aborted."; exit 1 ;; esac
     git checkout "$SNAP"
     GIT_COMMIT="$(git rev-parse --short HEAD)" GIT_COUNT="$(git rev-list --count HEAD)" \

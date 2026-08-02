@@ -23,7 +23,11 @@ func (c *CPUCollector) Collect() ([]CPUStat, error) {
 	for _, p := range procs {
 		idle := float64(p.PercentIdleTime)
 		stats = append(stats, CPUStat{
-			Core:   p.Name,
+			// Map the WMI "_Total" aggregate row to the cross-platform aggregate
+			// key ("cpu") so it feeds the chart + Overview stat like Linux, instead
+			// of showing as a fake per-core bar. Per-core rows ("0".."N") pass
+			// through unchanged.
+			Core:   normalizeCPUCore(p.Name),
 			User:   float64(p.PercentUserTime),
 			System: float64(p.PercentPrivilegedTime),
 			Idle:   idle,

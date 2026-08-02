@@ -7,8 +7,8 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def device():
     from apps.devices.models import Device
-    return Device.objects.create(hostname="sw1", ip_address="10.150.0.21",
-                                 management_ip="10.150.0.21", platform="aos_cx", status="active")
+    return Device.objects.create(hostname="sw1", ip_address="192.0.2.21",
+                                 management_ip="192.0.2.21", platform="aos_cx", status="active")
 
 
 # ── normalization ─────────────────────────────────────────────────────────────
@@ -72,12 +72,12 @@ class TestParsing:
             "Current ARP caches:\n"
             "===================\n"
             "IP Address     Type     MAC Address        Vendor      Interface  Timeout\n"
-            "10.16.128.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\n"
-            "10.16.128.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\n"
-            "10.16.129.11   Dynamic  D4:A2:CD:13:5C:FB  DELL                        X0:V201    Expires in 2 minutes   2\n"
+            "198.51.100.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\n"
+            "198.51.100.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\n"
+            "198.51.100.11   Dynamic  D4:A2:CD:13:5C:FB  DELL                        X0:V201    Expires in 2 minutes   2\n"
         )
         out = _parse_sonicwall_arp(sample)
-        assert out[0] == {"ip_address": "10.16.128.129", "mac_address": "1a:c2:41:2c:0b:0c",
+        assert out[0] == {"ip_address": "198.51.100.129", "mac_address": "1a:c2:41:2c:0b:0c",
                           "interface": "X0:V1000", "vlan": None, "age_minutes": None,
                           "protocol": "Internet", "entry_type": "static"}   # Static row
         assert out[1]["mac_address"] == "9c:37:08:25:f3:40" and out[1]["age_minutes"] == 10
@@ -114,8 +114,8 @@ class TestParsing:
                     # Paging disabled → full table in one reply, no --More--.
                     self._queue.append(
                         b"IP Address     Type     MAC Address        Vendor      Interface  Timeout\r\n"
-                        b"10.16.128.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\r\n"
-                        b"10.16.128.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\r\n"
+                        b"198.51.100.129  Static   1A:C2:41:2C:0B:0C  SONICWALL                   X0:V1000   Permanent published\r\n"
+                        b"198.51.100.135  Dynamic  9C:37:08:25:F3:40  HEWLETT PACKARD ENTERPRISE  X0:V1000   Expires in 10 minutes  10\r\n"
                         b"hostname> ")
 
         shell = _FakeShell()
@@ -127,15 +127,15 @@ class TestParsing:
         assert " " not in shell.sent                     # no --More-- space-advancing needed
         assert "--More--" not in out
         entries = _parse_sonicwall_arp(out)
-        assert {e["ip_address"] for e in entries} == {"10.16.128.129", "10.16.128.135"}
+        assert {e["ip_address"] for e in entries} == {"198.51.100.129", "198.51.100.135"}
         assert entries[0]["entry_type"] == "static"
 
     def test_fortios_arp_regex(self):
         from apps.arp_mac.collector import _parse_fortios_arp
         out = _parse_fortios_arp(
             "Address           Age(min)   Hardware Addr      Interface\n"
-            "10.150.0.1        0          aa:bb:cc:dd:ee:ff  port1\n")
-        assert out == [{"ip_address": "10.150.0.1", "mac_address": "aa:bb:cc:dd:ee:ff",
+            "192.0.2.1        0          aa:bb:cc:dd:ee:ff  port1\n")
+        assert out == [{"ip_address": "192.0.2.1", "mac_address": "aa:bb:cc:dd:ee:ff",
                         "interface": "port1", "vlan": None, "age_minutes": 0,
                         "protocol": "Internet", "entry_type": "dynamic"}]
 
@@ -164,7 +164,7 @@ class TestAOSCXRest:
 
     def test_rest_preferred_no_ssh(self, device, monkeypatch):
         from apps.arp_mac import collector
-        arp = [{"ip_address": "10.150.0.1", "mac_address": "1A:C2:41:2C:0B:0C",
+        arp = [{"ip_address": "192.0.2.1", "mac_address": "1A:C2:41:2C:0B:0C",
                 "interface": "vlan1", "vlan": 1, "age_minutes": None,
                 "protocol": "Internet", "entry_type": "dynamic"}]
         mac = [{"mac_address": "00:09:01:12:A6:C3", "vlan": 1,
@@ -175,7 +175,7 @@ class TestAOSCXRest:
         arp_out, mac_out = collector.collect_arp_mac(
             device, {"ssh_password": "pw"}, "travis-admin")
 
-        assert arp_out[0]["ip_address"] == "10.150.0.1"
+        assert arp_out[0]["ip_address"] == "192.0.2.1"
         assert arp_out[0]["mac_address"] == "1a:c2:41:2c:0b:0c"   # normalized
         assert mac_out[0]["mac_address"] == "00:09:01:12:a6:c3"   # normalized
 

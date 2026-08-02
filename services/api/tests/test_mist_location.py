@@ -24,9 +24,9 @@ MAPS = [{
 
 # /sites/{s}/stats/devices — APs carry placement (pixel x/y), status, num_clients.
 DEVICE_STATS = [
-    {"type": "ap", "mac": "7cb68d30da49", "name": "wco2-wh-ap-08", "status": "connected",
+    {"type": "ap", "mac": "7cb68d30da49", "name": "site1-wh-ap-08", "status": "connected",
      "map_id": "map-1", "x": 915.5, "y": 718.3, "num_clients": 3},
-    {"type": "ap", "mac": "7cb68d30daa3", "name": "wco2-wh-ap-05", "status": "disconnected",
+    {"type": "ap", "mac": "7cb68d30daa3", "name": "site1-wh-ap-05", "status": "disconnected",
      "map_id": "map-1", "x": 978.9, "y": 439.0, "num_clients": 0},
     {"type": "ap", "mac": "aaaaaaaaaaaa", "name": "other-floor-ap", "status": "connected",
      "map_id": "map-OTHER", "x": 10, "y": 10, "num_clients": 1},
@@ -118,8 +118,8 @@ class TestHelpers:
         # Fed AP-only rows plus the coord-less AP; markers keep on-map, located APs.
         aps = mist_location._ap_markers(mist_location._ap_stats(FakeMist(), "s") + [AP_NO_COORDS], "map-1")
         names = {a["name"] for a in aps}
-        assert names == {"wco2-wh-ap-08", "wco2-wh-ap-05"}  # other-floor + unplaced excluded
-        a8 = next(a for a in aps if a["name"] == "wco2-wh-ap-08")
+        assert names == {"site1-wh-ap-08", "site1-wh-ap-05"}  # other-floor + unplaced excluded
+        a8 = next(a for a in aps if a["name"] == "site1-wh-ap-08")
         assert a8["x"] == 915.5 and a8["status"] == "connected" and a8["clients"] == 3
 
     def test_client_markers_filter_and_throughput(self):
@@ -298,7 +298,7 @@ class TestCoordinateSpace:
 
     def test_known_ap_maps_to_expected_pct(self):
         markers = mist_location._ap_markers(mist_location._ap_stats(FakeMist(), "s"), "map-1")
-        ap = next(m for m in markers if m["name"] == "wco2-wh-ap-08")  # x=915.5, y=718.3
+        ap = next(m for m in markers if m["name"] == "site1-wh-ap-08")  # x=915.5, y=718.3
         x_pct = ap["x"] / MAPS[0]["width"] * 100
         y_pct = ap["y"] / MAPS[0]["height"] * 100
         assert abs(x_pct - 32.6) < 1.0    # 915.5 / 2805
@@ -307,7 +307,7 @@ class TestCoordinateSpace:
     def test_pixel_equals_metres_times_ppm(self):
         # The pixel x equals the metre coordinate × ppm (so multiplying the
         # pixel value by ppm again — the reported bug — would be wrong).
-        ap = next(d for d in DEVICE_STATS if d["name"] == "wco2-wh-ap-08")
+        ap = next(d for d in DEVICE_STATS if d["name"] == "site1-wh-ap-08")
         x_m = ap["x"] / MAPS[0]["ppm"]
         assert abs(x_m * MAPS[0]["ppm"] - ap["x"]) < 0.01
         assert ap["x"] > MAPS[0]["width"] / MAPS[0]["ppm"]  # x*ppm would exceed width

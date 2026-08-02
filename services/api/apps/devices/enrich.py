@@ -35,6 +35,10 @@ _OID_ENT_SERIAL_TBL = "1.3.6.1.2.1.47.1.1.1.1.11"  # entPhysicalSerialNum
 _OID_ENT_DESCR_TBL = "1.3.6.1.2.1.47.1.1.1.1.2"    # entPhysicalDescr
 # SonicWall doesn't populate entPhysicalSerialNum; serial lives in its own MIB.
 _OID_SONICWALL_SERIAL = "1.3.6.1.4.1.8741.1.3.1.1.0"  # snwlSysSerialNumber
+# FortiGate sysDescr is often EMPTY (VM licenses) or model-only — the firmware
+# version lives in FORTINET-FORTIGATE-MIB fgSysVersion ("v7.4.5,build2662,240918").
+_OID_FORTINET_VERSION = "1.3.6.1.4.1.12356.101.4.1.1.0"  # fgSysVersion
+_FORTINET_ENTERPRISE_PREFIX = "1.3.6.1.4.1.12356."
 
 # sysObjectID → model fallback when sysDescr can't name the model.
 SYSOBJID_MODELS = {
@@ -78,6 +82,68 @@ def _parse_sonicwall_descr(descr: str) -> dict:
         return {}
     return {"model": m.group(1).strip(),
             "os_version": m.group(2).strip()}
+
+
+# FortiOS version token, e.g. "v7.4.5,build2662,240918" (fgSysVersion / CLI
+# "get system status" / some hardware sysDescr forms). We keep the vendor-native
+# "v{ver},build{n}" form and drop the trailing build-date token.
+_FORTIOS_VER_RE = re.compile(r"\bv(\d+\.\d+(?:\.\d+)?)\s*(?:,\s*build(\d+))?", re.IGNORECASE)
+_FORTIGATE_MODEL_RE = re.compile(r"\b(Forti(?:Gate|WiFi)[-\w]*)", re.IGNORECASE)
+
+
+def _fortios_version(text: str) -> str:
+    """Normalize any FortiOS version-bearing string to 'v{ver}[,build{n}]'.
+    'v7.4.5,build2662,240918 (GA.F)' → 'v7.4.5,build2662'. '' when absent."""
+    m = _FORTIOS_VER_RE.search(text or "")
+    if not m:
+        return ""
+    ver = f"v{m.group(1)}"
+    return f"{ver},build{m.group(2)}" if m.group(2) else ver
+
+
+def _parse_fortinet_descr(descr: str) -> dict:
+    """
+    Parse a FortiGate sysDescr into {model, os_version}. Returns {} for any
+    non-Fortinet sysDescr (never touches other vendors' strings). Example:
+      'FortiGate-VM64 v7.4.5,build2662,240918 (GA.F)'
+        → {'model': 'FortiGate-VM64', 'os_version': 'v7.4.5,build2662'}
+    Note: many FortiGates (esp. VMs) report an EMPTY or model-only sysDescr —
+    the fgSysVersion OID and the REST API are the reliable sources; this parser
+    is a bonus for units whose sysDescr does carry the version.
+    """
+    mm = _FORTIGATE_MODEL_RE.search(descr)
+    if not mm:
+        return {}
+    version = _fortios_version(descr)
+    if not version:
+        return {}
+    return {"model": mm.group(1), "os_version": version}
+
+
+# Junos sysDescr, e.g. "Juniper Networks, Inc. ex4300-48p Ethernet Switch,
+# kernel JUNOS 23.4R1.9, Build date: 2023-12-22 …". The version token follows
+# "JUNOS" (or "Junos:"), the model is the token right after the company name.
+_JUNOS_VER_RE = re.compile(r"\bJUNOS[:\s]+(\d+\.\d+[\w.\-]*)", re.IGNORECASE)
+_JUNOS_MODEL_RE = re.compile(r"Juniper Networks,?\s+Inc\.?\s+(\S+)", re.IGNORECASE)
+
+
+def _parse_junos_descr(descr: str) -> dict:
+    """
+    Parse a Junos sysDescr into {model, os_version}. Returns {} for any
+    non-Juniper sysDescr (same safety pattern as the other vendor parsers).
+      'Juniper Networks, Inc. ex4300-48p Ethernet Switch, kernel JUNOS 23.4R1.9,
+       Build date: …' → {'model': 'ex4300-48p', 'os_version': '23.4R1.9'}
+    """
+    if "juniper networks" not in descr.lower():
+        return {}
+    m = _JUNOS_VER_RE.search(descr)
+    if not m:
+        return {}
+    out = {"os_version": m.group(1)}
+    mm = _JUNOS_MODEL_RE.search(descr)
+    if mm:
+        out["model"] = mm.group(1).strip(",")
+    return out
 
 
 def _model_from_aos_cx_descr(descr: str) -> str:
@@ -178,6 +244,13 @@ def _snmp_collect(ip: str, profile, secrets) -> dict:
                 model = asyncio.run(_snmp_walk_first(ip, _OID_ENT_DESCR_TBL, build_snmp_auth(profile, secrets)))
             if model:
                 res[_OID_ENT_MODEL] = model
+        # Fortinet: sysDescr is often empty/model-only (esp. VMs), so the version
+        # can't come from it — fetch fgSysVersion when sysObjectID says Fortinet.
+        if _clean(res.get(_OID_SYS_OBJID)).startswith(_FORTINET_ENTERPRISE_PREFIX):
+            got = asyncio.run(_snmp_get(ip, [_OID_FORTINET_VERSION], build_snmp_auth(profile, secrets)))
+            ver = _clean(got.get(_OID_FORTINET_VERSION))
+            if ver:
+                res[_OID_FORTINET_VERSION] = ver
         return res
     except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
         logger.warning("SNMP enrichment failed for %s: %s", ip, exc)
@@ -203,6 +276,17 @@ def _parse_snmp(res: dict, updates: dict) -> None:
         if sonic:
             model = sonic["model"]
             updates["os_version"] = sonic["os_version"]
+        # FortiGate / Junos: neither carries a "Version X" token the generic
+        # regex below can find — dedicated parsers, {} on other vendors' descr.
+        # ENTITY-MIB already fills the model on both, so only fill a blank one.
+        forti = _parse_fortinet_descr(descr)
+        if forti:
+            updates["os_version"] = forti["os_version"]
+            model = model or forti.get("model", "")
+        junos = _parse_junos_descr(descr)
+        if junos:
+            updates["os_version"] = junos["os_version"]
+            model = model or junos.get("model", "")
         # The HPE/ANW AOS-CX sysDescr carries the most descriptive model
         # ("HPE ANW R9Y04A 6100 …"); prefer it over the entPhysical column.
         descr_model = _model_from_aos_cx_descr(descr)
@@ -210,9 +294,10 @@ def _parse_snmp(res: dict, updates: dict) -> None:
             model = descr_model
         # AOS-CX names its version differently: "ArubaOS-CX 10.10.1010" or, on
         # the 6100/6300, only a trailing firmware token ("… Sw PL.10.16.1030").
+        # Generic match runs only when no vendor parser above already decided.
         m = (_AOS_CX_VERSION_RE.search(descr) or _VERSION_RE.search(descr)
              or _AOS_CX_FW_RE.search(descr))
-        if m:
+        if m and "os_version" not in updates:
             updates["os_version"] = m.group(1)
         plat = _platform_from_descr(descr) or _platform_from_sysobjid(objid)
         if plat:
@@ -224,6 +309,12 @@ def _parse_snmp(res: dict, updates: dict) -> None:
             mm = _MODEL_RE.search(descr) or _AOS_CX_MODEL_RE.search(descr)
             if mm:
                 model = mm.group(1)
+    # fgSysVersion (fetched when sysObjectID is Fortinet) — deliberately OUTSIDE
+    # the descr block: FortiGate VMs commonly return an EMPTY sysDescr, which
+    # would otherwise skip version parsing entirely.
+    fgver = _fortios_version(_clean(res.get(_OID_FORTINET_VERSION)))
+    if fgver and "os_version" not in updates:
+        updates["os_version"] = fgver
     if not model and objid:
         model = SYSOBJID_MODELS.get(objid, "")
     if model:
@@ -353,6 +444,84 @@ def _parse_sonicwall_rest(info: dict, updates: dict) -> None:
     updates.setdefault("vendor", "sonicwall")
 
 
+# ── FortiOS REST API (preferred for fortios) ───────────────────────────────────
+
+def _fortinet_status_to_info(data: dict) -> dict:
+    """
+    Map a FortiOS ``GET /api/v2/monitor/system/status`` response to
+    {model, os_version, serial, hostname}. ``version``/``serial``/``build`` are
+    top-level envelope fields (standard on every FortiOS monitor response);
+    model/hostname live under ``results``. {} unless status == success.
+    """
+    if not data or data.get("status") != "success":
+        return {}
+    results = data.get("results") or {}
+    model_name = _clean(results.get("model_name"))      # "FortiGate"
+    model_number = _clean(results.get("model_number"))  # "VM64"
+    model = (f"{model_name}-{model_number}" if model_name and model_number
+             else model_name or _clean(results.get("model")))
+    version = _clean(data.get("version"))               # "v7.4.5"
+    build = data.get("build")                           # 2662
+    os_version = ""
+    if version:
+        os_version = f"{version},build{build}" if build else version
+    return {
+        "model": model,
+        "os_version": os_version,
+        "serial": _clean(data.get("serial")),
+        "hostname": _clean(results.get("hostname")),
+    }
+
+
+def _fortinet_collect(ip: str, profile, secrets) -> dict:
+    """
+    Collect FortiGate system info over the FortiOS REST API (preferred over
+    SNMP — FortiGate VMs often report an empty sysDescr). Auth is a bearer
+    token from a read-only REST API admin on the FortiGate, stored as the
+    credential profile's HTTPS ``https_token`` secret. Returns
+    {model, os_version, serial, hostname} or {} on any failure (caller falls
+    back to SNMP).
+    """
+    token = (secrets.get("https_token") or "").strip()
+    if not token:
+        logger.info("FortiOS REST enrichment for %s: no https_token configured", ip)
+        return {}
+    port = getattr(profile, "https_port", None) or 443
+    # FortiGate management certs are typically self-signed; honour the
+    # profile's verify flag (default off unless the operator enabled it).
+    verify = bool(getattr(profile, "https_verify_tls", False))
+    try:
+        import requests
+        session = requests.Session()
+        # Don't let REQUESTS_CA_BUNDLE / proxies from the env override verify.
+        session.trust_env = False
+        resp = session.get(
+            f"https://{ip}:{port}/api/v2/monitor/system/status",
+            headers={"Authorization": f"Bearer {token}"},
+            verify=verify, timeout=15)
+        resp.raise_for_status()
+        return _fortinet_status_to_info(resp.json())
+    except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+        logger.warning("FortiOS REST enrichment failed for %s: %s", ip, exc)
+        return {}
+
+
+def _parse_fortinet_rest(info: dict, updates: dict) -> None:
+    """Map the FortiOS system/status info onto device-field updates."""
+    if not info:
+        return
+    if info.get("hostname"):
+        updates["hostname"] = info["hostname"]
+    if info.get("os_version"):
+        updates["os_version"] = info["os_version"]
+    if info.get("model"):
+        updates["model"] = info["model"]
+    if info.get("serial"):
+        updates["serial_number"] = info["serial"]
+    updates.setdefault("platform", "fortios")
+    updates.setdefault("vendor", "fortinet")
+
+
 # ── orchestration ─────────────────────────────────────────────────────────────
 
 def _discover_interfaces(device):
@@ -450,18 +619,24 @@ def enrich_device(device_id: int) -> dict:
     # ── Step 1: device-info enrichment (REST → SNMP → SSH) ─────────────────────
     updates: dict = {}
 
-    # AOS-CX / SonicWall: try the REST API first (most accurate). SNMP only runs
-    # as a fallback when REST returns nothing, so it can't clobber REST values.
+    # AOS-CX / SonicWall / FortiOS: try the REST API first (most accurate). SNMP
+    # only runs as a fallback when REST returns nothing, so it can't clobber
+    # REST values.
     aos_info: dict = {}
     sonic_info: dict = {}
+    forti_info: dict = {}
     if device.platform == "aos_cx":
         aos_info = _aos_cx_collect(ip, profile, secrets)
         _parse_aos_cx(aos_info, updates)
     elif device.platform == "sonicwall":
         sonic_info = _sonicwall_collect(ip, profile, secrets)
         _parse_sonicwall_rest(sonic_info, updates)
+    elif device.platform == "fortios":
+        forti_info = _fortinet_collect(ip, profile, secrets)
+        _parse_fortinet_rest(forti_info, updates)
 
-    if device.platform not in ("aos_cx", "sonicwall") or not (aos_info or sonic_info):
+    if (device.platform not in ("aos_cx", "sonicwall", "fortios")
+            or not (aos_info or sonic_info or forti_info)):
         _parse_snmp(_snmp_collect(ip, profile, secrets), updates)
 
     # If SNMP just revealed this is an AOS-CX box that was misclassified on add

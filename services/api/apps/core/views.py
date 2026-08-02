@@ -99,6 +99,10 @@ def health(request):
             "openbao": "healthy" if _openbao_healthy() else "unavailable",
             "collector_ip": getattr(dj_settings, "COLLECTOR_IP", "") or "",
             "ssl_cert_days_remaining": _ssl_cert_days_remaining(),
+            # Authoritative server wall-clock (UTC, ISO 8601) — anchors the UI
+            # footer clock so it shows true server time even if the browser clock
+            # is wrong. TIME_ZONE=UTC, so this is the server's UTC now.
+            "server_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         },
         status=200 if db_ok else 503,
     )
@@ -111,7 +115,7 @@ def _openbao_healthy() -> bool:
     addr = getattr(dj_settings, "OPENBAO_ADDR", "") or os.environ.get("OPENBAO_ADDR", "http://openbao:8200")
     try:
         url = validate_outbound_url(f"{addr.rstrip('/')}/v1/sys/health", block_metadata=False)
-        with urllib.request.urlopen(url, timeout=2.0) as resp:
+        with urllib.request.urlopen(url, timeout=2.0) as resp:  # nosec B310 — scheme allowlisted (http/https) by validate_outbound_url() on the line above
             return resp.status == 200
     except urllib.error.HTTPError as exc:
         # 429 = unsealed standby (still usable); anything else (501 uninit,
@@ -121,39 +125,24 @@ def _openbao_healthy() -> bool:
         return False
 
 
-# Bind-mounted from the repo root (docker-compose api volumes); module-level so
-# tests can point it elsewhere.
-_VERSION_FILE = "/app/VERSION"
-
-
 def _netpulse_version() -> str:
-    """Best-effort version string, in priority order:
+    """Canonical version — TWO legible tiers, no hidden file:
 
-    1. ``SPANE_VERSION`` / ``NETPULSE_VERSION`` env (set by the update script /
-       release; ``dev``/empty is ignored).
-    2. the bind-mounted ``/app/VERSION`` file (updates without a rebuild).
-    3. ``settings.VERSION`` — ``1.0.<commit-count>`` computed from the git info
-       baked into the image (also what ``/api/version/`` returns), or a live
-       count in dev checkouts.
-    """
+    1. explicit env override ``SPANE_VERSION``/``NETPULSE_VERSION`` (set in deploy
+       config / CI / the update script — VISIBLE; ``dev``/empty ignored);
+    2. ``settings.VERSION`` — the git **app-tag**-derived version (the real
+       running code).
+
+    The old bind-mounted ``/app/VERSION`` file tier was removed: a file that
+    silently overrides the reported version is action-at-a-distance — for a
+    monitoring/security tool the version must reflect the running code, with the
+    only override being explicit in the deploy env. Every reader (infra-check,
+    /api/version/, the badge, logs) resolves through this one path."""
     for var in ("SPANE_VERSION", "NETPULSE_VERSION"):
         v = os.environ.get(var, "").strip()
         if v and v.lower() != "dev":
             return v
-
-    try:
-        from pathlib import Path
-
-        vf = Path(_VERSION_FILE)
-        if vf.is_file():
-            v = vf.read_text().strip()
-            if v:
-                return v
-    except Exception:
-        pass
-
     from django.conf import settings
-
     return getattr(settings, "VERSION", "") or "unknown"
 
 
@@ -214,7 +203,7 @@ def _http_probe(url: str, timeout: float = 2.0):
     start = time.monotonic()
     try:
         url = validate_outbound_url(url, block_metadata=False)
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310 — scheme allowlisted (http/https) by validate_outbound_url() on the line above
             return resp.status < 500, round((time.monotonic() - start) * 1000, 1)
     except urllib.error.HTTPError as exc:
         return exc.code < 500, round((time.monotonic() - start) * 1000, 1)
@@ -232,7 +221,7 @@ def _openbao_probe(timeout: float = 2.0):
     start = time.monotonic()
     try:
         url = validate_outbound_url(f"{addr.rstrip('/')}/v1/sys/health", block_metadata=False)
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310 — scheme allowlisted (http/https) by validate_outbound_url() on the line above
             return resp.status == 200, round((time.monotonic() - start) * 1000, 1)
     except urllib.error.HTTPError as exc:
         # 429 = unsealed standby (still usable).
@@ -294,11 +283,24 @@ def infrastructure_health(request):
         "openbao": _svc(_openbao_probe()),
     }
 
+    # Notification-delivery health — so external monitoring catches a silent
+    # dispatch failure ("watch the watcher"). Best-effort; never breaks /health.
+    try:
+        from apps.alerts.delivery_health import delivery_health
+        dh = delivery_health(window_minutes=60)
+        notification_delivery = {
+            "ok": dh["healthy"], "channels_failing": dh["channels_failing"],
+            "recent_failures": dh["recent_failures"],
+        }
+    except Exception:  # noqa: BLE001
+        notification_delivery = {"ok": True, "channels_failing": 0, "recent_failures": 0}
+
     return Response(
         {
             "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "version": _netpulse_version(),
             "services": services,
+            "notification_delivery": notification_delivery,
         }
     )
 
@@ -643,6 +645,27 @@ class UserViewSet(viewsets.ModelViewSet):
         log_event(AuditLog.EventType.USER_DELETED, request=self.request, target=instance,
                   description=f"User {name} deleted")
         instance.delete()
+
+    @action(detail=True, methods=["post"], url_path="reset-mfa")
+    def reset_mfa(self, request, pk=None):
+        """Reset (clear) a user's MFA — lost-device recovery (user:manage).
+
+        Clears the device so the user can re-enroll; if they are a privileged/
+        required account this re-triggers forced enrollment on their next login
+        (it is NOT a free pass). Never exposes the user's TOTP secret. Audited.
+        """
+        from .audit import log_event
+        from .models import AuditLog
+        user = self.get_object()
+        device = getattr(user, "mfa_device", None)
+        had_mfa = bool(device and device.mfa_enabled)
+        if device is not None:
+            device.clear()
+            device.save()
+        log_event(AuditLog.EventType.MFA_RESET_BY_ADMIN, request=request, user=request.user,
+                  target=user, description=f"MFA reset for {user.username}",
+                  metadata={"had_mfa": had_mfa})
+        return Response({"detail": "MFA reset.", "username": user.username, "had_mfa": had_mfa})
 
     @action(detail=True, methods=["patch"], url_path="rbac-role")
     def assign_rbac_role(self, request, pk=None):

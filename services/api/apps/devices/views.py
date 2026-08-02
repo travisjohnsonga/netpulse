@@ -85,6 +85,50 @@ class SiteViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     search_fields = ["name", "city", "address"]
     ordering_fields = ["name", "site_type", "created_at"]
 
+    def get_queryset(self):
+        """Layer the server (agent) + service-check up/down counts onto the base
+        device-count annotations. Servers link to a site via their Device
+        (Agent.device → Device.site); service checks link to the site directly.
+        Each Count is distinct so the multi-relation join doesn't inflate them.
+        The "up" cutoff for servers is time-dependent, so this can't live on the
+        class-level queryset."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.agents.models import AGENT_ONLINE_SECONDS, Agent
+        from apps.checks.models import ServiceCheck
+
+        cutoff = timezone.now() - timedelta(seconds=AGENT_ONLINE_SECONDS)
+        not_revoked = Q(devices__agent__status__in=[Agent.Status.ACTIVE, Agent.Status.INACTIVE])
+        online = Q(devices__agent__status=Agent.Status.ACTIVE, devices__agent__last_seen__gte=cutoff)
+        # Offline = non-revoked but not online: inactive, or active with a stale /
+        # never-set last_seen. Spelled out (rather than ~online) to avoid SQL
+        # three-valued-logic dropping NULL-last_seen agents from both buckets.
+        offline = not_revoked & (
+            Q(devices__agent__status=Agent.Status.INACTIVE)
+            | Q(devices__agent__last_seen__isnull=True)
+            | Q(devices__agent__last_seen__lt=cutoff)
+        )
+        check_active = Q(service_checks__is_active=True)
+        return super().get_queryset().annotate(
+            server_count=Count("devices__agent", filter=not_revoked, distinct=True),
+            servers_up=Count("devices__agent", filter=online, distinct=True),
+            servers_down=Count("devices__agent", filter=offline, distinct=True),
+            check_count=Count("service_checks", filter=check_active, distinct=True),
+            checks_up=Count(
+                "service_checks",
+                filter=check_active & Q(service_checks__current_status=ServiceCheck.Status.UP),
+                distinct=True,
+            ),
+            checks_down=Count(
+                "service_checks",
+                filter=check_active & Q(service_checks__current_status__in=[
+                    ServiceCheck.Status.DOWN, ServiceCheck.Status.DEGRADED]),
+                distinct=True,
+            ),
+        )
+
     _AUDIT_LABELS = {
         "name": "Name", "site_type": "Type", "description": "Description",
         "location": "Location", "address": "Address", "city": "City",
@@ -267,6 +311,15 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                         .values("score")[:1])
         qs = super().get_queryset().annotate(
             compliance_score=Subquery(latest_score, output_field=FloatField()))
+
+        # The Devices list shows NETWORK devices only; agent-backed servers
+        # (device_kind=SERVER, set at creation) live on the Servers page. One
+        # stored field is the single source of truth — no query-time
+        # agent__isnull/synthetic-IP heuristic (which was fragile on Postgres
+        # inet columns). Scoped to the list action; retrieve/CRUD still resolve
+        # every record for internal references.
+        if self.action == "list":
+            qs = qs.filter(device_kind=Device.DeviceKind.NETWORK_DEVICE)
 
         p = self.request.query_params
         checked = p.get("compliance_checked")
@@ -517,6 +570,32 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
             cache.set("ping_summary", data, 60)
         return Response(data)
 
+    @action(detail=False, methods=["get"], url_path="status-summary")
+    def status_summary(self, request):
+        """Total / up / down counts for the device-list summary cards. Counts the
+        NETWORK-device set (optionally ?site=) — the list is paginated, so these
+        come from the DB, not the current page. up = reachable & not unreachable;
+        down = the complement (matches the Up/Down badge). Cheap COUNT queries."""
+        qs = Device.objects.filter(device_kind=Device.DeviceKind.NETWORK_DEVICE)
+        site = request.query_params.get("site")
+        if site:
+            qs = qs.filter(site_id=site)
+        total = qs.count()
+        down = qs.filter(Q(status=Device.Status.UNREACHABLE) | Q(is_reachable=False)).count()
+        return Response({"total": total, "up": total - down, "down": down})
+
+    @action(detail=False, methods=["get"], url_path="metrics-summary")
+    def metrics_summary(self, request):
+        """Per-device current CPU% + memory% for the device-list CPU/Mem columns.
+        Cached 60s (shared InfluxDB query, like ping-summary)."""
+        from django.core.cache import cache
+        from . import metrics_influx
+        data = cache.get("device_metrics_summary")
+        if data is None:
+            data = metrics_influx.query_metrics_summary()
+            cache.set("device_metrics_summary", data, 60)
+        return Response(data)
+
     @extend_schema(summary="Apply hostname rules to this device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="apply-rules")
     def apply_rules(self, request, pk=None):
@@ -706,6 +785,29 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         from .hostname_check import check_and_update_hostname
         device = self.get_object()
         return Response(check_and_update_hostname(device))
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=True, methods=["patch"], url_path="alerting")
+    def alerting(self, request, pk=None):
+        """Per-device alert silencing: `alerting_enabled` (False = observe-only) +
+        `silenced_until` (timed mute, null to un-silence). NOTIFICATION-only —
+        AlertEvents still generate; only dispatch is suppressed. device:edit; audited."""
+        from apps.core.audit import log_event
+        from apps.core.models import AuditLog
+
+        from .serializers import DeviceAlertingSerializer
+        device = self.get_object()
+        ser = DeviceAlertingSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        changed = [f for f in ("alerting_enabled", "silenced_until") if f in ser.validated_data]
+        for f in changed:
+            setattr(device, f, ser.validated_data[f])
+        if changed:
+            device.save(update_fields=changed + ["updated_at"])
+            log_event(AuditLog.EventType.DEVICE_UPDATED, request=request, target=device,
+                      description=f"Alert silencing changed for {device.hostname}",
+                      metadata={k: str(getattr(device, k)) for k in changed})
+        return Response(self.get_serializer(device).data)
 
     @extend_schema(summary="Trigger an immediate SNMP poll of the device", request=None, responses=None)
     @action(detail=True, methods=["post"], url_path="poll-now")

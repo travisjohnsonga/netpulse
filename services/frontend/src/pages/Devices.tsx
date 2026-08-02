@@ -3,13 +3,20 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
-import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary, type Device, type DeviceRole, type PingSummary } from '../api/client'
+import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
+  fetchDeviceMetricsSummary, fetchDeviceStatusSummary,
+  type Device, type DeviceRole, type PingSummary, type DeviceMetricsSummary,
+  type DeviceStatusSummary } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useComplianceRunAll } from '../hooks/useComplianceRun'
 import { useSite } from '../store/siteStore'
 import {
-  DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, type ColCtx,
+  DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, COLUMN_STORAGE_KEY, type ColCtx,
 } from '../lib/deviceColumns'
+import { sshUrl, sshTooltip } from '../lib/ssh'
+import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui'
+import { STRIPED_ROW } from '../lib/tableStyles'
+import StatCard from '../components/StatCard'
 
 const PLATFORM_OPTIONS = ['All', 'IOS-XE', 'IOS-XR', 'NX-OS', 'Junos', 'EOS', 'FortiOS', 'Other']
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
@@ -50,6 +57,8 @@ export default function Devices() {
   const [columnKeys, setColumnKeys] = useState<string[]>(loadColumnKeys)
   const [credNames, setCredNames] = useState<Record<number, string>>({})
   const [pingMap, setPingMap] = useState<Record<number, PingSummary>>({})
+  const [metricsMap, setMetricsMap] = useState<Record<number, DeviceMetricsSummary>>({})
+  const [statusSummary, setStatusSummary] = useState<DeviceStatusSummary | null>(null)
   // Bulk selection for "Run Compliance" on the chosen devices.
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const { status: runStatus, start: startRun, starting, isRunning } = useComplianceRunAll()
@@ -72,19 +81,32 @@ export default function Devices() {
   // Reset to the first page whenever the global site filter changes.
   useEffect(() => { setPage(1) }, [selectedSite])
 
-  // Ping sparklines: fetched in the background (doesn't block the list render)
-  // and refreshed on the 60s cache cadence. Failures are non-fatal.
+  // Ping sparklines + CPU/Mem: fetched in the background (don't block the list
+  // render), refreshed on the 60s cache cadence. Failures are non-fatal.
   useEffect(() => {
     let active = true
-    const loadPing = () => {
+    const loadTelemetry = () => {
       fetchPingSummary()
         .then((rows) => { if (active) setPingMap(Object.fromEntries(rows.map((r) => [r.device_id, r]))) })
         .catch(() => {})
+      fetchDeviceMetricsSummary()
+        .then((rows) => { if (active) setMetricsMap(Object.fromEntries(rows.map((r) => [r.device_id, r]))) })
+        .catch(() => {})
     }
-    loadPing()
-    const t = setInterval(loadPing, 60000)
+    loadTelemetry()
+    const t = setInterval(loadTelemetry, 60000)
     return () => { active = false; clearInterval(t) }
   }, [])
+
+  // Summary-card counts (DB totals over the network-device set, site-scoped) —
+  // the list is paginated so these can't be derived from the current page.
+  useEffect(() => {
+    let active = true
+    fetchDeviceStatusSummary(selectedSite || undefined)
+      .then((s) => { if (active) setStatusSummary(s) })
+      .catch(() => { if (active) setStatusSummary(null) })
+    return () => { active = false }
+  }, [selectedSite, total])
 
   // Live reachability updates: patch the matching row when the monitor pushes.
   const { lastMessage } = useWebSocket('/ws/devices/')
@@ -114,7 +136,7 @@ export default function Devices() {
 
   const setColumns = (keys: string[]) => { setColumnKeys(keys); saveColumnKeys(keys) }
   const resetColumns = () => {
-    localStorage.removeItem('netpulse.devices.columns')
+    localStorage.removeItem(COLUMN_STORAGE_KEY)
     setColumnKeys(defaultColumnKeys())
   }
 
@@ -122,7 +144,7 @@ export default function Devices() {
     () => columnKeys.map((k) => DEVICE_COLUMNS.find((c) => c.key === k)).filter(Boolean) as typeof DEVICE_COLUMNS,
     [columnKeys],
   )
-  const colCtx: ColCtx = { credNames, ping: pingMap }
+  const colCtx: ColCtx = { credNames, ping: pingMap, metrics: metricsMap }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -165,21 +187,15 @@ export default function Devices() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Devices</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+          <p className="text-sm text-gray-500 dark:text-gray-300 mt-0.5">
             {total > 0 ? `${total} device${total !== 1 ? 's' : ''} managed` : 'No devices yet'}
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setShowDiscoveryModal(true)}
-            className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
-          >
+          <button onClick={() => setShowDiscoveryModal(true)} className={BTN_SECONDARY}>
             Run Discovery
           </button>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
+          <button onClick={() => setShowAddModal(true)} className={BTN_PRIMARY}>
             + Add Device
           </button>
         </div>
@@ -192,6 +208,16 @@ export default function Devices() {
         </div>
       )}
 
+      {/* Count-based summary (matches the Servers cards) — how many are down is
+          the actionable number; a fleet CPU/mem average hides hosts in trouble. */}
+      {statusSummary && (
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard title="Total Devices" value={statusSummary.total} color="blue" />
+          <StatCard title="Up" value={statusSummary.up} color="green" />
+          <StatCard title="Down" value={statusSummary.down} color="red" />
+        </div>
+      )}
+
       {/* Filters */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 flex flex-col sm:flex-row gap-3">
         <input
@@ -199,12 +225,12 @@ export default function Devices() {
           placeholder="Search hostname, IP, vendor..."
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={`flex-1 ${INPUT}`}
         />
         <select
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>{s === 'All' ? 'All Statuses' : s}</option>
@@ -213,7 +239,7 @@ export default function Devices() {
         <select
           value={platformFilter}
           onChange={(e) => { setPlatformFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           {PLATFORM_OPTIONS.map((p) => (
             <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>
@@ -222,7 +248,7 @@ export default function Devices() {
         <select
           value={roleFilter}
           onChange={(e) => { setRoleFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           <option value="All">All Roles</option>
           {roles.map((r) => (
@@ -232,7 +258,7 @@ export default function Devices() {
         <select
           value={complianceFilter}
           onChange={(e) => { setComplianceFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={SELECT}
         >
           <option value="All">Any Compliance</option>
           <option value="A">A (90–100)</option>
@@ -280,7 +306,7 @@ export default function Devices() {
                   >
                     {starting || isRunning ? 'Running…' : '▶ Run Compliance'}
                   </button>
-                  <button onClick={() => setSelected(new Set())} className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium">Clear</button>
+                  <button onClick={() => setSelected(new Set())} className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 font-medium">Clear</button>
                 </div>
               </div>
             )}
@@ -300,7 +326,10 @@ export default function Devices() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
-                    <th className="pl-5 pr-2 py-3 w-10">
+                    {/* Frozen identity columns (checkbox + Hostname) so they stay
+                        anchored while the metric columns scroll on laptop widths.
+                        Checkbox fixed at w-12 (3rem) so Hostname pins flush at left-12. */}
+                    <th className="w-12 px-3 py-3 sticky left-0 z-20 bg-gray-50 dark:bg-gray-900">
                       <input
                         type="checkbox"
                         aria-label="Select all devices on this page"
@@ -310,43 +339,63 @@ export default function Devices() {
                         onChange={toggleAll}
                       />
                     </th>
-                    {activeColumns.map((col) => {
+                    {activeColumns.map((col, i) => {
                       const sortable = !!col.sortKey
                       const active = col.sortKey === ordering || `-${col.sortKey}` === ordering
                       const arrow = !active ? '' : ordering.startsWith('-') ? ' ↓' : ' ↑'
+                      const sticky = i === 0 ? 'sticky left-12 z-20 bg-gray-50 dark:bg-gray-900' : ''
                       return (
                         <th
                           key={col.key}
                           onClick={sortable ? () => toggleSort(col.sortKey as string) : undefined}
-                          className={`px-5 py-3 font-medium whitespace-nowrap ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''} ${active ? 'text-gray-700 dark:text-gray-200' : ''}`}
+                          className={`px-5 py-3 font-medium whitespace-nowrap ${sticky} ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''} ${active ? 'text-gray-700 dark:text-gray-200' : ''}`}
                         >
                           {col.label}<span className="text-blue-500">{arrow}</span>
                         </th>
                       )
                     })}
+                    <th className="px-5 py-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {devices.map((device) => (
+                <tbody>
+                  {devices.map((device) => {
+                    const isSel = selected.has(device.id)
+                    // Frozen cells need an opaque bg matching the row state.
+                    const frozenBg = isSel ? 'bg-blue-50 dark:bg-blue-900/40' : 'bg-white dark:bg-gray-800'
+                    return (
                     <tr
                       key={device.id}
                       onClick={() => navigate(`/devices/${device.id}`)}
-                      className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer ${selected.has(device.id) ? 'bg-blue-50/60 dark:bg-blue-900/20' : ''}`}
+                      className={`cursor-pointer ${isSel ? 'bg-blue-50/60 dark:bg-blue-900/20' : STRIPED_ROW}`}
                     >
-                      <td className="pl-5 pr-2 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td className={`w-12 px-3 py-3 sticky left-0 z-10 ${frozenBg}`} onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           aria-label={`Select ${device.hostname}`}
                           className="rounded border-gray-300 dark:border-gray-600 cursor-pointer"
-                          checked={selected.has(device.id)}
+                          checked={isSel}
                           onChange={() => toggleSelect(device.id)}
                         />
                       </td>
-                      {activeColumns.map((col) => (
-                        <td key={col.key} className="px-5 py-3">{col.render(device, colCtx)}</td>
+                      {activeColumns.map((col, i) => (
+                        <td key={col.key}
+                          className={`px-5 py-3 whitespace-nowrap ${i === 0 ? `sticky left-12 z-10 ${frozenBg}` : ''}`}>{col.render(device, colCtx)}</td>
                       ))}
+                      {/* Right-aligned row action: opens the SSH/console (was the
+                          inline "Connect" button next to the hostname). */}
+                      <td className="px-5 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={sshUrl(device)}
+                          target="_blank" rel="noopener noreferrer"
+                          title={sshTooltip(device.hostname, device)}
+                          className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400"
+                        >
+                          SSH
+                        </a>
+                      </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -354,7 +403,7 @@ export default function Devices() {
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 dark:border-gray-700 text-sm">
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className="text-gray-500 dark:text-gray-300">
                   Page {page} of {totalPages}
                 </span>
                 <div className="flex gap-2">
@@ -392,7 +441,7 @@ export default function Devices() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
             <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">Auto-Discovery</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
               Automatically discover devices on your network using SNMP, gNMI, NETCONF, and topology walking.
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">

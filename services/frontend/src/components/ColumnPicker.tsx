@@ -2,15 +2,21 @@ import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { DEVICE_COLUMNS } from '../lib/deviceColumns'
 
+// Minimal column shape the picker needs (both DEVICE_COLUMNS and SERVER_COLUMNS
+// satisfy it). Pass `columns` to reuse the picker on any column-config table.
+export interface PickerColumn { key: string; label: string; locked?: boolean }
+
 /**
- * Dropdown to choose & reorder the Devices table columns. Hostname is locked
- * (always shown, always first). Selection + order are owned by the parent and
- * persisted to localStorage there.
+ * Dropdown to choose & reorder a table's columns. The locked column(s) (e.g.
+ * Hostname) are always shown and always first. Selection + order are owned by
+ * the parent and persisted to localStorage there. `columns` defaults to the
+ * Devices set so existing callers keep working; the Servers list passes its own.
  */
-export default function ColumnPicker({ activeKeys, onChange, onReset }: {
+export default function ColumnPicker({ activeKeys, onChange, onReset, columns = DEVICE_COLUMNS }: {
   activeKeys: string[]
   onChange: (keys: string[]) => void
   onReset: () => void
+  columns?: PickerColumn[]
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -23,14 +29,14 @@ export default function ColumnPicker({ activeKeys, onChange, onReset }: {
   }, [open])
 
   const active = new Set(activeKeys)
-  const locked = DEVICE_COLUMNS.filter((c) => c.locked).map((c) => c.key)
+  const locked = columns.filter((c) => c.locked).map((c) => c.key)
 
   // Display order: active columns (in their saved order), then inactive ones.
   const ordered = [
     ...activeKeys,
-    ...DEVICE_COLUMNS.map((c) => c.key).filter((k) => !active.has(k)),
+    ...columns.map((c) => c.key).filter((k) => !active.has(k)),
   ]
-  const colByKey = Object.fromEntries(DEVICE_COLUMNS.map((c) => [c.key, c]))
+  const colByKey = Object.fromEntries(columns.map((c) => [c.key, c]))
 
   const toggle = (key: string) => {
     const col = colByKey[key]
@@ -66,7 +72,7 @@ export default function ColumnPicker({ activeKeys, onChange, onReset }: {
             <button onClick={onReset} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Reset</button>
           </div>
           <div className="px-4 py-1.5 text-xs text-gray-400 dark:text-gray-500 border-b border-gray-50 dark:border-gray-700">
-            {activeKeys.length} of {DEVICE_COLUMNS.length} columns shown
+            {activeKeys.length} of {columns.length} columns shown
           </div>
           <div className="max-h-80 overflow-y-auto py-1">
             {ordered.map((key) => {
