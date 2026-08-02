@@ -12,14 +12,23 @@
 #
 set -euo pipefail
 
-# When invoked from a piped installer (`curl … | bash` → install.sh →
-# ./scripts/setup.sh), stdin is the SCRIPT pipe — every interactive `read`
-# below would consume install.sh's remaining text as its "answers". This
-# actually happened: COLLECTOR_IP captured install.sh's "# ─── Done" banner
-# line and propagated it into REACT_APP_API_URL/WS_URL. Rebind stdin to the
-# real terminal when there is one; with no terminal at all every `read … ||
-# true` fails cleanly and the [bracketed] defaults are kept (non-interactive).
-if [ ! -t 0 ] && [ -e /dev/tty ] && (: < /dev/tty) 2>/dev/null; then
+# The one-line installer (install.sh) exports NETPULSE_NONINTERACTIVE=1 to
+# request a fully non-interactive run: defaults + auto-detection for everything,
+# no prompts — the historical "curl … | bash just works, no questions" behavior.
+# When it's set we must NOT rebind stdin to /dev/tty: from a normal interactive
+# SSH session (the common real-world case) /dev/tty IS reachable, so rebinding
+# would make setup.sh sit waiting for manual answers instead of completing
+# silently. INTERACTIVE is also forced to 0 below, and ask()/ask_secret() then
+# never read stdin — so no leftover installer text can be consumed as an answer
+# regardless. (The durable fix for that original poisoning is the COLLECTOR_IP
+# validation guard, which runs in defaults mode too.)
+#
+# When the flag is UNSET (someone runs ./scripts/setup.sh directly) and stdin is
+# a pipe but a real terminal is reachable, rebind to it so interactive prompts
+# work — with no terminal at all every `read … || true` fails cleanly and the
+# [bracketed] defaults are kept.
+if [ "${NETPULSE_NONINTERACTIVE:-0}" != "1" ] \
+   && [ ! -t 0 ] && [ -e /dev/tty ] && (: < /dev/tty) 2>/dev/null; then
   exec < /dev/tty
 fi
 
@@ -53,7 +62,10 @@ info() { echo "${B}→${N} $*"; }
 # curl pipe, so every `read` gets EOF. In that case we fall back to defaults
 # (auto-generated secrets, dev ports) instead of prompting, and tell the user
 # how to re-run interactively to customise anything.
-if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
+# Non-interactive when the installer requests it (NETPULSE_NONINTERACTIVE=1) OR
+# when there's no real terminal on stdin. Either way: defaults/auto-detection,
+# and ask()/ask_secret() never block on (or consume from) stdin.
+if [ "${NETPULSE_NONINTERACTIVE:-0}" = "1" ] || [ ! -t 0 ]; then INTERACTIVE=0; else INTERACTIVE=1; fi
 if [ "$INTERACTIVE" -eq 0 ]; then
   warn "Non-interactive mode (no TTY on stdin) — using safe defaults:"
   warn "  • all infrastructure + admin secrets auto-generated"
@@ -91,7 +103,14 @@ env_set() {
 
 # prompt KEY "Question" [default] — plain text input
 ask() {
-  local key="$1" prompt="$2" def="${3:-$(env_get "$key")}" reply
+  # NB: bind `key` on its own before referencing it in `def`'s default — within a
+  # single `local` statement the earlier names aren't yet visible to a later
+  # default's command substitution, which trips `set -u` ("key: unbound").
+  local key="$1" prompt="$2" reply def="${3-}"
+  [ -n "$def" ] || def="$(env_get "$key")"
+  # Non-interactive: take the default WITHOUT reading stdin, so leftover piped
+  # installer text can never be consumed as an answer (the poisoning bug).
+  if [ "${INTERACTIVE:-1}" -eq 0 ]; then env_set "$key" "$def"; return; fi
   read -r -p "$(printf '%s [%s]: ' "$prompt" "${def}")" reply || true
   env_set "$key" "${reply:-$def}"
 }
@@ -100,6 +119,14 @@ ask() {
 ask_secret() {
   local key="$1" prompt="$2" minlen="${3:-0}" cur reply confirm
   cur="$(env_get "$key")"
+  # Non-interactive: don't read stdin. Auto-generate a placeholder secret, else
+  # keep the existing value — mirrors the blank-reply branch below.
+  if [ "${INTERACTIVE:-1}" -eq 0 ]; then
+    case "$cur" in ""|change-me*|change-me-in-production)
+      reply="$(gen_secret)"; env_set "$key" "$reply"; ok "generated a random value";;
+    *) info "keeping existing value";; esac
+    return
+  fi
   local hint="leave blank to keep existing"
   case "$cur" in ""|change-me|change-me-in-production|change-me-to-a-random-50-char-string) hint="leave blank to auto-generate";; esac
   while true; do
@@ -426,11 +453,15 @@ fi
 merge_allowed_hosts
 
 # Web UI ports: production (80/443) is the default; dev (3000/3443) or custom.
+# This is a raw prompt (not via ask()), so gate it too: in non-interactive mode
+# take the production default WITHOUT reading stdin — otherwise a piped install
+# would consume a line of the installer's own text here.
 echo "Web UI port configuration:"
 echo "  1) Production  — 80 (HTTP) / 443 (HTTPS)  [default]"
 echo "  2) Development — 3000 (HTTP) / 3443 (HTTPS)"
 echo "  3) Custom"
-printf "Choose [1]: "; read -r port_choice || true
+port_choice=""
+if [ "${INTERACTIVE:-1}" -ne 0 ]; then printf "Choose [1]: "; read -r port_choice || true; fi
 case "${port_choice:-1}" in
   2) env_set FRONTEND_PORT 3000; env_set FRONTEND_HTTPS_PORT 3443 ;;
   3) ask FRONTEND_PORT       "HTTP port"  "$(env_get FRONTEND_PORT || echo 80)"

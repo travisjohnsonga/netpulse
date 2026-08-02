@@ -234,7 +234,13 @@ section "Running NetPulse setup"
 chmod +x netpulse.sh scripts/*.sh
 
 log "Starting setup..."
-./scripts/setup.sh
+# The one-line installer must run setup.sh FULLY non-interactively — defaults +
+# auto-detection for everything, no prompts — so `curl … | bash` "just works"
+# even from an interactive SSH session (where /dev/tty is reachable and setup.sh
+# would otherwise rebind to it and block waiting for manual answers). This flag
+# tells setup.sh to stay non-interactive regardless of tty availability; anyone
+# who wants to customize values runs `./scripts/setup.sh` directly (flag unset).
+NETPULSE_NONINTERACTIVE=1 ./scripts/setup.sh
 
 # ─── Done ─────────────────────────────────
 section "Installation complete"
