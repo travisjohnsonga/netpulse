@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTabParam } from '../lib/useTabParam'
 import clsx from 'clsx'
-import { api, fetchDevice, fetchCredential, deleteDevice, discoverInterfaces, reachabilityOf, fetchCollectors, setDeviceCollector, type Collector, type DeviceDetail as Device } from '../api/client'
+import { api, fetchDevice, fetchCredential, deleteDevice, refreshDevice, reachabilityOf, fetchCollectors, setDeviceCollector, type Collector, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import { useWebSocket } from '../hooks/useWebSocket'
 import Overview from './device/Overview'
@@ -77,7 +77,7 @@ export default function DeviceDetail() {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchDevice(deviceId)
+    return fetchDevice(deviceId)
       .then((d) => { setDevice(d); setError(null) })
       .catch((err) => {
         // A missing device (deleted, or stale link) bounces back to the list
@@ -109,7 +109,7 @@ export default function DeviceDetail() {
       .catch(() => setSshCred({ username: null, port: null }))
   }, [device?.credential_profile])
 
-  const flash = (ok: boolean, msg: string) => { setToast({ ok, msg }); setTimeout(() => setToast(null), 4000) }
+  const flash = (ok: boolean, msg: string, ms = 4000) => { setToast({ ok, msg }); setTimeout(() => setToast(null), ms) }
 
   const collectNow = async () => {
     setMenuOpen(false); setBusy('collect')
@@ -117,10 +117,23 @@ export default function DeviceDetail() {
     catch { flash(false, 'Config collection failed') } finally { setBusy(null) }
   }
 
+  // "Run Discovery" is a full refresh: re-probe device info (model/OS/serial/
+  // platform) AND rediscover interfaces + LLDP links, then report what changed.
   const runDiscovery = async () => {
     setMenuOpen(false); setBusy('discover')
-    try { const r = await discoverInterfaces(deviceId); flash(true, `Discovered ${r.count} interface${r.count !== 1 ? 's' : ''}`) }
-    catch { flash(false, 'Discovery failed') } finally { setBusy(null) }
+    try {
+      const r = await refreshDevice(deviceId)
+      await load()   // pull the refreshed os_version/model/serial into the view
+      const changedFields = Object.keys(r.changed || {})
+      const parts: string[] = []
+      if (changedFields.length) parts.push(`Updated ${changedFields.map(fieldLabel).join(', ')}`)
+      else parts.push('Device info already current')
+      if (r.interfaces_found != null) parts.push(`${r.interfaces_found} interface${r.interfaces_found !== 1 ? 's' : ''} found`)
+      if (r.links_found) parts.push(`${r.links_found} LLDP link${r.links_found !== 1 ? 's' : ''}`)
+      const errs = r.errors || []
+      if (errs.length) parts.push(`⚠ ${errs.map((e) => `${e.step}: ${e.message}`).join('; ')}`)
+      flash(errs.length === 0, parts.join(' · '), errs.length ? 9000 : 5000)
+    } catch { flash(false, 'Device refresh failed') } finally { setBusy(null) }
   }
 
   const confirmDelete = async () => {
@@ -246,6 +259,14 @@ export default function DeviceDetail() {
       )}
     </div>
   )
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  os_version: 'OS version', model: 'model', serial_number: 'serial',
+  platform: 'platform', vendor: 'vendor', hostname: 'hostname',
+}
+function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] || field.replace(/_/g, ' ')
 }
 
 function relAge(iso?: string | null): string {

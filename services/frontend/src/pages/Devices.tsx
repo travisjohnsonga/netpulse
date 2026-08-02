@@ -9,6 +9,7 @@ import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
   type DeviceStatusSummary } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useComplianceRunAll } from '../hooks/useComplianceRun'
+import { useReenrichAll } from '../hooks/useReenrichAll'
 import { useSite } from '../store/siteStore'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, COLUMN_STORAGE_KEY, type ColCtx,
@@ -62,6 +63,8 @@ export default function Devices() {
   // Bulk selection for "Run Compliance" on the chosen devices.
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const { status: runStatus, start: startRun, starting, isRunning } = useComplianceRunAll()
+  const { status: reenrichStatus, start: startReenrich, starting: reenrichStarting,
+          isRunning: reenrichRunning } = useReenrichAll(() => load())
   const toggleSelect = (id: number) => setSelected((prev) => {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
   })
@@ -192,6 +195,14 @@ export default function Devices() {
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => startReenrich()}
+            disabled={reenrichStarting || reenrichRunning}
+            title="Re-probe model / OS version / serial / vendor for every device now (identity refresh). Runs in the background; normally runs daily."
+            className={BTN_SECONDARY}
+          >
+            {reenrichStarting || reenrichRunning ? 'Refreshing…' : '↻ Refresh Info'}
+          </button>
           <button onClick={() => setShowDiscoveryModal(true)} className={BTN_SECONDARY}>
             Run Discovery
           </button>
@@ -200,6 +211,25 @@ export default function Devices() {
           </button>
         </div>
       </div>
+
+      {/* Fleet identity re-enrichment progress (the "↻ Refresh Info" action) */}
+      {reenrichStatus && (reenrichStatus.running || reenrichStatus.done > 0) && (
+        <div className="rounded-lg border px-4 py-2 text-sm flex items-center gap-2 bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300">
+          {reenrichStatus.running ? (
+            <>
+              <span className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Refreshing device info… {reenrichStatus.done}/{reenrichStatus.total}
+            </>
+          ) : (
+            <>
+              ✅ Device info refresh complete: {reenrichStatus.success}/{reenrichStatus.total} refreshed
+              {reenrichStatus.updated > 0 && ` · ${reenrichStatus.updated} updated`}
+              {reenrichStatus.failed > 0 &&
+                ` · ⚠ ${reenrichStatus.failed} failed${reenrichStatus.unreachable ? ` (${reenrichStatus.unreachable} unreachable)` : ''}`}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Error */}
       {error && (

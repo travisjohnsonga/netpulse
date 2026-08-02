@@ -4,6 +4,7 @@ from django.db.models import Count, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
@@ -756,19 +757,97 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="enrich")
     def enrich(self, request, pk=None):
         """
-        Re-probe the device in the background to refresh model/OS/serial/platform
-        and rediscover interfaces + LLDP links. Returns immediately (202); the
-        device record updates in place.
+        Re-probe the device to refresh model/OS/serial/platform and rediscover
+        interfaces + LLDP links (the general enrichment pipeline).
+
+        Default: schedule it in the background and return 202 immediately.
+        Pass ``?sync=true`` (or ``{"sync": true}``) for a synchronous "refresh
+        everything we know about this device" run that returns the fields that
+        changed, the interface/link counts, and any per-step errors — so an
+        interactive caller can report the outcome instead of it happening (and
+        failing) silently in the background.
         """
-        from .enrich import trigger_enrich
+        from .enrich import enrich_device, trigger_enrich
         device = self.get_object()
-        scheduled = trigger_enrich(device)
-        return Response(
-            {"status": "enrichment started" if scheduled else "enrichment unavailable",
-             "device_id": device.id,
-             "detail": None if scheduled else "No credential profile, or enrichment is disabled."},
-            status=status.HTTP_202_ACCEPTED,
-        )
+
+        raw = request.query_params.get("sync")
+        if raw is None:
+            raw = request.data.get("sync") if isinstance(request.data, dict) else None
+        sync = str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+        if not sync:
+            scheduled = trigger_enrich(device)
+            return Response(
+                {"status": "enrichment started" if scheduled else "enrichment unavailable",
+                 "device_id": device.id,
+                 "detail": None if scheduled else "No credential profile, or enrichment is disabled."},
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        # Synchronous full refresh — runs the enrichment pipeline inline so the
+        # UI can surface what changed and any errors (same as interface
+        # discovery already surfaces its failures).
+        if not device.credential_profile_id:
+            return Response(
+                {"status": "enrichment unavailable", "device_id": device.id,
+                 "detail": "No credential profile is attached to this device.",
+                 "changed": {}, "interfaces_found": None, "links_found": None, "errors": []},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        detail: dict = {}
+        try:
+            enrich_device(device.id, result=detail)
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"status": "error", "device_id": device.id,
+                 "error": safe_detail(exc, logger, "device enrichment",
+                                      public="Device refresh failed.")},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        device.refresh_from_db()
+        return Response({
+            "status": "refreshed",
+            "device_id": device.id,
+            "changed": detail.get("changed", {}),
+            "interfaces_found": detail.get("interfaces_found"),
+            "links_found": detail.get("links_found"),
+            "errors": detail.get("errors", []),
+            "device": self.get_serializer(device).data,
+        })
+
+    @extend_schema(request=None, responses=None,
+                   summary="Start / check a fleet-wide identity re-enrichment")
+    @action(detail=False, methods=["get", "post"], url_path="reenrich-all")
+    def reenrich_all(self, request):
+        """Re-probe identity (model/OS/serial/vendor/platform) for all active
+        devices — the on-demand twin of the daily scheduled run, for use right
+        after a firmware upgrade instead of waiting for the next window.
+
+        POST ``{device_ids?: [...]}`` → start a staggered background run over
+        all active, credentialed devices (or the given subset); returns the
+        initial status (202), or 409 if a run is already in progress.
+        GET → current/last run status for polling.
+        """
+        from .reenrich import get_status, start_reenrich_all
+        if request.method in SAFE_METHODS:
+            return Response(get_status())
+
+        ids = request.data.get("device_ids") or None
+        if ids is not None:
+            if not isinstance(ids, list):
+                return Response({"error": "device_ids must be a list"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            try:
+                ids = [int(i) for i in ids]
+            except (TypeError, ValueError):
+                return Response({"error": "device_ids must be integers"},
+                                status=status.HTTP_400_BAD_REQUEST)
+        started, run_status = start_reenrich_all(ids, trigger="manual")
+        if not started:
+            return Response({"error": "A re-enrichment run is already in progress.",
+                             **run_status}, status=status.HTTP_409_CONFLICT)
+        return Response(run_status, status=status.HTTP_202_ACCEPTED)
 
     @extend_schema(
         summary="Re-verify the device's hostname (SNMP sysName / DNS) now",

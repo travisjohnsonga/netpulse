@@ -37,6 +37,33 @@ PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broke
 - Tests: ~2567 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
   Django 6.0. Frontend: React + Vite 7. Latest release: **app-v0.7.1** (2026-08-01, patch).
 
+**Recently completed (device-info staleness sweep — 2026-08-02):** closes the gap where
+`os_version`/`model`/`serial` went stale after a firmware/hardware change until someone
+manually ran `enrich_device()` (hit repeatedly on the Junos + Fortinet fleet).
+- **Identity/enrich split** — `enrich.py` factored into a shared `_refresh_identity()`
+  (REST→SNMP→SSH → model/os_version/serial/vendor/platform, persist changed) reused by
+  both the full `enrich_device()` pipeline and a new lightweight `refresh_device_identity()`
+  (identity only — NO interface/LLDP/config/hostname work, those have their own cadence).
+  A `reachable` signal (collectors swallow connection errors + return `{}`) lets callers
+  count an unreachable box as **failed**, not a silent "success". `enrich_device()`'s return
+  contract is unchanged.
+- **Daily fleet re-enrichment** — added to **`run_scheduler`** (NOT Celery — Celery is present
+  but unused; `run_scheduler` is the single scheduler). `apps/devices/reenrich.py`: hour-gated
+  (`REENRICH_RUN_HOUR`=04:00, after the 03:00 compliance run) + same-day-deduped; runs a
+  single background thread that re-probes every active/credentialed device sequentially with an
+  **adaptive per-device stagger** (`min(REENRICH_STAGGER_WINDOW_S/N, REENRICH_MAX_STAGGER_S)` +
+  ±50% jitter — anti-thundering-herd, self-throttles into ~1h regardless of fleet size).
+  Per-device try/except (one bad device never aborts the batch); Valkey lock + status cache
+  (mirrors `apps/compliance/runner.py`); logs a summary (`success/failed/unreachable/updated`).
+  Disable via `REENRICH_ENABLED=false` (scheduled run only; manual still works).
+- **Manual "run now"** — `GET/POST /api/devices/reenrich-all/` (POST→`device:edit`, 202/409;
+  GET→status) reuses the same batch logic; Devices page gets a **"↻ Refresh Info"** button +
+  live progress banner (`useReenrichAll` hook).
+- **"Run Discovery" per-device button = full refresh** — now calls the enrichment pipeline
+  synchronously via `POST /api/devices/{id}/enrich/?sync=true` (returns `changed`/interface
+  count/errors) instead of interfaces-only, so os_version/model/serial actually refresh and
+  errors surface (no more silent background failure). Verified end-to-end on the live vSRX.
+
 **Recently completed (bug-fix marathon — 2026-08-01, shipped as app-v0.7.1):** ten PRs
 (#173–#182), all merged to `main`, full detail in `CHANGELOG.md` §0.7.1. Highlights + the
 engineering facts worth remembering:
