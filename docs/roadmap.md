@@ -78,6 +78,16 @@ shipped work):
   matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
+- **Junos PoE + real PSU/fan STATUS (jnxOperatingTable)** — the EX-family fix
+  shipped presence-only inventory (entPhysicalTable) because (a) the PoE budget
+  math hardcodes the AOS-CX half-watt divisor (`_POE_BUDGET_DIVISOR=2`), which
+  would halve a Juniper true-watt budget — needs a platform-aware divisor, and
+  the poller payload is platform-blind today; and (b) EX4100/4400 don't
+  implement ENTITY-SENSOR-MIB at all (verified live: "No Such Object" across
+  1.3.6.1.2.1.99.*), so per-unit status/readings need Juniper's proprietary
+  **jnxOperatingTable** (JUNIPER-MIB, 1.3.6.1.4.1.2636.3.1.13.1). Before
+  building: walk that OID on the real EX4100 to confirm it's populated — same
+  verify-first discipline that disproved the sensor-join-bug theory.
 - **Junos JTI capability probe (replace the hardcoded SRX check)** — the gNMI
   config generator currently special-cases models matching `srx` (live-verified
   on vSRX 23.2R2.21: no `streaming-server` grammar, sensors can't commit). But
