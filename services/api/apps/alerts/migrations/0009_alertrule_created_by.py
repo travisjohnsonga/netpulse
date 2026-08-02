@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("alerts", "0008_rename_notificationlog_indexes"),
+        ("alerts", "0008_merge_dual_0007_leaves"),
     ]
 
     operations = [
