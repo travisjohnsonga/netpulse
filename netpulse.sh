@@ -104,12 +104,20 @@ case "$1" in
     ;;
   status)
     docker compose ps
+    # Probe via nginx on :443 (self-signed → -k), NOT gunicorn's :8000: with
+    # SECURE_SSL_REDIRECT=true (shipped production default) plain HTTP to
+    # :8000 returns an empty 301 → json.tool printed "Expecting value" on a
+    # perfectly healthy stack. This is the endpoint customers actually use.
+    _hp="$(grep -E '^FRONTEND_HTTPS_PORT=' .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//')"
+    _hp="${_hp:-443}"
     echo ""
     echo "--- Health ---"
-    curl -s http://localhost:8000/api/health/ | python3 -m json.tool
+    curl -sk --max-time 5 "https://localhost:${_hp}/api/health/" | python3 -m json.tool \
+      || echo "  (api not reachable via https://localhost:${_hp} — is the stack up?)"
     echo ""
     echo "--- Infrastructure ---"
-    curl -s http://localhost:8000/api/health/infrastructure/ | python3 -m json.tool
+    curl -sk --max-time 5 "https://localhost:${_hp}/api/health/infrastructure/" | python3 -m json.tool \
+      || echo "  (infrastructure health not reachable)"
     ;;
   logs)
     docker compose logs -f ${2:-api}

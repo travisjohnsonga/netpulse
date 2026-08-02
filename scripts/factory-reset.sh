@@ -110,8 +110,16 @@ if [ "$confirmation" != "RESET" ]; then
 fi
 
 wait_for_api() {
+  # Probe via nginx (:443, self-signed → -k) and require status:"ok" in the
+  # body. The old plain-HTTP :8000 probe had the OPPOSITE bug here: with
+  # SECURE_SSL_REDIRECT=true it got a 301, which `curl -f` treats as success
+  # (-f only fails on >=400) — so the wait could pass while the api was
+  # actually still down.
+  local hp
+  hp="$(grep -E '^FRONTEND_HTTPS_PORT=' .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//')"
+  hp="${hp:-443}"
   echo "Waiting for API to become healthy..."
-  until curl -sf http://localhost:8000/api/health/ >/dev/null 2>&1; do
+  until curl -sk --max-time 5 "https://localhost:${hp}/api/health/" 2>/dev/null | grep -q '"status": *"ok"'; do
     echo "  waiting for API..."
     sleep 5
   done
