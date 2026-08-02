@@ -91,6 +91,14 @@ shipped work):
   status/role/name) so large chassis are navigable.
 - **Expand alert rules** — a rule **condition view** (show what each rule actually
   matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
+  *Status: BUILT on `feature/rule-management` (PRs #161–#167, reconciled with main
+  2026-08-02, suite green) — unmerged; lands with the v0.8.0 arc.*
+- **Version display cleanup (v0.7.2 candidate)** — lead with a clean `X.Y.Z` as
+  the primary version everywhere. Mostly EXISTS already via `display_version`;
+  remaining: decide bare `0.7.1` vs `0.7.1+` for between-tag builds (Travis's
+  call), and lead with `display_version` in `show-version` + the
+  `/api/health/infrastructure/` outputs. The full `git describe` string stays
+  available in the badge tooltip / the API's full-version field.
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
 - **nginx upstream caching / resolver behavior** — flagged during a

@@ -6,6 +6,36 @@ All notable changes to spane (NetPulse) are documented here. Versions follow
 `GET /api/health/`. Minor = features, patch = fixes; dev builds between tags
 report `X.Y.Z-<n>-g<sha>`.
 
+## Unreleased
+
+### Fixed
+- **Script health probes hit nginx, not gunicorn** (#185) — `update.sh` /
+  `netpulse.sh status` / `factory-reset.sh` probed `http://localhost:8000`,
+  which `SECURE_SSL_REDIRECT=true` answers with a 301 → false "unreachable"
+  verdicts and bogus rollback advice during updates. All probes now hit
+  `https://localhost:${FRONTEND_HTTPS_PORT:-443}/api/health/` (verified live on
+  both the success and failure paths).
+- **EX-family PSU/fan inventory** (#183) — Junos devices were never given the
+  environment walks, so EX switches showed no PSU/fan presence at all.
+  Presence-only inventory via entPhysicalTable ships now; per-unit STATUS
+  needs Juniper's proprietary jnxOperatingTable (pinned on the roadmap, with
+  the platform-aware PoE-divisor prerequisite).
+
+### Changed
+- **Dependency refresh (Dependabot batch, 2026-08-02)** — 15 pip minor/patch
+  bumps across the ingest services, stream-processor, and api (nats-py ~=2.15,
+  aiohttp ~=3.14, influxdb-client ~=1.50, hvac ~=2.4, pyasn1 >=0.6.3,
+  channels-redis ~=4.3) plus 5 GitHub Actions bumps (upload-artifact 7,
+  download-artifact 8, setup-python 6, setup-go 6, action-gh-release 3).
+  The ingest/stream-processor bumps only take effect at the next image
+  rebuild — covered by the roadmap's ingest end-to-end verify item. Major
+  upgrades were deliberately left open for review.
+
+### Docs
+- **Comprehensive docs refresh** (#184) — v0.7.1 session notes, verified arc
+  status, security posture, and the new Junos platform guide
+  (`docs/platforms/junos.md`).
+
 ## 0.7.1 — 2026-08-01
 
 Patch release: a day of live-diagnosed bug fixes and hardening — zero new
