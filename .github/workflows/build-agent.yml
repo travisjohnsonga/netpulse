@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           # go.sum lives in agent/, not the repo root — point the dep cache at it.
@@ -60,7 +60,7 @@ jobs:
           ./scripts/build.sh
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-binaries
           path: agent/dist/
@@ -81,13 +81,13 @@ jobs:
       contents: write
     steps:
       - name: Download built binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: agent-binaries
           path: agent/dist
 
       - name: Create/update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: agent-latest
           name: NetPulse Agent (latest)

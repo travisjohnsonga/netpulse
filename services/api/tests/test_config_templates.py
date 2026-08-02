@@ -25,7 +25,7 @@ def ssh_profile():
 @pytest.fixture
 def aoscx_device(ssh_profile):
     return Device.objects.create(
-        hostname="wco2-idf4-asw-01", ip_address="10.150.0.20", management_ip="10.150.0.20",
+        hostname="site1-idf3-asw-01", ip_address="192.0.2.20", management_ip="192.0.2.20",
         platform="aos_cx", vendor="HPE", status="active", credential_profile=ssh_profile)
 
 
@@ -60,11 +60,11 @@ class TestRender:
 
     def test_render_uses_device_and_settings(self, aoscx_device, monkeypatch):
         monkeypatch.setattr("apps.core.models.SystemSetting.get",
-                            classmethod(lambda cls, k, d="": "10.16.132.250" if k == "syslog_server" else d))
+                            classmethod(lambda cls, k, d="": "198.51.100.250" if k == "syslog_server" else d))
         out = render_template(
             "logging {{ settings.syslog_server }} host {{ device.hostname }}",
             aoscx_device, {})
-        assert out == "logging 10.16.132.250 host wco2-idf4-asw-01"
+        assert out == "logging 198.51.100.250 host site1-idf3-asw-01"
 
     def test_render_default_filter_and_conditional(self, aoscx_device):
         content = ("logging {{ syslog_server }} severity {{ syslog_severity | default('informational') }}\n"
@@ -98,13 +98,13 @@ class TestCrud:
         resp = admin_client.post("/api/config-templates/", {
             "name": "Custom SNMP", "category": "snmp", "platform": "aos_cx",
             "template_content": "snmpv3 user {{ snmp_user }} auth-pass {{ snmp_auth_pass }}",
-            "variables": {"snmp_user": "fpsrw", "snmp_auth_pass": "topsecret"},
+            "variables": {"snmp_user": "svc-snmp", "snmp_auth_pass": "topsecret"},
         }, format="json")
         assert resp.status_code == 201, resp.content
         obj = ConfigPushTemplate.objects.get(name="Custom SNMP")
         # Secret value must never be persisted to the DB.
         assert "snmp_auth_pass" not in obj.variables
-        assert obj.variables.get("snmp_user") == "fpsrw"
+        assert obj.variables.get("snmp_user") == "svc-snmp"
         # And the secret is masked (empty) in the API response.
         assert resp.json()["variables"].get("snmp_auth_pass", "") == ""
 
@@ -137,12 +137,12 @@ class TestPreview:
             template_content="snmpv3 user {{ snmp_user }} auth-pass {{ snmp_auth_pass }}")
         resp = admin_client.post(f"/api/config-templates/{tmpl.id}/preview/", {
             "device_id": aoscx_device.id,
-            "variables": {"snmp_user": "fpsrw", "snmp_auth_pass": "S3cret"},
+            "variables": {"snmp_user": "svc-snmp", "snmp_auth_pass": "S3cret"},
         }, format="json")
         assert resp.status_code == 200, resp.content
         body = resp.json()
-        assert body["device"] == "wco2-idf4-asw-01"
-        assert "fpsrw" in body["rendered"]
+        assert body["device"] == "site1-idf3-asw-01"
+        assert "svc-snmp" in body["rendered"]
         assert "S3cret" not in body["rendered"]  # secret masked
 
     def test_preview_bad_template_returns_400(self, admin_client, aoscx_device):
@@ -186,14 +186,103 @@ class TestPush:
         monkeypatch.setattr("netmiko.ConnectHandler", lambda **k: FakeConn())
         tmpl = self._template()
         resp = admin_client.post(f"/api/config-templates/{tmpl.id}/push/", {
-            "device_ids": [aoscx_device.id], "variables": {"snmp_user": "fpsrw"},
+            "device_ids": [aoscx_device.id], "variables": {"snmp_user": "svc-snmp"},
         }, format="json")
         assert resp.status_code == 200, resp.content
         body = resp.json()
         assert body["success"] is True
         assert body["succeeded"] == 1 and body["total"] == 1
         assert body["results"][0]["success"] is True
-        assert captured["lines"] == ["snmpv3 user fpsrw"]
+        assert captured["lines"] == ["snmpv3 user svc-snmp"]
+
+    # ── Junos: private candidate + explicit commit ────────────────────────────
+    # send_config_set only LOADS the Junos candidate; without a commit the push
+    # silently no-ops (confirmed live on the vSRX). Other platforms apply lines
+    # immediately — test_push_success's FakeConn has NO commit/config-mode
+    # methods, so any commit attempt on a non-Junos push would fail that test.
+
+    class _FakeJunosConn:
+        def __init__(self, commit_fails=False):
+            self.commit_fails = commit_fails
+            self.calls = []
+            self.send_kwargs = None
+            self._in_cfg = False
+
+        def send_config_set(self, lines, **kw):
+            self.calls.append(("load", list(lines)))
+            self.send_kwargs = kw
+            if kw.get("exit_config_mode") is False:
+                self._in_cfg = True
+            return "loaded"
+
+        def commit(self, **kw):
+            self.calls.append(("commit", kw))
+            if self.commit_fails:
+                raise RuntimeError("error: configuration check-out failed")
+            return "commit complete"
+
+        def send_command(self, cmd, **kw):
+            self.calls.append(("cmd", cmd))
+            return ""
+
+        def check_config_mode(self):
+            return self._in_cfg
+
+        def exit_config_mode(self):
+            self.calls.append(("exit-cfg",))
+            self._in_cfg = False
+
+        def disconnect(self):
+            self.calls.append(("disconnect",))
+
+    def _junos_setup(self, ssh_profile, monkeypatch, conn):
+        dev = Device.objects.create(
+            hostname="vsrx-1", ip_address="192.0.2.60", platform="junos",
+            vendor="juniper", status="active", credential_profile=ssh_profile)
+        monkeypatch.setattr("netmiko.ConnectHandler", lambda **k: conn)
+        tmpl = ConfigPushTemplate.objects.create(
+            name="junos-snmp", category="snmp", platform="junos",
+            template_content="set snmp location {{ loc }}")
+        return dev, tmpl
+
+    def test_push_junos_uses_private_mode_and_commits(self, admin_client, ssh_profile,
+                                                      settings, monkeypatch):
+        settings.ALLOW_CONFIG_PUSH = True
+        conn = self._FakeJunosConn()
+        dev, tmpl = self._junos_setup(ssh_profile, monkeypatch, conn)
+        resp = admin_client.post(f"/api/config-templates/{tmpl.id}/push/", {
+            "device_ids": [dev.id], "variables": {"loc": "LAB"}}, format="json")
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["results"][0]["success"] is True
+        # isolated private candidate, load stays in config mode for the commit
+        assert conn.send_kwargs["config_mode_command"] == "configure private"
+        assert conn.send_kwargs["exit_config_mode"] is False
+        ops = [c[0] for c in conn.calls]
+        assert "commit" in ops                          # the actual fix
+        assert ops.index("load") < ops.index("commit")
+        assert "exit-cfg" in ops and "disconnect" in ops
+        commit_kw = next(c[1] for c in conn.calls if c[0] == "commit")
+        assert commit_kw.get("comment") == "spane config push"
+
+    def test_push_junos_commit_failure_is_real_failure(self, admin_client, ssh_profile,
+                                                       settings, monkeypatch):
+        settings.ALLOW_CONFIG_PUSH = True
+        conn = self._FakeJunosConn(commit_fails=True)
+        dev, tmpl = self._junos_setup(ssh_profile, monkeypatch, conn)
+        resp = admin_client.post(f"/api/config-templates/{tmpl.id}/push/", {
+            "device_ids": [dev.id], "variables": {"loc": "LAB"}}, format="json")
+        assert resp.status_code == 200
+        result = resp.json()["results"][0]
+        assert result["success"] is False               # NOT a silent false success
+        assert "commit failed" in result["error"] or "push/commit failed" in result["error"]
+        # candidate discarded + config mode exited, never left lingering
+        assert ("cmd", "rollback 0") in conn.calls
+        assert ("exit-cfg",) in conn.calls
+        # audit records the failure
+        from apps.core.models import AuditLog
+        row = AuditLog.objects.filter(
+            event_type=AuditLog.EventType.CONFIG_PUSHED).order_by("-id").first()
+        assert row.success is False
 
     def test_push_platform_mismatch_skips_connection(self, admin_client, ssh_profile, settings, monkeypatch):
         settings.ALLOW_CONFIG_PUSH = True

@@ -281,11 +281,18 @@ def _app_version() -> str:
         agent: vX.Y.Z        (agent/build.sh, scoped to its own prefix)
 
     Priority:
-      1. SPANE_VERSION baked at build (docker build-arg → ENV; the host build runs
-         `git describe --match 'app-v*'` — see netpulse.sh). The container has no
-         .git, so this is how a built image knows its version.
-      2. a live `git describe` against app tags (dev checkouts on the host).
-      3. ``0.0.0+<short-sha>`` — clearly pre-release, used until the first
+      1. runtime override ``SPANE_VERSION``/``NETPULSE_VERSION`` (explicit,
+         VISIBLE deploy-env override; empty/``dev`` ignored). NOTE compose sets
+         ``SPANE_VERSION: ${SPANE_VERSION:-}`` on every api-image service, so
+         with an empty .env this arrives as ``""`` — which must fall through.
+      2. ``SPANE_BUILD_VERSION`` baked at build (docker build-arg → ENV; the
+         host build runs `git describe --match 'app-v*'` — see netpulse.sh).
+         The container has no .git, so this is how a built image knows its
+         version. A DIFFERENT env name than the runtime override on purpose:
+         when they shared the name, compose's empty runtime value masked the
+         baked one and the badge fell all the way to ``0.0.0+sha``.
+      3. a live `git describe` against app tags (dev checkouts on the host).
+      4. ``0.0.0+<short-sha>`` — clearly pre-release, used until the first
          ``app-v*`` tag exists (so the badge never silently shows a bare hash).
 
     A released image reports its tag (e.g. ``0.5.0``); a dev build between tags
@@ -293,9 +300,10 @@ def _app_version() -> str:
     (fetch-depth: 0, fetch-tags: true) or describe falls back to a bare hash —
     the agent's #114 bug; don't repeat it in any future image CI.
     """
-    v = (os.environ.get("SPANE_VERSION") or os.environ.get("NETPULSE_VERSION") or "").strip()
-    if v and v.lower() != "dev":
-        return v.lstrip("v")
+    for var in ("SPANE_VERSION", "NETPULSE_VERSION", "SPANE_BUILD_VERSION"):
+        v = (os.environ.get(var) or "").strip()
+        if v and v.lower() != "dev":
+            return v.lstrip("v")
     desc = _git(["describe", "--tags", "--match", "app-v*", "--always", "--dirty"], "")
     if desc.startswith("app-v"):
         return desc[len("app-v"):]

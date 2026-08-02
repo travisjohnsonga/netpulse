@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - name: No exception detail in API responses (CWE-209)
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -50,6 +50,10 @@ jobs:
       # BLOCKING: services/api/requirements.txt is currently free of known CVEs
       # (verified locally when this job was added). A newly-disclosed CVE in a
       # pinned dependency fails the build so it gets triaged, not ignored.
+      # (PYSEC-2026-1325/ecdsa was briefly a candidate for --ignore-vuln, but
+      # its sole dependent — python-jose — turned out to be a DEAD requirement:
+      # zero imports in spane or social-core, whose JWT work uses PyJWT. It was
+      # removed instead, which is why no ignore list exists here.)
       - name: pip-audit (services/api dependencies)
         run: pip-audit -r services/api/requirements.txt --progress-spinner off
 

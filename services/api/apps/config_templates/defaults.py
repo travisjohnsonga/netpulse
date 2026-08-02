@@ -78,6 +78,91 @@ BUILTIN_TEMPLATES = [
         ),
         "variables": {"syslog_severity": "informational"},
     },
+    {
+        # Keywords verified live on vSRX 23.2R2.21 (CLI completion): SHA-1 is
+        # "authentication-sha" — "authentication-sha1" does NOT exist and Junos
+        # rejects the line at that token (the config_gen _AUTH_CLI bug fixed in
+        # the same change that seeded these). Pushes to Junos go through
+        # push_junos_private (configure private + explicit commit).
+        "name": "Junos SNMP v3",
+        "description": "Configure an SNMPv3 user (SHA auth / AES-128 priv) with read-only VACM access on Junos.",
+        "category": "snmp",
+        "platform": "junos",
+        "template_content": (
+            "set snmp v3 usm local-engine user {{ snmp_user }} authentication-sha authentication-password {{ snmp_auth_pass }}\n"
+            "set snmp v3 usm local-engine user {{ snmp_user }} privacy-aes128 privacy-password {{ snmp_priv_pass }}\n"
+            "set snmp v3 vacm security-to-group security-model usm security-name {{ snmp_user }} group {{ snmp_group | default('V3GROUP') }}\n"
+            "set snmp v3 vacm access group {{ snmp_group | default('V3GROUP') }} default-context-prefix security-model usm security-level privacy read-view all\n"
+            "set snmp view all oid .1 include"
+        ),
+        "variables": {"snmp_user": "", "snmp_group": "V3GROUP"},
+    },
+    {
+        "name": "Junos Syslog",
+        "description": "Forward syslog to a collector on Junos devices.",
+        "category": "syslog",
+        "platform": "junos",
+        "template_content": (
+            "set system syslog host {{ syslog_server }} any {{ syslog_severity | default('info') }}\n"
+            "set system syslog host {{ syslog_server }} port {{ syslog_port | default('514') }}"
+        ),
+        "variables": {"syslog_severity": "info", "syslog_port": "514"},
+    },
+    {
+        "name": "Junos NTP",
+        "description": "Configure NTP servers on Junos devices.",
+        "category": "ntp",
+        "platform": "junos",
+        "template_content": (
+            "set system ntp server {{ ntp_primary }}\n"
+            "{% if ntp_secondary is defined %}set system ntp server {{ ntp_secondary }}{% endif %}"
+        ),
+        "variables": {},
+    },
+    {
+        "name": "Junos Banner",
+        "description": "Set the pre-login system message on Junos devices.",
+        "category": "banner",
+        "platform": "junos",
+        "template_content": 'set system login message "{{ banner_text }}"',
+        "variables": {"banner_text": "Authorized access only."},
+    },
+    {
+        "name": "FortiOS SNMP v3",
+        "description": "Configure an SNMPv3 user (SHA-1 auth / AES priv) on FortiGate firewalls.",
+        "category": "snmp",
+        "platform": "fortios",
+        "template_content": (
+            "config system snmp sysinfo\n"
+            "    set status enable\n"
+            "end\n"
+            "config system snmp user\n"
+            '    edit "{{ snmp_user }}"\n'
+            "        set security-level auth-priv\n"
+            "        set auth-proto sha1\n"
+            "        set auth-pwd {{ snmp_auth_pass }}\n"
+            "        set priv-proto aes\n"
+            "        set priv-pwd {{ snmp_priv_pass }}\n"
+            "    next\n"
+            "end"
+        ),
+        "variables": {"snmp_user": ""},
+    },
+    {
+        "name": "FortiOS Syslog",
+        "description": "Forward syslog to a collector on FortiGate firewalls.",
+        "category": "syslog",
+        "platform": "fortios",
+        "template_content": (
+            "config log syslogd setting\n"
+            "    set status enable\n"
+            '    set server "{{ syslog_server }}"\n'
+            "    set port {{ syslog_port | default('514') }}\n"
+            "    set facility local7\n"
+            "end"
+        ),
+        "variables": {"syslog_port": "514"},
+    },
 ]
 
 

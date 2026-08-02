@@ -32,10 +32,75 @@ ECharts + Cytoscape.js + D3 + React Query + Zustand (frontend), Docker Compose (
 PostgreSQL 17, InfluxDB (time-series), OpenSearch (logs), Valkey (cache/WS broker), NATS+JetStream
 (bus), OpenBao (secrets, Vault-compatible). Auth: JWT (SimpleJWT) + SSO (social-auth) minting same JWT.
 
-## Current State (June 2026)
+## Current State (August 2026)
 
-- Tests: ~1933 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
-  Django 6.0. Frontend: React + Vite 7.
+- Tests: ~2567 passing (services/api, in-memory SQLite). Services: 24/24 running. Python 3.13,
+  Django 6.0. Frontend: React + Vite 7. Latest release: **app-v0.7.1** (2026-08-01, patch).
+
+**Recently completed (bug-fix marathon — 2026-08-01, shipped as app-v0.7.1):** ten PRs
+(#173–#182), all merged to `main`, full detail in `CHANGELOG.md` §0.7.1. Highlights + the
+engineering facts worth remembering:
+- **Junos config push actually commits** (#179) — `send_config_set` only LOADS the Junos
+  candidate; pushes silently no-opped for weeks while Netmiko + the audit log said success.
+  Now: isolated **`configure private`** candidate (Junos refuses private entry while the
+  shared db is dirty — a human's half-finished edit fails the push instead of being swept
+  into it) + explicit `commit(comment="spane config push")`; commit failure = surfaced
+  failure + `rollback 0`; printed Junos load errors (`_JUNOS_LOAD_ERR_RE`) fail the push
+  (no partial commits). Both push paths (config-templates + telemetry) wired.
+- **Junos SNMPv3 keyword chain** (#179) — verified on the live vSRX via CLI completion:
+  `authentication-sha` (NOT `-sha1`; the bad token silently truncated the line), every
+  SHA-2 variant has its own keyword (no downmapping — that's a poller protocol mismatch),
+  and **`authentication-password`/`privacy-password`** for plaintext (`-key` means an
+  already-localized key → "Wrong SNMP PDU digest" on every poll).
+- **Junos gNMI generation** (#182) — resource paths double-quoted (CLI tokenizes
+  `[name='Routing Engine']` at the space); **SRX-family has NO JTI dial-out at all** (no
+  `streaming-server` grammar; `commit check`: "streaming-server shoud be defined" [sic]) →
+  the generator emits guidance comments for `srx` models instead of unpushable config.
+  Per Juniper's own CLI reference, JTI support is **line-card/FPC-granular** (MX
+  MPC-generation-specific, PTX FPC-specific, EX/QFX never listed) — so NO model allowlist
+  can be right; the **live capability probe** is the pinned real fix (roadmap).
+- **EX4100/EX4400 PSU/fan gap** (#183, in review) — EX-family implements entPhysicalTable
+  but **NOT ENTITY-SENSOR-MIB at all** ("No Such Object" across 1.3.6.1.2.1.99.*; verified
+  against a real EX4100-24MP capture). Root cause of the missing units: junos was never in
+  `PLATFORM_WALK_OIDS` (only aos_cx), so entPhysical was never collected — `_units()`
+  itself already degrades gracefully. Junos now walks env bases EXCEPT pethMainPse (the
+  PoE budget divisor is an AOS-CX half-watt quirk that would halve Juniper true watts —
+  platform-aware divisor + proprietary `jnxOperatingTable` status are roadmap-pinned).
+- **FortiOS/Junos os_version enrichment** (#175) — FortiOS REST
+  (`/api/v2/monitor/system/status`, bearer token via the existing `https_token` credential
+  field; the lab FortiGate needed a read-only `api-user` created on-box) + `fgSysVersion`
+  SNMP fallback (FortiGate VMs report an EMPTY sysDescr — no regex could ever work);
+  `_parse_junos_descr` for the "kernel JUNOS 23.4R1.9" form. PAN-OS still lacks a version
+  source (sysDescr carries none; `panSysSwVersion` OID exists — future).
+- **Version badge fix** (#176) — compose's runtime `SPANE_VERSION: ${SPANE_VERSION:-}` +
+  an empty `.env` masked the image's baked ENV of the same name → v0.0.0 badge. Builds now
+  bake **`SPANE_BUILD_VERSION`** (compose never sets it); resolution: runtime override →
+  baked → git describe → 0.0.0+sha. `update.sh`'s stamp also now matches `app-v*` only.
+- **Security CI unblocked** (#180) — the failing gate was **pip-audit**, not bandit (B104
+  is clean; the one data-literal carries its nosec). aiosmtplib →5.1 (CVE) — and the bump's
+  functional test exposed that **every SMTP service check was silently broken** (`ehlo()`
+  is keyword-only in 3.x AND 5.x; the positional call TypeError'd into a "down" result).
+  **`python-jose` removed entirely** (dead dep: zero imports anywhere, social-core uses
+  PyJWT) — which eliminated the unfixable ecdsa advisory instead of ignoring it.
+- **update.sh backups moved out of the git tree** (#181) — `/var/backups/netpulse/`
+  (in-tree backups false-positived the script's own dirty-tree guard on a customer box);
+  fail-loud permissions handling, self-migrating legacy sweep.
+- **Incidental fixes** (#177) — alerts index-drift (see the rule-management note below),
+  compliance grade `"N/A"` vs `varchar(2)` (failed on every collection for no-compliance
+  devices), `/api/health/` collector_ip poisoned by **curl|bash stdin consumption** in
+  setup.sh (prompts read the installer's own script text as answers; stdin now rebinds to
+  `/dev/tty` — see SECURITY-REPORT.md 2026-08-01).
+- **Repo scrub for open source** (#174) — real hostnames/IPs/usernames → generic
+  `site1-*` + RFC5737 across code, tests, and docs; real values live ONLY in gitignored
+  `LOCAL_NOTES.md`. **Keep it that way — never reintroduce real lab identifiers.**
+
+**Rule-management arc status (v0.8.0-track, VERIFIED 2026-08-01):** fully built and intact
+on `origin/feature/rule-management` (17 commits ahead of main; sub-PRs #161–#167 all merged
+into the arc), **NOT merged to main, no app-v0.8.0 tag exists**. Reconcile-gate items when
+it lands: delete the arc's `alerts/0008_rename_notificationlog_indexes` (main now has its
+own `0007_rename_notificationlog_indexes` from #177 — the renames are already applied and
+would fail a second time) and add a merge migration for the dual-0007 leaves (note also in
+main's migration header).
 
 **Recently completed (agent + resilience + UI session — 2026-06-28):** all merged to `main`.
 - **Service stability monitoring** (#121, role-INDEPENDENT) — `apps/agents/stability.py` +
@@ -627,7 +692,7 @@ aos_cx, aruba, sonicwall, plus aruba/aos.
   Aruba Central keepalive logs (`hpe-restd`) are normal noise. Central-managed config push: `aruba-central
   disable` → `sleep(2)` → push → re-enable (try/finally). gNMI on 8443 (OpenConfig) — planned.
   **REST API** (preferred enrichment when reachable; SNMP fallback) verified on FL.10.13 firmware
-  (`wco2-mdf-crt-01` 10.150.0.15). LLDP on FL.10.13 uses the **per-interface** API, not
+  (`site1-core-01` 192.0.2.15). LLDP on FL.10.13 uses the **per-interface** API, not
   `/lldp_neighbors_info`: `GET /system/interfaces/{port}` → `lldp_neighbors: {key: uri}`, then
   `GET /system/interfaces/{port}/lldp_neighbors/{key}` → `neighbor_info` (`chassis_id`,
   `chassis_name`, `chassis_capability_available` as comma string, `chassis_description`,
@@ -635,9 +700,17 @@ aos_cx, aruba, sonicwall, plus aruba/aos.
   Capabilities `"Bridge, Router"` → split/strip/lowercase → `["bridge","router"]`; mgmt IP =
   first entry of comma-separated `mgmt_ip_list`. Confirmed working: `GET /system?depth=1`. Next
   session: migrate interfaces/ARP/environment/VLANs/PoE off SNMP to REST (see Pending).
+- **Junos (verified on vSRX 23.2R2.21)**: config push MUST use `configure private` +
+  explicit `commit` (see push_junos_private — plain send_config_set silently no-ops);
+  SNMPv3 keywords `authentication-sha` (no `-sha1` token exists) + `authentication-password`
+  (NOT `-key` = pre-localized). SRX family: NO JTI dial-out (`streaming-server` absent from
+  grammar) — telemetry is gNMI dial-IN (roadmap); JTI support elsewhere is line-card/FPC
+  granular per Juniper docs, so probe, never allowlist. EX4100/4400: entPhysicalTable yes,
+  ENTITY-SENSOR-MIB entirely absent → PSU/fan are presence-only; real status needs
+  proprietary jnxOperatingTable (1.3.6.1.4.1.2636.3.1.13.1, roadmap — verify by walk first).
 - **Discovery**: 4-tier (passive/topology-walk/active-scan/import); all land PENDING, never
   auto-activate. Default `ping_snmp` (production-safe). ⚠️ nmap Active Scan tripped a firewall block in
-  the wco2 lab — reserve for labs. OT/ICS WARNING: never auto-probe industrial subnets (excluded_subnets).
+  a production lab — reserve for labs. OT/ICS WARNING: never auto-probe industrial subnets (excluded_subnets).
 
 ## Docker NAT (Required)
 
@@ -654,9 +727,10 @@ Applied by `setup.sh`/`update.sh` (shared logic in `scripts/nat.sh`, idempotent)
 
 Local (192.168.98.x): router2 .152 ios_xe · router1.dnstest.local .100 ios · fortinet1 .155 fortios ·
 soniclab .160 sonicwall (NSv XS, SonicOSX 8.2.1, v8/443).
-Remote (host `azadmin@wco2lnxnetmon01`): wco2-idf5-asw-01 10.150.0.21 aos_cx (HPE 6100, verified) ·
-wco2-idf6-asw-01 10.150.0.25 aos_cx · wco2-mdf-fw-01 10.16.128.129 sonicwall (TZ 670, SonicOS 7.3.2,
-v7/4444, config backup needs built-in admin). AOS-CX SNMPv3 user `fpsrw` (authPriv SHA/AES).
+Remote (generic placeholders — REAL hostnames/IPs/jump-host live in gitignored `LOCAL_NOTES.md`):
+site1-idf1-asw-01 192.0.2.21 aos_cx (HPE 6100, verified) · site1-idf2-asw-01 192.0.2.25 aos_cx ·
+site1-core-fw-01 198.51.100.129 sonicwall (TZ 670, SonicOS 7.3.2, v7/4444, config backup needs
+built-in admin). AOS-CX SNMPv3 authPriv (SHA/AES); username in `LOCAL_NOTES.md`.
 
 ## Pinned Decisions
 

@@ -31,7 +31,7 @@ class WanCircuit(TimestampedModel):
         CANCELLED = "cancelled", "Cancelled"
 
     # Identity
-    name = models.CharField(max_length=128, help_text='e.g. "WCO2 Primary Internet"')
+    name = models.CharField(max_length=128, help_text='e.g. "Site1 Primary Internet"')
     circuit_id = models.CharField(max_length=128, blank=True, help_text="Provider circuit ID")
     circuit_type = models.CharField(max_length=32, choices=CircuitType.choices, default=CircuitType.INTERNET)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)

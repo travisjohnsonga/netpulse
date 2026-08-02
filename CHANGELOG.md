@@ -6,6 +6,74 @@ All notable changes to spane (NetPulse) are documented here. Versions follow
 `GET /api/health/`. Minor = features, patch = fixes; dev builds between tags
 report `X.Y.Z-<n>-g<sha>`.
 
+## 0.7.1 — 2026-08-01
+
+Patch release: a day of live-diagnosed bug fixes and hardening — zero new
+features. Highlights: the Junos config-push chain (pushes silently no-opped for
+weeks), the pre-open-source scrub of real-infrastructure fingerprints, and the
+version badge finally telling the truth.
+
+### Fixed
+- **Junos config push actually commits** (#179) — `send_config_set` only LOADS
+  Junos `set` lines into the candidate; without a commit nothing activated,
+  while Netmiko + the audit log reported success. Pushes now use an isolated
+  **`configure private`** candidate + explicit `commit` (comment "spane config
+  push"); commit failure is a REAL surfaced failure with the candidate
+  discarded, and Junos load errors (printed, not raised) fail the push instead
+  of committing a partial config. Wired into both the config-template and
+  telemetry push paths. Plus the keyword chain the silent no-op had hidden:
+  `authentication-sha` (not `-sha1`), 1:1 SHA-2 mappings, the missing
+  `message-processing-model`, and `authentication-password` (not `-key`, which
+  broke SNMPv3 polling with "Wrong PDU digest").
+- **Junos gNMI telemetry generation** (#182) — resource paths are double-quoted
+  (the CLI tokenized `[name='Routing Engine']` at the space and dropped the
+  line), and SRX-family models get honest guidance instead of unpushable
+  config: SRX has **no** `services analytics streaming-server` grammar and
+  sensors cannot commit without one (live-verified on vSRX 23.2R2.21).
+- **FortiOS / Junos `os_version` enrichment** (#175) — FortiOS REST
+  (`/api/v2/monitor/system/status`, bearer token via the existing HTTPS
+  credential) with `fgSysVersion` SNMP fallback (FortiGate VMs report an empty
+  sysDescr); Junos sysDescr parser (`23.4R1.9`-style). Cisco/Arista audited OK;
+  PAN-OS gap noted for later.
+- **Version badge showed v0.0.0-dev** (#176) — compose's runtime
+  `SPANE_VERSION: ${SPANE_VERSION:-}` masked the image's baked ENV with an
+  empty string; the build now bakes `SPANE_BUILD_VERSION` (a name compose never
+  sets). `update.sh`'s version stamp also now matches `app-v*` tags only (a
+  bare `git describe` could stamp an agent tag).
+- **Silently-broken SMTP service check** (#180) — `SMTP.ehlo()` is keyword-only
+  in aiosmtplib 3.x AND 5.x; the positional call raised `TypeError` on every
+  run, swallowed into a "down" result. First-ever SMTP handler test added.
+- **Three incidental fixes** (#177) — the alerts `NotificationLog` index-rename
+  drift (PR #163's fix had merged into the arc branch, never main; arc-merge
+  note in the migration header), the compliance grade `"N/A"`-vs-`varchar(2)`
+  write failure on no-data devices, and `/api/health/` `collector_ip` showing a
+  script banner (curl|bash left setup.sh's prompts reading the installer's own
+  text as answers — stdin now rebinds to /dev/tty, plus value validation).
+- **Pre-update DB backups moved out of the git tree** (#181) —
+  `/var/backups/netpulse/` (in-tree backups false-positived update.sh's own
+  dirty-tree guard and died with the repo dir); permission-aware dir creation
+  with a loud abort (no silent fallback), and a one-time sweep migrates legacy
+  in-tree backups automatically.
+
+### Added
+- **Junos + FortiOS entries in the Configuration Push Templates library**
+  (#179) — SNMP v3 / Syslog (+ NTP / Banner for Junos); both platforms were
+  missing entirely, and the Junos SNMP entry ships the corrected syntax.
+
+### Security
+- **Real-infrastructure fingerprint scrub** (#174) — internal site-specific
+  hostnames, real IPs, the jump-host identity, an SNMPv3 username, and
+  site-name examples replaced repo-wide with a generic `site1-*` / RFC5737
+  convention (engineering knowledge kept; real values moved to gitignored
+  `LOCAL_NOTES.md`).
+- **Dependency CVEs cleared** (#173, #178, #180) — js-yaml 4.3.0,
+  dompurify 3.4.12, brace-expansion 5.0.9, postcss 8.5.25, aiosmtplib 5.1
+  (PYSEC-2026-2338), and the **dead `python-jose` dependency removed** —
+  eliminating the unfixable ecdsa advisory (PYSEC-2026-1325) instead of
+  ignoring it. The npm minor-patch group (#178) rides along. Deliberately
+  parked with documented rationale: react-router v7 (migration tracked in the
+  roadmap) and immutable/swagger-ui-react (no upstream fix path).
+
 ## 0.7.0 — 2026-06-30
 
 The **alerting reliability + control** release: makes notification delivery

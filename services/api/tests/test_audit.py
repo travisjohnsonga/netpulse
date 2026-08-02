@@ -150,7 +150,7 @@ class TestFieldLevelDeviceDiff:
 class TestExtendedInstrumentation:
     def test_site_update_audited_with_diff(self, auth_client):
         from apps.devices.models import Site
-        site = Site.objects.create(name="WCO2", description="old")
+        site = Site.objects.create(name="Site1", description="old")
         resp = auth_client.patch(f"/api/sites/{site.pk}/", {"description": "new"}, format="json")
         assert resp.status_code == 200, resp.content
         ev = AuditLog.objects.get(event_type=ET.SITE_UPDATED, target_id=str(site.pk))

@@ -50,6 +50,21 @@ Moved out of this page because they're now in `main` (see the README/CLAUDE.md
   role-check config** (Custom web mode + service multi-select + stability link —
   kills the false role `not_found` count). *Phases 3–6 (escalation/grouping/flap)
   are the v0.8.0 engine work — see below.*
+- **app-v0.7.1 bug-fix release (2026-08-01, #173–#182)** — Junos config-push
+  private-candidate + explicit-commit chain (pushes silently no-opped before),
+  Junos gNMI quoting + SRX-has-no-JTI detection, FortiOS/Junos os_version
+  enrichment (REST + vendor-OID fallback), version-badge env-mask fix
+  (`SPANE_BUILD_VERSION`), SMTP-check `ehlo()` bugfix, update.sh backups →
+  `/var/backups/netpulse/`, curl|bash stdin-poisoning fix in setup.sh,
+  dependency CVE clearance (incl. removing the dead `python-jose`), and the
+  pre-open-source infrastructure-fingerprint scrub. See `CHANGELOG.md` §0.7.1.
+- **Post-0.7.1 fixes (#183, #185)** — EX-family PSU/fan *presence* inventory
+  (Junos was never given the environment walks; per-unit STATUS via
+  jnxOperatingTable stays pinned below) and the script health probes
+  (update.sh/netpulse.sh/factory-reset.sh) now hitting nginx
+  `https://localhost:443/api/health/` instead of gunicorn `:8000` — kills the
+  false "unreachable" verdicts (and bad rollback advice) that
+  `SECURE_SSL_REDIRECT`'s 301 caused.
 
 ---
 
@@ -78,6 +93,59 @@ shipped work):
   matches) + **clone-to-custom** (duplicate a seeded rule as an editable custom one).
 - **Alerting-panel placement** — revisit where the alerting controls / silencing
   live in the UI for discoverability.
+- **nginx upstream caching / resolver behavior** — flagged during a
+  customer incident: nginx resolves upstream container names at config load,
+  which can pin a stale upstream IP across container recreation until nginx
+  reloads (classic Docker-DNS + nginx `proxy_pass` caveat). Investigate whether
+  the frontend proxy needs an explicit `resolver` + variable-based
+  `proxy_pass` so api-container recreation never leaves nginx pointing at a
+  dead IP. Needs reproduction + confirmation before changing the proxy config.
+- **Junos PoE + real PSU/fan STATUS (jnxOperatingTable)** — the EX-family fix
+  shipped presence-only inventory (entPhysicalTable) because (a) the PoE budget
+  math hardcodes the AOS-CX half-watt divisor (`_POE_BUDGET_DIVISOR=2`), which
+  would halve a Juniper true-watt budget — needs a platform-aware divisor, and
+  the poller payload is platform-blind today; and (b) EX4100/4400 don't
+  implement ENTITY-SENSOR-MIB at all (verified live: "No Such Object" across
+  1.3.6.1.2.1.99.*), so per-unit status/readings need Juniper's proprietary
+  **jnxOperatingTable** (JUNIPER-MIB, 1.3.6.1.4.1.2636.3.1.13.1). Before
+  building: walk that OID on the real EX4100 to confirm it's populated — same
+  verify-first discipline that disproved the sensor-join-bug theory.
+- **Junos JTI capability probe (replace the hardcoded SRX check)** — the gNMI
+  config generator currently special-cases models matching `srx` (live-verified
+  on vSRX 23.2R2.21: no `streaming-server` grammar, sensors can't commit). But
+  Juniper's own streaming-server CLI reference shows support is **line-card/FPC
+  granular**, not chassis-family granular (MX from 15.1F3 on MPC1–6E only,
+  MPC7E–9E from 15.1F5; PTX FPC3 from 15.1F3, FPC1/2 from 16.1R3; EX/QFX never
+  listed in that hierarchy) — so *any* model allowlist is wrong by construction;
+  even genuine MX support depends on which MPC is installed, which spane can't
+  know statically. The correct fix is a **live capability probe** before
+  generating push config (e.g. a lightweight CLI grammar check for
+  `services analytics streaming-server` on THIS device), making the SRX case
+  just one instance of a general mechanism. Interim rule: when MX/PTX/EX/QFX
+  hardware reaches the lab, live-test the gNMI push (same standard as the SRX
+  session) before assuming support; extend the hardcoded detection per
+  confirmed case only as a stopgap.
+
+## Dependency security follow-ups — deferred majors *(Near-term · scoped)*
+
+Two Dependabot alert groups were deliberately **not** force-fixed in the
+2026-08-01 security sweep (`fix/dependabot-alerts`) because the only remediation
+is a breaking **major** upgrade — same judgment call as the documented Vite-8
+caution. Both are dismissed-with-reason on GitHub, not silently ignored:
+
+- **react-router v7 migration** — fixes CVE-2026-53668/-53666/-53669 (alerts
+  #13/#15/#16, all *moderate*). Requires react-router-dom **6.30.4 → 7.18+**
+  (Dependabot PR #172 proposes 7.0.0 — if taken up, go straight to 7.18+, not
+  7.0.0): app-wide routing changes, needs its own branch + full build/smoke
+  test. Not blocking: #15 (SSR-hydration constructor injection) doesn't apply
+  to this SPA at all; #13/#16 are open-redirects requiring attacker-controlled
+  navigation targets — limited real exposure.
+- **immutable / swagger-ui-react** — alerts #11/#12 (*high*, DoS in
+  Immutable.js 3.8.3) are pulled **only** by swagger-ui-react, whose `^3.x`
+  constraint blocks the fixed immutable 4.3.9. Forcing the major risks breaking
+  the `/api-docs` page to close a DoS whose "attacker input" is our own OpenAPI
+  spec. **Revisit when swagger-ui-react ships a release on immutable 4.x**
+  (check its changelog on dep-update passes).
 
 ## v0.8.0 — the alerting ENGINE
 

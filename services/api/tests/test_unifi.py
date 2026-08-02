@@ -74,7 +74,7 @@ class TestImportDevice:
         # A device whose IP was manually curated (ip_locked) must keep its
         # management_ip even when the controller reports a different address.
         c = _controller()
-        unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "10.150.0.1",
+        unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "192.0.2.1",
                                    "mac": "aa:aa:aa:aa:aa:aa"}, c)
         d = Device.objects.get(hostname="udm-L")
         d.ip_locked = True
@@ -84,12 +84,12 @@ class TestImportDevice:
         assert unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "203.0.113.9",
                                           "mac": "aa:aa:aa:aa:aa:aa"}, c) == "updated"
         d.refresh_from_db()
-        assert d.management_ip == "10.150.0.1" and d.ip_address == "10.150.0.1"
+        assert d.management_ip == "192.0.2.1" and d.ip_address == "192.0.2.1"
         # Non-IP fields still update normally.
         unifi_sync._import_device({"type": "udm", "name": "udm-L", "ip": "203.0.113.9",
                                    "mac": "aa:aa:aa:aa:aa:aa", "version": "9.9"}, c)
         d.refresh_from_db()
-        assert d.os_version == "9.9" and d.management_ip == "10.150.0.1"
+        assert d.os_version == "9.9" and d.management_ip == "192.0.2.1"
 
 
 class TestMacNormalize:
@@ -112,19 +112,19 @@ class TestDuplicateOnIpChange:
     def test_mac_keeps_single_record_when_ip_changes(self, roles):
         c = _controller()
         mac = "aa:bb:cc:dd:ee:ff"
-        unifi_sync._import_device({"type": "udm", "name": "wco2-mdf-uic-01", "ip": "10.151.1.167",
+        unifi_sync._import_device({"type": "udm", "name": "site1-core-uic-01", "ip": "198.51.100.167",
                                    "mac": mac, "version": "3.0"}, c)
-        d1 = Device.objects.get(hostname="wco2-mdf-uic-01")
+        d1 = Device.objects.get(hostname="site1-core-uic-01")
         assert d1.mac_address == mac
 
         # Same device, new IP — must match by MAC and update, not create a dup.
-        assert unifi_sync._import_device({"type": "udm", "name": "wco2-mdf-uic-01",
-                                          "ip": "10.16.133.5", "mac": mac}, c) == "updated"
+        assert unifi_sync._import_device({"type": "udm", "name": "site1-core-uic-01",
+                                          "ip": "198.51.100.5", "mac": mac}, c) == "updated"
         assert Device.objects.count() == 1
         d1.refresh_from_db()
-        assert d1.ip_address == "10.16.133.5" and d1.management_ip == "10.16.133.5"
+        assert d1.ip_address == "198.51.100.5" and d1.management_ip == "198.51.100.5"
         # No "-2" suffix duplicate.
-        assert not Device.objects.filter(hostname="wco2-mdf-uic-01-2").exists()
+        assert not Device.objects.filter(hostname="site1-core-uic-01-2").exists()
 
     def test_no_mac_falls_back_to_hostname_platform(self, roles):
         c = _controller()
@@ -146,24 +146,24 @@ class TestDuplicateOnIpChange:
 class TestControllerHostPropagation:
     def test_updates_linked_device_on_host_change(self, roles):
         from apps.integrations.models import UnifiConsoleStatus
-        c = _controller(host="10.16.133.5")
-        unifi_sync._import_device({"type": "udm", "name": "udm-1", "ip": "10.151.1.167",
+        c = _controller(host="198.51.100.5")
+        unifi_sync._import_device({"type": "udm", "name": "udm-1", "ip": "198.51.100.167",
                                    "mac": "de:ad:be:ef:00:01"}, c)
         device = Device.objects.get(hostname="udm-1")
         UnifiConsoleStatus.objects.create(device=device, controller=c)
 
         assert unifi_sync.update_linked_device_host(c) is True
         device.refresh_from_db()
-        assert device.management_ip == "10.16.133.5" and device.ip_address == "10.16.133.5"
+        assert device.management_ip == "198.51.100.5" and device.ip_address == "198.51.100.5"
 
     def test_noop_without_linked_device(self):
-        c = _controller(host="10.16.133.5")
+        c = _controller(host="198.51.100.5")
         assert unifi_sync.update_linked_device_host(c) is False
 
     def test_noop_when_device_ip_locked(self, roles):
         from apps.integrations.models import UnifiConsoleStatus
         c = _controller(host="203.0.113.9")
-        unifi_sync._import_device({"type": "udm", "name": "udm-3", "ip": "10.150.0.1",
+        unifi_sync._import_device({"type": "udm", "name": "udm-3", "ip": "192.0.2.1",
                                    "mac": "de:ad:be:ef:00:03"}, c)
         device = Device.objects.get(hostname="udm-3")
         device.ip_locked = True
@@ -172,7 +172,7 @@ class TestControllerHostPropagation:
 
         assert unifi_sync.update_linked_device_host(c) is False
         device.refresh_from_db()
-        assert device.management_ip == "10.150.0.1" and device.ip_address == "10.150.0.1"
+        assert device.management_ip == "192.0.2.1" and device.ip_address == "192.0.2.1"
 
     def test_noop_when_host_is_dns_name(self, roles):
         from apps.integrations.models import UnifiConsoleStatus

@@ -104,12 +104,20 @@ case "$1" in
     ;;
   status)
     docker compose ps
+    # Probe via nginx on :443 (self-signed → -k), NOT gunicorn's :8000: with
+    # SECURE_SSL_REDIRECT=true (shipped production default) plain HTTP to
+    # :8000 returns an empty 301 → json.tool printed "Expecting value" on a
+    # perfectly healthy stack. This is the endpoint customers actually use.
+    _hp="$(grep -E '^FRONTEND_HTTPS_PORT=' .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//')"
+    _hp="${_hp:-443}"
     echo ""
     echo "--- Health ---"
-    curl -s http://localhost:8000/api/health/ | python3 -m json.tool
+    curl -sk --max-time 5 "https://localhost:${_hp}/api/health/" | python3 -m json.tool \
+      || echo "  (api not reachable via https://localhost:${_hp} — is the stack up?)"
     echo ""
     echo "--- Infrastructure ---"
-    curl -s http://localhost:8000/api/health/infrastructure/ | python3 -m json.tool
+    curl -sk --max-time 5 "https://localhost:${_hp}/api/health/infrastructure/" | python3 -m json.tool \
+      || echo "  (infrastructure health not reachable)"
     ;;
   logs)
     docker compose logs -f ${2:-api}
@@ -258,7 +266,7 @@ LOGROTATE
     fi
     echo ""
     echo "Update history (last 10):"
-    tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
+    tail -n 10 /var/backups/netpulse/update-history.log 2>/dev/null || tail -n 10 .update-history.log 2>/dev/null || echo "  (no updates recorded yet)"
     ;;
   rollback)
     # Roll the working tree back to a pre-update snapshot tag, then rebuild.
@@ -274,7 +282,7 @@ LOGROTATE
       echo "❌ Unknown snapshot: $SNAP"; exit 1
     fi
     echo "⚠️  Rolling back to $SNAP and rebuilding. The DB is NOT downgraded —"
-    echo "    restore a .update-db-backup-*.sql.gz manually if a migration must be reverted."
+    echo "    restore a /var/backups/netpulse/update-db-backup-*.sql.gz manually if a migration must be reverted."
     read -r -p "Continue? [y/N]: " c; case "${c:-}" in y|Y) ;; *) echo "Aborted."; exit 1 ;; esac
     git checkout "$SNAP"
     GIT_COMMIT="$(git rev-parse --short HEAD)" GIT_COUNT="$(git rev-list --count HEAD)" \

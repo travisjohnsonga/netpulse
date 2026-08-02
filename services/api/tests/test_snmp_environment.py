@@ -1,12 +1,12 @@
 """Environment metric derivation (apps.telemetry.snmp_environment).
 
-Data mirrors the real HPE AOS-CX 6100 (wco2-idf5-asw-01, 10.150.0.21).
+Data mirrors the real HPE AOS-CX 6100 (site1-idf1-asw-01, 192.0.2.21).
 """
 from apps.telemetry import snmp_environment as env
 
 
 def _aos_cx_walk():
-    """Walk results captured from the real 6100 (10.150.0.21)."""
+    """Walk results captured from the real 6100 (192.0.2.21)."""
     w = {
         # hrProcessorLoad — two cores at vendor indexes (NOT .1).
         f"{env.HR_PROCESSOR_LOAD}.196608": "23",
@@ -143,3 +143,53 @@ class TestDeriveEnvironment:
     def test_empty_inputs_are_safe(self):
         result = env.derive_environment({}, {})
         assert result == {"scalars": {}, "temperature": [], "fans": [], "psus": []}
+
+
+class TestJunosEXInventory:
+    """Regression: EX-family PSU/fan presence without ENTITY-SENSOR-MIB.
+
+    Fixture mirrors a REAL EX4100-24MP capture (JUNOS 23.4R2-S4.11): the
+    entPhysicalTable carries PSUs at 3/6 (class 6, "JPSU-920W-AC-AFO") and
+    fans at 20/21/30/31 (class 7), while ENTITY-SENSOR-MIB is ENTIRELY absent
+    on the platform ("No Such Object" on every 1.3.6.1.2.1.99.* walk) — so
+    there is nothing to overlay and units must appear presence-only rather
+    than vanish. (Names are hardware SKUs — nothing site-identifying.)
+    """
+
+    def _ex4100_walk(self):
+        w = {}
+        for idx in (3, 6):
+            w[f"{env.ENT_PHYSICAL_CLASS}.{idx}"] = "6"
+            w[f"{env.ENT_PHYSICAL_NAME}.{idx}"] = "JPSU-920W-AC-AFO"
+        for idx in (20, 21, 30, 31):
+            w[f"{env.ENT_PHYSICAL_CLASS}.{idx}"] = "7"
+            w[f"{env.ENT_PHYSICAL_NAME}.{idx}"] = "Fan Module, Airflow Out (AFO)"
+        # deliberately NO ENT_SENSOR_* keys — the whole MIB branch is missing
+        return w
+
+    def test_psu_fan_presence_without_sensor_mib(self):
+        out = env.derive_environment({}, self._ex4100_walk())
+        assert len(out["psus"]) == 2
+        assert len(out["fans"]) == 4
+        assert out["scalars"]["psu_count"] == 2
+        assert out["scalars"]["fan_count"] == 4
+        for u in out["psus"]:
+            assert u["name"] == "JPSU-920W-AC-AFO"
+            assert u["watts"] is None and u["status_ok"] is None
+        for u in out["fans"]:
+            assert u["rpm"] is None and u["status_ok"] is None
+        assert out["temperature"] == []          # no sensors → no temps, no crash
+
+    def test_junos_walk_bases_exclude_poe_table(self):
+        # The publisher's junos walk list must carry the entPhysical +
+        # ENTITY-SENSOR bases but NOT pethMainPseTable: the PoE budget math
+        # applies the AOS-CX half-watt divisor, which would halve a Juniper
+        # true-watt budget (platform-aware divisor is a pinned follow-up).
+        from apps.devices.snmp_publish import PLATFORM_WALK_OIDS
+        junos = PLATFORM_WALK_OIDS["junos"]
+        assert env.ENT_PHYSICAL_CLASS in junos
+        assert env.ENT_PHYSICAL_NAME in junos
+        assert env.ENT_SENSOR_TYPE in junos      # harmless where absent, useful where not
+        assert env.PETH_MAIN_PSE_ENTRY not in junos
+        # AOS-CX keeps the full list including PoE (half-watt divisor is correct there)
+        assert env.PETH_MAIN_PSE_ENTRY in PLATFORM_WALK_OIDS["aos_cx"]

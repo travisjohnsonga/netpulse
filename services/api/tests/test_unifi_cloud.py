@@ -49,15 +49,15 @@ class TestMapping:
         # The reported primary IP is the WAN address — it must be skipped in
         # favour of a LAN IP from ipAddrs (Option C: poll the mgmt interface).
         host = _host("h1", "udm", "203.0.113.5")
-        host["reportedState"]["ipAddrs"] = ["203.0.113.5", "10.150.0.1"]
+        host["reportedState"]["ipAddrs"] = ["203.0.113.5", "192.168.98.10"]
         host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
-        assert unifi_cloud._host_to_controller_fields(host)["host"] == "10.150.0.1"
+        assert unifi_cloud._host_to_controller_fields(host)["host"] == "192.168.98.10"
 
     def test_ipaddrs_skips_wan_entries(self):
         host = _host("h1", "udm", None)
-        host["reportedState"]["ipAddrs"] = ["203.0.113.5", "10.150.0.1"]
+        host["reportedState"]["ipAddrs"] = ["203.0.113.5", "192.168.98.10"]
         host["reportedState"]["wans"] = [{"ipv4": "203.0.113.5"}]
-        assert unifi_cloud._host_to_controller_fields(host)["host"] == "10.150.0.1"
+        assert unifi_cloud._host_to_controller_fields(host)["host"] == "192.168.98.10"
 
     def test_falls_back_to_wan_when_only_wan_available(self):
         # Primary IP is the WAN address and there's no LAN IP anywhere — better

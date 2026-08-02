@@ -108,7 +108,7 @@ class TestCapabilityComplianceMatch:
 
         dev = Device.objects.create(hostname="acc-sw", ip_address="10.9.0.2", status="active")
         LLDPNeighbor.objects.create(seen_by=dev, local_interface="1/1/5",
-                                    system_name="wco2-wh-ap-05", capabilities=["wlan-ap"])
+                                    system_name="site1-wh-ap-05", capabilities=["wlan-ap"])
 
         class Rule:
             trigger = "lldp_capability"

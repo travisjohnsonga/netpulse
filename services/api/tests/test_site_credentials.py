@@ -12,9 +12,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def setup(db):
-    site = Site.objects.create(name="WCO2")
+    site = Site.objects.create(name="Site1")
     fw_role = DeviceRole.objects.create(name="Firewall", slug="firewall")
-    sitewide = CredentialProfile.objects.create(name="wco2-ssh-snmp")
+    sitewide = CredentialProfile.objects.create(name="site1-ssh-snmp")
     fw_cred = CredentialProfile.objects.create(name="sonicwall-creds")
     return dict(site=site, fw_role=fw_role, sitewide=sitewide, fw_cred=fw_cred)
 
@@ -83,7 +83,7 @@ class TestEndpoints:
         resp = auth_client.get(f"/api/sites/{setup['site'].id}/suggest-credential/")
         assert resp.status_code == 200
         b = resp.json()
-        assert b["name"] == "wco2-ssh-snmp" and b["scope"] == "all roles"
+        assert b["name"] == "site1-ssh-snmp" and b["scope"] == "all roles"
 
     def test_suggest_none(self, auth_client, setup):
         resp = auth_client.get(f"/api/sites/{setup['site'].id}/suggest-credential/")

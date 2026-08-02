@@ -392,3 +392,41 @@ class TestChecksApi:
                                         config={"path": "/health"})
         d = check_to_dict(c)
         assert d["effective_port"] == 8080 and d["config"]["path"] == "/health"
+
+
+class TestSmtpHandler:
+    def test_ehlo_called_with_keyword_hostname(self, monkeypatch):
+        # aiosmtplib's SMTP.ehlo() is KEYWORD-ONLY (`*, hostname=...`) in both
+        # 3.x and 5.x — a positional `ehlo(helo)` raises TypeError, which the
+        # handler's except swallowed into a "down" result: every SMTP check
+        # was silently broken. The fake mirrors the real keyword-only API so
+        # a positional-call regression fails loudly here.
+        from apps.checks import runner
+        calls = {}
+
+        class FakeSMTP:
+            def __init__(self, *, hostname, port, timeout, start_tls):
+                calls["init"] = (hostname, port)
+
+            async def connect(self):
+                class R: code, message = 220, "test banner"
+                return R()
+
+            async def ehlo(self, *, hostname=None):   # keyword-only, like the real lib
+                calls["ehlo_hostname"] = hostname
+
+            def supports_extension(self, name):
+                return False
+
+            async def quit(self):
+                pass
+
+        import types, sys
+        fake_mod = types.SimpleNamespace(SMTP=FakeSMTP)
+        monkeypatch.setitem(sys.modules, "aiosmtplib", fake_mod)
+
+        res = asyncio.run(runner.check_smtp({
+            "host": "mail.example.com", "effective_port": 25,
+            "config": {"helo": "spane.test"}, "timeout_seconds": 5}))
+        assert res["status"] == "up", res
+        assert calls["ehlo_hostname"] == "spane.test"

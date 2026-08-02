@@ -281,7 +281,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://{SERVER_IP}/
 
 ## 16. AOS-CX (HPE) Testing
 
-Reference device: wco2-idf5-asw-01 (10.150.0.21, AOS-CX 6100, SNMPv3 `fpsrw`).
+Reference device: site1-idf1-asw-01 (192.0.2.21, AOS-CX 6100, SNMPv3 `<snmpv3-user>`).
 
 ### 16.1 Discovery & Detection
 - [ ] Active scan finds the AOS-CX switch
@@ -298,9 +298,9 @@ docker compose exec api python3 - <<'PY'
 import asyncio
 from pysnmp.hlapi.v3arch.asyncio import *
 async def t():
-    e=SnmpEngine(); u=UsmUserData('fpsrw', <auth_key>, <priv_key>,
+    e=SnmpEngine(); u=UsmUserData('<snmpv3-user>', <auth_key>, <priv_key>,
         authProtocol=usmHMACSHAAuthProtocol, privProtocol=usmAesCfb128Protocol)
-    tgt=await UdpTransportTarget.create(('10.150.0.21',161),timeout=4)
+    tgt=await UdpTransportTarget.create(('192.0.2.21',161),timeout=4)
     ei,es,_,vb=await get_cmd(e,u,tgt,ContextData(),
         ObjectType(ObjectIdentity('1.3.6.1.2.1.1.1.0')))   # sysDescr
     print(ei or [str(v[1]) for v in vb]); e.close_dispatcher()

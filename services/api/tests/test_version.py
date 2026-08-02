@@ -111,7 +111,7 @@ class TestHealthVersionResolution:
 
     @pytest.fixture(autouse=True)
     def _clear_env(self, monkeypatch):
-        for var in ("SPANE_VERSION", "NETPULSE_VERSION"):
+        for var in ("SPANE_VERSION", "NETPULSE_VERSION", "SPANE_BUILD_VERSION"):
             monkeypatch.delenv(var, raising=False)
         yield
 
@@ -135,6 +135,23 @@ class TestHealthVersionResolution:
         from apps.core import views
         settings.VERSION = "0.7.2"
         assert views._netpulse_version() == "0.7.2"
+
+    def test_empty_runtime_env_does_not_mask_build_version(self, monkeypatch):
+        # The v0.0.0-badge bug: compose sets SPANE_VERSION: ${SPANE_VERSION:-}
+        # on every api-image service, so an empty .env delivers SPANE_VERSION=""
+        # at runtime — which used to shadow the value baked at build. The baked
+        # value now lives in SPANE_BUILD_VERSION and must win over the empty
+        # runtime override.
+        from config.settings import base
+        monkeypatch.setenv("SPANE_VERSION", "")
+        monkeypatch.setenv("SPANE_BUILD_VERSION", "0.7.0-2-gabc1234")
+        assert base._app_version() == "0.7.0-2-gabc1234"
+
+    def test_runtime_override_beats_build_version(self, monkeypatch):
+        from config.settings import base
+        monkeypatch.setenv("SPANE_VERSION", "v9.1.0")
+        monkeypatch.setenv("SPANE_BUILD_VERSION", "0.7.0-2-gabc1234")
+        assert base._app_version() == "9.1.0"
 
     def test_infrastructure_health_reports_version(self, auth_client, monkeypatch):
         monkeypatch.setenv("SPANE_VERSION", "v9.9.9")

@@ -261,6 +261,144 @@ class TestSonicWall:
         assert _platform_from_sysobjid("1.3.6.1.4.1.8741.1.3.1") == "sonicwall"
 
 
+class TestFortinet:
+    # CLI "get system status" / hardware-unit sysDescr form; VMs often report
+    # an EMPTY sysDescr (the live lab FortiGate-VM64 does), hence the
+    # fgSysVersion fallback below.
+    SYSDESCR = "FortiGate-VM64 v7.4.5,build2662,240918 (GA.F)"
+    REST_STATUS = {
+        "results": {"model_name": "FortiGate", "model_number": "VM64",
+                    "model": "FGVM64", "hostname": "FortiGate-VM64"},
+        "serial": "FGVMEVAVS0BDH36C", "version": "v7.4.5", "build": 2662,
+        "status": "success", "vdom": "root",
+    }
+
+    def test_parse_fortinet_descr(self):
+        assert enrich._parse_fortinet_descr(self.SYSDESCR) == {
+            "model": "FortiGate-VM64", "os_version": "v7.4.5,build2662"}
+
+    def test_parse_non_fortinet_returns_empty(self):
+        assert enrich._parse_fortinet_descr("Cisco IOS Software, Version 17.3.1") == {}
+        assert enrich._parse_fortinet_descr(
+            "SonicWALL TZ 670 (SonicOS Enhanced SonicOS 7.3.2-7010-R9118)") == {}
+        # Model-only sysDescr (no version token) must not half-populate.
+        assert enrich._parse_fortinet_descr("FortiGate-100F") == {}
+
+    def test_fortios_version_normalizes(self):
+        assert enrich._fortios_version("v7.4.5,build2662,240918 (GA.F)") == "v7.4.5,build2662"
+        assert enrich._fortios_version("v7.2.8") == "v7.2.8"
+        assert enrich._fortios_version("no version here") == ""
+
+    def test_rest_status_to_info(self):
+        assert enrich._fortinet_status_to_info(self.REST_STATUS) == {
+            "model": "FortiGate-VM64", "os_version": "v7.4.5,build2662",
+            "serial": "FGVMEVAVS0BDH36C", "hostname": "FortiGate-VM64"}
+
+    def test_rest_status_non_success_is_empty(self):
+        assert enrich._fortinet_status_to_info({"status": "error"}) == {}
+        assert enrich._fortinet_status_to_info({}) == {}
+
+    def test_parse_fortinet_rest_updates(self):
+        updates: dict = {}
+        enrich._parse_fortinet_rest(enrich._fortinet_status_to_info(self.REST_STATUS), updates)
+        assert updates["os_version"] == "v7.4.5,build2662"
+        assert updates["model"] == "FortiGate-VM64"
+        assert updates["serial_number"] == "FGVMEVAVS0BDH36C"
+        assert updates["platform"] == "fortios"
+        assert updates["vendor"] == "fortinet"
+
+    def test_collect_without_token_is_empty(self):
+        class FakeProfile:
+            https_port = 443
+            https_verify_tls = False
+        assert enrich._fortinet_collect("192.168.98.60", FakeProfile(), {}) == {}
+
+    def test_fgsysversion_fallback_empty_sysdescr(self, monkeypatch):
+        # The live-lab shape: EMPTY sysDescr, Fortinet sysObjectID → the extra
+        # fgSysVersion GET fills os_version.
+        class FakeProfile:
+            snmpv3_enabled = True
+            snmpv2c_enabled = False
+
+        async def fake_get(ip, oids, auth):
+            if oids == [enrich._OID_FORTINET_VERSION]:
+                return {enrich._OID_FORTINET_VERSION: "v7.4.5,build2662,240918"}
+            return {
+                enrich._OID_SYS_DESCR: "",
+                enrich._OID_SYS_OBJID: "1.3.6.1.4.1.12356.101.1.30",
+                enrich._OID_ENT_MODEL: "FGT_VM64",
+                enrich._OID_ENT_SERIAL: "FGVMEVAVS0BDH36C",
+            }
+
+        monkeypatch.setattr(enrich, "_snmp_get", fake_get)
+        monkeypatch.setattr("apps.credentials.snmp_auth.build_snmp_auth", lambda p, s: object())
+
+        res = enrich._snmp_collect("192.168.98.60", FakeProfile(), {})
+        updates: dict = {}
+        enrich._parse_snmp(res, updates)
+        assert updates["os_version"] == "v7.4.5,build2662"
+        assert updates["model"] == "FGT_VM64"          # ENTITY-MIB still wins
+        assert updates["serial_number"] == "FGVMEVAVS0BDH36C"
+
+    def test_snmp_descr_parsing_keeps_entity_model(self):
+        # When sysDescr does carry the version, the descr parser fills
+        # os_version but must NOT clobber a working ENTITY-MIB model.
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: self.SYSDESCR,
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.12356.101.1.30",
+            enrich._OID_ENT_MODEL: "FGT_VM64",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["os_version"] == "v7.4.5,build2662"
+        assert updates["model"] == "FGT_VM64"
+        assert updates["platform"] == "fortios"
+        assert updates["vendor"] == "fortinet"
+
+
+class TestJunos:
+    SYSDESCR_EX = ("Juniper Networks, Inc. ex4300-48p Ethernet Switch, kernel "
+                   "JUNOS 23.4R1.9, Build date: 2023-12-22 06:11:34 UTC "
+                   "Copyright (c) 1996-2023 Juniper Networks, Inc.")
+    SYSDESCR_MX = ("Juniper Networks, Inc. mx240 internet router, kernel "
+                   "JUNOS 20.4R3.8, Build date: 2021-09-16 08:31:29 UTC")
+
+    def test_parse_junos_descr_ex(self):
+        assert enrich._parse_junos_descr(self.SYSDESCR_EX) == {
+            "os_version": "23.4R1.9", "model": "ex4300-48p"}
+
+    def test_parse_junos_descr_mx(self):
+        assert enrich._parse_junos_descr(self.SYSDESCR_MX) == {
+            "os_version": "20.4R3.8", "model": "mx240"}
+
+    def test_parse_non_junos_returns_empty(self):
+        assert enrich._parse_junos_descr("Cisco IOS Software, Version 17.3.1") == {}
+        assert enrich._parse_junos_descr(
+            "FortiGate-VM64 v7.4.5,build2662,240918 (GA.F)") == {}
+
+    def test_snmp_descr_parsing(self):
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: self.SYSDESCR_EX,
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.2636.1.1.1.2.98",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["os_version"] == "23.4R1.9"
+        assert updates["model"] == "ex4300-48p"        # no ENTITY-MIB value → descr fills
+        assert updates["platform"] == "junos"
+
+    def test_entity_model_wins_over_descr_model(self):
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: self.SYSDESCR_EX,
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.2636.1.1.1.2.98",
+            enrich._OID_ENT_MODEL: "EX4300-48P",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["model"] == "EX4300-48P"
+        assert updates["os_version"] == "23.4R1.9"
+
+
 class TestEnrichChain:
     def test_discovers_interfaces_and_lldp(self, device, monkeypatch):
         from apps.devices import topology

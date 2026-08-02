@@ -116,8 +116,39 @@ generate_nxos_gnmi = _ietf_generator(_NXOS_DEVICE, _NXOS_IFACE)
 
 
 def generate_junos_gnmi(device, collector_ip, interfaces, cfg=None):
-    """Juniper JunOS analytics (gRPC dial-out) sensor config (OpenConfig paths)."""
+    """Juniper JunOS analytics (JTI gRPC dial-out) sensor config (OpenConfig paths).
+
+    Two live-vSRX-verified constraints shape the output:
+
+    * Every ``resource`` path is DOUBLE-QUOTED. The CLI tokenizes an unquoted
+      path at the space inside a bracket predicate (``[name='Routing
+      Engine']``) and rejects the line ("missing mandatory statement:
+      'resource'" at commit); bracketed predicates without spaces are quoted
+      too for uniformity — quoting is always valid Junos.
+    * The SRX family (incl. vSRX) has NO ``streaming-server`` statement under
+      ``services analytics`` (syntax error at the token), and ``commit check``
+      then rejects every sensor with "streaming-server shoud be defined"
+      [sic] — JTI dial-out is un-configurable on SRX, full stop (its telemetry
+      story is gNMI dial-IN, which spane doesn't drive yet — see roadmap). For
+      SRX models this generator emits guidance comments instead of config the
+      device grammar cannot accept — the push endpoint then reports "no
+      pushable commands" instead of a cryptic Netmiko timeout.
+    """
     mgmt = str(device.management_ip or device.ip_address or "<MGMT_IP>")
+
+    if "srx" in (device.model or "").lower():
+        return "\n".join([
+            _header(device, collector_ip, interfaces),
+            "! SRX-family Junos (model: %s) does not support JTI gRPC dial-out:" % device.model,
+            "! 'set services analytics streaming-server ...' is not in the platform",
+            "! grammar, and sensors cannot commit without a streaming-server",
+            "! (verified live on vSRX 23.2R2.21). SRX streaming telemetry uses gNMI",
+            "! dial-IN (system services extension-service), which spane does not",
+            "! drive yet - see the gNMI capability discovery roadmap item.",
+            "! spane monitors this device via SNMP in the meantime; no analytics",
+            "! config is generated because the device would reject it.",
+        ])
+
     lines = [
         _header(device, collector_ip, interfaces),
         "set services analytics streaming-server NetPulse "
@@ -131,10 +162,12 @@ def generate_junos_gnmi(device, collector_ip, interfaces, cfg=None):
     ]
 
     def sensor(name, resource):
+        # Resource paths are double-quoted: required when a bracket predicate
+        # contains a space, always harmless (see docstring).
         return (
             f"set services analytics sensor {name} server-name NetPulse\n"
             f"set services analytics sensor {name} export-name NetPulse-Profile\n"
-            f"set services analytics sensor {name} resource {resource}"
+            f'set services analytics sensor {name} resource "{resource}"'
         )
 
     lines.append(sensor("CPU-Memory", "/components/component[name='Routing Engine']/state"))
@@ -148,7 +181,7 @@ def generate_junos_gnmi(device, collector_ip, interfaces, cfg=None):
             safe = iface.if_name.replace("/", "_").replace(".", "_")
             lines.append(sensor(f"Interface-{safe}", f"/interfaces/interface[name='{iface.if_name}']/"))
     else:
-        lines.append("# No monitored interfaces - falling back to all interfaces")
+        lines.append("! No monitored interfaces - falling back to all interfaces")
         lines.append(sensor("Interfaces-All", "/interfaces/"))
     return "\n".join(lines)
 

@@ -9,6 +9,16 @@
 > escalation timers + ack (Phase 3), routing unification (Phase 4), and anti-storm
 > — dependency suppression + grouping + flap/for-duration (Phase 5) — targeted at
 > **v0.8.0**. Per-feature status is marked ✅ built / ❌ designed throughout.
+>
+> **Rule-management arc (adjacent to this doc, verified 2026-08-01):** the
+> seed-once / two-tier rule-kind / delete-protection / clone-to-custom /
+> expand-rules work is **fully built but UNMERGED** — it lives intact on
+> `origin/feature/rule-management` (sub-PRs #161–#167 merged into the arc; 17
+> commits ahead of main; no app-v0.8.0 tag exists). Reconcile-gate items for
+> the eventual merge: drop the arc's `alerts/0008_rename_notificationlog_indexes`
+> (main independently gained `0007_rename_notificationlog_indexes` in #177 —
+> the renames are already applied) and add a merge migration for the resulting
+> dual-0007 leaves.
 
 ## 0. Why this matters
 
@@ -509,7 +519,7 @@ multi-tier failure design (§3) wanted.
 2. **Critical takeover** — a critical (config: which severities) **interrupts
    `TVRotate`** and pins a full-screen alert until acked/resolved. **Grouping-aware:
    once grouping (§7) lands, the takeover pins the GROUP summary** ("CRITICAL: 12
-   unreachable at Waco"), not 12 separate takeovers. **→ depends on §7 (grouping).**
+   unreachable at Site One"), not 12 separate takeovers. **→ depends on §7 (grouping).**
 3. **Delivery-failure display** — reads the **`/api/alerts/notifications/delivery-health/`
    endpoint built in PR #152** (and `notification_delivery` on `/api/health/
    infrastructure/`): when push delivery is degraded, the wall shows a prominent
