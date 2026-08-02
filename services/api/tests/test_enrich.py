@@ -458,6 +458,38 @@ class TestTriggerEnrich:
         assert len(scheduled) == 1
 
 
+class TestEnrichResultOutParam:
+    def test_result_captures_changed_interfaces_and_links(self, device, monkeypatch):
+        _no_network(monkeypatch)
+        monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: {
+            enrich._OID_SYS_DESCR: "Cisco IOS-XE Software, C8000V Software, Version 17.12.4",
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.9.1.2862",
+        })
+        monkeypatch.setattr(enrich, "_discover_interfaces", lambda d: ([{}, {}, {}], 3, 1))
+        monkeypatch.setattr(enrich, "_discover_lldp", lambda d, i=None: 2)
+
+        detail: dict = {}
+        changed = enrich.enrich_device(device.id, result=detail)
+        # Return contract unchanged: still a dict of changed field names.
+        assert set(changed) >= {"platform", "os_version"}
+        assert detail["changed"] == changed
+        assert detail["interfaces_found"] == 3
+        assert detail["links_found"] == 2
+        assert detail["errors"] == []
+
+    def test_result_captures_step_errors(self, device, monkeypatch):
+        _no_network(monkeypatch)
+
+        def boom(d):
+            raise RuntimeError("device unreachable")
+        monkeypatch.setattr(enrich, "_discover_interfaces", boom)
+
+        detail: dict = {}
+        enrich.enrich_device(device.id, result=detail)
+        steps = {e["step"] for e in detail["errors"]}
+        assert "interfaces" in steps
+
+
 class TestEnrichEndpoint:
     def test_requires_auth(self, api_client, device):
         assert api_client.post(f"/api/devices/{device.id}/enrich/").status_code == 401
@@ -466,3 +498,40 @@ class TestEnrichEndpoint:
         resp = auth_client.post(f"/api/devices/{device.id}/enrich/")
         assert resp.status_code == 202
         assert resp.json()["device_id"] == device.id
+
+    def test_sync_refreshes_and_reports(self, auth_client, device, monkeypatch):
+        _no_network(monkeypatch)
+        monkeypatch.setattr(enrich, "_snmp_collect", lambda ip, p, s: {
+            enrich._OID_SYS_DESCR: "Cisco IOS-XE Software, C8000V Software, Version 17.12.4",
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.9.1.2862",
+        })
+        monkeypatch.setattr(enrich, "_discover_interfaces", lambda d: ([{}, {}], 2, 0))
+
+        resp = auth_client.post(f"/api/devices/{device.id}/enrich/?sync=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "refreshed"
+        assert body["changed"]["os_version"] == "17.12.4"
+        assert body["interfaces_found"] == 2
+        assert body["errors"] == []
+        # The device payload reflects the refreshed values.
+        assert body["device"]["os_version"] == "17.12.4"
+        device.refresh_from_db()
+        assert device.os_version == "17.12.4"
+
+    def test_sync_surfaces_step_errors(self, auth_client, device, monkeypatch):
+        _no_network(monkeypatch)
+
+        def boom(d):
+            raise RuntimeError("ssh timeout")
+        monkeypatch.setattr(enrich, "_discover_interfaces", boom)
+
+        resp = auth_client.post(f"/api/devices/{device.id}/enrich/?sync=true")
+        assert resp.status_code == 200
+        assert any(e["step"] == "interfaces" for e in resp.json()["errors"])
+
+    def test_sync_without_profile_returns_400(self, auth_client):
+        dev = Device.objects.create(hostname="np", ip_address="10.0.0.9")
+        resp = auth_client.post(f"/api/devices/{dev.id}/enrich/?sync=true")
+        assert resp.status_code == 400
+        assert resp.json()["changed"] == {}

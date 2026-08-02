@@ -16,6 +16,8 @@ Periodic (each on its own cadence; the loop wakes every --tick seconds):
   - MAC-vendor OUI refresh     — weekly  (MAC_VENDOR_UPDATE_INTERVAL_S)
   - LLDP neighbor collection  — every 30m (LLDP_COLLECT_INTERVAL_S)
   - daily compliance run       — 03:00    (hour-gated, same-day deduped)
+  - daily fleet re-enrichment  — 04:00    (hour-gated, same-day deduped, staggered;
+                                           REENRICH_ENABLED / REENRICH_RUN_HOUR)
 
 The 6h/weekly tasks first fire one interval after startup so a restart doesn't
 stampede the fleet (SSH) or re-download the OUI registry every boot.
@@ -61,6 +63,10 @@ BACKUP_SCHEDULE_INTERVAL_S = int(os.environ.get("BACKUP_SCHEDULE_INTERVAL_S", st
 # COMPLIANCE_RUN_HOUR, default 03:00, + same-day deduped, so a short interval
 # just fires it promptly within the target hour).
 COMPLIANCE_RUN_INTERVAL_S = int(os.environ.get("COMPLIANCE_RUN_INTERVAL_S", str(15 * 60)))
+# Daily fleet identity re-enrichment: check frequently (the task is hour-gated at
+# REENRICH_RUN_HOUR, default 04:00, + same-day deduped, and can be disabled via
+# REENRICH_ENABLED — so a short interval just fires it promptly within the hour).
+REENRICH_CHECK_INTERVAL_S = int(os.environ.get("REENRICH_CHECK_INTERVAL_S", str(15 * 60)))
 # AOS-CX environment + PoE collection → InfluxDB (for alerting/trending).
 ENVIRONMENT_POLL_INTERVAL_S = int(os.environ.get("ENVIRONMENT_POLL_INTERVAL_S", str(5 * 60)))
 # WAN circuit utilization + contract-expiry checks.
@@ -112,6 +118,7 @@ class Command(BaseCommand):
             ["scheduled_reports", REPORT_SCHEDULE_INTERVAL_S, self._run_scheduled_reports, False, None],
             ["backup", BACKUP_SCHEDULE_INTERVAL_S, self._run_scheduled_backup, False, None],
             ["compliance_run", COMPLIANCE_RUN_INTERVAL_S, self._run_due_compliance, False, None],
+            ["reenrich", REENRICH_CHECK_INTERVAL_S, self._run_due_reenrichment, False, None],
             ["environment_poll", ENVIRONMENT_POLL_INTERVAL_S, self._poll_environment, False, None],
             ["circuit_checks", CIRCUIT_CHECK_INTERVAL_S, self._check_circuits, False, None],
             ["agent_liveness", AGENT_LIVENESS_CHECK_INTERVAL_S, self._check_agent_liveness, True, None],
@@ -313,6 +320,16 @@ class Command(BaseCommand):
         from apps.compliance.scheduler import run_due_compliance
         if run_due_compliance():
             logger.info("scheduler: ran daily compliance pass")
+
+    def _run_due_reenrichment(self):
+        # Daily fleet identity re-enrichment (hour-gated at REENRICH_RUN_HOUR,
+        # default 04:00, + same-day deduped; disable via REENRICH_ENABLED=false).
+        # Re-probes model/os_version/serial/vendor/platform so they don't go
+        # stale after firmware/hardware changes. Starts a staggered background
+        # run — non-blocking so the scheduler loop keeps ticking.
+        from apps.devices.reenrich import run_due_reenrichment
+        if run_due_reenrichment():
+            logger.info("scheduler: started daily fleet re-enrichment")
 
     def _poll_environment(self):
         # Collect AOS-CX environment (temp/fan/PSU) + PoE over REST and store it

@@ -586,27 +586,16 @@ def _publish_topology_updated(device_id: int) -> None:
         logger.debug("topology_updated publish failed: %s", exc)
 
 
-def enrich_device(device_id: int) -> dict:
+def _refresh_identity(device, profile, result: dict) -> list[str]:
+    """Re-probe and persist a device's identity fields — model / os_version /
+    serial_number / vendor / platform — via REST → SNMP → SSH (in preference
+    order, per platform). Returns the list of field names that changed.
+
+    Shared by the full :func:`enrich_device` pipeline and the lightweight
+    :func:`refresh_device_identity` used by the daily fleet re-enrichment job;
+    it deliberately does NOT touch interfaces, LLDP, config, or the hostname
+    (those have their own triggers/cadence).
     """
-    Post-approval enrichment pipeline (best-effort, each step independent):
-      1. SNMP, then SSH — fill model / os_version / serial / platform / vendor.
-      2. Interface discovery — persist LLDP-connected interfaces for monitoring.
-      3. LLDP neighbour discovery — create TopologyLink rows.
-    A failure in any step is logged and never blocks the others. Returns the
-    dict of device fields changed in step 1.
-    """
-    from .models import Device
-
-    try:
-        device = Device.objects.select_related("credential_profile").get(id=device_id)
-    except Device.DoesNotExist:
-        return {}
-
-    profile = device.credential_profile
-    if not profile:
-        logger.info("enrich %s: no credential profile — skipping", device.hostname)
-        return {}
-
     ip = str(device.management_ip or device.ip_address)
     secrets = {}
     try:
@@ -615,8 +604,9 @@ def enrich_device(device_id: int) -> dict:
             secrets = vault.read_secret(profile.vault_path) or {}
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich %s: could not read secrets: %s", device.hostname, exc)
+        result["errors"].append({"step": "device-info",
+                                 "message": f"Could not read credentials: {exc}"})
 
-    # ── Step 1: device-info enrichment (REST → SNMP → SSH) ─────────────────────
     updates: dict = {}
 
     # AOS-CX / SonicWall / FortiOS: try the REST API first (most accurate). SNMP
@@ -625,6 +615,8 @@ def enrich_device(device_id: int) -> dict:
     aos_info: dict = {}
     sonic_info: dict = {}
     forti_info: dict = {}
+    snmp_res: dict = {}
+    ssh_res: dict = {}
     if device.platform == "aos_cx":
         aos_info = _aos_cx_collect(ip, profile, secrets)
         _parse_aos_cx(aos_info, updates)
@@ -637,7 +629,8 @@ def enrich_device(device_id: int) -> dict:
 
     if (device.platform not in ("aos_cx", "sonicwall", "fortios")
             or not (aos_info or sonic_info or forti_info)):
-        _parse_snmp(_snmp_collect(ip, profile, secrets), updates)
+        snmp_res = _snmp_collect(ip, profile, secrets)
+        _parse_snmp(snmp_res, updates)
 
     # If SNMP just revealed this is an AOS-CX box that was misclassified on add
     # (e.g. stored as "other"), run the REST collector now so a single re-run —
@@ -649,7 +642,14 @@ def enrich_device(device_id: int) -> dict:
     def missing(field):
         return field not in updates and not getattr(device, field, "")
     if missing("model") or missing("os_version") or missing("serial_number"):
-        _merge_ssh(_ssh_collect(ip, profile, secrets), updates)
+        ssh_res = _ssh_collect(ip, profile, secrets)
+        _merge_ssh(ssh_res, updates)
+
+    # Reachability signal for the caller's summary: the per-platform collectors
+    # swallow connection failures and return {}, so "we got some data back" is
+    # our proxy for "the device answered". A device that answered but was already
+    # up-to-date is still reachable (changed=[] but reachable=True).
+    result["reachable"] = bool(aos_info or sonic_info or forti_info or snmp_res or ssh_res)
 
     changed = []
     for field, val in updates.items():
@@ -657,10 +657,85 @@ def enrich_device(device_id: int) -> dict:
         if val and getattr(device, field, "") != val:
             setattr(device, field, val)
             changed.append(field)
+    result["changed"] = {f: getattr(device, f) for f in changed}
     if changed:
         device.save(update_fields=changed + ["updated_at"])
         logger.info("SNMP/SSH enrichment complete for %s: %s", device.hostname,
-                    {f: getattr(device, f) for f in changed})
+                    result["changed"])
+    return changed
+
+
+def refresh_device_identity(device_id: int, result: dict | None = None) -> dict:
+    """Lightweight identity-only refresh (REST/SNMP/SSH → model/os_version/
+    serial/vendor/platform), the unit of the daily fleet re-enrichment job.
+
+    Unlike :func:`enrich_device` it skips interface discovery, LLDP, config
+    collection and hostname verification — the fields that go stale after a
+    firmware upgrade or hardware swap are the identity fields, and the heavier
+    discovery steps have their own schedules/triggers. ``result`` (an optional
+    dict) is populated with ``changed`` and ``errors`` for the caller to report;
+    the return value is the changed-fields dict.
+    """
+    from .models import Device
+
+    if result is None:
+        result = {}
+    result.setdefault("errors", [])
+    result.setdefault("changed", {})
+
+    try:
+        device = Device.objects.select_related("credential_profile").get(id=device_id)
+    except Device.DoesNotExist:
+        return {}
+
+    profile = device.credential_profile
+    if not profile:
+        result["errors"].append({"step": "device-info",
+                                 "message": "No credential profile is attached to this device."})
+        return {}
+
+    _refresh_identity(device, profile, result)
+    return result["changed"]
+
+
+def enrich_device(device_id: int, result: dict | None = None) -> dict:
+    """
+    Post-approval enrichment pipeline (best-effort, each step independent):
+      1. SNMP, then SSH — fill model / os_version / serial / platform / vendor.
+      2. Interface discovery — persist LLDP-connected interfaces for monitoring.
+      3. LLDP neighbour discovery — create TopologyLink rows.
+    A failure in any step is logged and never blocks the others. Returns the
+    dict of device fields changed in step 1.
+
+    Pass ``result`` (a dict) to capture per-step detail for a synchronous,
+    interactive caller: it is populated with ``changed`` (same as the return
+    value), ``interfaces_found``, ``links_found``, and ``errors`` (a list of
+    ``{"step", "message"}`` for steps that failed). The return value is
+    unchanged for existing callers.
+    """
+    from .models import Device
+
+    if result is None:
+        result = {}
+    result.setdefault("errors", [])
+    result.setdefault("changed", {})
+    result.setdefault("interfaces_found", None)
+    result.setdefault("links_found", None)
+
+    try:
+        device = Device.objects.select_related("credential_profile").get(id=device_id)
+    except Device.DoesNotExist:
+        return {}
+
+    profile = device.credential_profile
+    if not profile:
+        logger.info("enrich %s: no credential profile — skipping", device.hostname)
+        result["errors"].append({"step": "device-info",
+                                 "message": "No credential profile is attached to this device."})
+        return {}
+
+    # ── Step 1: device-info enrichment (REST → SNMP → SSH) ─────────────────────
+    changed = _refresh_identity(device, profile, result)
 
     # Verify the hostname against the network (SNMP sysName / DNS) and update it
     # if it changed — stamps hostname_verified_at, raises an info alert on change,
@@ -684,6 +759,7 @@ def enrich_device(device_id: int) -> dict:
     interfaces = None
     try:
         interfaces, _found, _enabled = _discover_interfaces(device)
+        result["interfaces_found"] = _found
         # bulk_create skips the MonitoredInterface post_save signal that
         # republishes the device to the poller, and there's no periodic
         # republish — so without this nudge the new interfaces are persisted
@@ -696,14 +772,19 @@ def enrich_device(device_id: int) -> dict:
                            device.hostname, exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Interface discovery failed for %s: %s", device.hostname, exc)
+        result["errors"].append({"step": "interfaces",
+                                 "message": f"Interface discovery failed: {exc}"})
 
     # ── Step 3: LLDP neighbour discovery ──────────────────────────────────────
     try:
         links = _discover_lldp(device, interfaces)
+        result["links_found"] = links
         if links:
             _publish_topology_updated(device.id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLDP discovery failed for %s: %s", device.hostname, exc)
+        result["errors"].append({"step": "lldp",
+                                 "message": f"LLDP neighbor discovery failed: {exc}"})
 
     # ── Step 4: initial config collection ─────────────────────────────────────
     # Capture a baseline running-config immediately so drift detection works from
@@ -712,9 +793,11 @@ def enrich_device(device_id: int) -> dict:
         _collect_config(device)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Config collection failed for %s: %s", device.hostname, exc)
+        result["errors"].append({"step": "config",
+                                 "message": f"Config collection failed: {exc}"})
 
     logger.info("Enrichment complete for %s", device.hostname)
-    return {f: getattr(device, f) for f in changed}
+    return result["changed"]
 
 
 def _collect_config(device) -> None:

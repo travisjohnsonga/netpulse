@@ -1001,6 +1001,23 @@ export async function enrichDevice(deviceId: number): Promise<{ status: string; 
   return data
 }
 
+export interface RefreshDeviceResult {
+  status: string
+  device_id: number
+  changed: Record<string, unknown>
+  interfaces_found: number | null
+  links_found: number | null
+  errors: { step: string; message: string }[]
+}
+
+// Synchronous "refresh everything we know about this device": re-probe model/OS/
+// serial/platform, rediscover interfaces + LLDP links, and return what changed
+// plus any per-step errors (so the UI can report the outcome, not fail silently).
+export async function refreshDevice(deviceId: number): Promise<RefreshDeviceResult> {
+  const { data } = await api.post(`/devices/${deviceId}/enrich/?sync=true`)
+  return data
+}
+
 // Re-verify the device hostname now (SNMP sysName / DNS). Updates if changed.
 export async function checkHostname(deviceId: number): Promise<{
   hostname_changed: boolean; old_hostname: string; new_hostname: string
@@ -3373,6 +3390,30 @@ export async function runComplianceAll(deviceIds?: number[]): Promise<Compliance
 
 export async function fetchComplianceRunStatus(): Promise<ComplianceRunStatus> {
   const { data } = await api.get<ComplianceRunStatus>('/compliance/run-all/status/')
+  return data
+}
+
+// ── Fleet identity re-enrichment (on-demand twin of the daily scheduled run) ──
+export interface ReenrichStatus {
+  running: boolean
+  total: number; done: number; success: number; failed: number
+  unreachable: number; updated: number
+  errors: { device: string; error: string }[]
+  changes: { device: string; fields: string[] }[]
+  started_at: string | null; finished_at: string | null
+  trigger: string | null
+}
+
+// Start a staggered background re-probe of model/OS/serial/vendor/platform for
+// all active devices (or a subset). May 409 if a run is already in progress.
+export async function runReenrichAll(deviceIds?: number[]): Promise<ReenrichStatus> {
+  const { data } = await api.post<ReenrichStatus>(
+    '/devices/reenrich-all/', deviceIds && deviceIds.length ? { device_ids: deviceIds } : {})
+  return data
+}
+
+export async function fetchReenrichStatus(): Promise<ReenrichStatus> {
+  const { data } = await api.get<ReenrichStatus>('/devices/reenrich-all/')
   return data
 }
 
