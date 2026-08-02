@@ -9,6 +9,16 @@
 > escalation timers + ack (Phase 3), routing unification (Phase 4), and anti-storm
 > — dependency suppression + grouping + flap/for-duration (Phase 5) — targeted at
 > **v0.8.0**. Per-feature status is marked ✅ built / ❌ designed throughout.
+>
+> **Rule-management arc (adjacent to this doc, verified 2026-08-01):** the
+> seed-once / two-tier rule-kind / delete-protection / clone-to-custom /
+> expand-rules work is **fully built but UNMERGED** — it lives intact on
+> `origin/feature/rule-management` (sub-PRs #161–#167 merged into the arc; 17
+> commits ahead of main; no app-v0.8.0 tag exists). Reconcile-gate items for
+> the eventual merge: drop the arc's `alerts/0008_rename_notificationlog_indexes`
+> (main independently gained `0007_rename_notificationlog_indexes` in #177 —
+> the renames are already applied) and add a merge migration for the resulting
+> dual-0007 leaves.
 
 ## 0. Why this matters
 
