@@ -203,14 +203,24 @@ fi
 apply_docker_nat || warn "Could not re-apply Docker NAT — run: sudo ./netpulse.sh fix-nat"
 
 # ── 8. Verify health ──────────────────────────────────────────────────────────
+# Probe the REAL public endpoint (nginx :443, self-signed → -k) — NOT :8000.
+# With SECURE_SSL_REDIRECT=true (the shipped production default) a plain-HTTP
+# probe of gunicorn's :8000 gets a 301 to https://…:8000, which gunicorn can't
+# serve → the old check reported a FALSE "unreachable" (with rollback advice)
+# after perfectly successful updates. Going through nginx also verifies the
+# full path a customer actually uses (frontend up + proxy wired + api up).
+# 10 attempts × 5s on top of the initial settle covers slow container starts;
+# a genuine failure still exhausts the retries and keeps the rollback guidance.
 log "Verifying health..."
 sleep 8
+HTTPS_PORT="${FRONTEND_HTTPS_PORT:-443}"   # .env already sourced above
 HEALTH="unreachable"
-for _ in 1 2 3 4 5; do
-  HEALTH="$(docker compose exec -T api python -c \
-'import urllib.request,json,sys
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  body="$(curl -sk --max-time 5 "https://localhost:${HTTPS_PORT}/api/health/" 2>/dev/null || true)"
+  HEALTH="$(printf '%s' "$body" | python3 -c \
+'import json,sys
 try:
-    sys.stdout.write(json.load(urllib.request.urlopen("http://localhost:8000/api/health/",timeout=5)).get("status","error"))
+    sys.stdout.write(json.load(sys.stdin).get("status","error"))
 except Exception:
     sys.stdout.write("unreachable")' 2>/dev/null || echo unreachable)"
   [ "$HEALTH" = "ok" ] && break
