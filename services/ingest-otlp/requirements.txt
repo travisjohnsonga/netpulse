@@ -1,6 +1,6 @@
 opentelemetry-proto>=1.24
 grpcio>=1.64
-grpcio-tools>=1.64
+grpcio-tools>=1.83.0
 protobuf>=5.27
 nats-py~=2.15
 aiohttp>=3.14.1
