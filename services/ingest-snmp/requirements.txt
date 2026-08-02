@@ -9,4 +9,4 @@ nats-py~=2.15
 hvac~=2.4
 
 # Valkey — read gNMI liveness heartbeat for adaptive polling
-redis~=5.0
+redis~=8.1
