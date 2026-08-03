@@ -218,6 +218,139 @@ class TestBuildSnmpAuth:
         assert isinstance(auth, CommunityData)
 
 
+# ── AOS-CX REST ifIndex resolution ────────────────────────────────────────────
+
+
+class _FakeAOSCXClient:
+    """Stand-in for AOSCXClient used to drive _discover_via_aos_cx_rest."""
+    ifaces = [
+        {"name": "1/1/8", "type": "", "admin_state": "up", "link_state": "up",
+         "description": "uplink", "speed_mbps": 1000},
+        {"name": "1/1/9", "type": "", "admin_state": "up", "link_state": "down",
+         "description": "", "speed_mbps": 1000},
+    ]
+    neighbors = []
+
+    def __init__(self, host):
+        self.host = host
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def login(self, u, p):
+        return {}
+
+    def get_interfaces(self):
+        return self.ifaces
+
+    def get_lldp_neighbors(self):
+        return self.neighbors
+
+
+class TestAosCxIfIndex:
+    @pytest.fixture
+    def snmp_profile(self):
+        return CredentialProfile.objects.create(
+            name="aos-snmp", snmpv3_enabled=True, snmpv3_username="netpulse-mon",
+            snmpv3_port=161, vault_path="x")
+
+    @pytest.fixture
+    def aos_device(self, snmp_profile):
+        return Device.objects.create(
+            hostname="asw-01", ip_address="192.0.2.21", management_ip="192.0.2.21",
+            vendor="aruba", platform="aos_cx", status="active",
+            credential_profile=snmp_profile)
+
+    def test_iface_match_key_normalises(self):
+        assert discovery._iface_match_key("1/1/8") == "1/1/8"
+        assert discovery._iface_match_key(" 1/1/8 ") == "1/1/8"
+        assert discovery._iface_match_key("VLAN 10") == "vlan10"
+        assert discovery._iface_match_key(None) == ""
+
+    def test_build_ifindex_map_ifname_wins_on_collision(self):
+        # Same key from both columns → ifName's index wins.
+        descr = {"8": "1/1/8", "9": "bad"}
+        name = {"18": "1/1/8"}
+        m = discovery._build_ifindex_map(descr, name)
+        assert m["1/1/8"] == 18          # ifName applied second, wins
+        assert m["bad"] == 9
+
+    def test_build_ifindex_map_skips_nonnumeric_index(self):
+        m = discovery._build_ifindex_map({"x": "1/1/8"}, {})
+        assert m == {}
+
+    def test_snmp_ifindex_map_empty_without_snmp(self):
+        prof = CredentialProfile(ssh_enabled=True)  # no SNMP
+        assert discovery._snmp_ifindex_map("10.0.0.1", prof, {}) == {}
+
+    def test_rest_discovery_resolves_ifindex(self, aos_device, monkeypatch):
+        import apps.devices.aos_cx_client as aos_mod
+        monkeypatch.setattr(aos_mod, "AOSCXClient", _FakeAOSCXClient)
+        # Reuse ssh creds path: profile has no ssh_username, so supply via creds.
+        creds = {"ssh_username": "admin", "ssh_password": "pw"}
+        monkeypatch.setattr(
+            discovery, "_snmp_ifindex_map",
+            lambda host, profile, c: {"1/1/8": 8, "1/1/9": 9})
+        rows = discovery._discover_via_aos_cx_rest(
+            aos_device, aos_device.credential_profile, creds)
+        by_name = {r["if_name"]: r for r in rows}
+        assert by_name["1/1/8"]["if_index"] == 8
+        assert by_name["1/1/9"]["if_index"] == 9
+
+    def test_rest_discovery_ifindex_none_when_unmatched(self, aos_device, monkeypatch):
+        # Graceful per-interface degradation: an interface missing from the SNMP
+        # walk keeps if_index None; matched interfaces are still resolved.
+        import apps.devices.aos_cx_client as aos_mod
+        monkeypatch.setattr(aos_mod, "AOSCXClient", _FakeAOSCXClient)
+        creds = {"ssh_username": "admin", "ssh_password": "pw"}
+        monkeypatch.setattr(
+            discovery, "_snmp_ifindex_map", lambda host, profile, c: {"1/1/8": 8})
+        rows = discovery._discover_via_aos_cx_rest(
+            aos_device, aos_device.credential_profile, creds)
+        by_name = {r["if_name"]: r for r in rows}
+        assert by_name["1/1/8"]["if_index"] == 8
+        assert by_name["1/1/9"]["if_index"] is None
+
+    def test_backfill_command_updates_existing_rows(self, aos_device, monkeypatch):
+        # Simulate the pre-fix state: existing rows with if_index None.
+        MonitoredInterface.objects.create(
+            device=aos_device, if_name="1/1/8", if_index=None, poll_traffic=True)
+        MonitoredInterface.objects.create(
+            device=aos_device, if_name="1/1/9", if_index=None, poll_traffic=True)
+        MonitoredInterface.objects.create(
+            device=aos_device, if_name="1/1/99", if_index=None, poll_traffic=True)
+
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "1/1/8", "if_index": 8},
+            {"if_name": "1/1/9", "if_index": 9},
+            {"if_name": "1/1/99", "if_index": None},  # unmatched → stays None
+        ])
+        published = []
+        import apps.devices.snmp_publish as pub
+        monkeypatch.setattr(pub, "publish_device_upsert", lambda d: published.append(d.id))
+
+        from django.core.management import call_command
+        call_command("backfill_aos_cx_ifindex", device=aos_device.id)
+
+        idx = {mi.if_name: mi.if_index
+               for mi in MonitoredInterface.objects.filter(device=aos_device)}
+        assert idx == {"1/1/8": 8, "1/1/9": 9, "1/1/99": None}
+        assert published == [aos_device.id]   # republished so poller picks it up
+
+    def test_backfill_command_dry_run_writes_nothing(self, aos_device, monkeypatch):
+        MonitoredInterface.objects.create(
+            device=aos_device, if_name="1/1/8", if_index=None, poll_traffic=True)
+        monkeypatch.setattr(discovery, "discover_interfaces", lambda d: [
+            {"if_name": "1/1/8", "if_index": 8}])
+        from django.core.management import call_command
+        call_command("backfill_aos_cx_ifindex", device=aos_device.id, dry_run=True)
+        mi = MonitoredInterface.objects.get(device=aos_device, if_name="1/1/8")
+        assert mi.if_index is None   # dry-run left it untouched
+
+
 # ── monitored interfaces CRUD ─────────────────────────────────────────────────
 
 
