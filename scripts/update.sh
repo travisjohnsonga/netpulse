@@ -72,10 +72,20 @@ ASSUME_YES=0
 { [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ]; } && ASSUME_YES=1
 
 version_str() {
-  local count commit
-  count="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
-  commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  echo "1.0.${count} (${commit})"
+  # Report the SAME app-v* git-describe version the API/UI show (the badge and
+  # /api/health/infrastructure/), NOT a disconnected commit-count scheme — a
+  # customer seeing "1.0.905" here while the dashboard showed "0.7.0" for the
+  # same deployment is the bug this fixes. Mirrors the non-env branch of the
+  # API's resolver (services/api/config/settings/base.py::_app_version, from
+  # PR #176): describe against app-v* tags, strip the prefix, and fall back to
+  # 0.0.0+<hash> when no app-v* tag is reachable (fresh/shallow clone edge).
+  local desc
+  desc="$(git describe --tags --match 'app-v*' --always --dirty 2>/dev/null || echo '')"
+  case "$desc" in
+    app-v*) echo "${desc#app-v}" ;;
+    "")     echo "0.0.0+$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" ;;
+    *)      echo "0.0.0+${desc}" ;;   # bare hash: no app-v* tag reachable
+  esac
 }
 
 # ── Pre-flight ────────────────────────────────────────────────────────────────
