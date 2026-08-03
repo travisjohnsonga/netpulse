@@ -133,13 +133,20 @@ def _discover_via_aos_cx_rest(device, profile, creds: dict) -> list[dict]:
     if not ifaces:
         raise DiscoveryError("AOS-CX REST returned no interfaces")
 
+    # AOS-CX REST identifies interfaces by NAME ("1/1/8"), but the SNMP poller
+    # keys per-interface OIDs by the numeric IF-MIB ifIndex. Resolve the index
+    # by cross-referencing each REST name against a lightweight IF-MIB walk of
+    # the SAME device (best-effort — {} when no SNMP credential, leaving
+    # if_index None per interface so REST discovery still succeeds).
+    ifindex_map = _snmp_ifindex_map(host, profile, creds)
+
     lldp_by_port = {n["local_port"]: n for n in neighbors if n.get("local_port")}
     rows = []
     for i in ifaces:
         name = i.get("name", "")
         nb = lldp_by_port.get(name, {})
         rows.append({
-            "if_index": None,
+            "if_index": ifindex_map.get(_iface_match_key(name)),
             "if_name": name,
             "if_description": i.get("description", "") or "",
             "if_speed_mbps": i.get("speed_mbps"),
@@ -156,6 +163,69 @@ def _discover_via_aos_cx_rest(device, profile, creds: dict) -> list[dict]:
             "lldp_neighbor_capabilities": nb.get("capabilities") or None,
         })
     return rows
+
+
+def _iface_match_key(name: str) -> str:
+    """
+    Normalise an interface name for cross-referencing an AOS-CX REST name
+    ("1/1/8") against an SNMP ifName/ifDescr value: lowercase, drop all
+    whitespace. Kept deliberately conservative — AOS-CX numeric port names carry
+    no alphabetic prefix, so no ``_norm``-style prefix collapsing is applied
+    (that would risk mismerging distinct ports).
+    """
+    return "".join((name or "").split()).lower()
+
+
+def _snmp_ifindex_map(host: str, profile, creds: dict) -> dict[str, int]:
+    """
+    Walk IF-MIB ifName + ifDescr over SNMP and return ``{match_key: ifIndex}``.
+
+    AOS-CX's native REST API has no numeric SNMP ifIndex — but the SNMP poller
+    builds per-interface OIDs by suffixing that index (see
+    ``apps.devices.snmp_publish``), so without it interface traffic/status/error
+    polling silently never happens. This resolves the index for each REST
+    interface by name. Best-effort: returns ``{}`` when the profile has no SNMP
+    credential or the walk fails (the caller then leaves ``if_index`` None,
+    degrading per-interface rather than failing discovery).
+    """
+    if not (profile.snmpv2c_enabled or profile.snmpv3_enabled):
+        return {}
+    from apps.credentials.snmp_auth import build_snmp_auth
+    auth = build_snmp_auth(profile, creds)
+    port = (profile.snmpv3_port if profile.snmpv3_enabled else profile.snmpv2c_port) or 161
+    try:
+        return asyncio.run(_snmp_walk_ifindex(host, port, auth))
+    except Exception as exc:  # noqa: BLE001 — best-effort index resolution
+        logger.warning("AOS-CX ifIndex SNMP walk failed for %s: %s", host, exc)
+        return {}
+
+
+async def _snmp_walk_ifindex(host: str, port: int, auth_data) -> dict[str, int]:
+    """Walk ifName + ifDescr, returning ``{match_key: ifIndex}``."""
+    from pysnmp.hlapi.v3arch.asyncio import SnmpEngine, UdpTransportTarget
+
+    engine = SnmpEngine()
+    target = await UdpTransportTarget.create((host, port), timeout=3, retries=1)
+    name = await _snmp_walk_column(engine, target, auth_data, OID_IF_NAME)
+    descr = await _snmp_walk_column(engine, target, auth_data, OID_IF_DESCR)
+    return _build_ifindex_map(descr, name)
+
+
+def _build_ifindex_map(descr: dict[str, str], name: dict[str, str]) -> dict[str, int]:
+    """
+    Merge ifDescr + ifName walk columns ({ifIndex: value}) into
+    ``{match_key: ifIndex}``. ifDescr is applied first, ifName second, so ifName
+    (the canonical short port name on AOS-CX, "1/1/8") wins on any key collision.
+    """
+    out: dict[str, int] = {}
+    for col in (descr, name):
+        for idx, val in col.items():
+            if not idx.isdigit():
+                continue
+            key = _iface_match_key(val)
+            if key:
+                out[key] = int(idx)
+    return out
 
 
 # ── SNMP ──────────────────────────────────────────────────────────────────────
