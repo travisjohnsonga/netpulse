@@ -1,6 +1,6 @@
 grpcio~=1.65
 grpcio-tools~=1.65
-protobuf~=5.27
+protobuf~=7.36
 nats-py~=2.15
 
 # Valkey — gNMI liveness heartbeat for SNMP adaptive polling
