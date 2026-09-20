@@ -1,3 +1,3 @@
-nats-py~=2.15
+nats-py~=2.16
 aiohttp~=3.14
 hvac~=2.4
