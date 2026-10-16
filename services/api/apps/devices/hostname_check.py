@@ -88,10 +88,14 @@ def _hostname_change_rule():
 
 
 def _record_change_alert(device, old: str, new: str) -> None:
+    from apps.alerts.gating import rule_enabled
     from apps.alerts.models import AlertEvent
+    rule = _hostname_change_rule()
+    if not rule_enabled(rule):
+        return  # operator disabled the built-in → suppress new alerts
     ip = str(device.management_ip or device.ip_address)
     AlertEvent.objects.create(
-        rule=_hostname_change_rule(),
+        rule=rule,
         state=AlertEvent.State.FIRING,
         labels={
             "source": SOURCE, "device": new, "device_id": device.id,

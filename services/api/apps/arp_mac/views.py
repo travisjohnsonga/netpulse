@@ -1,8 +1,10 @@
 """REST endpoints for ARP/MAC tables, global IP/MAC search and OUI lookup."""
 from __future__ import annotations
 
+import ipaddress
 import logging
 import threading
+from math import ceil
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -161,6 +163,175 @@ class NetworkSearchView(APIView):
             "arp": [{**_arp_dict(e, vendors), **dev(e)} for e in arp],
             "mac": [{**_mac_dict(e, vendors), **dev(e)} for e in mac],
         })
+
+
+# Bound the in-Python aggregation so a pathologically large fleet can't OOM the
+# worker. Current-state ARP/MAC tables are modest (a few thousand rows), so
+# aggregating then sorting/slicing in Python is fine for v1 and lets every column
+# sort cleanly. If a fleet's tables grow past this, move to keyset SQL (group by
+# mac with a window for the preferred location) rather than raising the cap.
+HOSTS_SCAN_CAP = 100_000
+
+_HOST_SORTS = {"mac", "vendor", "ip", "device", "port", "vlan", "type", "last_seen"}
+
+
+def _ip_int(ip: str) -> int:
+    try:
+        return int(ipaddress.ip_address(ip))
+    except ValueError:
+        return -1
+
+
+def _host_sort_key(row: dict, sort: str):
+    """A consistently-typed sort key per column (empties coerce to a floor value
+    so asc/desc reverse cleanly without None comparisons)."""
+    if sort == "vendor":
+        return (row["vendor"] or "").lower()
+    if sort == "ip":
+        return min((_ip_int(i) for i in row["ips"]), default=-1)
+    if sort == "device":
+        return (row["device"] or "").lower()
+    if sort == "port":
+        return (row["port"] or "").lower()
+    if sort == "vlan":
+        return row["vlan"] if row["vlan"] is not None else -1
+    if sort == "type":
+        return row["entry_type"] or ""
+    if sort == "last_seen":
+        return row["_last_seen_ts"]
+    return row["mac"]  # default/mac
+
+
+class NetworkHostsView(APIView):
+    """Unified, browsable IP/MAC table — one row per MAC across the whole fleet.
+
+    Joins ARP and MAC-table sightings by MAC so a host's L3 presence (router ARP)
+    and L2 location (switchport) collapse into a single row even when they were
+    seen on different devices. Includes MACs that appear only in ARP (router-
+    learned, no switchport). Default-all, filtered, sorted and paginated.
+    """
+    permission_classes = [HasCapability("device:view")]
+
+    def get(self, request):
+        q = (request.query_params.get("q") or "").strip().lower()
+        sort = request.query_params.get("sort") or "mac"
+        if sort not in _HOST_SORTS:
+            sort = "mac"
+        order = request.query_params.get("order") or "asc"
+        desc = order == "desc"
+        page = max(1, _int(request.query_params.get("page"), 1))
+        page_size = min(500, max(1, _int(request.query_params.get("page_size"), 100)))
+
+        arp_rows = list(ARPEntry.objects.select_related("device")
+                        .order_by("mac_address")[:HOSTS_SCAN_CAP])
+        mac_rows = list(MACEntry.objects.select_related("device")
+                        .order_by("mac_address")[:HOSTS_SCAN_CAP])
+
+        vendors = _vendor_map([e.mac_address for e in arp_rows]
+                              + [e.mac_address for e in mac_rows])
+
+        # Aggregate per MAC. Location prefers a MAC-table sighting (switchport);
+        # falls back to the ARP device when a MAC only ever appears in ARP.
+        hosts: dict[str, dict] = {}
+        last_overall = None
+
+        def _bump(ts):
+            nonlocal last_overall
+            if ts and (last_overall is None or ts > last_overall):
+                last_overall = ts
+
+        for e in arp_rows:
+            h = hosts.setdefault(e.mac_address, _blank_host(e.mac_address, vendors))
+            if e.ip_address not in h["ips"]:
+                h["ips"].append(e.ip_address)
+            # ARP is the fallback location only — don't overwrite a MAC sighting.
+            if not h["_has_mac_loc"] and e.collected_at and e.collected_at > h["_arp_loc_ts"]:
+                h["_arp_loc_ts"] = e.collected_at
+                h["device_id"], h["device"] = e.device_id, e.device.hostname
+                h["port"] = e.interface
+                if e.vlan is not None:
+                    h["vlan"] = e.vlan
+                h["entry_type"] = h["entry_type"] or e.entry_type
+            _touch_last_seen(h, e.collected_at)
+            _bump(e.collected_at)
+
+        for e in mac_rows:
+            h = hosts.setdefault(e.mac_address, _blank_host(e.mac_address, vendors))
+            # A MAC-table sighting is the authoritative location; most recent wins.
+            if not h["_has_mac_loc"] or (e.collected_at and e.collected_at > h["_mac_loc_ts"]):
+                h["_has_mac_loc"] = True
+                h["_mac_loc_ts"] = e.collected_at or h["_mac_loc_ts"]
+                h["device_id"], h["device"] = e.device_id, e.device.hostname
+                h["port"] = e.interface
+                h["vlan"] = e.vlan
+                h["entry_type"] = e.entry_type
+            _touch_last_seen(h, e.collected_at)
+            _bump(e.collected_at)
+
+        rows = list(hosts.values())
+        for h in rows:
+            h["ips"].sort(key=_ip_int)
+
+        if q:
+            rows = [h for h in rows if _host_matches(h, q)]
+
+        rows.sort(key=lambda h: _host_sort_key(h, sort), reverse=desc)
+
+        count = len(rows)
+        num_pages = max(1, ceil(count / page_size))
+        start = (page - 1) * page_size
+        window = rows[start:start + page_size]
+
+        return Response({
+            "count": count,
+            "page": page,
+            "page_size": page_size,
+            "num_pages": num_pages,
+            "last_collected": last_overall.isoformat() if last_overall else None,
+            "results": [_host_public(h) for h in window],
+        })
+
+
+def _int(val, default: int) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _blank_host(mac: str, vendors: dict) -> dict:
+    from datetime import datetime, timezone
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    return {
+        "mac": mac, "vendor": vendors.get(mac, ""), "ips": [],
+        "device_id": None, "device": "", "port": "", "vlan": None,
+        "entry_type": "", "last_seen": None,
+        "_last_seen_ts": floor, "_arp_loc_ts": floor, "_mac_loc_ts": floor,
+        "_has_mac_loc": False,
+    }
+
+
+def _touch_last_seen(h: dict, ts) -> None:
+    if ts and ts > h["_last_seen_ts"]:
+        h["_last_seen_ts"] = ts
+        h["last_seen"] = ts.isoformat()
+
+
+def _host_matches(h: dict, q: str) -> bool:
+    if q in h["mac"].lower() or q in (h["vendor"] or "").lower():
+        return True
+    if q in (h["device"] or "").lower() or q in (h["port"] or "").lower():
+        return True
+    return any(q in ip.lower() for ip in h["ips"])
+
+
+def _host_public(h: dict) -> dict:
+    return {
+        "mac": h["mac"], "vendor": h["vendor"], "ips": h["ips"],
+        "device_id": h["device_id"], "device": h["device"],
+        "port": h["port"], "vlan": h["vlan"],
+        "entry_type": h["entry_type"], "last_seen": h["last_seen"],
+    }
 
 
 class MACVendorView(APIView):

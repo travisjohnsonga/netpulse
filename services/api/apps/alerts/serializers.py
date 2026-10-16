@@ -25,11 +25,16 @@ class AlertChannelSerializer(serializers.ModelSerializer):
 
 
 class AlertRuleSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+
     class Meta:
         model = AlertRule
         fields = "__all__"
-        # is_system is set only by the seed command, never via the API.
-        read_only_fields = ("created_at", "updated_at", "is_system")
+        # is_system / kind classify the rule and are set by the seed command,
+        # the dispatch meta-alarm, or the backfill migration — never via the API.
+        # created_by is provenance — set server-side (clone action), never by a
+        # client-supplied value.
+        read_only_fields = ("created_at", "updated_at", "is_system", "kind", "created_by")
 
 
 class AlertEventSerializer(serializers.ModelSerializer):

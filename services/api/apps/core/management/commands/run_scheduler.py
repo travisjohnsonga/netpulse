@@ -191,8 +191,8 @@ class Command(BaseCommand):
         call_command("collect_arp_mac", all=True)
 
     def _update_mac_vendors(self):
-        logger.info("scheduler: refreshing MAC-vendor OUI registry")
-        call_command("update_mac_vendors")
+        logger.info("scheduler: refreshing MAC-vendor OUI registry (live, bundled fallback)")
+        call_command("update_mac_vendors", refresh=True)
 
     def _check_hostnames(self):
         logger.info("scheduler: verifying device hostnames (SNMP sysName / DNS)")

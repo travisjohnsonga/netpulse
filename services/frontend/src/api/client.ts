@@ -1116,6 +1116,47 @@ export async function networkSearch(q: string): Promise<NetworkSearchResult> {
   return data
 }
 
+// Unified, browsable IP/MAC table — one row per MAC across the whole fleet.
+export interface NetworkHost {
+  mac: string
+  vendor: string
+  ips: string[]
+  device_id: number | null
+  device: string
+  port: string
+  vlan: number | null
+  entry_type: string
+  last_seen: string | null
+}
+
+export interface NetworkHostsResult {
+  count: number
+  page: number
+  page_size: number
+  num_pages: number
+  last_collected: string | null
+  results: NetworkHost[]
+}
+
+export type NetworkHostSort = 'mac' | 'vendor' | 'ip' | 'device' | 'port' | 'vlan' | 'type' | 'last_seen'
+
+export async function networkHosts(opts: {
+  q?: string
+  sort?: NetworkHostSort
+  order?: 'asc' | 'desc'
+  page?: number
+  page_size?: number
+} = {}): Promise<NetworkHostsResult> {
+  const params: Record<string, string> = {}
+  if (opts.q) params.q = opts.q
+  if (opts.sort) params.sort = opts.sort
+  if (opts.order) params.order = opts.order
+  if (opts.page) params.page = String(opts.page)
+  if (opts.page_size) params.page_size = String(opts.page_size)
+  const { data } = await api.get<NetworkHostsResult>('/network/hosts/', { params })
+  return data
+}
+
 // How a device's telemetry is currently being collected (gNMI / SNMP).
 export interface CollectionStatus {
   device_id: string
@@ -1326,7 +1367,14 @@ export interface AlertRule {
   // AlertEvents (UI) but does not dispatch notifications (observe-only).
   notify_enabled: boolean
   is_system: boolean
+  // Two-tier classification by what the rule monitors: 'system' = spane's own
+  // machinery (Tier 1), 'operational' = the customer's network/servers (Tier 2).
+  kind: 'system' | 'operational'
   cooldown_minutes: number
+  // Provenance: who created the rule (null for seeded/engine rules). Set by the
+  // clone action; a later PR surfaces it in the UI.
+  created_by: number | null
+  created_by_username?: string | null
   created_at: string
   updated_at: string
 }
@@ -1351,6 +1399,20 @@ export async function createAlertRule(payload: Partial<AlertRule>): Promise<Aler
 
 export async function updateAlertRule(id: number, payload: Partial<AlertRule>): Promise<AlertRule> {
   const { data } = await api.patch<AlertRule>(`/alerts/rules/${id}/`, payload)
+  return data
+}
+
+// Delete a rule. The backend hard-blocks Tier-1 system rules (403); only
+// operational rules are deletable.
+export async function deleteAlertRule(id: number): Promise<void> {
+  await api.delete(`/alerts/rules/${id}/`)
+}
+
+// Clone any rule (system / built-in / user) into a new editable operational
+// rule the caller owns. The backend gives it a distinct non-engine name and
+// sets created_by; returns the new rule so the UI can open it for editing.
+export async function cloneAlertRule(id: number, name?: string): Promise<AlertRule> {
+  const { data } = await api.post<AlertRule>(`/alerts/rules/${id}/clone/`, name ? { name } : {})
   return data
 }
 

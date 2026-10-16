@@ -506,9 +506,13 @@ def _reconcile_startup_alert(device, result: dict) -> None:
         return
     if open_qs.exists():
         return  # already firing — don't spam a new event each collection
+    from apps.alerts.gating import rule_enabled
+    rule = _config_unsaved_rule()
+    if not rule_enabled(rule):
+        return  # operator disabled the built-in → suppress new alerts
     unsaved = (result.get("added", 0) or 0) + (result.get("removed", 0) or 0)
     AlertEvent.objects.create(
-        rule=_config_unsaved_rule(),
+        rule=rule,
         state=AlertEvent.State.FIRING,
         labels={
             "source": "config_backup", "device": device.hostname, "device_id": device.id,

@@ -26,6 +26,8 @@ import logging
 
 from django.utils import timezone
 
+from apps.alerts.gating import rule_enabled
+
 logger = logging.getLogger(__name__)
 
 _RULE_NAME = "Agent Offline"
@@ -87,6 +89,8 @@ def reconcile_agent_liveness() -> dict:
             if open_ev is None:  # debounce: only fire on the transition to offline
                 if rule is None:
                     rule = _offline_rule()
+                if not rule_enabled(rule):
+                    continue  # operator disabled the built-in → suppress new alerts
                 mins = int(_offline_for(agent, now) // 60)
                 last = (agent.last_seen.isoformat() if agent.last_seen else "never")
                 AlertEvent.objects.create(

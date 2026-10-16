@@ -495,6 +495,8 @@ class TestDeliveryReliability:
             labels__alert_type="notification_delivery_failed",
             labels__failed_channel_id=fch.id).first()
         assert meta is not None  # the surviving channel reports the dead one
+        # The meta-alarm rule is Tier-1 SYSTEM (spane monitoring its own dispatch).
+        assert meta.rule.kind == "system"
         chans = dispatch.matching_channels(meta, payload_mod.build_payload(meta, "firing"))
         assert gch in chans and fch not in chans  # excludes the dead channel, routes to teams
 
@@ -525,6 +527,31 @@ class TestDeliveryReliability:
         before = AlertEvent.objects.count()
         dispatch._fire_delivery_failure_alarm(fch, payload_mod.build_payload(ev, "firing"))
         assert AlertEvent.objects.count() == before  # recursion guard
+
+    @ENABLED
+    def test_disabled_rule_suppresses_meta_alarm(self, monkeypatch):
+        """Tier-1 SYSTEM disable contract: disabling "Notification Delivery
+        Failed" must genuinely stop the meta-alarm from firing (e.g. silencing
+        it during planned maintenance)."""
+        from django.core.cache import cache
+        cache.clear()
+        monkeypatch.setitem(_REGISTRY, "fail", FailingNotifier())
+        # Pre-create the built-in rule DISABLED so get_or_create finds it as-is.
+        rule = AlertRule.objects.create(
+            name="Notification Delivery Failed", severity="high",
+            condition={"meta": True}, is_active=False, kind=AlertRule.Kind.SYSTEM)
+        fch = make_channel(channel_type="fail", name="email", config={"all_alerts": True})
+        ev = make_event(make_rule(), severity="high")
+        dispatch.dispatch_event(ev, "firing")
+        assert not AlertEvent.objects.filter(
+            labels__alert_type="notification_delivery_failed").exists()  # stays silent
+        # Re-enable → the meta-alarm fires again.
+        rule.is_active = True
+        rule.save(update_fields=["is_active"])
+        cache.clear()
+        dispatch.dispatch_event(make_event(make_rule(), severity="high"), "firing")
+        assert AlertEvent.objects.filter(
+            labels__alert_type="notification_delivery_failed").exists()
 
     def test_test_send_not_logged(self, rec):
         ch = make_channel()

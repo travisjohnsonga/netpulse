@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 
 from django.utils import timezone
 
+from apps.alerts.gating import rule_enabled
+
 from .models import (
     STABILITY_FLAP_THRESHOLD, STABILITY_FLAP_WINDOW_S, WatchedServiceStatus,
 )
@@ -75,9 +77,12 @@ def _reconcile_down(agent, ws, now):
     open_ev = _open_event(agent, ws.name, "service_down")
     if not ws.running:
         if open_ev is None:  # debounce: only on the transition to down
+            rule = _rule(_DOWN_RULE, AlertRule.Severity.HIGH,
+                         "A watched service stopped running.", "service_down")
+            if not rule_enabled(rule):
+                return (0, 0)  # operator disabled the built-in → suppress new alerts
             AlertEvent.objects.create(
-                rule=_rule(_DOWN_RULE, AlertRule.Severity.HIGH,
-                           "A watched service stopped running.", "service_down"),
+                rule=rule,
                 state=AlertEvent.State.FIRING,
                 labels={"source": "service_stability", "alert_type": "service_down",
                         "agent_id": str(agent.id), "service": ws.name,
@@ -103,9 +108,12 @@ def _reconcile_flap(agent, ws, now):
     open_ev = _open_event(agent, ws.name, "service_flapping")
     if len(recent) >= STABILITY_FLAP_THRESHOLD:
         if open_ev is None:
+            rule = _rule(_FLAP_RULE, AlertRule.Severity.MEDIUM,
+                         "A watched service is restarting repeatedly.", "service_flapping")
+            if not rule_enabled(rule):
+                return (0, 0)  # operator disabled the built-in → suppress new alerts
             AlertEvent.objects.create(
-                rule=_rule(_FLAP_RULE, AlertRule.Severity.MEDIUM,
-                           "A watched service is restarting repeatedly.", "service_flapping"),
+                rule=rule,
                 state=AlertEvent.State.FIRING,
                 labels={"source": "service_stability", "alert_type": "service_flapping",
                         "agent_id": str(agent.id), "service": ws.name,

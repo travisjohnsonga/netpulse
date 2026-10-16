@@ -1,12 +1,20 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  fetchAlertRules, createAlertRule, updateAlertRule,
+  fetchAlertRules, createAlertRule, updateAlertRule, deleteAlertRule, cloneAlertRule,
   type AlertRule, type AlertSeverity,
 } from '../../api/client'
+import { parseApiErrors } from '../../api/errors'
 import Modal from '../../components/Modal'
 import EmptyState from '../../components/EmptyState'
 import { SectionHeader, Tabs } from '../Settings'
+import { describeCondition } from '../../lib/alertCondition'
+import { formatDate } from '../../lib/time'
+
+// Only pure user-created rules are deletable. Tier-1 system rules (kind=system)
+// and engine-fired built-ins (is_system — spane re-creates them by name) are
+// protected: no delete button, disable instead.
+const isDeletable = (r: AlertRule) => r.kind !== 'system' && !r.is_system
 
 const TABS = [
   { id: 'rules', label: 'Alert Rules' },
@@ -45,6 +53,19 @@ function RulesTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  // Row expanded into its detail panel (condition + provenance + actions). One
+  // at a time — clicking another rule swaps focus.
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+  // Rule currently open in the edit modal (used after a clone so the user can
+  // immediately customize the copy's values).
+  const [editing, setEditing] = useState<AlertRule | null>(null)
+  // Rule mid-clone (disables its Clone button so a double-click can't dupe).
+  const [cloningId, setCloningId] = useState<number | null>(null)
+  // Rule pending a delete confirm (operational only).
+  const [deleting, setDeleting] = useState<AlertRule | null>(null)
+  // System rule pending a disable warning (Tier-1 self-health rules warn before
+  // being turned off — they're load-bearing for spane's own reliability).
+  const [disablingSystem, setDisablingSystem] = useState<AlertRule | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -56,14 +77,53 @@ function RulesTab() {
 
   useEffect(() => { load() }, [load])
 
-  const toggle = async (rule: AlertRule) => {
+  const setActive = async (rule: AlertRule, active: boolean) => {
     // optimistic
-    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: !r.is_active } : r)))
+    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: active } : r)))
     try {
-      await updateAlertRule(rule.id, { is_active: !rule.is_active })
+      await updateAlertRule(rule.id, { is_active: active })
     } catch {
-      setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: rule.is_active } : r)))
+      setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, is_active: !active } : r)))
       setError('Failed to update rule.')
+    }
+  }
+
+  // Enabled toggle. Friction scales with consequence: disabling a Tier-1 SYSTEM
+  // rule warns first (spane would stop watching its own health); everything else
+  // — including re-enabling a system rule — toggles immediately, no nag.
+  const toggle = (rule: AlertRule) => {
+    if (rule.kind === 'system' && rule.is_active) {
+      setDisablingSystem(rule)
+      return
+    }
+    void setActive(rule, !rule.is_active)
+  }
+
+  // Clone any rule → a new editable operational rule; land the user in the edit
+  // modal on the copy so they can tweak values (e.g. drop 500ms → 300ms) at once.
+  const clone = async (rule: AlertRule) => {
+    setCloningId(rule.id)
+    try {
+      const created = await cloneAlertRule(rule.id)
+      setRules((rs) => [created, ...rs])
+      setEditing(created)
+    } catch (e) {
+      setError(parseApiErrors(e, 'Failed to clone rule.'))
+    } finally {
+      setCloningId(null)
+    }
+  }
+
+  const confirmDelete = async () => {
+    const rule = deleting
+    if (!rule) return
+    try {
+      await deleteAlertRule(rule.id)
+      setRules((rs) => rs.filter((r) => r.id !== rule.id))
+      setDeleting(null)
+    } catch (e) {
+      setError(parseApiErrors(e, 'Failed to delete rule.'))
+      setDeleting(null)
     }
   }
 
@@ -105,20 +165,42 @@ function RulesTab() {
                   <th className="px-5 py-3 font-medium">Channels</th>
                   <th className="px-5 py-3 font-medium text-right" title="Generate AlertEvents (UI) — the whole rule on/off">Enabled</th>
                   <th className="px-5 py-3 font-medium text-right" title="Send notifications (email/Teams). Off = observe-only: still shows in the UI, pages no one.">Notify</th>
+                  <th className="px-5 py-3 font-medium text-right w-px"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {rules.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                {rules.map((r) => {
+                  const expanded = expandedId === r.id
+                  return (
+                  <Fragment key={r.id}>
+                  <tr
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                    onClick={() => setExpandedId(expanded ? null : r.id)}
+                  >
                     <td className="px-5 py-3">
                       <p className="font-medium text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : r.id) }}
+                          className="-my-1 -ml-1 p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          aria-expanded={expanded}
+                          aria-label={expanded ? `Collapse ${r.name}` : `Expand ${r.name}`}
+                        >
+                          <Chevron open={expanded} />
+                        </button>
                         {r.name}
-                        {r.is_system && (
+                        {r.kind === 'system' ? (
                           <span
-                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
-                            title="Default rule — cannot be deleted. Disable it with the toggle instead."
+                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            title="Tier 1 — spane platform self-health (its own machinery). Load-bearing for spane's reliability."
                           >
                             System
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700/40 dark:text-gray-400"
+                            title="Tier 2 — monitors your network/servers. You own this rule."
+                          >
+                            Operational
                           </span>
                         )}
                       </p>
@@ -129,17 +211,68 @@ function RulesTab() {
                     </td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.cooldown_minutes}m</td>
                     <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{r.channels.length}</td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <Toggle on={r.is_active} onClick={() => toggle(r)} />
                     </td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       {/* Dimmed when the rule is disabled — Notify is moot if it doesn't generate. */}
                       <span className={clsx(!r.is_active && 'opacity-40')} title={!r.is_active ? 'Rule is disabled' : undefined}>
                         <Toggle on={r.notify_enabled ?? true} onClick={() => toggleNotify(r)} />
                       </span>
                     </td>
+                    <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        {/* Clone is offered for EVERY rule — you can template off a
+                            system or built-in rule to make your own editable copy;
+                            the original stays untouched. */}
+                        <button
+                          onClick={() => clone(r)}
+                          disabled={cloningId === r.id}
+                          className="p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40"
+                          title={`Clone rule "${r.name}" into an editable copy`}
+                          aria-label={`Clone rule ${r.name}`}
+                        >
+                          <CopyIcon />
+                        </button>
+                        {/* Delete is offered ONLY for user-created rules. Both Tier-1
+                            system rules AND engine-fired built-ins (is_system) are
+                            protected — deleting a built-in is futile (the engine
+                            re-creates it), so disable it instead. */}
+                        {isDeletable(r) ? (
+                          <button
+                            onClick={() => setDeleting(r)}
+                            className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+                            title={`Delete rule "${r.name}"`}
+                            aria-label={`Delete rule ${r.name}`}
+                          >
+                            <TrashIcon />
+                          </button>
+                        ) : (
+                          <span
+                            className="text-gray-300 dark:text-gray-600 text-xs px-1.5"
+                            title={r.kind === 'system'
+                              ? 'System rules monitor spane’s own health — disable them instead.'
+                              : 'Built-in monitoring rule — spane re-creates it automatically. Disable it to stop its alerts.'}
+                          >—</span>
+                        )}
+                      </div>
+                    </td>
                   </tr>
-                ))}
+                  {expanded && (
+                    <tr className="bg-gray-50/70 dark:bg-gray-900/40">
+                      <td colSpan={7} className="px-5 pb-5 pt-1 border-b-2 border-blue-100 dark:border-blue-900/40">
+                        <RuleDetail
+                          rule={r}
+                          cloning={cloningId === r.id}
+                          onClone={() => clone(r)}
+                          onEdit={() => setEditing(r)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -147,7 +280,267 @@ function RulesTab() {
       </div>
 
       {adding && <AddRuleModal onClose={() => setAdding(false)} onCreated={() => { setAdding(false); load() }} onError={() => setError('Failed to create rule.')} />}
+
+      {editing && (
+        <EditRuleModal
+          rule={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(updated) => {
+            setRules((rs) => rs.map((r) => (r.id === updated.id ? updated : r)))
+            setEditing(null)
+          }}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmDialog
+          title="Delete alert rule?"
+          confirmLabel="Delete rule"
+          tone="danger"
+          onConfirm={confirmDelete}
+          onClose={() => setDeleting(null)}
+        >
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Delete rule <span className="font-semibold">“{deleting.name}”</span>? This can’t be undone.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {disablingSystem && (
+        <ConfirmDialog
+          title="Disable a system rule?"
+          confirmLabel="Disable anyway"
+          tone="warning"
+          onConfirm={async () => { await setActive(disablingSystem, false); setDisablingSystem(null) }}
+          onClose={() => setDisablingSystem(null)}
+        >
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            <span className="font-semibold">“{disablingSystem.name}”</span> monitors spane’s own
+            health — disabling it means spane can’t detect{' '}
+            {disablingSystem.name === 'Notification Delivery Failed'
+              ? 'notification-delivery failures'
+              : 'this platform-health condition'}. Disable anyway?
+          </p>
+        </ConfirmDialog>
+      )}
     </div>
+  )
+}
+
+function CopyIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 8V6a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2h-2M6 8h8a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2v-8a2 2 0 012-2z" />
+    </svg>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" />
+    </svg>
+  )
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={clsx('w-4 h-4 transition-transform', open && 'rotate-90')}
+      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+  )
+}
+
+// ── Expanded rule detail ─────────────────────────────────────────────────────
+// The "understand this rule fully" panel: what it checks (friendly + raw JSON),
+// its classification + why it can/can't be deleted, who created it and when, and
+// the clone-to-customize action right where you're reading it.
+
+// Classification chip + one-line explanation, derived from kind/is_system/
+// created_by (the same signals the row's badge and delete-protection use).
+function classify(r: AlertRule): { label: string; badge: string; blurb: string } {
+  if (r.kind === 'system') {
+    return {
+      label: 'System',
+      badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+      blurb: 'Tier 1 — monitors spane’s own platform machinery. Load-bearing for spane’s reliability.',
+    }
+  }
+  if (r.is_system) {
+    return {
+      label: 'Built-in',
+      badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+      blurb: 'Engine-fired built-in — spane re-creates it automatically if removed.',
+    }
+  }
+  if (r.created_by != null) {
+    return {
+      label: 'User',
+      badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+      blurb: 'Created by a user. Fully editable and deletable.',
+    }
+  }
+  return {
+    label: 'Operational',
+    badge: 'bg-gray-100 text-gray-600 dark:bg-gray-700/50 dark:text-gray-300',
+    blurb: 'Tier 2 — monitors your network and servers.',
+  }
+}
+
+function protectionText(r: AlertRule): string {
+  if (isDeletable(r)) return 'Editable and deletable — it’s your rule.'
+  if (r.kind === 'system')
+    return 'Protected: you can disable it (with a warning) but not delete it — spane needs it to watch its own health.'
+  return 'Protected: deleting is futile — the engine re-creates it. Disable it instead to stop its alerts.'
+}
+
+// Provenance line, null-safe for rules that predate the created_by field or were
+// seeded/engine-created (no human author).
+function provenance(r: AlertRule): string {
+  if (r.created_by != null) {
+    return `Created by ${r.created_by_username || 'a user'} on ${formatDate(r.created_at)}`
+  }
+  if (r.kind === 'system' || r.is_system) return 'Provided by spane (built-in) — no individual author.'
+  return 'System — no recorded author (created before provenance tracking).'
+}
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-1.5">{title}</p>
+      {children}
+    </div>
+  )
+}
+
+function RuleDetail({
+  rule, cloning, onClone, onEdit,
+}: {
+  rule: AlertRule
+  cloning: boolean
+  onClone: () => void
+  onEdit: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const summary = describeCondition(rule.condition)
+  const rawJson = JSON.stringify(rule.condition ?? {}, null, 2)
+  const cls = classify(rule)
+
+  const copyJson = () => {
+    navigator.clipboard?.writeText(rawJson)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
+      .catch(() => {})
+  }
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-3 pt-3">
+      {/* What it checks — friendly summary on top, raw JSON below (teaching aid). */}
+      <div className="lg:col-span-2 space-y-3">
+        <DetailSection title="What it checks">
+          <p className="text-sm text-gray-700 dark:text-gray-200">{summary.text}</p>
+          {!summary.parsed && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              Custom condition shape — see the raw definition below.
+            </p>
+          )}
+          <div className="mt-2 relative">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500">Raw condition (JSON)</span>
+              <button
+                onClick={copyJson}
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                title="Copy the condition JSON"
+              >
+                <CopyIcon />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <pre className="text-xs font-mono bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">{rawJson}</pre>
+          </div>
+        </DetailSection>
+      </div>
+
+      {/* Right rail: classification, protection, provenance, actions. */}
+      <div className="space-y-4">
+        <DetailSection title="Classification">
+          <div className="flex items-center gap-2">
+            <span className={clsx('text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded', cls.badge)}>{cls.label}</span>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">{cls.blurb}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{protectionText(rule)}</p>
+        </DetailSection>
+
+        <DetailSection title="Provenance">
+          <p className="text-sm text-gray-700 dark:text-gray-200">{provenance(rule)}</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Last updated {formatDate(rule.updated_at)}</p>
+        </DetailSection>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            onClick={onClone}
+            disabled={cloning}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium"
+            title="Copy this rule into an editable operational rule"
+          >
+            <CopyIcon />
+            {cloning ? 'Cloning…' : 'Clone & customize'}
+          </button>
+          {isDeletable(rule) && (
+            <button
+              onClick={onEdit}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-gray-400 dark:text-gray-500">
+          Cloning leaves this rule untouched and drops you into an editable copy.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// Small confirm/warning dialog built on the shared Modal. `tone` colours the
+// primary action: danger (red) for destructive deletes, warning (amber) for a
+// reversible-but-consequential disable.
+function ConfirmDialog({
+  title, children, confirmLabel, tone, onConfirm, onClose,
+}: {
+  title: string
+  children: ReactNode
+  confirmLabel: string
+  tone: 'danger' | 'warning'
+  onConfirm: () => void | Promise<void>
+  onClose: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const run = async () => {
+    setBusy(true)
+    try { await onConfirm() } finally { setBusy(false) }
+  }
+  const confirmCls = tone === 'danger'
+    ? 'bg-red-600 hover:bg-red-700'
+    : 'bg-amber-600 hover:bg-amber-700'
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      size="md"
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={run} disabled={busy} className={clsx('flex-1 py-2.5 disabled:opacity-50 text-white rounded-lg text-sm font-medium', confirmCls)}>{busy ? 'Working…' : confirmLabel}</button>
+        </>
+      }
+    >
+      <div>{children}</div>
+    </Modal>
   )
 }
 
@@ -201,6 +594,72 @@ function AddRuleModal({ onClose, onCreated, onError }: { onClose: () => void; on
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="High CPU on core devices" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Severity</label>
+            <select className={inputCls} value={severity} onChange={(e) => setSeverity(e.target.value as AlertSeverity)}>
+              {(['critical', 'high', 'medium', 'low', 'info'] as AlertSeverity[]).map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Cooldown (minutes)</label>
+            <input className={inputCls} type="number" value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Condition (JSON)</label>
+          <textarea className={`${inputCls} font-mono text-xs h-32`} value={condition} onChange={(e) => setCondition(e.target.value)} />
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// Edit an existing rule's core fields. Opened right after a clone so the copy
+// can be customized immediately (e.g. change the threshold), and reusable for
+// editing any rule. Name/severity/cooldown/condition are the editable core;
+// channels/notify are managed from the row toggles.
+function EditRuleModal({ rule, onClose, onSaved }: { rule: AlertRule; onClose: () => void; onSaved: (r: AlertRule) => void }) {
+  const [name, setName] = useState(rule.name)
+  const [severity, setSeverity] = useState<AlertSeverity>(rule.severity)
+  const [cooldown, setCooldown] = useState(String(rule.cooldown_minutes))
+  const [condition, setCondition] = useState(JSON.stringify(rule.condition ?? {}, null, 2))
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const submit = async () => {
+    if (!name.trim()) { setErr('Name is required.'); return }
+    let parsed: Record<string, unknown>
+    try { parsed = JSON.parse(condition) } catch { setErr('Condition must be valid JSON.'); return }
+    setSaving(true); setErr(null)
+    try {
+      const updated = await updateAlertRule(rule.id, {
+        name: name.trim(), severity, cooldown_minutes: Number(cooldown) || 60, condition: parsed,
+      })
+      onSaved(updated)
+    } catch (e) {
+      setSaving(false); setErr(parseApiErrors(e, 'Failed to save rule.'))
+    }
+  }
+
+  return (
+    <Modal
+      title="Edit Alert Rule"
+      onClose={onClose}
+      size="lg"
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">{saving ? 'Saving…' : 'Save Changes'}</button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {err && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-400">{err}</div>}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>

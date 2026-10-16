@@ -8,5 +8,6 @@ urlpatterns = [
     path("devices/<int:device_id>/arp-mac/collect/", views.DeviceARPMACCollectView.as_view(),
          name="device-arp-mac-collect"),
     path("network/search/", views.NetworkSearchView.as_view(), name="network-search"),
+    path("network/hosts/", views.NetworkHostsView.as_view(), name="network-hosts"),
     path("network/mac-vendor/<str:mac>/", views.MACVendorView.as_view(), name="mac-vendor"),
 ]
