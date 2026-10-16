@@ -1099,6 +1099,47 @@ export async function networkSearch(q: string): Promise<NetworkSearchResult> {
   return data
 }
 
+// Unified, browsable IP/MAC table — one row per MAC across the whole fleet.
+export interface NetworkHost {
+  mac: string
+  vendor: string
+  ips: string[]
+  device_id: number | null
+  device: string
+  port: string
+  vlan: number | null
+  entry_type: string
+  last_seen: string | null
+}
+
+export interface NetworkHostsResult {
+  count: number
+  page: number
+  page_size: number
+  num_pages: number
+  last_collected: string | null
+  results: NetworkHost[]
+}
+
+export type NetworkHostSort = 'mac' | 'vendor' | 'ip' | 'device' | 'port' | 'vlan' | 'type' | 'last_seen'
+
+export async function networkHosts(opts: {
+  q?: string
+  sort?: NetworkHostSort
+  order?: 'asc' | 'desc'
+  page?: number
+  page_size?: number
+} = {}): Promise<NetworkHostsResult> {
+  const params: Record<string, string> = {}
+  if (opts.q) params.q = opts.q
+  if (opts.sort) params.sort = opts.sort
+  if (opts.order) params.order = opts.order
+  if (opts.page) params.page = String(opts.page)
+  if (opts.page_size) params.page_size = String(opts.page_size)
+  const { data } = await api.get<NetworkHostsResult>('/network/hosts/', { params })
+  return data
+}
+
 // How a device's telemetry is currently being collected (gNMI / SNMP).
 export interface CollectionStatus {
   device_id: string

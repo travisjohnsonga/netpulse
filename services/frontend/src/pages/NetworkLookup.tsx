@@ -1,189 +1,209 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { networkSearch, searchFlows, type NetworkSearchResult } from '../api/client'
-import { detectQueryKind, relTime, latestCollected } from '../lib/ipmac'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { networkHosts, searchFlows, type NetworkHost, type NetworkHostSort } from '../api/client'
+import { detectQueryKind, relTime } from '../lib/ipmac'
+import { STRIPED_ROW } from '../lib/tableStyles'
 import FlowsTable from '../components/FlowsTable'
 import DeviceLink from '../components/DeviceLink'
 
 const card = 'bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800'
-const th = 'text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-400'
-const td = 'px-3 py-2 text-gray-700 dark:text-gray-300'
+const th = 'text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap'
+const td = 'px-3 py-2 text-gray-700 dark:text-gray-300 align-top'
+const PAGE_SIZES = [50, 100, 200]
+const DEFAULT_PAGE_SIZE = 100
 
-// Dedicated "where is this host?" workflow — find the device that sees a given
-// IP or MAC in its ARP or MAC address-table. Mirrors the header quick-search.
+const COLUMNS: { key: NetworkHostSort; label: string }[] = [
+  { key: 'mac', label: 'MAC' },
+  { key: 'vendor', label: 'Vendor' },
+  { key: 'ip', label: 'IP Address(es)' },
+  { key: 'device', label: 'Device' },
+  { key: 'port', label: 'Port' },
+  { key: 'vlan', label: 'VLAN' },
+  { key: 'type', label: 'Type' },
+  { key: 'last_seen', label: 'Last Seen' },
+]
+
+// Unified, browsable IP/MAC table — one row per MAC across the whole fleet,
+// joining ARP (L3) and MAC-table (L2 switchport) sightings. Default-all,
+// sortable, paginated. q/page/sort/order live in the URL. The header
+// quick-search still hits /network/search/ separately.
 export default function NetworkLookup() {
   const [params, setParams] = useSearchParams()
-  const [q, setQ] = useState(params.get('q') ?? '')
-  const [result, setResult] = useState<NetworkSearchResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [searched, setSearched] = useState(false)
+  const q = params.get('q') ?? ''
+  const sort = (params.get('sort') as NetworkHostSort) || 'mac'
+  const order = params.get('order') === 'desc' ? 'desc' : 'asc'
+  const page = Math.max(1, Number(params.get('page')) || 1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [qInput, setQInput] = useState(q)
 
-  const run = useCallback(async (raw: string) => {
-    const query = raw.trim()
-    if (!query) return
-    setLoading(true)
-    setSearched(true)
-    try {
-      setResult(await networkSearch(query))
-    } catch {
-      setResult({ query, arp: [], mac: [] })
-    } finally {
-      setLoading(false)
+  // Merge a partial change into the URL params (kept as the single source of truth).
+  const update = (patch: Record<string, string | null>) => {
+    const next = new URLSearchParams(params)
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null || v === '') next.delete(k)
+      else next.set(k, v)
     }
-  }, [])
-
-  // Auto-run when arriving with ?q= (e.g. from the header "View full results").
-  useEffect(() => {
-    const initial = params.get('q')
-    if (initial) void run(initial)
-    // run once on mount for the incoming query
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const query = q.trim()
-    if (!query) return
-    setParams(query ? { q: query } : {}, { replace: true })
-    void run(query)
+    setParams(next, { replace: true })
   }
 
-  const kind = detectQueryKind(q)
-  const arp = result?.arp ?? []
-  const mac = result?.mac ?? []
-  const hits = arp.length + mac.length
-  const lastCollected = latestCollected([
-    ...arp.map((e) => e.collected_at),
-    ...mac.map((e) => e.collected_at),
-  ])
-  // A MAC table hit with a port is the "this host is plugged in here" answer.
-  const portHit = mac.find((e) => e.interface)
+  // Keep the search box in sync if q changes from elsewhere (e.g. header link).
+  useEffect(() => { setQInput(q) }, [q])
+
+  // Debounce typing → q param, resetting to page 1 on a new filter.
+  useEffect(() => {
+    if (qInput === q) return
+    const t = setTimeout(() => update({ q: qInput || null, page: null }), 300)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput])
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['network-hosts', q, sort, order, page, pageSize],
+    queryFn: () => networkHosts({ q, sort, order, page, page_size: pageSize }),
+    placeholderData: keepPreviousData,
+  })
+
+  const rows = data?.results ?? []
+  const count = data?.count ?? 0
+  const numPages = data?.num_pages ?? 1
+
+  const onSort = (key: NetworkHostSort) => {
+    const nextOrder = sort === key && order === 'asc' ? 'desc' : 'asc'
+    update({ sort: key, order: nextOrder, page: null })
+  }
+
+  const kind = detectQueryKind(q.trim())
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <div className="max-w-6xl mx-auto space-y-4">
       <div>
         <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
           🔍 IP / MAC Lookup
         </h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Find any device by IP or MAC address.</p>
-      </div>
-
-      <div className={`${card} p-4`}>
-        <form onSubmit={onSubmit} className="flex gap-2">
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="e.g. 10.150.0.50 or aa:bb:cc:dd:ee:ff"
-            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button type="submit" disabled={loading || !q.trim()}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
-            {loading ? 'Searching…' : 'Search'}
-          </button>
-        </form>
-        <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-          Accepts: IPv4 · MAC (any format)
-          {q.trim() && kind !== 'unknown' && (
-            <span className="ml-2 text-gray-500 dark:text-gray-400">— looks like {kind === 'ip' ? 'an IP address' : 'a MAC address'}</span>
-          )}
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          Every host seen across the fleet's ARP and MAC address-tables — one row per MAC.
         </p>
       </div>
 
-      {searched && !loading && result && (
-        <div className={`${card} p-4 space-y-5`}>
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Results for <span className="font-mono text-base">{result.query}</span>
-            </h2>
-            {hits > 0 && (
-              <span className="text-xs text-gray-400 dark:text-gray-500">Last collected: {relTime(lastCollected)}</span>
-            )}
-          </div>
+      <div className={`${card} p-4 flex flex-wrap items-center gap-3`}>
+        <input
+          autoFocus
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
+          placeholder="Filter by MAC, vendor, IP, device, or port…"
+          className="flex-1 min-w-[16rem] px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {qInput && (
+          <button onClick={() => setQInput('')}
+            className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+            Clear
+          </button>
+        )}
+        <label className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          Show
+          <select
+            value={pageSize}
+            onChange={(e) => { setPageSize(Number(e.target.value)); update({ page: null }) }}
+            className="px-2 py-1.5 border border-gray-300 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          >
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      </div>
 
-          {hits === 0 ? (
-            <EmptyResults />
-          ) : (
-            <>
-              {portHit && (
-                <div className="rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 px-4 py-3 text-sm text-blue-800 dark:text-blue-300">
-                  📍 This device is on port <span className="font-mono font-medium">{portHit.interface}</span>
-                  {' '}on <Link to={`/devices/${portHit.device_id}`} className="font-medium underline hover:no-underline">{portHit.device_hostname}</Link>
-                  {portHit.vlan != null && <> · VLAN {portHit.vlan}</>}
-                </div>
-              )}
-
-              {arp.length > 0 && (
-                <section>
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">ARP Table Matches</h3>
-                  <div className={`${card} overflow-x-auto`}>
-                    <table className="w-full text-sm">
-                      <thead className="border-b border-gray-200 dark:border-gray-800">
-                        <tr><th className={th}>Device</th><th className={th}>IP Address</th><th className={th}>MAC</th><th className={th}>Interface</th></tr>
-                      </thead>
-                      <tbody>
-                        {arp.map((e) => (
-                          <tr key={`a${e.id}`} className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                            <td className={td}><DeviceLink deviceId={e.device_id} hostname={e.device_hostname} className="font-medium" /></td>
-                            <td className={`${td} font-mono text-xs`}>{e.ip_address}</td>
-                            <td className={td}>
-                              <span className="font-mono text-xs">{e.mac_address}</span>
-                              {e.vendor && <span className="block text-xs text-gray-400 dark:text-gray-500">{e.vendor}</span>}
-                            </td>
-                            <td className={td}>{e.interface || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              )}
-
-              {mac.length > 0 && (
-                <section>
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">MAC Table Matches</h3>
-                  <div className={`${card} overflow-x-auto`}>
-                    <table className="w-full text-sm">
-                      <thead className="border-b border-gray-200 dark:border-gray-800">
-                        <tr><th className={th}>Device</th><th className={th}>MAC</th><th className={th}>VLAN</th><th className={th}>Type</th><th className={th}>Port</th></tr>
-                      </thead>
-                      <tbody>
-                        {mac.map((e) => (
-                          <tr key={`m${e.id}`} className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                            <td className={td}><DeviceLink deviceId={e.device_id} hostname={e.device_hostname} className="font-medium" /></td>
-                            <td className={td}>
-                              <span className="font-mono text-xs">{e.mac_address}</span>
-                              {e.vendor && <span className="block text-xs text-gray-400 dark:text-gray-500">{e.vendor}</span>}
-                            </td>
-                            <td className={td}>{e.vlan ?? '—'}</td>
-                            <td className={td}>{e.entry_type || '—'}</td>
-                            <td className={td}>
-                              <Link to={`/devices/${e.device_id}?tab=arpmac`} className="text-blue-600 dark:text-blue-400 hover:underline">
-                                {e.interface || '—'} →
-                              </Link>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              )}
-            </>
-          )}
+      <div className={card}>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
+          <span>
+            {count.toLocaleString()} host{count !== 1 ? 's' : ''}
+            {isFetching && <span className="ml-2 text-gray-400">· updating…</span>}
+          </span>
+          {data?.last_collected && <span>Last collected: {relTime(data.last_collected)}</span>}
         </div>
-      )}
 
-      {searched && !loading && result && detectQueryKind(result.query) === 'ip' && (
-        <IpFlows ip={result.query} />
-      )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-gray-200 dark:border-gray-800">
+              <tr>
+                {COLUMNS.map((c) => (
+                  <th key={c.key} className={`${th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200`}
+                      onClick={() => onSort(c.key)}>
+                    {c.label}
+                    <span className="ml-1 inline-block w-2 text-gray-400">
+                      {sort === c.key ? (order === 'asc' ? '▲' : '▼') : ''}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr><td className="px-3 py-10 text-center text-gray-400" colSpan={COLUMNS.length}>Loading…</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td className="px-3 py-10 text-center text-gray-400" colSpan={COLUMNS.length}>
+                  {q ? 'No hosts match this filter.' : 'No ARP/MAC data collected yet.'}
+                </td></tr>
+              ) : (
+                rows.map((h) => <HostRow key={h.mac} h={h} />)
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pager */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 dark:border-gray-800 text-sm">
+          <span className="text-gray-500 dark:text-gray-400">
+            {count.toLocaleString()} total
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => update({ page: String(page - 1) })}
+              disabled={page <= 1}
+              className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 rounded-md hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+            >
+              ← Prev
+            </button>
+            <span className="text-gray-500 dark:text-gray-400">page {page} of {numPages}</span>
+            <button
+              onClick={() => update({ page: String(page + 1) })}
+              disabled={page >= numPages}
+              className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 rounded-md hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent flows panel — only when the filter is a single IP. */}
+      {kind === 'ip' && <IpFlows ip={q.trim()} />}
     </div>
   )
 }
 
+function HostRow({ h }: { h: NetworkHost }) {
+  return (
+    <tr className={STRIPED_ROW}>
+      <td className={`${td} font-mono text-xs`}>{h.mac}</td>
+      <td className={`${td} text-gray-500 dark:text-gray-400`}>{h.vendor || '—'}</td>
+      <td className={`${td} font-mono text-xs`}>
+        {h.ips.length ? h.ips.map((ip) => <div key={ip}>{ip}</div>) : '—'}
+      </td>
+      <td className={td}>
+        {h.device_id != null
+          ? <DeviceLink deviceId={h.device_id} hostname={h.device} className="font-medium" />
+          : (h.device || '—')}
+      </td>
+      <td className={td}>{h.port || '—'}</td>
+      <td className={td}>{h.vlan ?? '—'}</td>
+      <td className={td}>{h.entry_type || '—'}</td>
+      <td className={`${td} whitespace-nowrap text-gray-500 dark:text-gray-400`}>{relTime(h.last_seen)}</td>
+    </tr>
+  )
+}
+
 // "Recent flows involving this IP" — flows where the IP is source OR destination
-// (last 24h). Only shown for IP lookups.
+// (last 24h). Only shown when the filter is a single IP.
 function IpFlows({ ip }: { ip: string }) {
   const navigate = useNavigate()
   const { data, isLoading } = useQuery({
@@ -195,7 +215,7 @@ function IpFlows({ ip }: { ip: string }) {
   if (!isLoading && rows.length === 0) return null
 
   return (
-    <div className={`${card}`}>
+    <div className={card}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
         <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent flows involving this IP</h3>
         <button
@@ -209,21 +229,6 @@ function IpFlows({ ip }: { ip: string }) {
       <div className="px-4 py-2 text-xs text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-800">
         {rows.length.toLocaleString()} of {(data?.count ?? 0).toLocaleString()} flows · last 24h
       </div>
-    </div>
-  )
-}
-
-function EmptyResults() {
-  return (
-    <div className="text-center py-8 text-sm text-gray-500 dark:text-gray-400 space-y-2">
-      <p className="text-gray-600 dark:text-gray-300 font-medium">No results found.</p>
-      <p>
-        No device has this IP or MAC in a collected ARP/MAC table. ARP/MAC tables are
-        collected on a schedule (every 6 hours) or on demand.
-      </p>
-      <p className="text-gray-400 dark:text-gray-500">
-        Try collecting now: open a device → <span className="font-medium">ARP / MAC</span> tab → <span className="font-medium">Collect Now</span>.
-      </p>
     </div>
   )
 }

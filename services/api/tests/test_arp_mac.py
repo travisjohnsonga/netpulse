@@ -266,3 +266,189 @@ class TestApi:
         r = auth_client.get("/api/network/mac-vendor/aa:bb:cc:dd:ee:ff/")
         assert r.status_code == 200 and r.data["vendor"] == "Acme Networks"
         assert r.data["oui"] == "aa:bb:cc"
+
+
+# ── unified hosts endpoint ──────────────────────────────────────────────────────
+@pytest.fixture
+def switch(db):
+    from apps.devices.models import Device
+    return Device.objects.create(hostname="sw2", ip_address="10.150.0.25",
+                                 management_ip="10.150.0.25", platform="aos_cx", status="active")
+
+
+def _seed_hosts(router, switch):
+    """Three fleet hosts:
+      H1 (cisco1) — MAC-table sighting on the switch + ARP on the router (joined by MAC)
+      H2 (cisco2) — MAC + ARP, same join
+      H3 (acme)   — router-learned ARP only, no switchport
+    """
+    from apps.arp_mac.models import ARPEntry, MACEntry, MACVendor
+    MACVendor.objects.create(oui="00:00:0c", vendor="Cisco Systems, Inc")
+    MACVendor.objects.create(oui="aa:bb:cc", vendor="Acme Networks")
+    # H1 — switchport location is 1/1/3 on the switch; ARP seen on the router.
+    MACEntry.objects.create(device=switch, mac_address="00:00:0c:00:00:01",
+                            vlan=30, interface="1/1/3", entry_type="static")
+    ARPEntry.objects.create(device=router, ip_address="10.0.0.30",
+                            mac_address="00:00:0c:00:00:01", interface="vlan30", entry_type="dynamic")
+    # H2
+    MACEntry.objects.create(device=switch, mac_address="00:00:0c:00:00:02",
+                            vlan=10, interface="1/1/1", entry_type="dynamic")
+    ARPEntry.objects.create(device=router, ip_address="10.0.0.10",
+                            mac_address="00:00:0c:00:00:02", interface="vlan10", entry_type="dynamic")
+    # H3 — ARP only (no MAC-table sighting anywhere).
+    ARPEntry.objects.create(device=router, ip_address="10.0.0.200",
+                            mac_address="aa:bb:cc:dd:ee:ff", interface="vlan99", entry_type="dynamic")
+
+
+def _ip_int(ip):
+    import ipaddress
+    try:
+        return int(ipaddress.ip_address(ip))
+    except ValueError:
+        return -1
+
+
+def _expected_key(row, sort):
+    if sort == "vendor":
+        return (row["vendor"] or "").lower()
+    if sort == "ip":
+        return min((_ip_int(i) for i in row["ips"]), default=-1)
+    if sort == "device":
+        return (row["device"] or "").lower()
+    if sort == "port":
+        return (row["port"] or "").lower()
+    if sort == "vlan":
+        return row["vlan"] if row["vlan"] is not None else -1
+    if sort == "type":
+        return row["entry_type"] or ""
+    if sort == "last_seen":
+        return row["last_seen"] or ""
+    return row["mac"]
+
+
+class TestHostsEndpoint:
+    def test_requires_auth(self, api_client, device):
+        assert api_client.get("/api/network/hosts/").status_code == 401
+
+    def test_returns_all_by_default(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/")
+        assert r.status_code == 200
+        assert r.data["count"] == 3
+        assert len(r.data["results"]) == 3
+        assert r.data["last_collected"] is not None
+
+    def test_arp_ip_joined_by_mac(self, auth_client, device, switch):
+        """H1's ARP IP (router) and switchport (switch) collapse into one row,
+        with the MAC-table sighting as the authoritative location."""
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/")
+        h1 = next(h for h in r.data["results"] if h["mac"] == "00:00:0c:00:00:01")
+        assert h1["ips"] == ["10.0.0.30"]
+        assert h1["device"] == "sw2"            # the switch (MAC sighting), not the router
+        assert h1["port"] == "1/1/3"
+        assert h1["vlan"] == 30
+        assert h1["entry_type"] == "static"
+        assert h1["vendor"] == "Cisco Systems, Inc"
+
+    def test_arp_only_mac_included(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/")
+        acme = next(h for h in r.data["results"] if h["mac"] == "aa:bb:cc:dd:ee:ff")
+        assert acme["ips"] == ["10.0.0.200"]
+        assert acme["device"] == "sw1"          # falls back to the ARP device (the router)
+        assert acme["port"] == "vlan99"
+        assert acme["vendor"] == "Acme Networks"
+
+    def test_pagination(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?page_size=2")
+        assert r.data["count"] == 3
+        assert r.data["page_size"] == 2
+        assert r.data["num_pages"] == 2
+        assert r.data["page"] == 1
+        assert len(r.data["results"]) == 2
+        r2 = auth_client.get("/api/network/hosts/?page_size=2&page=2")
+        assert r2.data["page"] == 2
+        assert len(r2.data["results"]) == 1
+
+    def test_page_size_capped(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?page_size=99999")
+        assert r.data["page_size"] == 500
+
+    @pytest.mark.parametrize("sort", ["mac", "vendor", "ip", "device", "port", "vlan", "type", "last_seen"])
+    def test_sort_keys_and_order(self, auth_client, device, switch, sort):
+        _seed_hosts(device, switch)
+        asc = auth_client.get(f"/api/network/hosts/?sort={sort}&order=asc").data["results"]
+        desc = auth_client.get(f"/api/network/hosts/?sort={sort}&order=desc").data["results"]
+        asc_keys = [_expected_key(h, sort) for h in asc]
+        desc_keys = [_expected_key(h, sort) for h in desc]
+        # Tied keys keep insertion order (stable sort), so compare against the
+        # sorted key sequence rather than an exact reverse of the asc result.
+        assert asc_keys == sorted(asc_keys), f"{sort} asc not ordered"
+        assert desc_keys == sorted(desc_keys, reverse=True), f"{sort} desc not ordered"
+
+    def test_q_filter_ip(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?q=10.0.0.200")
+        assert r.data["count"] == 1
+        assert r.data["results"][0]["mac"] == "aa:bb:cc:dd:ee:ff"
+
+    def test_q_filter_vendor_and_port(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        assert auth_client.get("/api/network/hosts/?q=cisco").data["count"] == 2
+        r = auth_client.get("/api/network/hosts/?q=1/1/3")
+        assert r.data["count"] == 1 and r.data["results"][0]["port"] == "1/1/3"
+
+    def test_vendor_resolved_from_bundled_snapshot(self, auth_client, device):
+        """Loading the bundled OUI snapshot (offline) resolves a real OUI."""
+        from django.core.management import call_command
+        from apps.arp_mac.models import ARPEntry
+        call_command("update_mac_vendors")   # no args → bundled, offline
+        ARPEntry.objects.create(device=device, ip_address="10.0.0.5",
+                                mac_address="00:00:0c:ab:cd:ef", interface="vlan1")
+        r = auth_client.get("/api/network/hosts/")
+        host = next(h for h in r.data["results"] if h["mac"] == "00:00:0c:ab:cd:ef")
+        assert "Cisco" in host["vendor"]
+
+
+# ── offline-first OUI population ────────────────────────────────────────────────
+class TestUpdateMacVendors:
+    def test_bundled_load_offline(self, db):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        call_command("update_mac_vendors")   # no network
+        assert MACVendor.objects.count() > 30000
+        assert "Cisco" in MACVendor.objects.get(oui="00:00:0c").vendor
+
+    def test_refresh_falls_back_when_download_fails(self, db, monkeypatch):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+
+        def _boom(*a, **k):
+            raise RuntimeError("no internet (air-gapped)")
+        import requests
+        monkeypatch.setattr(requests, "get", _boom)
+
+        call_command("update_mac_vendors", refresh=True)   # download fails → bundled fallback
+        # Table is populated from the bundled snapshot, never wiped/skipped.
+        assert MACVendor.objects.count() > 30000
+        assert MACVendor.objects.filter(oui="00:00:0c").exists()
+
+    def test_file_load_compact_header(self, db, tmp_path):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        p = tmp_path / "custom.csv"
+        p.write_text("oui,organization\n11:22:33,Custom Vendor Inc\n")
+        call_command("update_mac_vendors", file=str(p))
+        assert MACVendor.objects.get(oui="11:22:33").vendor == "Custom Vendor Inc"
+
+    def test_file_load_ieee_header(self, db, tmp_path):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        p = tmp_path / "ieee.csv"
+        p.write_text("Registry,Assignment,Organization Name,Address\n"
+                     "MA-L,445566,IEEE Style Corp,Somewhere\n")
+        call_command("update_mac_vendors", file=str(p))
+        assert MACVendor.objects.get(oui="44:55:66").vendor == "IEEE Style Corp"
