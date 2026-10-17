@@ -1,6 +1,13 @@
-# SNMP protocol stack (pysnmp fork maintained by Lextudio)
-pysnmp-lextudio>=4.4
-pyasn1>=0.6.3
+# SNMP protocol stack — pysnmp 7 (Lextudio's successor to pysnmp-lextudio;
+# same line as services/api). pysnmp-lextudio 6.x imports
+# pyasn1.compat.octets, which pyasn1 >=0.6.1 removed, so it can't run with
+# a pyasn1 that has the BER-decoder DoS fixes (>=0.6.4).
+pysnmp~=7.1
+pyasn1>=0.6.4
+# Required for SNMPv3 privacy (AES/DES) — an optional pysnmp 7 dependency that
+# isn't pulled in automatically; without it every authPriv poll fails.
+# >=43: pysnmp imports cryptography.hazmat.decrepit (added in 43.0).
+cryptography>=43
 
 # Messaging
 nats-py~=2.15

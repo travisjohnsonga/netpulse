@@ -280,7 +280,9 @@ def publish_poll_now(device) -> bool:
     payload = build_device_payload(device)
     if payload is None:
         return False
-    return _run([(UPSERT_SUBJECT, payload)])
+    # The poller ignores upserts identical to its running config; poll_now
+    # forces a restart (which polls immediately).
+    return _run([(UPSERT_SUBJECT, {**payload, "poll_now": True})])
 
 
 def publish_all_active() -> int:

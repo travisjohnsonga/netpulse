@@ -74,6 +74,11 @@ CIRCUIT_CHECK_INTERVAL_S = int(os.environ.get("CIRCUIT_CHECK_INTERVAL_S", str(15
 # Agent liveness: check often (default 60s) so an offline host is flagged within
 # ~1 tick of crossing its threshold (default AGENT_OFFLINE_SECONDS=300).
 AGENT_LIVENESS_CHECK_INTERVAL_S = int(os.environ.get("AGENT_LIVENESS_CHECK_INTERVAL_S", "60"))
+# Full republish of every pollable device to ingest-snmp. Device configs go over
+# plain (non-persistent) NATS, so a restarted poller starts empty and any change
+# that bypassed a signal (bulk writes) is missed; this heals both. The poller
+# ignores unchanged configs, so a short interval costs nothing.
+SNMP_CONFIG_SYNC_INTERVAL_S = int(os.environ.get("SNMP_CONFIG_SYNC_INTERVAL_S", str(5 * 60)))
 DEFAULT_TICK_S = 300
 
 
@@ -122,6 +127,7 @@ class Command(BaseCommand):
             ["environment_poll", ENVIRONMENT_POLL_INTERVAL_S, self._poll_environment, False, None],
             ["circuit_checks", CIRCUIT_CHECK_INTERVAL_S, self._check_circuits, False, None],
             ["agent_liveness", AGENT_LIVENESS_CHECK_INTERVAL_S, self._check_agent_liveness, True, None],
+            ["snmp_config_sync", SNMP_CONFIG_SYNC_INTERVAL_S, self._sync_snmp_configs, True, None],
         ]
         now = time.monotonic()
         for t in tasks:
@@ -340,6 +346,15 @@ class Command(BaseCommand):
         if res.get("collected"):
             logger.info("scheduler: environment poll — %d device(s), %d point(s)",
                         res["collected"], res["points"])
+
+    def _sync_snmp_configs(self):
+        from django.conf import settings
+
+        from apps.devices import snmp_publish
+        if not getattr(settings, "SNMP_DEVICE_PUBLISH", True):
+            return
+        count = snmp_publish.publish_all_active()
+        logger.debug("scheduler: SNMP config sync — %d device(s) published", count)
 
     def _check_circuits(self):
         # WAN circuit utilization (standing alert) + contract-expiry alerts.

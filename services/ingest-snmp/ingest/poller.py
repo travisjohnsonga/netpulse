@@ -61,6 +61,9 @@ class SNMPPoller:
         self._timeout = poll_timeout
         self._retries = poll_retries
         self._tasks: dict[str, list[asyncio.Task]] = {}
+        # device_id → the config its tasks were started with (to skip no-op
+        # upserts from the API's periodic full resync).
+        self._devices: dict[str, Device] = {}
         # Optional GNMIActivity — when a device is actively streaming gNMI we
         # suppress its (redundant) SNMP poll. None disables adaptive polling.
         self._gnmi = gnmi_activity
@@ -77,24 +80,35 @@ class SNMPPoller:
         "Wrong SNMP PDU digest" (seen on AOS-CX). A new engine re-runs discovery
         each poll — slightly more overhead, no digest flapping.
         """
-        from pysnmp.hlapi.asyncio import SnmpEngine
+        from pysnmp.hlapi.v3arch.asyncio import SnmpEngine
         return SnmpEngine()
 
     @staticmethod
     def _close_engine(engine) -> None:
         try:
-            engine.closeDispatcher()
+            engine.close_dispatcher()
         except Exception:
             pass  # dispatcher may never have started; nothing to close
 
     # ── Device lifecycle ──────────────────────────────────────────────────────
 
-    def upsert(self, device: Device) -> None:
-        """Add or replace a device's polling tasks."""
+    def upsert(self, device: Device, force: bool = False) -> bool:
+        """Add or replace a device's polling tasks. Returns True if (re)started.
+
+        The API republishes every device periodically (so a restarted poller
+        recovers its inventory), so an upsert identical to the running config
+        is a no-op — restarting would reset the poll cadence. ``force`` (Poll
+        Now) always restarts, and a restart polls immediately.
+        """
+        current = self._devices.get(device.device_id)
+        running = any(not t.done() for t in self._tasks.get(device.device_id, []))
+        if not force and current == device and (running or not device.poll_profiles):
+            return False
         self._stop_device(device.device_id)
+        self._devices[device.device_id] = device
         if not device.poll_profiles:
             logger.info("device %s has no poll profiles — not polling", device.device_id)
-            return
+            return True
         tasks = [
             asyncio.create_task(
                 self._poll_loop(device, profile),
@@ -107,14 +121,17 @@ class SNMPPoller:
             "polling %s (%s) with %d profile(s)",
             device.device_id, device.ip, len(tasks),
         )
+        return True
 
     def remove(self, device_id: str) -> None:
         self._stop_device(device_id)
+        self._devices.pop(device_id, None)
         logger.info("removed device %s from poller", device_id)
 
     def stop_all(self) -> None:
         for device_id in list(self._tasks):
             self._stop_device(device_id)
+        self._devices.clear()
 
     def _stop_device(self, device_id: str) -> None:
         for task in self._tasks.pop(device_id, []):
@@ -216,26 +233,26 @@ class SNMPPoller:
         creds: dict[str, Any],
         engine,
     ) -> dict[str, Any]:
-        from pysnmp.hlapi.asyncio import (
+        from pysnmp.hlapi.v3arch.asyncio import (
             ContextData,
             ObjectIdentity,
             ObjectType,
             UdpTransportTarget,
-            getCmd,
+            get_cmd,
         )
 
         auth = (
             build_usm_data(_map_snmp_creds(creds, device)) if device.version == 3
             else build_community_data(device.version, creds)
         )
-        target = UdpTransportTarget(
+        target = await UdpTransportTarget.create(
             (device.ip, device.port),
             timeout=self._timeout,
             retries=self._retries,
         )
         oid_objects = [ObjectType(ObjectIdentity(oid)) for oid in oids]
 
-        error_indication, error_status, error_index, var_binds = await getCmd(
+        error_indication, error_status, error_index, var_binds = await get_cmd(
             engine, auth, target, ContextData(), *oid_objects
         )
 
@@ -280,20 +297,20 @@ class SNMPPoller:
         index isn't fixed. Bounded to each base's subtree (lexicographicMode
         off). A per-base failure is logged and skipped; the rest still return.
         """
-        from pysnmp.hlapi.asyncio import (
+        from pysnmp.hlapi.v3arch.asyncio import (
             ContextData,
             ObjectIdentity,
             ObjectType,
             UdpTransportTarget,
-            bulkWalkCmd,
-            walkCmd,
+            bulk_walk_cmd,
+            walk_cmd,
         )
 
         auth = (
             build_usm_data(_map_snmp_creds(creds, device)) if device.version == 3
             else build_community_data(device.version, creds)
         )
-        target = UdpTransportTarget(
+        target = await UdpTransportTarget.create(
             (device.ip, device.port),
             timeout=self._timeout,
             retries=self._retries,
@@ -304,11 +321,11 @@ class SNMPPoller:
             obj = ObjectType(ObjectIdentity(base))
             # GETBULK for v2c/v3; GETNEXT walk for v1 (no bulk support).
             if device.version == 1:
-                walker = walkCmd(engine, auth, target, ContextData(), obj,
-                                 lexicographicMode=False)
+                walker = walk_cmd(engine, auth, target, ContextData(), obj,
+                                  lexicographicMode=False)
             else:
-                walker = bulkWalkCmd(engine, auth, target, ContextData(), 0, 25, obj,
-                                     lexicographicMode=False)
+                walker = bulk_walk_cmd(engine, auth, target, ContextData(), 0, 25, obj,
+                                       lexicographicMode=False)
             try:
                 async for error_indication, error_status, _idx, var_binds in walker:
                     if error_indication or error_status:

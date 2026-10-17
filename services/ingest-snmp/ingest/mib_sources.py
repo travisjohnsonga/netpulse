@@ -33,7 +33,7 @@ def register_mib_sources(extra_dirs: list[str] | None = None):
 
         mib_builder = builder.MibBuilder()
         if dirs:
-            mib_builder.addMibSources(*[builder.DirMibSource(d) for d in dirs])
+            mib_builder.add_mib_sources(*[builder.DirMibSource(d) for d in dirs])
         view.MibViewController(mib_builder)
         logger.info("registered %d MIB source dir(s) for OID resolution", len(dirs))
         return len(dirs)

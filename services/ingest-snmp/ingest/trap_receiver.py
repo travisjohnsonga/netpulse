@@ -84,16 +84,16 @@ def decode_trap(data: bytes, source_ip: str, source_port: int) -> dict[str, Any]
 
     now = datetime.now(timezone.utc).isoformat()
 
-    if msg_version == pMod.protoVersion1:
+    if msg_version == pMod.SNMP_VERSION_1:
         return _decode_v1(data, source_ip, source_port, now, pMod, ber_decoder)
-    if msg_version == pMod.protoVersion2c:
+    if msg_version == pMod.SNMP_VERSION_2C:
         return _decode_v2c(data, source_ip, source_port, now, pMod, ber_decoder)
     # SNMPv3 — USM decryption/auth not yet implemented
     return _decode_v3_stub(data, source_ip, source_port, now, msg_version)
 
 
 def _decode_v1(data, source_ip, source_port, now, pMod, ber_decoder) -> dict | None:
-    v1 = pMod.protoModules[pMod.protoVersion1]
+    v1 = pMod.PROTOCOL_MODULES[pMod.SNMP_VERSION_1]
     try:
         msg, _ = ber_decoder.decode(data, asn1Spec=v1.Message())
     except Exception as exc:
@@ -101,14 +101,15 @@ def _decode_v1(data, source_ip, source_port, now, pMod, ber_decoder) -> dict | N
         return None
 
     try:
-        community = str(v1.apiMessage.getCommunity(msg))
-        pdu = v1.apiMessage.getPDU(msg)
-        enterprise = str(v1.apiTrapPDU.getEnterprise(pdu))
-        agent_addr = str(v1.apiTrapPDU.getAgentAddr(pdu)) or source_ip
-        generic = int(v1.apiTrapPDU.getGenericTrap(pdu))
-        specific = int(v1.apiTrapPDU.getSpecificTrap(pdu))
-        uptime = int(v1.apiTrapPDU.getTimeStamp(pdu))
-        varbinds = _decode_varbinds(v1.apiTrapPDU.getVarBinds(pdu))
+        community = str(v1.apiMessage.get_community(msg))
+        pdu = v1.apiMessage.get_pdu(msg)
+        enterprise = str(v1.apiTrapPDU.get_enterprise(pdu))
+        # prettyPrint() → dotted quad; str() of an IpAddress is its raw octets.
+        agent_addr = v1.apiTrapPDU.get_agent_address(pdu).prettyPrint() or source_ip
+        generic = int(v1.apiTrapPDU.get_generic_trap(pdu))
+        specific = int(v1.apiTrapPDU.get_specific_trap(pdu))
+        uptime = int(v1.apiTrapPDU.get_timestamp(pdu))
+        varbinds = _decode_varbinds(v1.apiTrapPDU.get_varbinds(pdu))
     except Exception as exc:
         logger.debug("v1 PDU field extraction failed: %s", exc)
         return None
@@ -134,7 +135,7 @@ def _decode_v1(data, source_ip, source_port, now, pMod, ber_decoder) -> dict | N
 
 
 def _decode_v2c(data, source_ip, source_port, now, pMod, ber_decoder) -> dict | None:
-    v2c = pMod.protoModules[pMod.protoVersion2c]
+    v2c = pMod.PROTOCOL_MODULES[pMod.SNMP_VERSION_2C]
     try:
         msg, _ = ber_decoder.decode(data, asn1Spec=v2c.Message())
     except Exception as exc:
@@ -142,9 +143,9 @@ def _decode_v2c(data, source_ip, source_port, now, pMod, ber_decoder) -> dict | 
         return None
 
     try:
-        community = str(v2c.apiMessage.getCommunity(msg))
-        pdu = v2c.apiMessage.getPDU(msg)
-        varbinds = _decode_varbinds(v2c.apiPDU.getVarBinds(pdu))
+        community = str(v2c.apiMessage.get_community(msg))
+        pdu = v2c.apiMessage.get_pdu(msg)
+        varbinds = _decode_varbinds(v2c.apiPDU.get_varbinds(pdu))
     except Exception as exc:
         logger.debug("v2c PDU field extraction failed: %s", exc)
         return None
