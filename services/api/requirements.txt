@@ -19,7 +19,7 @@ celery[redis]~=5.3
 django-celery-beat~=2.6
 
 # Messaging
-nats-py~=2.7
+nats-py~=2.15
 
 # Storage clients
 influxdb-client~=1.43
