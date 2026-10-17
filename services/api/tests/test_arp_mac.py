@@ -204,6 +204,116 @@ class TestAOSCXRest:
         assert called.get("disconnected") is True
 
 
+def _jleaf(v):
+    return [{"data": v}]
+
+
+def _junos_vlans_json():
+    import json
+    groups = [{"l2ng-l2rtb-name": _jleaf("default-switch"),
+               "l2ng-l2rtb-vlan-name": _jleaf(name),
+               "l2ng-l2rtb-vlan-tag": _jleaf(str(tag))}
+              for name, tag in [("USERS", 201), ("NATIVE", 999), ("MGMT", 1000), ("default", 1)]]
+    return json.dumps({"l2ng-l2ald-vlan-instance-information": [
+        {"l2ng-l2ald-vlan-instance-group": groups}]})
+
+
+def _junos_mac_json():
+    """Shape of a real EX4100 (Junos 23.4, ELS) brief-rtb table: one group whose
+    group-level vlan-id is NOT the per-entry VLAN — entries carry the name."""
+    import json
+    rows = [("USERS", "00:00:5e:00:53:01", "D", "ge-0/0/1.0"),
+            ("NATIVE", "00:00:5e:00:53:01", "D", "ae9.0"),      # same MAC, 2nd VLAN
+            ("MGMT", "00:00:5e:00:53:02", "S", "ae9.0"),
+            ("default", "00:00:5e:00:53:03", "D", "ge-0/0/2.0")]
+    entries = [{"l2ng-l2-mac-vlan-name": _jleaf(v), "l2ng-l2-mac-address": _jleaf(m),
+                "l2ng-l2-mac-flags": _jleaf(f), "l2ng-l2-mac-age": _jleaf("-"),
+                "l2ng-l2-mac-logical-interface": _jleaf(i),
+                "l2ng-l2-mac-fwd-next-hop": _jleaf("0"), "l2ng-l2-mac-rtr-id": _jleaf("0")}
+               for v, m, f, i in rows]
+    return json.dumps({"l2ng-l2ald-rtb-macdb": [{"l2ng-l2ald-mac-entry-vlan": [{
+        "attributes": {"junos:style": "brief-rtb"},
+        "l2ng-l2-vlan-id": _jleaf("201"),
+        "l2ng-mac-entry": entries}]}]})
+
+
+class TestJunosMac:
+    """Junos MAC table is parsed from JSON (the ntc text template can't parse ELS)."""
+
+    def test_vlan_name_to_tag(self):
+        from apps.arp_mac.collector import _parse_junos_vlans
+        assert _parse_junos_vlans(_junos_vlans_json()) == {
+            "USERS": 201, "NATIVE": 999, "MGMT": 1000, "default": 1}
+
+    def test_parse_mac_entries(self):
+        from apps.arp_mac.collector import _parse_junos_mac, _parse_junos_vlans
+        out = _parse_junos_mac(_junos_mac_json(), _parse_junos_vlans(_junos_vlans_json()))
+        assert out == [
+            {"mac_address": "00:00:5e:00:53:01", "vlan": 201, "interface": "ge-0/0/1", "entry_type": "dynamic"},
+            {"mac_address": "00:00:5e:00:53:01", "vlan": 999, "interface": "ae9", "entry_type": "dynamic"},
+            {"mac_address": "00:00:5e:00:53:02", "vlan": 1000, "interface": "ae9", "entry_type": "static"},
+            {"mac_address": "00:00:5e:00:53:03", "vlan": 1, "interface": "ge-0/0/2", "entry_type": "dynamic"},
+        ]
+
+    def test_unknown_vlan_name_is_none(self):
+        from apps.arp_mac.collector import _parse_junos_mac
+        out = _parse_junos_mac(_junos_mac_json(), {})
+        assert {e["vlan"] for e in out} == {None}
+
+    @pytest.mark.parametrize("bad", ["", "error: syntax error", "{not json", None, []])
+    def test_garbage_output_is_empty(self, bad):
+        from apps.arp_mac.collector import _parse_junos_mac, _parse_junos_vlans
+        assert _parse_junos_vlans(bad) == {}
+        assert _parse_junos_mac(bad, {}) == []
+
+    def test_collect_and_store_end_to_end(self, monkeypatch):
+        from apps.arp_mac import collector
+        from apps.arp_mac.models import MACEntry
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="ex1", ip_address="192.0.2.30",
+                                    platform="junos", status="active")
+        sent = []
+
+        class _Conn:
+            def send_command(self, cmd, **kw):
+                sent.append((cmd, kw.get("use_textfsm", False)))
+                if cmd == "show vlans | display json":
+                    return _junos_vlans_json()
+                if cmd == "show ethernet-switching table | display json":
+                    return _junos_mac_json()
+                return []   # ARP via ntc-templates
+
+            def disconnect(self):
+                pass
+
+        import netmiko
+        monkeypatch.setattr(netmiko, "ConnectHandler", lambda **kw: _Conn())
+        arp, mac = collector.collect_arp_mac(dev, {"ssh_password": "pw"}, "u")
+        assert ("show ethernet-switching table | display json", False) in sent
+        assert collector.store_arp_mac(dev, arp, mac) == (0, 4)
+        # Same MAC in two VLANs is kept as two rows (was collapsed with vlan=None).
+        assert MACEntry.objects.filter(device=dev, mac_address="00:00:5e:00:53:01").count() == 2
+
+    def test_send_failure_does_not_raise(self, monkeypatch):
+        from apps.arp_mac import collector
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="ex2", ip_address="192.0.2.31",
+                                    platform="junos", status="active")
+
+        class _Conn:
+            def send_command(self, cmd, **kw):
+                if "display json" in cmd:
+                    raise OSError("socket closed")
+                return []
+
+            def disconnect(self):
+                pass
+
+        import netmiko
+        monkeypatch.setattr(netmiko, "ConnectHandler", lambda **kw: _Conn())
+        assert collector.collect_arp_mac(dev, {"ssh_password": "pw"}, "u") == ([], [])
+
+
 # ── persistence ───────────────────────────────────────────────────────────────
 class TestStore:
     def test_arp_upsert_and_mac_replace(self, device):
