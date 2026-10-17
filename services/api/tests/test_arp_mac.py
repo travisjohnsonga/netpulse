@@ -414,6 +414,95 @@ class TestHostsEndpoint:
 
 
 # ── offline-first OUI population ────────────────────────────────────────────────
+@pytest.fixture
+def core(db):
+    from apps.devices.models import Device
+    return Device.objects.create(hostname="core1", ip_address="192.0.2.50",
+                                 platform="junos", status="active")
+
+
+def _seed_uplinks(switch, core):
+    """H1 is on access port 1/1/3 of sw2 and (seen later) on core1's uplink ae9;
+    H4 is only ever seen on uplinks (lag10 on sw2, ae9 on core1)."""
+    from apps.arp_mac.models import MACEntry
+    MACEntry.objects.get_or_create(device=switch, mac_address="00:00:0c:00:00:01",
+                                   vlan=30, defaults={"interface": "1/1/3"})   # also in _seed_hosts
+    MACEntry.objects.create(device=core, mac_address="00:00:0c:00:00:01",
+                            vlan=30, interface="ae9")             # newer, but an uplink
+    MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:04",
+                            vlan=30, interface="lag10")
+    MACEntry.objects.create(device=core, mac_address="00:00:5e:00:53:04",
+                            vlan=30, interface="ae9")
+
+
+class TestUplinks:
+    @pytest.mark.parametrize("port,expected", [
+        ("lag10", True), ("ae9", True), ("ae9.0", True), ("Po1", True),
+        ("Port-channel12", True), ("Trk1", True),
+        ("1/1/3", False), ("ge-0/0/1", False), ("Gi0/1", False), ("", False), (None, False),
+        ("vlan30", False), ("aero1", False),
+    ])
+    def test_is_uplink_port(self, port, expected):
+        from apps.arp_mac.views import is_uplink_port
+        assert is_uplink_port(port) is expected
+
+    def test_access_port_beats_newer_uplink_sighting(self, auth_client, switch, core):
+        _seed_uplinks(switch, core)
+        rows = auth_client.get("/api/network/hosts/").data["results"]
+        h1 = next(h for h in rows if h["mac"] == "00:00:0c:00:00:01")
+        assert (h1["device"], h1["port"], h1["uplink"]) == ("sw2", "1/1/3", False)
+        h4 = next(h for h in rows if h["mac"] == "00:00:5e:00:53:04")
+        assert h4["uplink"] is True
+
+    def test_exclude_uplinks_hides_uplink_only_hosts(self, auth_client, device, switch, core):
+        _seed_hosts(device, switch)
+        _seed_uplinks(switch, core)
+        assert auth_client.get("/api/network/hosts/").data["count"] == 4
+        r = auth_client.get("/api/network/hosts/?exclude_uplinks=true")
+        macs = {h["mac"] for h in r.data["results"]}
+        assert r.data["count"] == 3 and "00:00:5e:00:53:04" not in macs
+        assert "aa:bb:cc:dd:ee:ff" in macs        # ARP-only host is not an uplink
+
+
+class TestHostsCsv:
+    def _csv(self, resp):
+        import csv
+        import io
+        return list(csv.reader(io.StringIO(resp.content.decode())))
+
+    def test_exports_all_rows_not_one_page(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?export=csv&page_size=1")
+        assert r.status_code == 200 and r["Content-Type"].startswith("text/csv")
+        assert 'filename="ip-mac-hosts-' in r["Content-Disposition"]
+        rows = self._csv(r)
+        assert rows[0] == ["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
+                           "Type", "Last Seen"]
+        assert len(rows) == 1 + 3
+        h1 = next(x for x in rows if x[0] == "00:00:0c:00:00:01")
+        assert h1[1:7] == ["Cisco Systems, Inc", "10.0.0.30", "sw2", "1/1/3", "30", "static"]
+
+    def test_respects_filter_sort_and_uplinks(self, auth_client, device, switch, core):
+        _seed_hosts(device, switch)
+        _seed_uplinks(switch, core)
+        rows = self._csv(auth_client.get(
+            "/api/network/hosts/?export=csv&exclude_uplinks=true&sort=mac&order=desc"))
+        macs = [x[0] for x in rows[1:]]
+        assert macs == sorted(macs, reverse=True) and "00:00:5e:00:53:04" not in macs
+        rows = self._csv(auth_client.get("/api/network/hosts/?export=csv&q=acme"))
+        assert [x[0] for x in rows[1:]] == ["aa:bb:cc:dd:ee:ff"]
+
+    def test_formula_injection_neutralized(self, auth_client, switch):
+        from apps.arp_mac.models import MACEntry
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:09",
+                                interface="=HYPERLINK(\"x\")")
+        rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
+        assert rows[1][4].startswith("'=")
+
+    def test_requires_auth(self, api_client):
+        assert api_client.get("/api/network/hosts/?export=csv").status_code == 401
+
+
 class TestUpdateMacVendors:
     def test_bundled_load_offline(self, db):
         from django.core.management import call_command

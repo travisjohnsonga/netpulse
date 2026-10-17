@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { networkHosts, searchFlows, type NetworkHost, type NetworkHostSort } from '../api/client'
+import { networkHosts, downloadNetworkHostsCsv, searchFlows, type NetworkHost, type NetworkHostSort } from '../api/client'
 import { detectQueryKind, relTime } from '../lib/ipmac'
 import { STRIPED_ROW } from '../lib/tableStyles'
 import FlowsTable from '../components/FlowsTable'
@@ -34,8 +34,12 @@ export default function NetworkLookup() {
   const sort = (params.get('sort') as NetworkHostSort) || 'mac'
   const order = params.get('order') === 'desc' ? 'desc' : 'asc'
   const page = Math.max(1, Number(params.get('page')) || 1)
+  // Hide hosts only seen on aggregated uplinks (lag/ae/Po) — no access port.
+  const hideUplinks = params.get('uplinks') === 'hide'
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [qInput, setQInput] = useState(q)
+  const [exporting, setExporting] = useState(false)
+  const [exportErr, setExportErr] = useState<string | null>(null)
 
   // Merge a partial change into the URL params (kept as the single source of truth).
   const update = (patch: Record<string, string | null>) => {
@@ -59,8 +63,8 @@ export default function NetworkLookup() {
   }, [qInput])
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['network-hosts', q, sort, order, page, pageSize],
-    queryFn: () => networkHosts({ q, sort, order, page, page_size: pageSize }),
+    queryKey: ['network-hosts', q, sort, order, page, pageSize, hideUplinks],
+    queryFn: () => networkHosts({ q, sort, order, page, page_size: pageSize, exclude_uplinks: hideUplinks }),
     placeholderData: keepPreviousData,
   })
 
@@ -74,6 +78,18 @@ export default function NetworkLookup() {
   }
 
   const kind = detectQueryKind(q.trim())
+
+  // Export every matching host (all pages) with the current filter + sort.
+  const onExport = async () => {
+    setExporting(true); setExportErr(null)
+    try {
+      await downloadNetworkHostsCsv({ q, sort, order, exclude_uplinks: hideUplinks })
+    } catch {
+      setExportErr('Export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="max-w-6xl mx-auto space-y-4">
@@ -110,6 +126,17 @@ export default function NetworkLookup() {
             {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
+        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
+          title="Hide hosts only seen on aggregated uplink/trunk ports (lagN, aeN, Port-channelN)">
+          <input type="checkbox" checked={hideUplinks}
+            onChange={(e) => update({ uplinks: e.target.checked ? 'hide' : null, page: null })} />
+          Hide uplinks
+        </label>
+        <button onClick={onExport} disabled={exporting || count === 0}
+          className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-40 disabled:cursor-not-allowed">
+          {exporting ? 'Exporting…' : `Export CSV${count ? ` (${count.toLocaleString()})` : ''}`}
+        </button>
+        {exportErr && <span className="text-sm text-red-600 dark:text-red-400">{exportErr}</span>}
       </div>
 
       <div className={card}>
