@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { networkHosts, downloadNetworkHosts, searchFlows, type NetworkHost, type NetworkHostSort } from '../api/client'
@@ -36,6 +36,8 @@ export default function NetworkLookup() {
   const page = Math.max(1, Number(params.get('page')) || 1)
   // Hide hosts only seen on uplinks (lag/ae/Po/vtep) — no access port.
   const hideUplinks = params.get('uplinks') === 'hide'
+  // Reverse-DNS hostnames (inventory-first, cached server-side) — opt-in.
+  const resolve = params.get('resolve') === '1'
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [qInput, setQInput] = useState(q)
   const [exporting, setExporting] = useState<'csv' | 'xlsx' | null>(null)
@@ -63,8 +65,8 @@ export default function NetworkLookup() {
   }, [qInput])
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['network-hosts', q, sort, order, page, pageSize, hideUplinks],
-    queryFn: () => networkHosts({ q, sort, order, page, page_size: pageSize, exclude_uplinks: hideUplinks }),
+    queryKey: ['network-hosts', q, sort, order, page, pageSize, hideUplinks, resolve],
+    queryFn: () => networkHosts({ q, sort, order, page, page_size: pageSize, exclude_uplinks: hideUplinks, resolve }),
     placeholderData: keepPreviousData,
   })
 
@@ -78,12 +80,13 @@ export default function NetworkLookup() {
   }
 
   const kind = detectQueryKind(q.trim())
+  const colCount = COLUMNS.length + (resolve ? 1 : 0)
 
   // Export every matching host (all pages) with the current filter + sort.
   const onExport = async (fmt: 'csv' | 'xlsx') => {
     setExporting(fmt); setExportErr(null)
     try {
-      await downloadNetworkHosts(fmt, { q, sort, order, exclude_uplinks: hideUplinks })
+      await downloadNetworkHosts(fmt, { q, sort, order, exclude_uplinks: hideUplinks, resolve })
     } catch {
       setExportErr('Export failed')
     } finally {
@@ -132,6 +135,12 @@ export default function NetworkLookup() {
             onChange={(e) => update({ uplinks: e.target.checked ? 'hide' : null, page: null })} />
           Hide uplinks
         </label>
+        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
+          title="Reverse-DNS the IPs (spane device names first). Also adds a Hostname column to exports — large exports take longer.">
+          <input type="checkbox" checked={resolve}
+            onChange={(e) => update({ resolve: e.target.checked ? '1' : null })} />
+          Resolve hostnames
+        </label>
         <button onClick={() => onExport('xlsx')} disabled={exporting != null || count === 0}
           title="Excel workbook — ports stay text (CSV opened in Excel turns 1/1/16 into a date)"
           className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -159,25 +168,29 @@ export default function NetworkLookup() {
             <thead className="border-b border-gray-200 dark:border-gray-800">
               <tr>
                 {COLUMNS.map((c) => (
-                  <th key={c.key} className={`${th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200`}
-                      onClick={() => onSort(c.key)}>
-                    {c.label}
-                    <span className="ml-1 inline-block w-2 text-gray-400">
-                      {sort === c.key ? (order === 'asc' ? '▲' : '▼') : ''}
-                    </span>
-                  </th>
+                  <Fragment key={c.key}>
+                    <th className={`${th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200`}
+                        onClick={() => onSort(c.key)}>
+                      {c.label}
+                      <span className="ml-1 inline-block w-2 text-gray-400">
+                        {sort === c.key ? (order === 'asc' ? '▲' : '▼') : ''}
+                      </span>
+                    </th>
+                    {/* Hostnames are resolved per page server-side, so not sortable. */}
+                    {resolve && c.key === 'ip' && <th className={th}>Hostname</th>}
+                  </Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td className="px-3 py-10 text-center text-gray-400" colSpan={COLUMNS.length}>Loading…</td></tr>
+                <tr><td className="px-3 py-10 text-center text-gray-400" colSpan={colCount}>Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td className="px-3 py-10 text-center text-gray-400" colSpan={COLUMNS.length}>
+                <tr><td className="px-3 py-10 text-center text-gray-400" colSpan={colCount}>
                   {q ? 'No hosts match this filter.' : 'No ARP/MAC data collected yet.'}
                 </td></tr>
               ) : (
-                rows.map((h) => <HostRow key={h.mac} h={h} />)
+                rows.map((h) => <HostRow key={h.mac} h={h} resolve={resolve} />)
               )}
             </tbody>
           </table>
@@ -214,7 +227,7 @@ export default function NetworkLookup() {
   )
 }
 
-function HostRow({ h }: { h: NetworkHost }) {
+function HostRow({ h, resolve }: { h: NetworkHost; resolve: boolean }) {
   return (
     <tr className={STRIPED_ROW}>
       <td className={`${td} font-mono text-xs`}>{h.mac}</td>
@@ -222,6 +235,7 @@ function HostRow({ h }: { h: NetworkHost }) {
       <td className={`${td} font-mono text-xs`}>
         {h.ips.length ? h.ips.map((ip) => <div key={ip}>{ip}</div>) : '—'}
       </td>
+      {resolve && <td className={`${td} text-xs`}>{h.hostname || '—'}</td>}
       <td className={td}>
         {h.device_id != null
           ? <DeviceLink deviceId={h.device_id} hostname={h.device} className="font-medium" />

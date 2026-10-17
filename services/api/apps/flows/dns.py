@@ -66,14 +66,16 @@ def _reverse_one(ip: str) -> tuple[str, str]:
         return ip, ip   # fall back to the IP itself
 
 
-def resolve_ips(ips: list[str]) -> dict:
+def resolve_ips(ips: list[str], max_ips: int = _MAX_IPS) -> dict:
     """Resolve a list of IPs to hostnames (inventory-first, then cached rDNS).
 
     Returns ``{"resolved": {ip: hostname}, "total", "cached", "resolved_now",
-    "from_inventory", "failed"}``. Invalid/extra IPs are dropped (capped at 100).
+    "from_inventory", "failed"}``. Invalid/extra IPs are dropped (capped at
+    ``max_ips`` — 100 for the public endpoint; server-side callers such as the
+    IP/MAC export pass a larger cap).
     """
     # De-dupe, validate, cap.
-    unique = [ip for ip in dict.fromkeys(ips) if _valid_ip(ip)][:_MAX_IPS]
+    unique = [ip for ip in dict.fromkeys(ips) if _valid_ip(ip)][:max_ips]
     resolved: dict[str, str] = {}
 
     # 1) Inventory wins — and warms the cache so other views agree.
