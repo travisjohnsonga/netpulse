@@ -61,7 +61,7 @@ MAC_COMMANDS = {
     "ios_xr": "show l2vpn forwarding bridge-domain mac-address location 0/0/CPU0",
     "nxos": "show mac address-table",
     "eos": "show mac address-table",
-    "junos": "show ethernet-switching table",
+    "junos": "show ethernet-switching table | display json",   # JSON, see _parse_junos_mac
     "aos_cx": "show mac-address-table",
     "aruba": "show mac-address",
 }
@@ -159,6 +159,74 @@ def _parse_fortios_arp(output: str) -> list[dict]:
             "age_minutes": _to_int(age), "protocol": "Internet",
             "entry_type": "dynamic",   # FortiOS ARP carries no static/dynamic flag
         })
+    return out
+
+
+# Junos (ELS) MAC table: the ntc-template for "show ethernet-switching table"
+# only matches VLAN names shaped like "Vlan100", and 23.x added GBP/MAC-property
+# columns with blank cells — so the text form never parses. The JSON form is
+# stable; it carries the VLAN *name* per entry (the group-level vlan-id is not
+# per-entry in brief output), resolved to a tag via "show vlans | display json".
+JUNOS_VLANS_JSON_CMD = "show vlans | display json"
+_MAC_RE = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
+
+
+def _junos_leaf(node: dict, key: str) -> str:
+    """Junos JSON wraps every leaf as ``[{"data": value}]``."""
+    try:
+        return str(node[key][0]["data"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def _junos_json(output) -> dict:
+    import json
+    try:
+        data = json.loads(output) if isinstance(output, str) else None
+    except ValueError:
+        data = None
+    return data if isinstance(data, dict) else {}
+
+
+def _parse_junos_vlans(output) -> dict[str, int]:
+    """``show vlans | display json`` → ``{vlan_name: tag}``."""
+    data = _junos_json(output)
+    vlans: dict[str, int] = {}
+    for info in data.get("l2ng-l2ald-vlan-instance-information", []):
+        for group in info.get("l2ng-l2ald-vlan-instance-group", []):
+            name = _junos_leaf(group, "l2ng-l2rtb-vlan-name")
+            tag = _to_int(_junos_leaf(group, "l2ng-l2rtb-vlan-tag"))
+            if name and tag is not None:
+                vlans.setdefault(name, tag)
+    return vlans
+
+
+def _parse_junos_mac(output, vlan_tags: dict[str, int]) -> list[dict]:
+    """``show ethernet-switching table | display json`` → normalized MAC rows."""
+    data = _junos_json(output)
+    out = []
+    for db in data.get("l2ng-l2ald-rtb-macdb", []):
+        for group in db.get("l2ng-l2ald-mac-entry-vlan", []):
+            for e in group.get("l2ng-mac-entry", []):
+                mac = normalize_mac(_junos_leaf(e, "l2ng-l2-mac-address"))
+                if not _MAC_RE.match(mac):
+                    continue
+                vlan_name = _junos_leaf(e, "l2ng-l2-mac-vlan-name")
+                vlan = vlan_tags.get(vlan_name)
+                if vlan is None and vlan_name.isdigit():
+                    vlan = int(vlan_name)
+                # Logical unit "ge-0/0/1.0" / "ae9.0" → the physical port.
+                intf = _junos_leaf(e, "l2ng-l2-mac-logical-interface")
+                if intf.endswith(".0"):
+                    intf = intf[:-2]
+                flags = _junos_leaf(e, "l2ng-l2-mac-flags").upper().split(",")
+                static = any(f.strip() in ("S", "P") for f in flags)
+                out.append({
+                    "mac_address": mac,
+                    "vlan": vlan,
+                    "interface": intf,
+                    "entry_type": "static" if static else "dynamic",
+                })
     return out
 
 
@@ -417,7 +485,15 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
                 arp_entries = _normalize_arp(_textfsm_parse(out, "aruba_aoscx_show_arp.textfsm"))
 
         mac_cmd = MAC_COMMANDS.get(platform)
-        if mac_cmd:
+        if platform == "junos":
+            try:
+                vlan_tags = _parse_junos_vlans(
+                    conn.send_command(JUNOS_VLANS_JSON_CMD, read_timeout=120))
+                mac_entries = _parse_junos_mac(
+                    conn.send_command(mac_cmd, read_timeout=120), vlan_tags)
+            except Exception as exc:
+                logger.warning("arp_mac: Junos MAC table on %s failed: %s", device.hostname, exc)
+        elif mac_cmd:
             out = _send(conn, mac_cmd)
             if isinstance(out, list):
                 mac_entries = _normalize_mac(out)
