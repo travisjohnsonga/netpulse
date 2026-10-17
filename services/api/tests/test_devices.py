@@ -637,6 +637,24 @@ class TestDetectParsing:
         assert info["hostname"] == "router1"
         assert info["serial"] == "9W7Q57VMXHY"
 
+    def test_parse_version_junos(self):
+        # Real Junos 23.4 layout: the version is the "Junos:" line; the package
+        # lines below used to match JUNOS\s+ and yield os_version "OS".
+        from apps.devices.detect import parse_version
+        out = ("\nHostname: sw1\nModel: ex4100-24mp\nJunos: 23.4R2-S4.11\n"
+               "JUNOS OS Kernel 64-bit  [20241031.89001bf_builder_stable_12_234]\n"
+               "JUNOS OS libs [20241031.89001bf_builder_stable_12_234]\n"
+               "JUNOS py base [20250314.192941_builder_junos_234_r2_s4]\n")
+        info = parse_version(out, "netops@sw1> ")
+        assert info["os_version"] == "23.4R2-S4.11"
+        assert info["model"] == "ex4100-24mp"
+        assert info["hostname"] == "sw1"          # not "netops@sw1"
+
+    def test_parse_version_junos_package_lines_only(self):
+        from apps.devices.detect import parse_version
+        out = "JUNOS OS Kernel 64-bit  [20241031.89001bf]\nJUNOS py base [20250314.1]\n"
+        assert parse_version(out)["os_version"] is None
+
     def test_netmiko_mapping_complete(self):
         from apps.devices.detect import NETMIKO_TO_NETPULSE
         assert NETMIKO_TO_NETPULSE["cisco_xe"] == {"vendor": "cisco", "platform": "ios_xe"}
