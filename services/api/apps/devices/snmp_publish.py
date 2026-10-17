@@ -180,7 +180,10 @@ def build_device_payload(device) -> dict | None:
     port = (profile.snmpv3_port if version == 3 else profile.snmpv2c_port) or 161
 
     interfaces, oids = [], _device_oids(device.platform)
-    for iface in device.monitored_interfaces.all():
+    # Stable order (by name, not row id): re-saving an unchanged selection
+    # recreates the rows, and the poller treats a reordered OID list as a
+    # config change (restarting its poll loop).
+    for iface in sorted(device.monitored_interfaces.all(), key=lambda i: i.if_name):
         interfaces.append({
             "if_name": iface.if_name,
             "if_index": iface.if_index,
