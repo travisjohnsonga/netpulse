@@ -480,7 +480,8 @@ class TestHostsCsv:
                            "Type", "Last Seen"]
         assert len(rows) == 1 + 3
         h1 = next(x for x in rows if x[0] == "00:00:0c:00:00:01")
-        assert h1[1:7] == ["Cisco Systems, Inc", "10.0.0.30", "sw2", "1/1/3", "30", "static"]
+        # Port "1/1/3" is wrapped so Excel shows text, not a date.
+        assert h1[1:7] == ["Cisco Systems, Inc", "10.0.0.30", "sw2", '="1/1/3"', "30", "static"]
 
     def test_respects_filter_sort_and_uplinks(self, auth_client, device, switch, core):
         _seed_hosts(device, switch)
@@ -498,6 +499,17 @@ class TestHostsCsv:
                                 interface="=HYPERLINK(\"x\")")
         rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
         assert rows[1][4].startswith("'=")
+
+    @pytest.mark.parametrize("port,expected", [
+        ("1/1/16", '="1/1/16"'), ("1/1/51", '="1/1/51"'), ("17", '="17"'), ("1-2", '="1-2"'),
+        ("ge-0/0/1", "ge-0/0/1"), ("ae9", "ae9"), ("lag10", "lag10"), ("Gi0/1", "Gi0/1"),
+        ("", ""),
+    ])
+    def test_port_kept_as_text_in_excel(self, auth_client, switch, port, expected):
+        from apps.arp_mac.models import MACEntry
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:0a", interface=port)
+        rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
+        assert rows[1][4] == expected
 
     def test_requires_auth(self, api_client):
         assert api_client.get("/api/network/hosts/?export=csv").status_code == 401

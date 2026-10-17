@@ -333,11 +333,24 @@ def _hosts_csv(rows: list[dict]):
                 "Type", "Last Seen"])
     # csv_safe: ports, hostnames and vendor strings come from devices.
     for h in rows:
-        w.writerow([csv_safe(c) for c in (
+        row = [csv_safe(c) for c in (
             h["mac"], h["vendor"], " ".join(h["ips"]), h["device"], h["port"],
             "" if h["vlan"] is None else h["vlan"], h["entry_type"], h["last_seen"] or "",
-        )])
+        )]
+        row[4] = _excel_text(h["port"] or "") or row[4]
+        w.writerow(row)
     return resp
+
+
+# Ports like "1/1/16" are read by Excel as dates (quoting doesn't stop it).
+_EXCEL_COERCED_RE = re.compile(r"^[\d/\-.: ]+$")
+
+
+def _excel_text(value: str) -> str:
+    """``="1/1/16"`` for an all-digit/separator value Excel would coerce to a
+    date or number — it evaluates to the literal text. '' when no wrap is
+    needed. Safe as a formula: the pattern admits no quotes or letters."""
+    return f'="{value}"' if _EXCEL_COERCED_RE.match(value) else ""
 
 
 def _int(val, default: int) -> int:
