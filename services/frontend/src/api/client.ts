@@ -3195,8 +3195,10 @@ export async function fetchReachabilitySummary(period = '1h'): Promise<Reachabil
 export interface PlatformOption { value: string; label: string }
 // Supported device platforms, sourced from the backend (Device.Platform) so new
 // platforms appear in dropdowns without a frontend change.
-export async function fetchDevicePlatforms(): Promise<PlatformOption[]> {
-  const { data } = await api.get<PlatformOption[]>('/devices/platforms/')
+// inUse: only platforms at least one network device has (list filters).
+export async function fetchDevicePlatforms(inUse = false): Promise<PlatformOption[]> {
+  const { data } = await api.get<PlatformOption[]>('/devices/platforms/',
+    inUse ? { params: { in_use: 'true' } } : undefined)
   return Array.isArray(data) ? data : []
 }
 
