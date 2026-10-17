@@ -125,6 +125,7 @@ def _parse_fortinet_descr(descr: str) -> dict:
 # "JUNOS" (or "Junos:"), the model is the token right after the company name.
 _JUNOS_VER_RE = re.compile(r"\bJUNOS[:\s]+(\d+\.\d+[\w.\-]*)", re.IGNORECASE)
 _JUNOS_MODEL_RE = re.compile(r"Juniper Networks,?\s+Inc\.?\s+(\S+)", re.IGNORECASE)
+_JUNIPER_PART_NO_RE = re.compile(r"^\d{3}-\d{6}$")
 
 
 def _parse_junos_descr(descr: str) -> dict:
@@ -286,7 +287,10 @@ def _parse_snmp(res: dict, updates: dict) -> None:
         junos = _parse_junos_descr(descr)
         if junos:
             updates["os_version"] = junos["os_version"]
-            model = model or junos.get("model", "")
+            # Some EX (e.g. EX4100) report a Juniper part number ("640-060601")
+            # as entPhysicalModelName — the descr model ("ex4100-24mp") is better.
+            if not model or _JUNIPER_PART_NO_RE.match(model):
+                model = junos.get("model", "") or model
         # The HPE/ANW AOS-CX sysDescr carries the most descriptive model
         # ("HPE ANW R9Y04A 6100 …"); prefer it over the entPhysical column.
         descr_model = _model_from_aos_cx_descr(descr)
