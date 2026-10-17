@@ -292,16 +292,21 @@ class NetworkHostsView(APIView):
 
         # Every matching row (no pagination), in the table's current sort.
         # Not "?format=" — DRF reserves that for renderer selection.
+        # ?resolve=1 adds reverse-DNS hostnames (inventory-first, cached; see
+        # apps.flows.dns) — for the page window only, or every row on export.
+        resolve = request.query_params.get("resolve") in ("1", "true")
         export = request.query_params.get("export")
-        if export == "csv":
-            return _hosts_csv(rows)
-        if export == "xlsx":
-            return _hosts_xlsx(rows)
+        if export in ("csv", "xlsx"):
+            if resolve:
+                _attach_hostnames(rows)
+            return _hosts_csv(rows) if export == "csv" else _hosts_xlsx(rows)
 
         count = len(rows)
         num_pages = max(1, ceil(count / page_size))
         start = (page - 1) * page_size
         window = rows[start:start + page_size]
+        if resolve:
+            _attach_hostnames(window)
 
         return Response({
             "count": count,
@@ -315,6 +320,27 @@ class NetworkHostsView(APIView):
 
 _EXPORT_HEADERS = ["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
                    "Type", "Last Seen (UTC)"]
+
+
+# Exports resolve every row's IPs; cap the batch so a huge table can't turn one
+# request into thousands of lookups (the rest fall back to the bare IP).
+_EXPORT_RESOLVE_MAX = 5000
+
+
+def _attach_hostnames(rows: list[dict]) -> None:
+    """Set ``hostname`` on each row: the resolved names of its IPs (deduped,
+    comma-joined), '' when none resolved. Best-effort — never raises."""
+    from apps.flows.dns import resolve_ips
+
+    ips = [ip for h in rows for ip in h["ips"]]
+    try:
+        names = resolve_ips(ips, max_ips=_EXPORT_RESOLVE_MAX)["resolved"] if ips else {}
+    except Exception as exc:  # noqa: BLE001 — enrichment must not break the table
+        logger.warning("hostname resolution failed: %s", exc)
+        names = {}
+    for h in rows:
+        found = [names.get(ip) for ip in h["ips"]]
+        h["hostname"] = ", ".join(dict.fromkeys(n for n, ip in zip(found, h["ips"]) if n and n != ip))
 
 
 def _export_filename(ext: str) -> str:
@@ -332,14 +358,23 @@ def _hosts_csv(rows: list[dict]):
     resp = HttpResponse(content_type="text/csv")
     resp["Content-Disposition"] = f'attachment; filename="{_export_filename("csv")}"'
     w = csv.writer(resp)
-    w.writerow(_EXPORT_HEADERS)
-    # csv_safe: ports, hostnames and vendor strings come from devices.
+    resolved = bool(rows) and "hostname" in rows[0]
+    w.writerow(_headers(resolved))
+    # csv_safe: ports, hostnames and vendor strings come from devices / DNS.
     for h in rows:
-        w.writerow([csv_safe(c) for c in (
-            h["mac"], h["vendor"], " ".join(h["ips"]), h["device"], h["port"],
-            "" if h["vlan"] is None else h["vlan"], h["entry_type"], h["last_seen"] or "",
-        )])
+        cells = [h["mac"], h["vendor"], " ".join(h["ips"])]
+        if resolved:
+            cells.append(h["hostname"])
+        cells += [h["device"], h["port"], "" if h["vlan"] is None else h["vlan"],
+                  h["entry_type"], h["last_seen"] or ""]
+        w.writerow([csv_safe(c) for c in cells])
     return resp
+
+
+def _headers(resolved: bool) -> list[str]:
+    """Export headers; "Hostname" follows "IP Addresses" when resolved."""
+    return (_EXPORT_HEADERS[:3] + ["Hostname"] + _EXPORT_HEADERS[3:]) if resolved \
+        else list(_EXPORT_HEADERS)
 
 
 def _hosts_xlsx(rows: list[dict]):
@@ -361,26 +396,37 @@ def _hosts_xlsx(rows: list[dict]):
     text = wb.add_format({"num_format": "@"})
     when = wb.add_format({"num_format": "yyyy-mm-dd hh:mm:ss"})
 
-    widths = [19, 28, 30, 26, 14, 7, 9, 20]
-    for col, width in enumerate(widths):
-        ws.set_column(col, col, width, when if col == 7 else text if col != 5 else None)
-    for col, title in enumerate(_EXPORT_HEADERS):
-        ws.write_string(0, col, title, bold)
+    def _last_seen(h):
+        # Excel has no time zones — store the UTC wall time (header says so).
+        ts = h["_last_seen_ts"] if h["last_seen"] else None
+        return ts.astimezone(dt_timezone.utc).replace(tzinfo=None) if ts else None
+
+    # (width, kind, value) per column, in _headers() order.
+    columns = [(19, "text", lambda h: h["mac"]), (28, "text", lambda h: h["vendor"]),
+               (30, "text", lambda h: " ".join(h["ips"]))]
+    resolved = bool(rows) and "hostname" in rows[0]
+    if resolved:
+        columns.append((34, "text", lambda h: h["hostname"]))
+    columns += [(26, "text", lambda h: h["device"]), (14, "text", lambda h: h["port"]),
+                (7, "number", lambda h: h["vlan"]), (9, "text", lambda h: h["entry_type"]),
+                (20, "datetime", _last_seen)]
+    headers = _headers(resolved)
+
+    for col, (width, kind, _get) in enumerate(columns):
+        ws.set_column(col, col, width, {"text": text, "datetime": when}.get(kind))
+        ws.write_string(0, col, headers[col], bold)
 
     for r, h in enumerate(rows, start=1):
-        for col, val in enumerate((h["mac"], h["vendor"], " ".join(h["ips"]),
-                                   h["device"], h["port"])):
-            ws.write_string(r, col, val or "", text)
-        if h["vlan"] is not None:
-            ws.write_number(r, 5, h["vlan"])
-        ws.write_string(r, 6, h["entry_type"] or "", text)
-        if h["last_seen"]:
-            # Excel has no time zones — store the UTC wall time (header says so).
-            ws.write_datetime(
-                r, 7, h["_last_seen_ts"].astimezone(dt_timezone.utc).replace(tzinfo=None), when)
+        for col, (_w, kind, get) in enumerate(columns):
+            val = get(h)
+            if kind == "text":
+                ws.write_string(r, col, val or "", text)
+            elif val is not None:
+                (ws.write_number if kind == "number" else ws.write_datetime)(
+                    r, col, val, *(() if kind == "number" else (when,)))
 
     ws.freeze_panes(1, 0)
-    ws.autofilter(0, 0, max(len(rows), 1), len(_EXPORT_HEADERS) - 1)
+    ws.autofilter(0, 0, max(len(rows), 1), len(columns) - 1)
     wb.close()
 
     resp = HttpResponse(
@@ -424,7 +470,8 @@ def _host_matches(h: dict, q: str) -> bool:
 
 
 def _host_public(h: dict) -> dict:
-    return {
+    extra = {"hostname": h["hostname"]} if "hostname" in h else {}   # only with ?resolve=1
+    return {**extra, 
         "mac": h["mac"], "vendor": h["vendor"], "ips": h["ips"],
         "device_id": h["device_id"], "device": h["device"],
         "port": h["port"], "vlan": h["vlan"],

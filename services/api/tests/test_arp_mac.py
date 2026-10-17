@@ -697,6 +697,64 @@ class TestHostsXlsx:
         assert api_client.get("/api/network/hosts/?export=xlsx").status_code == 401
 
 
+class TestHostsReverseDns:
+    """?resolve=1 adds reverse-DNS hostnames (apps.flows.dns.resolve_ips,
+    mocked here) to the page, and a Hostname column to CSV/XLSX exports."""
+
+    @pytest.fixture
+    def fake_dns(self, monkeypatch):
+        calls = {}
+
+        def fake(ips, max_ips=100):
+            calls["ips"], calls["max_ips"] = list(ips), max_ips
+            names = {"10.0.0.30": "printer-1.example.com", "10.0.0.10": "laptop-2.example.com"}
+            return {"resolved": {ip: names.get(ip, ip) for ip in ips}}
+        monkeypatch.setattr("apps.flows.dns.resolve_ips", fake)
+        return calls
+
+    def test_page_hostnames(self, auth_client, device, switch, fake_dns):
+        _seed_hosts(device, switch)
+        rows = {h["mac"]: h for h in auth_client.get("/api/network/hosts/?resolve=1").data["results"]}
+        assert rows["00:00:0c:00:00:01"]["hostname"] == "printer-1.example.com"
+        assert rows["aa:bb:cc:dd:ee:ff"]["hostname"] == ""          # unresolved → blank, not the IP
+
+    def test_no_resolve_no_lookup(self, auth_client, device, switch, fake_dns):
+        _seed_hosts(device, switch)
+        rows = auth_client.get("/api/network/hosts/").data["results"]
+        assert "hostname" not in rows[0] and fake_dns == {}
+
+    def test_only_page_window_resolved(self, auth_client, device, switch, fake_dns):
+        _seed_hosts(device, switch)
+        auth_client.get("/api/network/hosts/?resolve=1&page_size=1&sort=mac")
+        assert len(fake_dns["ips"]) == 1
+
+    def test_csv_hostname_column(self, auth_client, device, switch, fake_dns):
+        import csv
+        import io
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?export=csv&resolve=1")
+        rows = list(csv.reader(io.StringIO(r.content.decode())))
+        assert rows[0][:5] == ["MAC", "Vendor", "IP Addresses", "Hostname", "Device"]
+        h1 = next(x for x in rows if x[0] == "00:00:0c:00:00:01")
+        assert h1[3] == "printer-1.example.com" and h1[5] == "1/1/3"
+        assert fake_dns["max_ips"] > 100                # export resolves every row
+
+    def test_xlsx_hostname_column(self, auth_client, device, switch, fake_dns):
+        _seed_hosts(device, switch)
+        cells = _xlsx_cells(auth_client.get("/api/network/hosts/?export=xlsx&resolve=1&q=00:00:0c:00:00:01").content)
+        assert cells["D1"] == ("s", "Hostname") and cells["F1"] == ("s", "Port")
+        assert cells["D2"] == ("s", "printer-1.example.com")
+        assert cells["F2"] == ("s", "1/1/3") and cells["G2"] == ("n", "30")
+
+    def test_resolver_failure_is_blank_not_error(self, auth_client, device, switch, monkeypatch):
+        def boom(ips, max_ips=100):
+            raise OSError("resolver down")
+        monkeypatch.setattr("apps.flows.dns.resolve_ips", boom)
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?resolve=1")
+        assert r.status_code == 200 and all(h["hostname"] == "" for h in r.data["results"])
+
+
 class TestUpdateMacVendors:
     def test_bundled_load_offline(self, db):
         from django.core.management import call_command

@@ -1128,6 +1128,7 @@ export interface NetworkHost {
   entry_type: string
   last_seen: string | null
   uplink: boolean   // location is an uplink (lag/ae/Po/vtep) — no access port seen
+  hostname?: string // reverse-DNS / inventory names (only with resolve) — '' when none
 }
 
 export interface NetworkHostsResult {
@@ -1148,10 +1149,12 @@ export async function networkHosts(opts: {
   page?: number
   page_size?: number
   exclude_uplinks?: boolean
+  resolve?: boolean
 } = {}): Promise<NetworkHostsResult> {
   const params: Record<string, string> = {}
   if (opts.q) params.q = opts.q
   if (opts.exclude_uplinks) params.exclude_uplinks = 'true'
+  if (opts.resolve) params.resolve = '1'
   if (opts.sort) params.sort = opts.sort
   if (opts.order) params.order = opts.order
   if (opts.page) params.page = String(opts.page)
@@ -1167,10 +1170,12 @@ export async function downloadNetworkHosts(fmt: 'csv' | 'xlsx', opts: {
   sort?: NetworkHostSort
   order?: 'asc' | 'desc'
   exclude_uplinks?: boolean
+  resolve?: boolean
 } = {}): Promise<void> {
   const params: Record<string, string> = { export: fmt }
   if (opts.q) params.q = opts.q
   if (opts.exclude_uplinks) params.exclude_uplinks = 'true'
+  if (opts.resolve) params.resolve = '1'
   if (opts.sort) params.sort = opts.sort
   if (opts.order) params.order = opts.order
   const resp = await api.get('/network/hosts/', { params, responseType: 'blob' })
