@@ -663,3 +663,114 @@ class TestUpdateMacVendors:
                      "MA-L,445566,IEEE Style Corp,Somewhere\n")
         call_command("update_mac_vendors", file=str(p))
         assert MACVendor.objects.get(oui="44:55:66").vendor == "IEEE Style Corp"
+
+
+class TestVendorPrefixes:
+    def test_longest_prefix_wins(self):
+        from apps.arp_mac.models import MACVendor
+        from apps.arp_mac.vendors import vendor_map
+        MACVendor.objects.create(oui="00:00:5e", vendor="IEEE Registration Authority")
+        MACVendor.objects.create(oui="00:00:5e:0", vendor="Medium Block Co")
+        MACVendor.objects.create(oui="00:00:5e:00:5", vendor="Small Block Co")
+        got = vendor_map(["00:00:5e:00:53:01", "00:00:5e:01:00:01", "00:00:5e:90:00:01"])
+        assert got == {"00:00:5e:00:53:01": "Small Block Co",
+                       "00:00:5e:01:00:01": "Medium Block Co",
+                       "00:00:5e:90:00:01": "IEEE Registration Authority"}
+
+    def test_locally_administered_is_labelled(self):
+        from apps.arp_mac.normalize import LOCALLY_ADMINISTERED
+        from apps.arp_mac.vendors import vendor_map
+        got = vendor_map(["02:00:5e:00:53:01", "00:00:5e:00:53:02"])
+        assert got["02:00:5e:00:53:01"] == LOCALLY_ADMINISTERED
+        assert got["00:00:5e:00:53:02"] == ""   # globally unique, just unknown
+
+    def test_registry_entry_beats_locally_administered_label(self):
+        from apps.arp_mac.models import MACVendor
+        from apps.arp_mac.vendors import vendor_for
+        MACVendor.objects.create(oui="aa:bb:cc", vendor="Acme Networks")
+        assert vendor_for("aa:bb:cc:00:00:01") == "Acme Networks"
+
+    def test_mac_vendor_endpoint_uses_long_prefixes(self, auth_client):
+        from apps.arp_mac.models import MACVendor
+        MACVendor.objects.create(oui="00:00:5e", vendor="IEEE Registration Authority")
+        MACVendor.objects.create(oui="00:00:5e:00:5", vendor="Small Block Co")
+        r = auth_client.get("/api/network/mac-vendor/00-00-5E-00-53-01/")
+        assert r.status_code == 200
+        assert r.data == {"mac": "00:00:5e:00:53:01", "oui": "00:00:5e", "vendor": "Small Block Co"}
+
+    def test_prefix_from_assignment(self):
+        from apps.arp_mac.normalize import prefix_from_assignment
+        assert prefix_from_assignment("00005E") == "00:00:5e"
+        assert prefix_from_assignment("00005E0") == "00:00:5e:0"
+        assert prefix_from_assignment("00005E005") == "00:00:5e:00:5"
+        assert prefix_from_assignment("00005") == ""
+        assert prefix_from_assignment("ZZ005E") == ""
+
+
+class TestUpdateMacVendorsRegistries:
+    def test_bundled_snapshot_has_all_block_sizes(self):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        call_command("update_mac_vendors")
+        lengths = {len(o) for o in MACVendor.objects.values_list("oui", flat=True)}
+        assert lengths == {8, 10, 13}
+
+    def test_file_load_ieee_small_blocks(self, tmp_path):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        p = tmp_path / "ieee.csv"
+        p.write_text("Registry,Assignment,Organization Name,Organization Address\n"
+                     "MA-M,00005E0,Medium Block Co,Somewhere\n"
+                     "MA-S,00005E005,Small Block Co,Somewhere\n")
+        call_command("update_mac_vendors", file=str(p))
+        assert MACVendor.objects.get(oui="00:00:5e:0").vendor == "Medium Block Co"
+        assert MACVendor.objects.get(oui="00:00:5e:00:5").vendor == "Small Block Co"
+
+    def _fake_get(self, monkeypatch, fail=()):
+        import requests
+        seen = []
+        bodies = {
+            "oui.csv": "MA-L,00005E,IEEE Registration Authority,x\n",
+            "mam.csv": "MA-M,00005E0,Medium Block Co,x\n",
+            "oui36.csv": "MA-S,00005E005,Small Block Co,x\n",
+            "iab.csv": "IAB,0050C2001,Legacy Block Co,x\n",
+        }
+
+        class _Resp:
+            def __init__(self, text):
+                self.content = ("Registry,Assignment,Organization Name,Organization Address\n"
+                                + text).encode()
+
+            def raise_for_status(self):
+                pass
+
+        def _get(url, timeout=None, headers=None):
+            seen.append((url, headers))
+            name = url.rsplit("/", 1)[-1]
+            if name in fail:
+                raise RuntimeError("down")
+            return _Resp(bodies[name])
+        monkeypatch.setattr(requests, "get", _get)
+        return seen
+
+    def test_refresh_downloads_every_registry_with_product_user_agent(self, monkeypatch):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        seen = self._fake_get(monkeypatch)
+        call_command("update_mac_vendors", refresh=True)
+        assert [u.rsplit("/", 1)[-1] for u, _ in seen] == ["oui.csv", "mam.csv", "oui36.csv", "iab.csv"]
+        # IEEE answers 418 to python-requests' default UA.
+        assert all("python-requests" not in h["User-Agent"] for _, h in seen)
+        assert set(MACVendor.objects.values_list("oui", flat=True)) == {
+            "00:00:5e", "00:00:5e:0", "00:00:5e:00:5", "00:50:c2:00:1"}
+
+    def test_refresh_keeps_bundled_entries_when_small_registry_fails(self, monkeypatch):
+        from django.core.management import call_command
+        from apps.arp_mac.models import MACVendor
+        self._fake_get(monkeypatch, fail={"mam.csv"})
+        call_command("update_mac_vendors", refresh=True)
+        ouis = set(MACVendor.objects.values_list("oui", flat=True))
+        assert not MACVendor.objects.filter(vendor="Medium Block Co").exists()
+        assert sum(len(o) == 10 for o in ouis) > 1000   # bundled MA-M kept
+        assert MACVendor.objects.get(oui="00:00:5e:00:5").vendor == "Small Block Co"
+        assert sum(len(o) == 8 for o in ouis) == 1      # live MA-L used, not the bundled one
