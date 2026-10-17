@@ -1160,14 +1160,15 @@ export async function networkHosts(opts: {
   return data
 }
 
-// Every host matching the filter (all pages) as CSV, in the given sort.
-export async function downloadNetworkHostsCsv(opts: {
+// Every host matching the filter (all pages), in the given sort. xlsx keeps
+// ports like "1/1/16" as text in Excel (a CSV can't stop it reading dates).
+export async function downloadNetworkHosts(fmt: 'csv' | 'xlsx', opts: {
   q?: string
   sort?: NetworkHostSort
   order?: 'asc' | 'desc'
   exclude_uplinks?: boolean
 } = {}): Promise<void> {
-  const params: Record<string, string> = { export: 'csv' }
+  const params: Record<string, string> = { export: fmt }
   if (opts.q) params.q = opts.q
   if (opts.exclude_uplinks) params.exclude_uplinks = 'true'
   if (opts.sort) params.sort = opts.sort
@@ -1176,7 +1177,7 @@ export async function downloadNetworkHostsCsv(opts: {
   const name = /filename="([^"]+)"/.exec(resp.headers['content-disposition'] ?? '')?.[1]
   const url = URL.createObjectURL(resp.data as Blob)
   const a = document.createElement('a')
-  a.href = url; a.download = name || 'ip-mac-hosts.csv'; a.click()
+  a.href = url; a.download = name || `ip-mac-hosts.${fmt}`; a.click()
   URL.revokeObjectURL(url)
 }
 

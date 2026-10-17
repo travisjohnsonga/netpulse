@@ -301,8 +301,11 @@ class NetworkHostsView(APIView):
 
         # Every matching row (no pagination), in the table's current sort.
         # Not "?format=" — DRF reserves that for renderer selection.
-        if request.query_params.get("export") == "csv":
+        export = request.query_params.get("export")
+        if export == "csv":
             return _hosts_csv(rows)
+        if export == "xlsx":
+            return _hosts_xlsx(rows)
 
         count = len(rows)
         num_pages = max(1, ceil(count / page_size))
@@ -319,40 +322,81 @@ class NetworkHostsView(APIView):
         })
 
 
+_EXPORT_HEADERS = ["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
+                   "Type", "Last Seen (UTC)"]
+
+
+def _export_filename(ext: str) -> str:
+    from datetime import date
+    return f"ip-mac-hosts-{date.today():%Y%m%d}.{ext}"
+
+
 def _hosts_csv(rows: list[dict]):
     import csv
-    from datetime import date
 
     from django.http import HttpResponse
 
     from apps.core.audit import csv_safe
 
     resp = HttpResponse(content_type="text/csv")
-    resp["Content-Disposition"] = (
-        f'attachment; filename="ip-mac-hosts-{date.today():%Y%m%d}.csv"')
+    resp["Content-Disposition"] = f'attachment; filename="{_export_filename("csv")}"'
     w = csv.writer(resp)
-    w.writerow(["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
-                "Type", "Last Seen"])
+    w.writerow(_EXPORT_HEADERS)
     # csv_safe: ports, hostnames and vendor strings come from devices.
     for h in rows:
-        row = [csv_safe(c) for c in (
+        w.writerow([csv_safe(c) for c in (
             h["mac"], h["vendor"], " ".join(h["ips"]), h["device"], h["port"],
             "" if h["vlan"] is None else h["vlan"], h["entry_type"], h["last_seen"] or "",
-        )]
-        row[4] = _excel_text(h["port"] or "") or row[4]
-        w.writerow(row)
+        )])
     return resp
 
 
-# Ports like "1/1/16" are read by Excel as dates (quoting doesn't stop it).
-_EXCEL_COERCED_RE = re.compile(r"^[\d/\-.: ]+$")
+def _hosts_xlsx(rows: list[dict]):
+    """Excel workbook with typed cells. Unlike CSV, Excel doesn't guess types
+    here: ports like "1/1/16" are stored as text (column also formatted "@" so
+    edits stay text), VLAN as a number, Last Seen as a date-time. Every text
+    cell goes through write_string, so nothing is ever stored as a formula."""
+    import io
+    from datetime import timezone as dt_timezone
 
+    import xlsxwriter
+    from django.http import HttpResponse
 
-def _excel_text(value: str) -> str:
-    """``="1/1/16"`` for an all-digit/separator value Excel would coerce to a
-    date or number — it evaluates to the literal text. '' when no wrap is
-    needed. Safe as a formula: the pattern admits no quotes or letters."""
-    return f'="{value}"' if _EXCEL_COERCED_RE.match(value) else ""
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True, "strings_to_formulas": False,
+                                   "strings_to_urls": False, "strings_to_numbers": False})
+    ws = wb.add_worksheet("IP-MAC Hosts")
+    bold = wb.add_format({"bold": True, "bottom": 1})
+    text = wb.add_format({"num_format": "@"})
+    when = wb.add_format({"num_format": "yyyy-mm-dd hh:mm:ss"})
+
+    widths = [19, 28, 30, 26, 14, 7, 9, 20]
+    for col, width in enumerate(widths):
+        ws.set_column(col, col, width, when if col == 7 else text if col != 5 else None)
+    for col, title in enumerate(_EXPORT_HEADERS):
+        ws.write_string(0, col, title, bold)
+
+    for r, h in enumerate(rows, start=1):
+        for col, val in enumerate((h["mac"], h["vendor"], " ".join(h["ips"]),
+                                   h["device"], h["port"])):
+            ws.write_string(r, col, val or "", text)
+        if h["vlan"] is not None:
+            ws.write_number(r, 5, h["vlan"])
+        ws.write_string(r, 6, h["entry_type"] or "", text)
+        if h["last_seen"]:
+            # Excel has no time zones — store the UTC wall time (header says so).
+            ws.write_datetime(
+                r, 7, h["_last_seen_ts"].astimezone(dt_timezone.utc).replace(tzinfo=None), when)
+
+    ws.freeze_panes(1, 0)
+    ws.autofilter(0, 0, max(len(rows), 1), len(_EXPORT_HEADERS) - 1)
+    wb.close()
+
+    resp = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = f'attachment; filename="{_export_filename("xlsx")}"'
+    return resp
 
 
 def _int(val, default: int) -> int:
