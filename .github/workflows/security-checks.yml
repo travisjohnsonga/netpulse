@@ -47,15 +47,44 @@ jobs:
       - name: Install scanners (pinned)
         run: python -m pip install --upgrade "pip-audit==2.9.0" "bandit==1.8.6"
 
-      # BLOCKING: services/api/requirements.txt is currently free of known CVEs
-      # (verified locally when this job was added). A newly-disclosed CVE in a
-      # pinned dependency fails the build so it gets triaged, not ignored.
-      # (PYSEC-2026-1325/ecdsa was briefly a candidate for --ignore-vuln, but
-      # its sole dependent — python-jose — turned out to be a DEAD requirement:
-      # zero imports in spane or social-core, whose JWT work uses PyJWT. It was
-      # removed instead, which is why no ignore list exists here.)
+      # BLOCKING: a newly-disclosed CVE in a pinned dependency fails the build
+      # so it gets triaged, not ignored. (PYSEC-2026-1325/ecdsa was briefly a
+      # candidate for --ignore-vuln, but its sole dependent — python-jose —
+      # turned out to be a DEAD requirement and was removed instead.)
+      #
+      # Ignores — each triaged as NOT APPLICABLE to spane, with no fix reachable
+      # without disproportionate churn. Revisit when the noted condition changes;
+      # remove the entry once a fixed version is adopted.
+      #  - social-auth-core 4.9.1 (triaged 2026-10-17). Every advisory is
+      #    backend- or feature-specific; spane's AUTHENTICATION_BACKENDS are
+      #    Google / Azure AD / Okta / GitHub only, and SOCIAL_AUTH_PIPELINE has
+      #    no partial steps:
+      #      GHSA-526j-582w-7fm9  LINE backend login CSRF          (no LINE)
+      #      PYSEC-2026-4167      SAML response not bound to request (no SAML
+      #                           backend registered — MUST upgrade before the
+      #                           planned SAML SSO stage ships)
+      #      PYSEC-2026-4169      LoginRadius backend login CSRF    (not used)
+      #      PYSEC-2026-4165      vk-app unsigned callback          (not used)
+      #      PYSEC-2026-4166      Vend user_id collision            (not used)
+      #      PYSEC-2026-4168      partial-pipeline token not session-bound
+      #                           (no partial pipeline steps)
+      #    Fixes need core >=5.0 / 5.0.2, which social-auth-app-django 5.9 caps
+      #    at <5.0; the newest app-django (7.1) needs core 6.x — a double-major
+      #    SSO upgrade. Revisit with that upgrade or before adding SAML.
+      #  - GHSA-8pqf-f4m5-798g (Twisted <=26.4.0, triaged 2026-10-17): ReDoS in
+      #    twisted.mail IMAP wildcardToRegexp. Twisted is pulled in by daphne
+      #    (websockets); spane never uses Twisted's IMAP. No fixed release yet —
+      #    drop this ignore when one ships.
       - name: pip-audit (services/api dependencies)
-        run: pip-audit -r services/api/requirements.txt --progress-spinner off
+        run: >-
+          pip-audit -r services/api/requirements.txt --progress-spinner off
+          --ignore-vuln GHSA-526j-582w-7fm9
+          --ignore-vuln PYSEC-2026-4165
+          --ignore-vuln PYSEC-2026-4166
+          --ignore-vuln PYSEC-2026-4167
+          --ignore-vuln PYSEC-2026-4168
+          --ignore-vuln PYSEC-2026-4169
+          --ignore-vuln GHSA-8pqf-f4m5-798g
 
       # BLOCKING at medium+ severity. Every High/Medium finding in
       # services/api/apps has been triaged: each is either fixed or carries an
