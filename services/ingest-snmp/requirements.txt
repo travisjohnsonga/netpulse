@@ -10,7 +10,7 @@ pyasn1>=0.6.4
 cryptography>=43
 
 # Messaging
-nats-py~=2.15
+nats-py~=2.16
 
 # Secrets (OpenBao / HashiCorp Vault compatible)
 hvac~=2.4
