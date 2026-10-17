@@ -79,9 +79,14 @@ def parse_version(output: str, prompt: str = "") -> dict:
                 return m.group(1).strip()
         return None
 
-    hostname = prompt.rstrip("#>$ ").strip() or None
+    # Junos prompts are "user@host>" — keep only the host.
+    hostname = prompt.rstrip("#>$ ").strip().rsplit("@", 1)[-1] or None
     return {
-        "os_version": first(r"Version\s+([\w.()\-]+)", r"JUNOS\s+([\w.\-]+)", r"\bEOS\b.*?([\d][\w.\-]+)"),
+        # Junos: the real version is the "Junos: 23.4R2-S4.11" line; the
+        # package lines below it ("JUNOS OS Kernel 64-bit [...]") must not match,
+        # so the fallback JUNOS form requires a digit.
+        "os_version": first(r"(?m)^Junos:\s*(\S+)", r"Version\s+([\w.()\-]+)",
+                            r"JUNOS[:\s]+(\d[\w.\-]*)", r"\bEOS\b.*?([\d][\w.\-]+)"),
         "model": first(r"Model number\s*:\s*(\S+)", r"cisco\s+(\S+)\s+.*processor",
                        r"Hardware:\s*(\S+)", r"Model:\s*(\S+)", r"^cisco\s+(\S+)"),
         "serial": first(r"System serial number\s*:\s*(\S+)", r"Processor board ID\s+(\S+)",

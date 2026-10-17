@@ -398,6 +398,19 @@ class TestJunos:
         assert updates["model"] == "EX4300-48P"
         assert updates["os_version"] == "23.4R1.9"
 
+    def test_part_number_entity_model_uses_descr_model(self):
+        # EX4100 reports a Juniper part number as entPhysicalModelName.
+        updates: dict = {}
+        res = {
+            enrich._OID_SYS_DESCR: ("Juniper Networks, Inc. ex4100-24mp Ethernet Switch, "
+                                    "kernel JUNOS 23.4R2-S4.11, Build date: 2025-03-14 21:17:35 UTC"),
+            enrich._OID_SYS_OBJID: "1.3.6.1.4.1.2636.1.1.1.4.169.2",
+            enrich._OID_ENT_MODEL: "640-060601",
+        }
+        enrich._parse_snmp(res, updates)
+        assert updates["model"] == "ex4100-24mp"
+        assert updates["os_version"] == "23.4R2-S4.11"
+
 
 class TestEnrichChain:
     def test_discovers_interfaces_and_lldp(self, device, monkeypatch):

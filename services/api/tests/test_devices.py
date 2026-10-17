@@ -637,6 +637,24 @@ class TestDetectParsing:
         assert info["hostname"] == "router1"
         assert info["serial"] == "9W7Q57VMXHY"
 
+    def test_parse_version_junos(self):
+        # Real Junos 23.4 layout: the version is the "Junos:" line; the package
+        # lines below used to match JUNOS\s+ and yield os_version "OS".
+        from apps.devices.detect import parse_version
+        out = ("\nHostname: sw1\nModel: ex4100-24mp\nJunos: 23.4R2-S4.11\n"
+               "JUNOS OS Kernel 64-bit  [20241031.89001bf_builder_stable_12_234]\n"
+               "JUNOS OS libs [20241031.89001bf_builder_stable_12_234]\n"
+               "JUNOS py base [20250314.192941_builder_junos_234_r2_s4]\n")
+        info = parse_version(out, "netops@sw1> ")
+        assert info["os_version"] == "23.4R2-S4.11"
+        assert info["model"] == "ex4100-24mp"
+        assert info["hostname"] == "sw1"          # not "netops@sw1"
+
+    def test_parse_version_junos_package_lines_only(self):
+        from apps.devices.detect import parse_version
+        out = "JUNOS OS Kernel 64-bit  [20241031.89001bf]\nJUNOS py base [20250314.1]\n"
+        assert parse_version(out)["os_version"] is None
+
     def test_netmiko_mapping_complete(self):
         from apps.devices.detect import NETMIKO_TO_NETPULSE
         assert NETMIKO_TO_NETPULSE["cisco_xe"] == {"vendor": "cisco", "platform": "ios_xe"}
@@ -990,3 +1008,32 @@ class TestDeviceComplianceColumn:
         rows = self._rows(auth_client.get("/api/devices/?ordering=-compliance_score"))
         scored = [r["hostname"] for r in rows if r["compliance_score"] is not None]
         assert scored[:2] == ["dev-b", "dev-a"]
+
+
+# ── Platform filter options ──────────────────────────────────────────────────
+
+class TestPlatformOptions:
+    def test_all_choices_by_default(self, auth_client):
+        resp = auth_client.get("/api/devices/platforms/")
+        assert resp.status_code == 200
+        assert len(resp.data) == len(Device.Platform.choices)
+
+    def test_in_use_only_fleet_platforms(self, auth_client):
+        Device.objects.create(hostname="j1", ip_address="192.0.2.40", platform="junos")
+        Device.objects.create(hostname="j2", ip_address="192.0.2.41", platform="junos")
+        Device.objects.create(hostname="cx", ip_address="192.0.2.42", platform="aos_cx")
+        Device.objects.create(hostname="srv", ip_address="192.0.2.43", platform="ios",
+                              device_kind=Device.DeviceKind.SERVER)   # not on the Devices list
+        resp = auth_client.get("/api/devices/platforms/?in_use=true")
+        assert resp.data == [{"value": "junos", "label": "Juniper JunOS"},
+                             {"value": "aos_cx", "label": "HPE AOS-CX"}]
+
+    def test_in_use_options_are_valid_list_filters(self, auth_client):
+        Device.objects.create(hostname="j1", ip_address="192.0.2.40", platform="junos")
+        for opt in auth_client.get("/api/devices/platforms/?in_use=true").data:
+            resp = auth_client.get("/api/devices/", {"platform": opt["value"]})
+            assert resp.status_code == 200 and resp.data["count"] == 1
+
+    def test_label_is_rejected(self, auth_client):
+        # The old hard-coded dropdown sent labels like "Junos" — the API 400s.
+        assert auth_client.get("/api/devices/", {"platform": "Junos"}).status_code == 400

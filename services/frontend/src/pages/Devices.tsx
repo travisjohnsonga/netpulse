@@ -4,9 +4,9 @@ import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
 import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
-  fetchDeviceMetricsSummary, fetchDeviceStatusSummary,
+  fetchDeviceMetricsSummary, fetchDeviceStatusSummary, fetchDevicePlatforms,
   type Device, type DeviceRole, type PingSummary, type DeviceMetricsSummary,
-  type DeviceStatusSummary } from '../api/client'
+  type DeviceStatusSummary, type PlatformOption } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useComplianceRunAll } from '../hooks/useComplianceRun'
 import { useReenrichAll } from '../hooks/useReenrichAll'
@@ -19,7 +19,6 @@ import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui'
 import { STRIPED_ROW } from '../lib/tableStyles'
 import StatCard from '../components/StatCard'
 
-const PLATFORM_OPTIONS = ['All', 'IOS-XE', 'IOS-XR', 'NX-OS', 'Junos', 'EOS', 'FortiOS', 'Other']
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
 const PAGE_SIZE = 20
 
@@ -47,6 +46,9 @@ export default function Devices() {
   const [roleFilter, setRoleFilter] = useState('All')
   const [complianceFilter, setComplianceFilter] = useState('All')
   const [roles, setRoles] = useState<DeviceRole[]>([])
+  // Filter on the stored platform value (e.g. "junos"), not its display label —
+  // the API rejects labels with a 400. Only platforms present in the fleet.
+  const [platforms, setPlatforms] = useState<PlatformOption[]>([])
   // Site scoping comes from the global header selector (persists across pages).
   const { selectedSite } = useSite()
   // Sort: column sortKey with optional leading '-' for descending (DRF ordering).
@@ -79,6 +81,7 @@ export default function Devices() {
       .then((profiles) => setCredNames(Object.fromEntries(profiles.map((p) => [p.id, p.name]))))
       .catch(() => {})
     fetchDeviceRoles().then(setRoles).catch(() => {})
+    fetchDevicePlatforms(true).then(setPlatforms).catch(() => {})
   }, [])
 
   // Reset to the first page whenever the global site filter changes.
@@ -271,8 +274,9 @@ export default function Devices() {
           onChange={(e) => { setPlatformFilter(e.target.value); setPage(1) }}
           className={SELECT}
         >
-          {PLATFORM_OPTIONS.map((p) => (
-            <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>
+          <option value="All">All Platforms</option>
+          {platforms.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
           ))}
         </select>
         <select

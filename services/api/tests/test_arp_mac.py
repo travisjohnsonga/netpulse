@@ -204,6 +204,116 @@ class TestAOSCXRest:
         assert called.get("disconnected") is True
 
 
+def _jleaf(v):
+    return [{"data": v}]
+
+
+def _junos_vlans_json():
+    import json
+    groups = [{"l2ng-l2rtb-name": _jleaf("default-switch"),
+               "l2ng-l2rtb-vlan-name": _jleaf(name),
+               "l2ng-l2rtb-vlan-tag": _jleaf(str(tag))}
+              for name, tag in [("USERS", 201), ("NATIVE", 999), ("MGMT", 1000), ("default", 1)]]
+    return json.dumps({"l2ng-l2ald-vlan-instance-information": [
+        {"l2ng-l2ald-vlan-instance-group": groups}]})
+
+
+def _junos_mac_json():
+    """Shape of a real EX4100 (Junos 23.4, ELS) brief-rtb table: one group whose
+    group-level vlan-id is NOT the per-entry VLAN — entries carry the name."""
+    import json
+    rows = [("USERS", "00:00:5e:00:53:01", "D", "ge-0/0/1.0"),
+            ("NATIVE", "00:00:5e:00:53:01", "D", "ae9.0"),      # same MAC, 2nd VLAN
+            ("MGMT", "00:00:5e:00:53:02", "S", "ae9.0"),
+            ("default", "00:00:5e:00:53:03", "D", "ge-0/0/2.0")]
+    entries = [{"l2ng-l2-mac-vlan-name": _jleaf(v), "l2ng-l2-mac-address": _jleaf(m),
+                "l2ng-l2-mac-flags": _jleaf(f), "l2ng-l2-mac-age": _jleaf("-"),
+                "l2ng-l2-mac-logical-interface": _jleaf(i),
+                "l2ng-l2-mac-fwd-next-hop": _jleaf("0"), "l2ng-l2-mac-rtr-id": _jleaf("0")}
+               for v, m, f, i in rows]
+    return json.dumps({"l2ng-l2ald-rtb-macdb": [{"l2ng-l2ald-mac-entry-vlan": [{
+        "attributes": {"junos:style": "brief-rtb"},
+        "l2ng-l2-vlan-id": _jleaf("201"),
+        "l2ng-mac-entry": entries}]}]})
+
+
+class TestJunosMac:
+    """Junos MAC table is parsed from JSON (the ntc text template can't parse ELS)."""
+
+    def test_vlan_name_to_tag(self):
+        from apps.arp_mac.collector import _parse_junos_vlans
+        assert _parse_junos_vlans(_junos_vlans_json()) == {
+            "USERS": 201, "NATIVE": 999, "MGMT": 1000, "default": 1}
+
+    def test_parse_mac_entries(self):
+        from apps.arp_mac.collector import _parse_junos_mac, _parse_junos_vlans
+        out = _parse_junos_mac(_junos_mac_json(), _parse_junos_vlans(_junos_vlans_json()))
+        assert out == [
+            {"mac_address": "00:00:5e:00:53:01", "vlan": 201, "interface": "ge-0/0/1", "entry_type": "dynamic"},
+            {"mac_address": "00:00:5e:00:53:01", "vlan": 999, "interface": "ae9", "entry_type": "dynamic"},
+            {"mac_address": "00:00:5e:00:53:02", "vlan": 1000, "interface": "ae9", "entry_type": "static"},
+            {"mac_address": "00:00:5e:00:53:03", "vlan": 1, "interface": "ge-0/0/2", "entry_type": "dynamic"},
+        ]
+
+    def test_unknown_vlan_name_is_none(self):
+        from apps.arp_mac.collector import _parse_junos_mac
+        out = _parse_junos_mac(_junos_mac_json(), {})
+        assert {e["vlan"] for e in out} == {None}
+
+    @pytest.mark.parametrize("bad", ["", "error: syntax error", "{not json", None, []])
+    def test_garbage_output_is_empty(self, bad):
+        from apps.arp_mac.collector import _parse_junos_mac, _parse_junos_vlans
+        assert _parse_junos_vlans(bad) == {}
+        assert _parse_junos_mac(bad, {}) == []
+
+    def test_collect_and_store_end_to_end(self, monkeypatch):
+        from apps.arp_mac import collector
+        from apps.arp_mac.models import MACEntry
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="ex1", ip_address="192.0.2.30",
+                                    platform="junos", status="active")
+        sent = []
+
+        class _Conn:
+            def send_command(self, cmd, **kw):
+                sent.append((cmd, kw.get("use_textfsm", False)))
+                if cmd == "show vlans | display json":
+                    return _junos_vlans_json()
+                if cmd == "show ethernet-switching table | display json":
+                    return _junos_mac_json()
+                return []   # ARP via ntc-templates
+
+            def disconnect(self):
+                pass
+
+        import netmiko
+        monkeypatch.setattr(netmiko, "ConnectHandler", lambda **kw: _Conn())
+        arp, mac = collector.collect_arp_mac(dev, {"ssh_password": "pw"}, "u")
+        assert ("show ethernet-switching table | display json", False) in sent
+        assert collector.store_arp_mac(dev, arp, mac) == (0, 4)
+        # Same MAC in two VLANs is kept as two rows (was collapsed with vlan=None).
+        assert MACEntry.objects.filter(device=dev, mac_address="00:00:5e:00:53:01").count() == 2
+
+    def test_send_failure_does_not_raise(self, monkeypatch):
+        from apps.arp_mac import collector
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="ex2", ip_address="192.0.2.31",
+                                    platform="junos", status="active")
+
+        class _Conn:
+            def send_command(self, cmd, **kw):
+                if "display json" in cmd:
+                    raise OSError("socket closed")
+                return []
+
+            def disconnect(self):
+                pass
+
+        import netmiko
+        monkeypatch.setattr(netmiko, "ConnectHandler", lambda **kw: _Conn())
+        assert collector.collect_arp_mac(dev, {"ssh_password": "pw"}, "u") == ([], [])
+
+
 # ── persistence ───────────────────────────────────────────────────────────────
 class TestStore:
     def test_arp_upsert_and_mac_replace(self, device):
@@ -414,6 +524,107 @@ class TestHostsEndpoint:
 
 
 # ── offline-first OUI population ────────────────────────────────────────────────
+@pytest.fixture
+def core(db):
+    from apps.devices.models import Device
+    return Device.objects.create(hostname="core1", ip_address="192.0.2.50",
+                                 platform="junos", status="active")
+
+
+def _seed_uplinks(switch, core):
+    """H1 is on access port 1/1/3 of sw2 and (seen later) on core1's uplink ae9;
+    H4 is only ever seen on uplinks (lag10 on sw2, ae9 on core1)."""
+    from apps.arp_mac.models import MACEntry
+    MACEntry.objects.get_or_create(device=switch, mac_address="00:00:0c:00:00:01",
+                                   vlan=30, defaults={"interface": "1/1/3"})   # also in _seed_hosts
+    MACEntry.objects.create(device=core, mac_address="00:00:0c:00:00:01",
+                            vlan=30, interface="ae9")             # newer, but an uplink
+    MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:04",
+                            vlan=30, interface="lag10")
+    MACEntry.objects.create(device=core, mac_address="00:00:5e:00:53:04",
+                            vlan=30, interface="ae9")
+
+
+class TestUplinks:
+    @pytest.mark.parametrize("port,expected", [
+        ("lag10", True), ("ae9", True), ("ae9.0", True), ("Po1", True),
+        ("Port-channel12", True), ("Trk1", True), ("vtep.32769", True), ("vtep", True),
+        ("1/1/3", False), ("ge-0/0/1", False), ("Gi0/1", False), ("", False), (None, False),
+        ("vlan30", False), ("aero1", False), ("vtep1", False), ("vteps", False),
+    ])
+    def test_is_uplink_port(self, port, expected):
+        from apps.arp_mac.views import is_uplink_port
+        assert is_uplink_port(port) is expected
+
+    def test_access_port_beats_newer_uplink_sighting(self, auth_client, switch, core):
+        _seed_uplinks(switch, core)
+        rows = auth_client.get("/api/network/hosts/").data["results"]
+        h1 = next(h for h in rows if h["mac"] == "00:00:0c:00:00:01")
+        assert (h1["device"], h1["port"], h1["uplink"]) == ("sw2", "1/1/3", False)
+        h4 = next(h for h in rows if h["mac"] == "00:00:5e:00:53:04")
+        assert h4["uplink"] is True
+
+    def test_exclude_uplinks_hides_uplink_only_hosts(self, auth_client, device, switch, core):
+        _seed_hosts(device, switch)
+        _seed_uplinks(switch, core)
+        assert auth_client.get("/api/network/hosts/").data["count"] == 4
+        r = auth_client.get("/api/network/hosts/?exclude_uplinks=true")
+        macs = {h["mac"] for h in r.data["results"]}
+        assert r.data["count"] == 3 and "00:00:5e:00:53:04" not in macs
+        assert "aa:bb:cc:dd:ee:ff" in macs        # ARP-only host is not an uplink
+
+
+class TestHostsCsv:
+    def _csv(self, resp):
+        import csv
+        import io
+        return list(csv.reader(io.StringIO(resp.content.decode())))
+
+    def test_exports_all_rows_not_one_page(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = auth_client.get("/api/network/hosts/?export=csv&page_size=1")
+        assert r.status_code == 200 and r["Content-Type"].startswith("text/csv")
+        assert 'filename="ip-mac-hosts-' in r["Content-Disposition"]
+        rows = self._csv(r)
+        assert rows[0] == ["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
+                           "Type", "Last Seen"]
+        assert len(rows) == 1 + 3
+        h1 = next(x for x in rows if x[0] == "00:00:0c:00:00:01")
+        # Port "1/1/3" is wrapped so Excel shows text, not a date.
+        assert h1[1:7] == ["Cisco Systems, Inc", "10.0.0.30", "sw2", '="1/1/3"', "30", "static"]
+
+    def test_respects_filter_sort_and_uplinks(self, auth_client, device, switch, core):
+        _seed_hosts(device, switch)
+        _seed_uplinks(switch, core)
+        rows = self._csv(auth_client.get(
+            "/api/network/hosts/?export=csv&exclude_uplinks=true&sort=mac&order=desc"))
+        macs = [x[0] for x in rows[1:]]
+        assert macs == sorted(macs, reverse=True) and "00:00:5e:00:53:04" not in macs
+        rows = self._csv(auth_client.get("/api/network/hosts/?export=csv&q=acme"))
+        assert [x[0] for x in rows[1:]] == ["aa:bb:cc:dd:ee:ff"]
+
+    def test_formula_injection_neutralized(self, auth_client, switch):
+        from apps.arp_mac.models import MACEntry
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:09",
+                                interface="=HYPERLINK(\"x\")")
+        rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
+        assert rows[1][4].startswith("'=")
+
+    @pytest.mark.parametrize("port,expected", [
+        ("1/1/16", '="1/1/16"'), ("1/1/51", '="1/1/51"'), ("17", '="17"'), ("1-2", '="1-2"'),
+        ("ge-0/0/1", "ge-0/0/1"), ("ae9", "ae9"), ("lag10", "lag10"), ("Gi0/1", "Gi0/1"),
+        ("", ""),
+    ])
+    def test_port_kept_as_text_in_excel(self, auth_client, switch, port, expected):
+        from apps.arp_mac.models import MACEntry
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:0a", interface=port)
+        rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
+        assert rows[1][4] == expected
+
+    def test_requires_auth(self, api_client):
+        assert api_client.get("/api/network/hosts/?export=csv").status_code == 401
+
+
 class TestUpdateMacVendors:
     def test_bundled_load_offline(self, db):
         from django.core.management import call_command

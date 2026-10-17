@@ -1127,6 +1127,7 @@ export interface NetworkHost {
   vlan: number | null
   entry_type: string
   last_seen: string | null
+  uplink: boolean   // location is an uplink (lag/ae/Po/vtep) — no access port seen
 }
 
 export interface NetworkHostsResult {
@@ -1146,15 +1147,37 @@ export async function networkHosts(opts: {
   order?: 'asc' | 'desc'
   page?: number
   page_size?: number
+  exclude_uplinks?: boolean
 } = {}): Promise<NetworkHostsResult> {
   const params: Record<string, string> = {}
   if (opts.q) params.q = opts.q
+  if (opts.exclude_uplinks) params.exclude_uplinks = 'true'
   if (opts.sort) params.sort = opts.sort
   if (opts.order) params.order = opts.order
   if (opts.page) params.page = String(opts.page)
   if (opts.page_size) params.page_size = String(opts.page_size)
   const { data } = await api.get<NetworkHostsResult>('/network/hosts/', { params })
   return data
+}
+
+// Every host matching the filter (all pages) as CSV, in the given sort.
+export async function downloadNetworkHostsCsv(opts: {
+  q?: string
+  sort?: NetworkHostSort
+  order?: 'asc' | 'desc'
+  exclude_uplinks?: boolean
+} = {}): Promise<void> {
+  const params: Record<string, string> = { export: 'csv' }
+  if (opts.q) params.q = opts.q
+  if (opts.exclude_uplinks) params.exclude_uplinks = 'true'
+  if (opts.sort) params.sort = opts.sort
+  if (opts.order) params.order = opts.order
+  const resp = await api.get('/network/hosts/', { params, responseType: 'blob' })
+  const name = /filename="([^"]+)"/.exec(resp.headers['content-disposition'] ?? '')?.[1]
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = name || 'ip-mac-hosts.csv'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 // How a device's telemetry is currently being collected (gNMI / SNMP).
@@ -3195,8 +3218,10 @@ export async function fetchReachabilitySummary(period = '1h'): Promise<Reachabil
 export interface PlatformOption { value: string; label: string }
 // Supported device platforms, sourced from the backend (Device.Platform) so new
 // platforms appear in dropdowns without a frontend change.
-export async function fetchDevicePlatforms(): Promise<PlatformOption[]> {
-  const { data } = await api.get<PlatformOption[]>('/devices/platforms/')
+// inUse: only platforms at least one network device has (list filters).
+export async function fetchDevicePlatforms(inUse = false): Promise<PlatformOption[]> {
+  const { data } = await api.get<PlatformOption[]>('/devices/platforms/',
+    inUse ? { params: { in_use: 'true' } } : undefined)
   return Array.isArray(data) ? data : []
 }
 
