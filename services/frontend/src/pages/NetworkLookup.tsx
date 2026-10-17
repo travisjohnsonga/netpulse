@@ -34,7 +34,7 @@ export default function NetworkLookup() {
   const sort = (params.get('sort') as NetworkHostSort) || 'mac'
   const order = params.get('order') === 'desc' ? 'desc' : 'asc'
   const page = Math.max(1, Number(params.get('page')) || 1)
-  // Hide hosts only seen on aggregated uplinks (lag/ae/Po) — no access port.
+  // Hide hosts only seen on uplinks (lag/ae/Po/vtep) — no access port.
   const hideUplinks = params.get('uplinks') === 'hide'
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [qInput, setQInput] = useState(q)
@@ -127,7 +127,7 @@ export default function NetworkLookup() {
           </select>
         </label>
         <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
-          title="Hide hosts only seen on aggregated uplink/trunk ports (lagN, aeN, Port-channelN)">
+          title="Hide hosts only seen on uplink/trunk ports (lagN, aeN, Port-channelN, vtep)">
           <input type="checkbox" checked={hideUplinks}
             onChange={(e) => update({ uplinks: e.target.checked ? 'hide' : null, page: null })} />
           Hide uplinks

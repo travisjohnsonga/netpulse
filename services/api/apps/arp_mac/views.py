@@ -173,9 +173,11 @@ class NetworkSearchView(APIView):
 # mac with a window for the preferred location) rather than raising the cap.
 HOSTS_SCAN_CAP = 100_000
 
-# Aggregated uplink/trunk ports by name: AOS-CX lagN, Junos aeN, Cisco
-# Port-channelN/PoN, ArubaOS-S TrkN (optionally with a .unit suffix).
-_UPLINK_PORT_RE = re.compile(r"^(?:lag|ae|port-channel|po|trk)\d+(?:\.\d+)?$", re.IGNORECASE)
+# Uplink/trunk ports by name: aggregates — AOS-CX lagN, Junos aeN, Cisco
+# Port-channelN/PoN, ArubaOS-S TrkN (optionally with a .unit suffix) — and the
+# Junos EVPN-VXLAN tunnel "vtep[.unit]" (MACs learned behind another switch).
+_UPLINK_PORT_RE = re.compile(
+    r"^(?:(?:lag|ae|port-channel|po|trk)\d+(?:\.\d+)?|vtep(?:\.\d+)?)$", re.IGNORECASE)
 
 
 def is_uplink_port(port: str) -> bool:

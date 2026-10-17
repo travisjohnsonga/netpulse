@@ -1127,7 +1127,7 @@ export interface NetworkHost {
   vlan: number | null
   entry_type: string
   last_seen: string | null
-  uplink: boolean   // location is an aggregated uplink (lag/ae/Po) — no access port seen
+  uplink: boolean   // location is an uplink (lag/ae/Po/vtep) — no access port seen
 }
 
 export interface NetworkHostsResult {

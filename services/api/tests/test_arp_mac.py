@@ -438,9 +438,9 @@ def _seed_uplinks(switch, core):
 class TestUplinks:
     @pytest.mark.parametrize("port,expected", [
         ("lag10", True), ("ae9", True), ("ae9.0", True), ("Po1", True),
-        ("Port-channel12", True), ("Trk1", True),
+        ("Port-channel12", True), ("Trk1", True), ("vtep.32769", True), ("vtep", True),
         ("1/1/3", False), ("ge-0/0/1", False), ("Gi0/1", False), ("", False), (None, False),
-        ("vlan30", False), ("aero1", False),
+        ("vlan30", False), ("aero1", False), ("vtep1", False), ("vteps", False),
     ])
     def test_is_uplink_port(self, port, expected):
         from apps.arp_mac.views import is_uplink_port
