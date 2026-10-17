@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 import threading
 from math import ceil
 
@@ -172,6 +173,17 @@ class NetworkSearchView(APIView):
 # mac with a window for the preferred location) rather than raising the cap.
 HOSTS_SCAN_CAP = 100_000
 
+# Uplink/trunk ports by name: aggregates — AOS-CX lagN, Junos aeN, Cisco
+# Port-channelN/PoN, ArubaOS-S TrkN (optionally with a .unit suffix) — and the
+# Junos EVPN-VXLAN tunnel "vtep[.unit]" (MACs learned behind another switch).
+_UPLINK_PORT_RE = re.compile(
+    r"^(?:(?:lag|ae|port-channel|po|trk)\d+(?:\.\d+)?|vtep(?:\.\d+)?)$", re.IGNORECASE)
+
+
+def is_uplink_port(port: str) -> bool:
+    return bool(_UPLINK_PORT_RE.match((port or "").strip()))
+
+
 _HOST_SORTS = {"mac", "vendor", "ip", "device", "port", "vlan", "type", "last_seen"}
 
 
@@ -257,9 +269,16 @@ class NetworkHostsView(APIView):
 
         for e in mac_rows:
             h = hosts.setdefault(e.mac_address, _blank_host(e.mac_address, vendors))
-            # A MAC-table sighting is the authoritative location; most recent wins.
-            if not h["_has_mac_loc"] or (e.collected_at and e.collected_at > h["_mac_loc_ts"]):
+            # A MAC-table sighting is the authoritative location. Every switch
+            # also sees the MAC on its uplink, so an access-port sighting beats
+            # an uplink one; within the same kind, most recent wins.
+            uplink = is_uplink_port(e.interface)
+            rank = 1 if uplink else 2
+            if rank > h["_mac_rank"] or (
+                    rank == h["_mac_rank"] and e.collected_at and e.collected_at > h["_mac_loc_ts"]):
                 h["_has_mac_loc"] = True
+                h["_mac_rank"] = rank
+                h["_uplink"] = uplink
                 h["_mac_loc_ts"] = e.collected_at or h["_mac_loc_ts"]
                 h["device_id"], h["device"] = e.device_id, e.device.hostname
                 h["port"] = e.interface
@@ -274,8 +293,16 @@ class NetworkHostsView(APIView):
 
         if q:
             rows = [h for h in rows if _host_matches(h, q)]
+        # Hide hosts only ever seen on an uplink (no access-port location).
+        if request.query_params.get("exclude_uplinks") in ("1", "true"):
+            rows = [h for h in rows if not h["_uplink"]]
 
         rows.sort(key=lambda h: _host_sort_key(h, sort), reverse=desc)
+
+        # Every matching row (no pagination), in the table's current sort.
+        # Not "?format=" — DRF reserves that for renderer selection.
+        if request.query_params.get("export") == "csv":
+            return _hosts_csv(rows)
 
         count = len(rows)
         num_pages = max(1, ceil(count / page_size))
@@ -290,6 +317,42 @@ class NetworkHostsView(APIView):
             "last_collected": last_overall.isoformat() if last_overall else None,
             "results": [_host_public(h) for h in window],
         })
+
+
+def _hosts_csv(rows: list[dict]):
+    import csv
+    from datetime import date
+
+    from django.http import HttpResponse
+
+    from apps.core.audit import csv_safe
+
+    resp = HttpResponse(content_type="text/csv")
+    resp["Content-Disposition"] = (
+        f'attachment; filename="ip-mac-hosts-{date.today():%Y%m%d}.csv"')
+    w = csv.writer(resp)
+    w.writerow(["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
+                "Type", "Last Seen"])
+    # csv_safe: ports, hostnames and vendor strings come from devices.
+    for h in rows:
+        row = [csv_safe(c) for c in (
+            h["mac"], h["vendor"], " ".join(h["ips"]), h["device"], h["port"],
+            "" if h["vlan"] is None else h["vlan"], h["entry_type"], h["last_seen"] or "",
+        )]
+        row[4] = _excel_text(h["port"] or "") or row[4]
+        w.writerow(row)
+    return resp
+
+
+# Ports like "1/1/16" are read by Excel as dates (quoting doesn't stop it).
+_EXCEL_COERCED_RE = re.compile(r"^[\d/\-.: ]+$")
+
+
+def _excel_text(value: str) -> str:
+    """``="1/1/16"`` for an all-digit/separator value Excel would coerce to a
+    date or number — it evaluates to the literal text. '' when no wrap is
+    needed. Safe as a formula: the pattern admits no quotes or letters."""
+    return f'="{value}"' if _EXCEL_COERCED_RE.match(value) else ""
 
 
 def _int(val, default: int) -> int:
@@ -307,7 +370,7 @@ def _blank_host(mac: str, vendors: dict) -> dict:
         "device_id": None, "device": "", "port": "", "vlan": None,
         "entry_type": "", "last_seen": None,
         "_last_seen_ts": floor, "_arp_loc_ts": floor, "_mac_loc_ts": floor,
-        "_has_mac_loc": False,
+        "_has_mac_loc": False, "_mac_rank": 0, "_uplink": False,
     }
 
 
@@ -331,6 +394,7 @@ def _host_public(h: dict) -> dict:
         "device_id": h["device_id"], "device": h["device"],
         "port": h["port"], "vlan": h["vlan"],
         "entry_type": h["entry_type"], "last_seen": h["last_seen"],
+        "uplink": h["_uplink"],
     }
 
 
