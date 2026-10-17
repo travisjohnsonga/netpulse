@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
@@ -13,6 +14,7 @@ from apps.core.errors import safe_detail
 from apps.core.permissions import HasCapability
 from apps.credentials import vault
 from apps.devices.models import Device
+from apps.devices.signals import republish_device
 
 from . import config_gen, discovery
 
@@ -134,33 +136,38 @@ class InterfaceListCreateView(APIView):
         before_names = set(
             MonitoredInterface.objects.filter(device=device).values_list("if_name", flat=True)
         )
-        MonitoredInterface.objects.filter(device=device).delete()
-        now = timezone.now()
-        created = [
-            MonitoredInterface(
-                device=device,
-                if_index=it.get("if_index"),
-                if_name=it["if_name"],
-                if_description=it.get("if_description", "") or "",
-                if_speed_mbps=it.get("if_speed_mbps"),
-                if_type=it.get("if_type", "") or "",
-                lldp_neighbor_hostname=it.get("lldp_neighbor_hostname"),
-                lldp_neighbor_port=it.get("lldp_neighbor_port"),
-                lldp_neighbor_desc=it.get("lldp_neighbor_desc"),
-                poll_traffic=it.get("poll_traffic", True),
-                poll_errors=it.get("poll_errors", True),
-                poll_status=it.get("poll_status", True),
-                collection_method=it.get("collection_method", "auto"),
-                alert_on_down=it.get("alert_on_down", True),
-                alert_on_up=it.get("alert_on_up", True),
-                alert_severity=it.get("alert_severity", "high"),
-                consecutive_polls_before_alert=it.get("consecutive_polls_before_alert", 1),
-                last_discovered=now,
-                last_status=it.get("oper_status") or "unknown",
-            )
-            for it in items
-        ]
-        MonitoredInterface.objects.bulk_create(created)
+        # Atomic, then one republish at commit with the final selection:
+        # bulk_create fires no post_save, and the deletes' post_delete
+        # signals coalesce per transaction (signals.republish_device).
+        with transaction.atomic():
+            MonitoredInterface.objects.filter(device=device).delete()
+            now = timezone.now()
+            created = [
+                MonitoredInterface(
+                    device=device,
+                    if_index=it.get("if_index"),
+                    if_name=it["if_name"],
+                    if_description=it.get("if_description", "") or "",
+                    if_speed_mbps=it.get("if_speed_mbps"),
+                    if_type=it.get("if_type", "") or "",
+                    lldp_neighbor_hostname=it.get("lldp_neighbor_hostname"),
+                    lldp_neighbor_port=it.get("lldp_neighbor_port"),
+                    lldp_neighbor_desc=it.get("lldp_neighbor_desc"),
+                    poll_traffic=it.get("poll_traffic", True),
+                    poll_errors=it.get("poll_errors", True),
+                    poll_status=it.get("poll_status", True),
+                    collection_method=it.get("collection_method", "auto"),
+                    alert_on_down=it.get("alert_on_down", True),
+                    alert_on_up=it.get("alert_on_up", True),
+                    alert_severity=it.get("alert_severity", "high"),
+                    consecutive_polls_before_alert=it.get("consecutive_polls_before_alert", 1),
+                    last_discovered=now,
+                    last_status=it.get("oper_status") or "unknown",
+                )
+                for it in items
+            ]
+            MonitoredInterface.objects.bulk_create(created)
+            republish_device(device.id)
 
         after_names = {it["if_name"] for it in items}
         added = sorted(after_names - before_names)
@@ -212,6 +219,7 @@ class InterfaceAlertConfigView(APIView):
         qs = MonitoredInterface.objects.filter(device_id=device_id, if_name__in=if_names)
         if updates:
             qs.update(**updates)
+            republish_device(device_id)   # queryset.update fires no post_save
         result = MonitoredInterface.objects.filter(device_id=device_id).order_by("if_name")
         return Response(MonitoredInterfaceSerializer(result, many=True).data)
 

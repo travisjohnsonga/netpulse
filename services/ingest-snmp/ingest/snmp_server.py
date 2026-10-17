@@ -83,9 +83,14 @@ async def serve() -> None:
     # ── NATS device-update subscriptions ─────────────────────────────────────
     async def on_device_upsert(msg):
         try:
-            device = Device.from_dict(json.loads(msg.data))
-            poller.upsert(device)
-            logger.info("device upserted via NATS: %s", device.device_id)
+            payload = json.loads(msg.data)
+            device = Device.from_dict(payload)
+            # poll_now: the user's "Poll now" — restart (and poll) even if the
+            # config is unchanged. Otherwise unchanged resyncs are no-ops.
+            if poller.upsert(device, force=bool(payload.get("poll_now"))):
+                logger.info("device upserted via NATS: %s", device.device_id)
+            else:
+                logger.debug("device %s unchanged — upsert ignored", device.device_id)
         except Exception as exc:
             logger.error("bad device upsert payload: %s", exc)
 

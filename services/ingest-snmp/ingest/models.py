@@ -113,54 +113,64 @@ def build_community_data(version: int, creds: dict[str, Any]):
 
     Accepts either ``community`` or the API's OpenBao key ``snmpv2c_community``.
     """
-    from pysnmp.hlapi.asyncio import CommunityData
+    from pysnmp.hlapi.v3arch.asyncio import CommunityData
     community = creds.get("community") or creds.get("snmpv2c_community") or "public"
     return CommunityData(community, mpModel=version - 1)   # mpModel: 0=v1, 1=v2c
 
 
 def build_usm_data(creds: dict[str, Any]):
-    """Return a pysnmp UsmUserData object for v3."""
-    from pysnmp.hlapi.asyncio import (
+    """Return a pysnmp UsmUserData object for v3.
+
+    Protocol names match the API's credential profiles (apps/credentials/
+    snmp_auth.py), case-insensitive. An unrecognised name is an error rather
+    than a silent fall-back to noAuth/noPriv, which would only ever fail.
+    """
+    from pysnmp.hlapi.v3arch.asyncio import (
         UsmUserData,
+        usmAesCfb128Protocol,
+        usmAesCfb192Protocol,
+        usmAesCfb256Protocol,
+        usmDESPrivProtocol,
+        usmHMAC128SHA224AuthProtocol,
+        usmHMAC192SHA256AuthProtocol,
+        usmHMAC256SHA384AuthProtocol,
+        usmHMAC384SHA512AuthProtocol,
         usmHMACMD5AuthProtocol,
         usmHMACSHAAuthProtocol,
-        usmAesCfb128Protocol,
-        usmDESPrivProtocol,
-        usmNoAuthProtocol,
-        usmNoPrivProtocol,
     )
-
-    try:
-        from pysnmp.hlapi.asyncio import usmHMAC192SHA256AuthProtocol
-    except ImportError:
-        usmHMAC192SHA256AuthProtocol = usmHMACSHAAuthProtocol
-    try:
-        from pysnmp.hlapi.asyncio import usmAesCfb256Protocol
-    except ImportError:
-        usmAesCfb256Protocol = usmAesCfb128Protocol
 
     _AUTH = {
         "MD5":    usmHMACMD5AuthProtocol,
         "SHA":    usmHMACSHAAuthProtocol,
+        "SHA1":   usmHMACSHAAuthProtocol,
+        "SHA224": usmHMAC128SHA224AuthProtocol,
         "SHA256": usmHMAC192SHA256AuthProtocol,
-        None:     usmNoAuthProtocol,
+        "SHA384": usmHMAC256SHA384AuthProtocol,
+        "SHA512": usmHMAC384SHA512AuthProtocol,
     }
     _PRIV = {
         "DES":    usmDESPrivProtocol,
         "AES":    usmAesCfb128Protocol,
+        "AES128": usmAesCfb128Protocol,
+        "AES192": usmAesCfb192Protocol,
         "AES256": usmAesCfb256Protocol,
-        None:     usmNoPrivProtocol,
     }
+
+    def _proto(table: dict, value, kind: str):
+        key = (value or "").strip().upper().replace("-", "")
+        if key not in table:
+            raise ValueError(f"unsupported SNMPv3 {kind} protocol: {value!r}")
+        return table[key]
 
     name = creds["security_name"]
     auth_key = creds.get("auth_key")
     priv_key = creds.get("priv_key")
-    auth_proto = _AUTH.get(creds.get("auth_protocol"), usmNoAuthProtocol)
-    priv_proto = _PRIV.get(creds.get("priv_protocol"), usmNoPrivProtocol)
 
     if auth_key and priv_key:
         return UsmUserData(name, authKey=auth_key, privKey=priv_key,
-                           authProtocol=auth_proto, privProtocol=priv_proto)
+                           authProtocol=_proto(_AUTH, creds.get("auth_protocol"), "auth"),
+                           privProtocol=_proto(_PRIV, creds.get("priv_protocol"), "priv"))
     if auth_key:
-        return UsmUserData(name, authKey=auth_key, authProtocol=auth_proto)
+        return UsmUserData(name, authKey=auth_key,
+                           authProtocol=_proto(_AUTH, creds.get("auth_protocol"), "auth"))
     return UsmUserData(name)

@@ -98,7 +98,7 @@ def test_fresh_engine_per_poll_is_closed():
         def __init__(self):
             self.closed = False
 
-        def closeDispatcher(self):
+        def close_dispatcher(self):
             self.closed = True
 
     def _fake_new_engine():
