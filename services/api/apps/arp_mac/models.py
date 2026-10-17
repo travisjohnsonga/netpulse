@@ -56,8 +56,9 @@ class MACEntry(models.Model):
 
 
 class MACVendor(models.Model):
-    """OUI prefix → vendor lookup cache (populated from the IEEE OUI registry)."""
-    oui = models.CharField(max_length=8, primary_key=True)   # "aa:bb:cc"
+    """IEEE prefix → vendor lookup cache (populated from the IEEE registries)."""
+    # "aa:bb:cc" (MA-L), "aa:bb:cc:d" (MA-M) or "aa:bb:cc:dd:e" (MA-S / IAB)
+    oui = models.CharField(max_length=13, primary_key=True)
     vendor = models.CharField(max_length=128)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -15,20 +15,11 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import HasCapability
 from apps.devices.models import Device
-from .models import ARPEntry, MACEntry, MACVendor
+from .models import ARPEntry, MACEntry
 from .normalize import normalize_mac, oui_of
+from .vendors import vendor_for, vendor_map as _vendor_map
 
 logger = logging.getLogger(__name__)
-
-
-def _vendor_map(macs) -> dict:
-    """Resolve {mac: vendor} for a set of MACs via their OUIs in one query."""
-    ouis = {oui_of(m) for m in macs if m}
-    ouis.discard("")
-    if not ouis:
-        return {}
-    lookup = dict(MACVendor.objects.filter(oui__in=ouis).values_list("oui", "vendor"))
-    return {m: lookup.get(oui_of(m), "") for m in macs if m}
 
 
 def _arp_dict(e: ARPEntry, vendors: dict) -> dict:
@@ -403,8 +394,5 @@ class MACVendorView(APIView):
 
     def get(self, request, mac):
         oui = oui_of(mac)
-        vendor = ""
-        if oui:
-            row = MACVendor.objects.filter(oui=oui).first()
-            vendor = row.vendor if row else ""
+        vendor = vendor_for(normalize_mac(mac)) if oui else ""
         return Response({"mac": normalize_mac(mac), "oui": oui, "vendor": vendor})
