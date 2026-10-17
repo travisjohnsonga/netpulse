@@ -587,11 +587,10 @@ class TestHostsCsv:
         assert 'filename="ip-mac-hosts-' in r["Content-Disposition"]
         rows = self._csv(r)
         assert rows[0] == ["MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN",
-                           "Type", "Last Seen"]
+                           "Type", "Last Seen (UTC)"]
         assert len(rows) == 1 + 3
         h1 = next(x for x in rows if x[0] == "00:00:0c:00:00:01")
-        # Port "1/1/3" is wrapped so Excel shows text, not a date.
-        assert h1[1:7] == ["Cisco Systems, Inc", "10.0.0.30", "sw2", '="1/1/3"', "30", "static"]
+        assert h1[1:7] == ["Cisco Systems, Inc", "10.0.0.30", "sw2", "1/1/3", "30", "static"]
 
     def test_respects_filter_sort_and_uplinks(self, auth_client, device, switch, core):
         _seed_hosts(device, switch)
@@ -610,19 +609,92 @@ class TestHostsCsv:
         rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
         assert rows[1][4].startswith("'=")
 
-    @pytest.mark.parametrize("port,expected", [
-        ("1/1/16", '="1/1/16"'), ("1/1/51", '="1/1/51"'), ("17", '="17"'), ("1-2", '="1-2"'),
-        ("ge-0/0/1", "ge-0/0/1"), ("ae9", "ae9"), ("lag10", "lag10"), ("Gi0/1", "Gi0/1"),
-        ("", ""),
-    ])
-    def test_port_kept_as_text_in_excel(self, auth_client, switch, port, expected):
+    def test_ports_are_plain_in_csv(self, auth_client, switch):
+        # The CSV stays plain for scripts; Excel users get the .xlsx export.
         from apps.arp_mac.models import MACEntry
-        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:0a", interface=port)
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:0a", interface="1/1/16")
         rows = self._csv(auth_client.get("/api/network/hosts/?export=csv"))
-        assert rows[1][4] == expected
+        assert rows[1][4] == "1/1/16"
 
     def test_requires_auth(self, api_client):
         assert api_client.get("/api/network/hosts/?export=csv").status_code == 401
+
+
+def _xlsx_cells(content: bytes) -> dict:
+    """{"A1": (type, value)} from the first sheet. type: "s" shared string,
+    "n" number, "f" formula. Read with zipfile — no spreadsheet lib needed."""
+    import io
+    import re
+    import zipfile
+    from xml.etree import ElementTree as ET
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    z = zipfile.ZipFile(io.BytesIO(content))
+    shared = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+            shared.append("".join(t.text or "" for t in si.iter(f"{{{ns['m']}}}t")))
+    cells = {}
+    for c in ET.fromstring(z.read("xl/worksheets/sheet1.xml")).iter(f"{{{ns['m']}}}c"):
+        v, f = c.find("m:v", ns), c.find("m:f", ns)
+        if f is not None:
+            cells[c.get("r")] = ("f", f.text)
+        elif c.get("t") == "s":
+            cells[c.get("r")] = ("s", shared[int(v.text)])
+        elif v is not None:
+            cells[c.get("r")] = ("n", v.text)
+    assert all(re.match(r"^[A-Z]+\d+$", k) for k in cells)
+    return cells
+
+
+class TestHostsXlsx:
+    def _get(self, client, query=""):
+        r = client.get(f"/api/network/hosts/?export=xlsx{query}")
+        assert r.status_code == 200
+        return r
+
+    def test_headers_and_filename(self, auth_client, device, switch):
+        _seed_hosts(device, switch)
+        r = self._get(auth_client, "&page_size=1")
+        assert r["Content-Type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        assert 'filename="ip-mac-hosts-' in r["Content-Disposition"]
+        assert r["Content-Disposition"].endswith('.xlsx"')
+        cells = _xlsx_cells(r.content)
+        assert [cells[f"{c}1"][1] for c in "ABCDEFGH"] == [
+            "MAC", "Vendor", "IP Addresses", "Device", "Port", "VLAN", "Type", "Last Seen (UTC)"]
+        assert "A4" in cells and "A5" not in cells          # all 3 hosts, not one page
+
+    @pytest.mark.parametrize("port", ["1/1/16", "1/1/51", "17", "1-2", "ge-0/0/1"])
+    def test_port_is_a_text_cell(self, auth_client, switch, port):
+        from apps.arp_mac.models import MACEntry
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:0a",
+                                interface=port, vlan=30)
+        cells = _xlsx_cells(self._get(auth_client).content)
+        assert cells["E2"] == ("s", port)        # a string cell — never a date/number
+        assert cells["F2"] == ("n", "30")        # VLAN stays numeric
+        assert cells["H2"][0] == "n"             # Last Seen is a real date-time
+
+    def test_formula_like_value_is_stored_as_text(self, auth_client, switch):
+        from apps.arp_mac.models import MACEntry
+        MACEntry.objects.create(device=switch, mac_address="00:00:5e:00:53:09",
+                                interface='=HYPERLINK("http://x")')
+        cells = _xlsx_cells(self._get(auth_client).content)
+        assert cells["E2"] == ("s", '=HYPERLINK("http://x")')
+        assert not any(t == "f" for t, _ in cells.values())
+
+    def test_respects_filter_and_uplinks(self, auth_client, device, switch, core):
+        _seed_hosts(device, switch)
+        _seed_uplinks(switch, core)
+        cells = _xlsx_cells(self._get(auth_client, "&exclude_uplinks=true&q=00:00:0c").content)
+        macs = [cells[k][1] for k in sorted(cells) if k[0] == "A" and k != "A1"]
+        assert sorted(macs) == ["00:00:0c:00:00:01", "00:00:0c:00:00:02"]
+
+    def test_empty_result_is_valid_workbook(self, auth_client, db):
+        cells = _xlsx_cells(self._get(auth_client).content)
+        assert cells["A1"] == ("s", "MAC") and "A2" not in cells
+
+    def test_requires_auth(self, api_client):
+        assert api_client.get("/api/network/hosts/?export=xlsx").status_code == 401
 
 
 class TestUpdateMacVendors:

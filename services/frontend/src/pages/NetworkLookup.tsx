@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { networkHosts, downloadNetworkHostsCsv, searchFlows, type NetworkHost, type NetworkHostSort } from '../api/client'
+import { networkHosts, downloadNetworkHosts, searchFlows, type NetworkHost, type NetworkHostSort } from '../api/client'
 import { detectQueryKind, relTime } from '../lib/ipmac'
 import { STRIPED_ROW } from '../lib/tableStyles'
 import FlowsTable from '../components/FlowsTable'
@@ -38,7 +38,7 @@ export default function NetworkLookup() {
   const hideUplinks = params.get('uplinks') === 'hide'
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [qInput, setQInput] = useState(q)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting] = useState<'csv' | 'xlsx' | null>(null)
   const [exportErr, setExportErr] = useState<string | null>(null)
 
   // Merge a partial change into the URL params (kept as the single source of truth).
@@ -80,14 +80,14 @@ export default function NetworkLookup() {
   const kind = detectQueryKind(q.trim())
 
   // Export every matching host (all pages) with the current filter + sort.
-  const onExport = async () => {
-    setExporting(true); setExportErr(null)
+  const onExport = async (fmt: 'csv' | 'xlsx') => {
+    setExporting(fmt); setExportErr(null)
     try {
-      await downloadNetworkHostsCsv({ q, sort, order, exclude_uplinks: hideUplinks })
+      await downloadNetworkHosts(fmt, { q, sort, order, exclude_uplinks: hideUplinks })
     } catch {
       setExportErr('Export failed')
     } finally {
-      setExporting(false)
+      setExporting(null)
     }
   }
 
@@ -132,9 +132,15 @@ export default function NetworkLookup() {
             onChange={(e) => update({ uplinks: e.target.checked ? 'hide' : null, page: null })} />
           Hide uplinks
         </label>
-        <button onClick={onExport} disabled={exporting || count === 0}
+        <button onClick={() => onExport('xlsx')} disabled={exporting != null || count === 0}
+          title="Excel workbook — ports stay text (CSV opened in Excel turns 1/1/16 into a date)"
           className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-40 disabled:cursor-not-allowed">
-          {exporting ? 'Exporting…' : `Export CSV${count ? ` (${count.toLocaleString()})` : ''}`}
+          {exporting === 'xlsx' ? 'Exporting…' : `Export Excel${count ? ` (${count.toLocaleString()})` : ''}`}
+        </button>
+        <button onClick={() => onExport('csv')} disabled={exporting != null || count === 0}
+          title="Plain CSV for scripts and other tools"
+          className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-40 disabled:cursor-not-allowed">
+          {exporting === 'csv' ? 'Exporting…' : 'CSV'}
         </button>
         {exportErr && <span className="text-sm text-red-600 dark:text-red-400">{exportErr}</span>}
       </div>
