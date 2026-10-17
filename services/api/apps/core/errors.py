@@ -42,6 +42,38 @@ def log_internal_error(exc: BaseException, logger: logging.Logger | None = None,
                            exc, exc_info=True)
 
 
+# Exception class names → a safe, user-meaningful category. Matched by name over
+# the MRO so netmiko/paramiko/requests/smtplib needn't be imported here.
+_ERROR_CATEGORIES = (
+    (("NetmikoAuthenticationException", "AuthenticationException",
+      "SMTPAuthenticationError", "BadSecretError"), "authentication failed"),
+    (("NetmikoTimeoutException", "TimeoutError", "Timeout", "ConnectTimeout",
+      "ReadTimeout", "SMTPServerDisconnected"), "timed out"),
+    (("ConnectionRefusedError",), "connection refused"),
+    (("SSLError", "SSLCertVerificationError"), "TLS error"),
+    (("SMTPRecipientsRefused", "SMTPSenderRefused"), "recipient or sender rejected"),
+    (("gaierror", "NameResolutionError"), "host name could not be resolved"),
+    (("ConnectionError", "OSError", "SMTPConnectError", "SSHException"), "could not connect"),
+    (("Forbidden", "InvalidPath", "VaultError"), "secret store error"),
+)
+
+
+def classify_error(exc: BaseException) -> str:
+    """A short, safe description of ``exc`` for API responses — derived only
+    from the exception's TYPE (and an HTTP status code), never its message,
+    which can carry hostnames, URLs with tokens, paths or server replies.
+    Callers still log the full exception server-side."""
+    resp = getattr(exc, "response", None)
+    code = getattr(resp, "status_code", None)
+    if isinstance(code, int):
+        return "authentication failed" if code in (401, 403) else f"HTTP {code}"
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    for candidates, label in _ERROR_CATEGORIES:
+        if names.intersection(candidates):
+            return label
+    return "unexpected error (see server logs)"
+
+
 def safe_detail(exc: BaseException, logger: logging.Logger | None = None,
                 context: str = "", public: str = GENERIC_ERROR) -> str:
     """

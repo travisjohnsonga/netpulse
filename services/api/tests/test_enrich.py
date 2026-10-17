@@ -543,6 +543,25 @@ class TestEnrichEndpoint:
         assert resp.status_code == 200
         assert any(e["step"] == "interfaces" for e in resp.json()["errors"])
 
+    @pytest.mark.parametrize("exc,category", [
+        (TimeoutError("ssh to 192.0.2.9 timed out, key=SECRET123"), "timed out"),
+        (RuntimeError("bao token SECRET123 at /opt/x/y.py"), "unexpected error (see server logs)"),
+    ])
+    def test_sync_step_errors_never_carry_raw_exception_text(
+            self, auth_client, device, monkeypatch, exc, category):
+        # CodeQL py/stack-trace-exposure: the message is categorized, the raw
+        # exception (hosts, tokens, paths) only goes to the server log.
+        _no_network(monkeypatch)
+
+        def boom(d):
+            raise exc
+        monkeypatch.setattr(enrich, "_discover_interfaces", boom)
+
+        resp = auth_client.post(f"/api/devices/{device.id}/enrich/?sync=true")
+        assert "SECRET123" not in resp.content.decode()
+        msg = next(e["message"] for e in resp.json()["errors"] if e["step"] == "interfaces")
+        assert msg == f"Interface discovery failed: {category}"
+
     def test_sync_without_profile_returns_400(self, auth_client):
         dev = Device.objects.create(hostname="np", ip_address="10.0.0.9")
         resp = auth_client.post(f"/api/devices/{dev.id}/enrich/?sync=true")

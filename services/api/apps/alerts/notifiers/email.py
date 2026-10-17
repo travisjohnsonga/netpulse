@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import logging
 
+from apps.core.errors import classify_error
+
 from . import Notifier, register
 
 logger = logging.getLogger(__name__)
@@ -109,4 +111,6 @@ class EmailNotifier(Notifier):
             return True, f"sent to {len(recipients)} recipient(s)"
         except Exception as exc:  # noqa: BLE001
             logger.warning("email notify failed for channel %s: %s", channel.pk, exc)
-            return False, str(exc)
+            # Raw SMTP errors carry server names and replies — the detail is
+            # shown to users (channel test, NotificationLog), so categorize.
+            return False, f"email send failed: {classify_error(exc)}"

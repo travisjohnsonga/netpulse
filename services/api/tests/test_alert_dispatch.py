@@ -241,6 +241,32 @@ class TestDispatch:
         assert ok and attempts["n"] == 2
 
     @ENABLED
+    def test_notifier_exception_text_not_returned(self):
+        # The detail is shown to users (channel test, NotificationLog), so a
+        # raising notifier yields a category, never str(exc).
+        class Raises(Notifier):
+            def send(self, channel, payload):
+                raise ConnectionRefusedError("https://hooks.example/SECRET123 refused")
+        with mock.patch.dict(_REGISTRY, {"raises": Raises()}):
+            ch = make_channel(channel_type="raises")
+            p = payload_mod.AlertPayload(event_id=None, transition="firing", severity="high",
+                                         title="t", message="m")
+            ok, detail = dispatch.send_to_channel(ch, p)
+        assert not ok
+        assert detail == "notifier error: connection refused"
+
+    def test_email_smtp_error_is_categorized(self):
+        import smtplib
+        ch = make_channel(channel_type="email", config={"recipients": ["ops@example.com"]})
+        p = payload_mod.AlertPayload(event_id=None, transition="firing", severity="high",
+                                     title="t", message="m")
+        err = smtplib.SMTPAuthenticationError(535, b"5.7.8 user SECRET123 rejected by smtp.internal")
+        with mock.patch("django.core.mail.EmailMultiAlternatives.send", side_effect=err):
+            ok, detail = get_notifier("email").send(ch, p)
+        assert not ok
+        assert detail == "email send failed: authentication failed"
+
+    @ENABLED
     def test_unknown_transition(self, rec):
         rule = make_rule()
         ev = make_event(rule)
