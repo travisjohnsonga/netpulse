@@ -16,6 +16,8 @@ import asyncio
 import logging
 import re
 
+from apps.core.errors import classify_error
+
 logger = logging.getLogger(__name__)
 
 # SNMP OIDs (the .1 instance for the chassis on entPhysicalTable).
@@ -609,7 +611,7 @@ def _refresh_identity(device, profile, result: dict) -> list[str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich %s: could not read secrets: %s", device.hostname, exc)
         result["errors"].append({"step": "device-info",
-                                 "message": f"Could not read credentials: {exc}"})
+                                 "message": f"Could not read credentials: {classify_error(exc)}"})
 
     updates: dict = {}
 
@@ -777,7 +779,7 @@ def enrich_device(device_id: int, result: dict | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Interface discovery failed for %s: %s", device.hostname, exc)
         result["errors"].append({"step": "interfaces",
-                                 "message": f"Interface discovery failed: {exc}"})
+                                 "message": f"Interface discovery failed: {classify_error(exc)}"})
 
     # ── Step 3: LLDP neighbour discovery ──────────────────────────────────────
     try:
@@ -788,7 +790,7 @@ def enrich_device(device_id: int, result: dict | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLDP discovery failed for %s: %s", device.hostname, exc)
         result["errors"].append({"step": "lldp",
-                                 "message": f"LLDP neighbor discovery failed: {exc}"})
+                                 "message": f"LLDP neighbor discovery failed: {classify_error(exc)}"})
 
     # ── Step 4: initial config collection ─────────────────────────────────────
     # Capture a baseline running-config immediately so drift detection works from
@@ -798,7 +800,7 @@ def enrich_device(device_id: int, result: dict | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Config collection failed for %s: %s", device.hostname, exc)
         result["errors"].append({"step": "config",
-                                 "message": f"Config collection failed: {exc}"})
+                                 "message": f"Config collection failed: {classify_error(exc)}"})
 
     logger.info("Enrichment complete for %s", device.hostname)
     return result["changed"]

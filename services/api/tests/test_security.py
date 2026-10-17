@@ -192,3 +192,45 @@ class TestNoExceptionExposure:
                          "  return Response({'error': safe_detail(e, logger, 'v')})\n")
         assert _response_violations(bad)
         assert not _response_violations(good)
+
+
+class TestClassifyError:
+    """apps.core.errors.classify_error — safe categories from the exception TYPE
+    (and HTTP status), never from its message."""
+
+    @pytest.mark.parametrize("make,expected", [
+        (lambda: TimeoutError("x"), "timed out"),
+        (lambda: ConnectionRefusedError("x"), "connection refused"),
+        (lambda: ConnectionResetError("x"), "could not connect"),
+        (lambda: OSError("x"), "could not connect"),
+        (lambda: __import__("socket").gaierror("x"), "host name could not be resolved"),
+        (lambda: __import__("ssl").SSLError("x"), "TLS error"),
+        (lambda: __import__("smtplib").SMTPAuthenticationError(535, b"x"), "authentication failed"),
+        (lambda: __import__("smtplib").SMTPServerDisconnected("x"), "timed out"),
+        (lambda: __import__("paramiko").AuthenticationException("x"), "authentication failed"),
+        (lambda: __import__("netmiko").NetmikoTimeoutException("x"), "timed out"),
+        (lambda: __import__("netmiko").NetmikoAuthenticationException("x"), "authentication failed"),
+        (lambda: __import__("requests").exceptions.ConnectTimeout("x"), "timed out"),
+        (lambda: __import__("requests").exceptions.ConnectionError("x"), "could not connect"),
+        (lambda: RuntimeError("x"), "unexpected error (see server logs)"),
+        (lambda: ValueError("x"), "unexpected error (see server logs)"),
+    ])
+    def test_categories(self, make, expected):
+        from apps.core.errors import classify_error
+        assert classify_error(make()) == expected
+
+    @pytest.mark.parametrize("code,expected", [(401, "authentication failed"),
+                                               (403, "authentication failed"),
+                                               (404, "HTTP 404"), (502, "HTTP 502")])
+    def test_http_status(self, code, expected):
+        import requests
+
+        from apps.core.errors import classify_error
+        resp = requests.Response()
+        resp.status_code = code
+        assert classify_error(requests.HTTPError("x", response=resp)) == expected
+
+    def test_message_never_included(self):
+        from apps.core.errors import classify_error
+        for exc in (RuntimeError("SECRET123"), OSError("SECRET123"), TimeoutError("SECRET123")):
+            assert "SECRET123" not in classify_error(exc)

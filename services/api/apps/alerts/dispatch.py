@@ -23,6 +23,8 @@ import time
 
 from django.conf import settings
 
+from apps.core.errors import classify_error
+
 from .payload import FIRING, RESOLVED, SEVERITY_ORDER, build_payload
 
 logger = logging.getLogger(__name__)
@@ -185,7 +187,9 @@ def send_to_channel(channel, payload) -> tuple[bool, str]:
         try:
             ok, detail = notifier.send(channel, payload)
         except Exception as exc:  # noqa: BLE001 — a notifier must never crash dispatch
-            ok, detail = False, str(exc)
+            logger.warning("channel %s (%s) notifier raised: %s",
+                           channel.pk, channel.channel_type, exc, exc_info=True)
+            ok, detail = False, f"notifier error: {classify_error(exc)}"
         last_detail = detail
         if ok:
             if attempt > 1:
