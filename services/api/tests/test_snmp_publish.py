@@ -205,6 +205,21 @@ class TestPollerSync:
         assert resp.status_code == 200
         assert published == [(snmp_v3_device.id, ["GigabitEthernet1"])]
 
+    def test_rolled_back_republish_does_not_suppress_later_ones(
+            self, snmp_v3_device, published, django_capture_on_commit_callbacks):
+        # A republish queued inside a transaction that rolls back must not
+        # leave the device deduped for the rest of the connection's life.
+        from django.db import transaction
+        from apps.devices.signals import republish_device
+        with pytest.raises(RuntimeError):
+            with transaction.atomic():
+                republish_device(snmp_v3_device.id)
+                raise RuntimeError("rollback")
+        with django_capture_on_commit_callbacks(execute=True):
+            republish_device(snmp_v3_device.id)
+            republish_device(snmp_v3_device.id)   # still one publish per transaction
+        assert [c[0] for c in published] == [snmp_v3_device.id]
+
     def test_device_delete_does_not_re_add_it(self, snmp_v3_device, published,
                                               django_capture_on_commit_callbacks):
         # Cascade-deleting the device's interfaces must not republish the

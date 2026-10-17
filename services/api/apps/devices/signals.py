@@ -30,19 +30,22 @@ def republish_device(device_id) -> None:
     device at commit time and skips it if it no longer exists, so a cascade
     delete can't re-add a device the poller was just told to remove."""
     # One publish per device per transaction: replacing N interfaces fires N
-    # post_delete signals, but only the committed end state matters.
-    pending = transaction.get_connection().__dict__.setdefault("_snmp_republish", set())
-    if device_id in pending:
+    # post_delete signals, but only the committed end state matters. Dedupe
+    # against Django's own pending on-commit queue rather than a side set:
+    # Django drops queued callbacks on rollback, so a rolled-back transaction
+    # can't leave the device marked "pending" and suppress later publishes.
+    conn = transaction.get_connection()
+    if any(getattr(func, "_snmp_republish_id", None) == device_id
+           for _sids, func, *_ in conn.run_on_commit):
         return
-    pending.add(device_id)
 
     def _go():
         from . import snmp_publish
         from .models import Device
-        pending.discard(device_id)
         device = Device.objects.filter(pk=device_id).first()
         if device is not None:
             snmp_publish.publish_device_upsert(device)
+    _go._snmp_republish_id = device_id
     transaction.on_commit(_go)
 
 
