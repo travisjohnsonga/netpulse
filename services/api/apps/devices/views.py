@@ -640,8 +640,22 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
         Supported device platforms as [{value, label}] for UI dropdowns. Driven
         by Device.Platform, so adding a platform to the model surfaces it in the
         UI with no frontend change.
+
+        ``?in_use=true`` narrows to platforms that at least one network device
+        actually has (the Devices-list filter), so it never offers an option
+        that can only return an empty list.
         """
-        return Response([{"value": v, "label": label} for v, label in Device.Platform.choices])
+        choices = list(Device.Platform.choices)
+        if self.request.query_params.get("in_use") == "true":
+            used = set(Device.objects
+                       .filter(device_kind=Device.DeviceKind.NETWORK_DEVICE)
+                       .exclude(platform="")
+                       .values_list("platform", flat=True).distinct())
+            known = {v for v, _ in choices}
+            # Stored values outside the choices still need to be filterable.
+            choices = [(v, label) for v, label in choices if v in used] + \
+                      [(v, v) for v in sorted(used - known)]
+        return Response([{"value": v, "label": label} for v, label in choices])
 
     @staticmethod
     def _lldp_neighbors(device):
