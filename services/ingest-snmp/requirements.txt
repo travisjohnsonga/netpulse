@@ -7,7 +7,7 @@ pyasn1>=0.6.4
 # Required for SNMPv3 privacy (AES/DES) — an optional pysnmp 7 dependency that
 # isn't pulled in automatically; without it every authPriv poll fails.
 # >=43: pysnmp imports cryptography.hazmat.decrepit (added in 43.0).
-cryptography>=43
+cryptography>=50.0.2
 
 # Messaging
 nats-py~=2.15
