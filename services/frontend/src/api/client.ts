@@ -3387,6 +3387,18 @@ export async function deleteDevice(id: number): Promise<void> {
   await api.delete(`/devices/${id}/`)
 }
 
+export interface BulkDeleteResult {
+  deleted: number
+  failed: number
+  errors: { id: number; error: string }[]
+}
+
+/** Delete many devices (device:edit; each deletion audited server-side). */
+export async function bulkDeleteDevices(ids: number[]): Promise<BulkDeleteResult> {
+  const { data } = await api.post<BulkDeleteResult>('/devices/bulk-delete/', { ids })
+  return data
+}
+
 export interface TestConnectionResult {
   reachable: boolean
   open_ports: number[]

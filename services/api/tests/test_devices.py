@@ -1037,3 +1037,39 @@ class TestPlatformOptions:
     def test_label_is_rejected(self, auth_client):
         # The old hard-coded dropdown sent labels like "Junos" — the API 400s.
         assert auth_client.get("/api/devices/", {"platform": "Junos"}).status_code == 400
+
+
+# ── Bulk delete ───────────────────────────────────────────────────────────────
+
+class TestDeviceBulkDelete:
+    URL = "/api/devices/bulk-delete/"
+
+    def test_deletes_selected_and_audits_each(self, auth_client, device):
+        from apps.core.models import AuditLog
+        other = Device.objects.create(hostname="edge-rtr-02", ip_address="10.0.0.2")
+        keep = Device.objects.create(hostname="keep-me", ip_address="10.0.0.9")
+        resp = auth_client.post(self.URL, {"ids": [device.pk, other.pk]}, format="json")
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 2, "failed": 0, "errors": []}
+        assert list(Device.objects.values_list("pk", flat=True)) == [keep.pk]
+        assert AuditLog.objects.filter(event_type=AuditLog.EventType.DEVICE_DELETED).count() == 2
+
+    def test_unknown_ids_count_as_failed(self, auth_client, device):
+        resp = auth_client.post(self.URL, {"ids": [device.pk, 999999]}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 1
+        assert resp.json()["failed"] == 1
+
+    @pytest.mark.parametrize("payload", [{}, {"ids": []}, {"ids": "1,2"}, {"ids": ["a"]}])
+    def test_rejects_bad_payload(self, auth_client, payload):
+        assert auth_client.post(self.URL, payload, format="json").status_code == 400
+
+    def test_engineer_allowed(self, engineer_client, device):
+        resp = engineer_client.post(self.URL, {"ids": [device.pk]}, format="json")
+        assert resp.status_code == 200
+        assert not Device.objects.filter(pk=device.pk).exists()
+
+    def test_viewer_forbidden(self, viewer_client, device):
+        resp = viewer_client.post(self.URL, {"ids": [device.pk]}, format="json")
+        assert resp.status_code == 403
+        assert Device.objects.filter(pk=device.pk).exists()
