@@ -1,9 +1,12 @@
 import logging
 
 from django.db.models import Count, Q
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
@@ -41,6 +44,63 @@ from .serializers import (
 def _truthy(value) -> bool:
     """Loose truthiness for query-string flags (?show_all=true|1|yes)."""
     return str(value).lower() in ("1", "true", "yes", "on")
+
+
+def _cached_ping_summary() -> list[dict]:
+    """Per-device ping summary from InfluxDB, cached 60s (shared by the
+    ping-summary endpoint and the device list's ?ordering=ping)."""
+    from django.core.cache import cache
+    from . import metrics_influx
+    data = cache.get("ping_summary")
+    if data is None:
+        data = metrics_influx.query_ping_summary()
+        cache.set("ping_summary", data, 60)
+    return data
+
+
+class DevicePagination(PageNumberPagination):
+    """The device list lets the UI pick its page size (25…500)."""
+    page_size_query_param = "page_size"
+    max_page_size = 500
+
+
+class DeviceOrderingFilter(OrderingFilter):
+    """
+    OrderingFilter for the device list with list-friendly semantics:
+      - text columns sort case-insensitively (vendor data mixes "Juniper" and
+        "juniper", which a byte sort scatters across the list);
+      - NULLs always sort LAST, both directions (Postgres puts them first on
+        DESC, so "-compliance_score" led with every never-checked device);
+      - ``ping`` sorts by the current RTT from the cached InfluxDB ping
+        summary (not a DB column), so it's correct across pages;
+      - a pk tie-breaker keeps pagination stable when many rows tie.
+    """
+
+    CASE_INSENSITIVE = {"hostname", "vendor", "platform", "model", "os_version",
+                        "serial_number", "site__name"}
+
+    def filter_queryset(self, request, queryset, view):
+        from django.db.models import Case, F, FloatField, Value, When
+        from django.db.models.functions import Lower
+
+        ordering = self.get_ordering(request, queryset, view)
+        if not ordering:
+            return queryset
+        exprs = []
+        for term in ordering:
+            desc = term.startswith("-")
+            name = term.lstrip("-")
+            if name == "ping":
+                whens = [When(pk=r["device_id"], then=Value(float(r["current_ms"])))
+                         for r in _cached_ping_summary()
+                         if isinstance(r.get("device_id"), int)
+                         and isinstance(r.get("current_ms"), (int, float))]
+                queryset = queryset.annotate(ping_ms=Case(
+                    *whens, default=Value(None), output_field=FloatField()))
+                name = "ping_ms"
+            expr = Lower(name) if name in self.CASE_INSENSITIVE else F(name)
+            exprs.append(expr.desc(nulls_last=True) if desc else expr.asc(nulls_last=True))
+        return queryset.order_by(*exprs, "pk")
 
 
 def _ssh_creds(profile_id):
@@ -286,12 +346,14 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     write_capability = "device:edit"
 
     queryset = Device.objects.select_related("site", "role").prefetch_related("groups").all()
+    pagination_class = DevicePagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, DeviceOrderingFilter]
     filterset_fields = ["status", "platform", "vendor", "site", "role"]
     search_fields = ["hostname", "ip_address", "serial_number"]
     ordering_fields = [
         "hostname", "status", "ip_address", "vendor", "platform", "model",
         "os_version", "serial_number", "last_seen", "created_at", "site__name",
-        "compliance_score",
+        "compliance_score", "ping",
     ]
     ordering = ["hostname"]
 
@@ -591,13 +653,7 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
     def ping_summary(self, request):
         """Per-device ping current/avg/max/uptime + 24h sparkline for the device
         list. Cached 60s (same data for every user; the InfluxDB query is shared)."""
-        from django.core.cache import cache
-        from . import metrics_influx
-        data = cache.get("ping_summary")
-        if data is None:
-            data = metrics_influx.query_ping_summary()
-            cache.set("ping_summary", data, 60)
-        return Response(data)
+        return Response(_cached_ping_summary())
 
     @action(detail=False, methods=["get"], url_path="status-summary")
     def status_summary(self, request):
