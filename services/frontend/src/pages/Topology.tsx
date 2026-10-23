@@ -66,7 +66,7 @@ function roleKey(n: TopologyNode): string {
   if (r.includes('server') || t === 'linux' || t === 'windows') return 'server'
   if (r.includes('core')) return 'core-switch'
   if (r.includes('distrib')) return 'distribution'
-  if (r.includes('access') || t === 'aos_cx' || t === 'nxos' || t === 'eos' || t === 'unifi_sw' || t === 'mist_sw') return 'access-switch'
+  if (r.includes('access') || t === 'aos_cx' || t === 'instant_on' || t === 'nxos' || t === 'eos' || t === 'unifi_sw' || t === 'mist_sw') return 'access-switch'
   if (r.includes('router') || r.includes('wan') || t.startsWith('ios') || t === 'junos' || t === 'mist_gw') return 'router'
   return 'default'
 }

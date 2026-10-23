@@ -66,6 +66,9 @@ FIELD_MAP = {
     "wlsxSysXCpuUtilization_0": "cpu_pct",
     "1_3_6_1_4_1_14823_2_2_1_1_1_10_0": "memory_used_pct",  # wlsxSysXMemoryUsage
     "wlsxSysXMemoryUsage_0": "memory_used_pct",
+    # HPE Instant On — Radlan rlCpuUtilDuringLastMinute re-rooted under HP
+    # enterprise 11.2 (unresolved by the MIB index → raw OID field).
+    "1_3_6_1_4_1_11_2_1_8_0": "cpu_pct",
     # Aruba AOS-CX native OpenConfig gNMI (dial-in, :8443).
     "/system/cpus/cpu/state/usage/instant": "cpu_pct",
     "/system/cpus/cpu[index=0]/state/usage/instant": "cpu_pct",

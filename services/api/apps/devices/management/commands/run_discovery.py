@@ -110,7 +110,9 @@ _VENDOR_PATTERNS = [
     ("arista",    ("arista",)),
     ("sonicwall", ("sonicwall", "sonicos")),
     # AOS-CX switches brand either as "Aruba…" or "HPE ANW/HPE Aruba …".
-    ("aruba",     ("aruba", "arubaos", "hpe anw", "hpe aruba")),
+    # Instant On ("HPE Networking Instant On …") sits in HP enterprise 11, which
+    # isn't mapped above — so the sysDescr brand is the vendor signal.
+    ("aruba",     ("aruba", "arubaos", "hpe anw", "hpe aruba", "instant on")),
     ("fortinet",  ("fortios", "fortigate", "fortinet")),
     ("paloalto",  ("palo alto", "pan-os")),
     ("mikrotik",  ("mikrotik", "routeros")),
@@ -166,6 +168,11 @@ def _platform_from_descr(descr: str) -> str:
         return "panos"
     if "sonicos" in low or "sonicwall" in low:
         return "sonicwall"
+    # Instant On before any HPE/Aruba match: older firmware brands as "Aruba
+    # Instant On", and its sysObjectID (HP enterprise 11.2.3.7.11.*) is shared
+    # with ProCurve/AOS-S, so only the sysDescr can identify it.
+    if "instant on" in low or "instanton_" in low:
+        return "instant_on"
     # AOS-CX must be matched before generic ArubaOS (its sysDescr contains both).
     # Some AOS-CX switches brand as "HPE ANW …"/"HPE Aruba …" with no AOS-CX
     # token (e.g. "HPE ANW R9Y04A 6100 … PL.10.16.1030").

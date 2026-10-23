@@ -162,6 +162,9 @@ class Device(TimestampedModel):
         SONICWALL = "sonicwall", "SonicWall SonicOS"
         AOS_CX = "aos_cx", "HPE AOS-CX"
         ARUBA = "aruba", "Aruba AOS"
+        # HPE Networking Instant On switches (1930/1960) — Radlan-based firmware
+        # with the RADLAN MIB re-rooted under HP enterprise 1.3.6.1.4.1.11.2.
+        INSTANT_ON = "instant_on", "HPE Instant On"
         SONIC = "sonic", "SONiC"
         # Ubiquiti UniFi (managed via their controller, not SSH/SNMP).
         UNIFI_AP = "unifi_ap", "UniFi Access Point"

@@ -327,7 +327,7 @@ class TestDeviceModel:
         for value, _ in Device.Platform.choices:
             assert value in ("ios", "ios_xe", "ios_xr", "nxos", "eos", "junos",
                              "fortios", "panos", "sonicwall", "aos_cx", "aruba",
-                             "unifi_ap", "unifi_sw", "unifi_gw", "unifi_udm",
+                             "instant_on", "unifi_ap", "unifi_sw", "unifi_gw", "unifi_udm",
                              "unifi_uckp", "unifi_ucg", "mist_ap", "mist_sw",
                              "mist_gw", "sonic", "other")
 
