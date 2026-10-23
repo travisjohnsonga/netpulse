@@ -53,6 +53,24 @@ PETH_MAIN_PSE_ENTRY = "1.3.6.1.2.1.105.1.3.1"       # table — one walk grabs a
 # device is found that reports the budget in true watts.
 _POE_BUDGET_DIVISOR = 2
 
+# RADLAN-Physicaldescription-MIB rlPhdUnitEnvParamTable, re-rooted by HPE
+# Instant On from Radlan's 1.3.6.1.4.1.89 to HP's 1.3.6.1.4.1.11.2 (so
+# 89.53.15.1 → 11.2.53.15.1). One row per stack unit; columns are
+# <base>.<col>.<unit>. Instant On has neither ENTITY-SENSOR-MIB nor
+# HOST-RESOURCES, so this table is its only temperature / PSU+fan status source.
+# Lab-verified on a 1930 JL684B (3.3.0.9): mainPS=1, redundantPS=5, fan1/2=1,
+# fan3-6=5, temp=65 °C, status=1 — matching its 1 PSU + 2 fans in entPhysical.
+RADLAN_ENV_TABLE = "1.3.6.1.4.1.11.2.53.15.1"
+_RADLAN_COL_MAIN_PS = "2"
+_RADLAN_COL_REDUNDANT_PS = "3"
+_RADLAN_COL_FANS = ("4", "5", "6", "7", "8", "9")   # fan1Status … fan6Status
+_RADLAN_COL_TEMP = "10"                              # rlPhdUnitEnvParamTempSensorValue (°C)
+_RADLAN_COL_TEMP_STATUS = "11"
+# RlEnvMonState: normal(1) warning(2) critical(3) shutdown(4) notPresent(5)
+# notFunctioning(6).
+_RADLAN_NORMAL = 1
+_RADLAN_NOT_PRESENT = 5
+
 # All table bases an env-capable device should be told to walk.
 WALK_BASES = [
     HR_PROCESSOR_LOAD,
@@ -245,7 +263,7 @@ def _inventory(walk: dict) -> tuple[list[dict], list[dict]]:
     return fans, psus
 
 
-def _poe(walk: dict) -> dict:
+def _poe(walk: dict, budget_divisor: float = _POE_BUDGET_DIVISOR) -> dict:
     """
     POWER-ETHERNET-MIB pethMainPseTable → PoE budget/usage from the table walk,
     summed across PSE groups. {} when the device exposes no PoE table.
@@ -258,7 +276,7 @@ def _poe(walk: dict) -> dict:
         return {}
 
     budget = sum(v for v in (_to_float(x) for x in power.values()) if v is not None)
-    budget = budget / _POE_BUDGET_DIVISOR
+    budget = budget / budget_divisor
     used = sum(v for v in (_to_float(x) for x in consumed.values()) if v is not None)
     codes = [_to_int(v) for v in statuses.values() if _to_int(v) is not None]
     if 3 in codes:
@@ -274,6 +292,56 @@ def _poe(walk: dict) -> dict:
         "used_pct": round(used / budget * 100, 1) if budget > 0 else None,
         "status": status,
     }
+
+
+def _radlan_rows(walk: dict) -> dict:
+    """rlPhdUnitEnvParamTable → {unit: {col: int}} ({} when not walked)."""
+    rows: dict = {}
+    for suffix, val in _by_index(walk, RADLAN_ENV_TABLE).items():
+        col, _, unit = suffix.partition(".")
+        v = _to_int(val)
+        if unit and v is not None:
+            rows.setdefault(unit, {})[col] = v
+    return rows
+
+
+def _radlan_ok(state):
+    """RlEnvMonState → status_ok (None when absent/unknown)."""
+    if state is None or state == _RADLAN_NOT_PRESENT:
+        return None
+    return state == _RADLAN_NORMAL
+
+
+def _apply_radlan(rows: dict, fans: list[dict], psus: list[dict]) -> list[dict]:
+    """
+    Overlay Radlan per-unit status onto the entPhysical fan/PSU lists (which
+    carry presence + names but no status on Instant On) and return the
+    temperature readings. Fans/PSUs are matched positionally in entPhysical
+    index order — the table has no names, only fan1…fan6 / main+redundant PS.
+    Only the first stack unit is overlaid (Instant On doesn't stack).
+    """
+    temps = []
+    for unit in sorted(rows, key=lambda u: _to_int(u) or 0):
+        r = rows[unit]
+        temp = r.get(_RADLAN_COL_TEMP)
+        if temp is not None and temp > 0:
+            temps.append({
+                "name": "System" if len(rows) == 1 else f"Unit {unit}",
+                "index": unit,
+                "celsius": float(temp),
+                "status_ok": _radlan_ok(r.get(_RADLAN_COL_TEMP_STATUS)) is not False,
+            })
+    if rows:
+        first = rows[min(rows, key=lambda u: _to_int(u) or 0)]
+        fan_states = [first.get(c) for c in _RADLAN_COL_FANS]
+        fan_states = [s for s in fan_states if s is not None and s != _RADLAN_NOT_PRESENT]
+        for fan, state in zip(fans, fan_states):
+            fan["status_ok"] = _radlan_ok(state)
+        ps_states = [first.get(_RADLAN_COL_MAIN_PS), first.get(_RADLAN_COL_REDUNDANT_PS)]
+        ps_states = [s for s in ps_states if s is not None and s != _RADLAN_NOT_PRESENT]
+        for psu, state in zip(psus, ps_states):
+            psu["status_ok"] = _radlan_ok(state)
+    return temps
 
 
 def derive_environment(get_values: dict, walk: dict) -> dict:
@@ -305,17 +373,23 @@ def derive_environment(get_values: dict, walk: dict) -> dict:
     scalars.update(_memory(get_values))
 
     temps = _temperature_sensors(walk)
+    fans, psus = _inventory(walk)
+    radlan = _radlan_rows(walk)
+    if radlan:
+        radlan_temps = _apply_radlan(radlan, fans, psus)   # also sets fan/PSU status
+        temps = temps or radlan_temps
     if temps:
         scalars["temp_max_c"] = max(t["celsius"] for t in temps)
 
-    fans, psus = _inventory(walk)
     if fans:
         scalars["fan_count"] = len(fans)
     if psus:
         scalars["psu_count"] = len(psus)
 
     result = {"scalars": scalars, "temperature": temps, "fans": fans, "psus": psus}
-    poe = _poe(walk)
+    # Only Instant On walks the Radlan table, and it reports pethMainPsePower
+    # in true watts (370 for a 370 W budget) — no AOS-CX half-watt divisor.
+    poe = _poe(walk, budget_divisor=1 if radlan else _POE_BUDGET_DIVISOR)
     if poe:
         result["poe"] = poe
     return result

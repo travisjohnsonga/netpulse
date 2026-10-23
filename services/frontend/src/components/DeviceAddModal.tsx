@@ -24,6 +24,7 @@ const PLATFORMS = [
   { value: 'sonicwall', label: 'SonicWall SonicOS', vendor: 'sonicwall' },
   { value: 'aos_cx', label: 'HPE AOS-CX', vendor: 'hpe' },
   { value: 'aruba', label: 'Aruba AOS', vendor: 'aruba' },
+  { value: 'instant_on', label: 'HPE Instant On', vendor: 'aruba' },
   { value: 'vyos', label: 'VyOS', vendor: 'vyos' },
   { value: 'linux', label: 'Linux', vendor: 'linux' },
   { value: 'other', label: 'Other', vendor: '' },

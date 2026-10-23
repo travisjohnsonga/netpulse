@@ -50,6 +50,10 @@ SONIC_CONN = "1.3.6.1.4.1.8741.1.3.1.2.0"  # current connection count
 SONIC_CPU_ALT = "1.3.6.1.4.1.8741.1.3.2.3.0"       # CPU utilization (%)
 SONIC_MEM_USED_KB = "1.3.6.1.4.1.8741.1.3.2.2.0"   # RAM used (KB)
 SONIC_MEM_TOTAL_KB = "1.3.6.1.4.1.8741.1.3.2.1.0"  # RAM total (KB)
+# HPE Instant On: RADLAN-rndMng re-rooted from 89.1 to HP's 11.2.1
+# (rlCpuUtilDuringLastSecond/LastMinute/Last5Minutes = .7/.8/.9). No
+# HOST-RESOURCES-MIB on this platform, so hrProcessorLoad returns nothing.
+INSTANT_ON_CPU_1MIN = "1.3.6.1.4.1.11.2.1.8.0"
 # AOS-CX memory via HOST-RESOURCES hrStorage index 1 ("Physical memory").
 # CPU (hrProcessorLoad) and the ENTITY-SENSOR temp/fan/PSU tables live at
 # vendor indexes, so they are WALKED (PLATFORM_WALK_OIDS), not GET here.
@@ -81,6 +85,9 @@ PLATFORM_DEVICE_OIDS = {
                 "1.3.6.1.4.1.14823.2.2.1.1.1.11.0",  # wlsxSysXCpuUtilization (%)
                 "1.3.6.1.4.1.14823.2.2.1.1.1.10.0",  # wlsxSysXMemoryUsage (%)
                 "1.3.6.1.4.1.14823.2.2.1.1.1.9.0"],  # wlsxSysXMemorySize
+    # HPE Instant On: CPU via the re-rooted Radlan scalar; temp/fan/PSU/PoE are
+    # walked (below). No memory OID is exposed.
+    "instant_on": [SYSUPTIME, INSTANT_ON_CPU_1MIN],
     "_default": [SYSUPTIME, HRPROCLOAD],                  # universal fallback
 }
 
@@ -115,12 +122,23 @@ def _junos_walk_bases() -> list[str]:
     return [o for o in WALK_BASES if o != PETH_MAIN_PSE_ENTRY]
 
 
+def _instant_on_walk_bases() -> list[str]:
+    # entPhysical gives PSU/fan presence + names; the Radlan env table their
+    # status + the temperature; pethMainPseTable the PoE budget. Instant On has
+    # no ENTITY-SENSOR-MIB / HOST-RESOURCES, so those bases are left out.
+    from apps.telemetry.snmp_environment import (
+        ENT_PHYSICAL_CLASS, ENT_PHYSICAL_NAME, PETH_MAIN_PSE_ENTRY, RADLAN_ENV_TABLE,
+    )
+    return [ENT_PHYSICAL_CLASS, ENT_PHYSICAL_NAME, PETH_MAIN_PSE_ENTRY, RADLAN_ENV_TABLE]
+
+
 PLATFORM_WALK_OIDS = {
     "aos_cx": _aos_cx_walk_bases(),
     # junos previously got NO environment walks at all — entPhysicalTable was
     # never collected, so derive_environment saw an empty walk and EX-family
     # PSU/fan units silently vanished (the _units() overlay logic was fine).
     "junos": _junos_walk_bases(),
+    "instant_on": _instant_on_walk_bases(),
 }
 
 

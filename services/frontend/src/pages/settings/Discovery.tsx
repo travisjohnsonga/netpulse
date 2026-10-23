@@ -50,7 +50,7 @@ function apiError(err: unknown, fallback: string): string {
 // Device platforms offered when approving an unidentified device.
 const PLATFORMS = [
   'ios', 'ios_xe', 'ios_xr', 'nxos', 'asa', 'eos', 'junos',
-  'fortios', 'panos', 'sonicwall', 'aos_cx', 'aruba', 'vyos', 'linux', 'other',
+  'fortios', 'panos', 'sonicwall', 'aos_cx', 'aruba', 'instant_on', 'vyos', 'linux', 'other',
 ]
 
 // Default platform for an unambiguous vendor (mirrors the backend

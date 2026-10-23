@@ -14,7 +14,8 @@ const PLATFORMS_FALLBACK: PlatformOption[] = [
   { value: 'eos', label: 'Arista EOS' }, { value: 'junos', label: 'Juniper JunOS' },
   { value: 'fortios', label: 'Fortinet FortiOS' }, { value: 'panos', label: 'Palo Alto PAN-OS' },
   { value: 'sonicwall', label: 'SonicWall SonicOS' }, { value: 'aos_cx', label: 'HPE AOS-CX' },
-  { value: 'aruba', label: 'Aruba AOS' }, { value: 'sonic', label: 'SONiC' },
+  { value: 'aruba', label: 'Aruba AOS' }, { value: 'instant_on', label: 'HPE Instant On' },
+  { value: 'sonic', label: 'SONiC' },
   { value: 'other', label: 'Other' },
 ]
 

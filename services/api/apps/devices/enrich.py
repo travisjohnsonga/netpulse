@@ -149,6 +149,36 @@ def _parse_junos_descr(descr: str) -> dict:
     return out
 
 
+# Instant On firmware token: "InstantOn_1930_3.3.0.0 (9)" — the 4th component
+# is always 0 and the build rides in the parens; the running image (and the
+# Instant On app) calls that release 3.3.0.9.
+_INSTANT_ON_FW_RE = re.compile(r"InstantOn_\w+?_(\d+\.\d+\.\d+)\.\d+\s*\((\d+)\)", re.IGNORECASE)
+# "<series> <part no>", e.g. "1930 JL684B" / "1430 R8R45A" / "1960 JL808A".
+_INSTANT_ON_MODEL_RE = re.compile(r"\b(1[3-9]\d0)\s+([A-Z][A-Z0-9]{4}[A-Z])\b")
+
+
+def _parse_instant_on_descr(descr: str) -> dict:
+    """
+    Parse an HPE Instant On sysDescr into {model, os_version}. {} for any other
+    sysDescr. Verified on a 1930 (firmware 3.3.0.9):
+      'HPE Networking Instant On Switch 24p Gigabit CL4 PoE 4p SFP+ 370W 1930
+       JL684B, InstantOn_1930_3.3.0.0 (9)'
+        → {'model': '1930 JL684B', 'os_version': '3.3.0.9'}
+    The model here is only a fallback: entPhysicalModelName carries the fuller
+    "Instant On 1930 24G 4SFP+ 370W Switch JL684B".
+    """
+    if "instant on" not in descr.lower() and "instanton_" not in descr.lower():
+        return {}
+    out = {}
+    m = _INSTANT_ON_FW_RE.search(descr)
+    if m:
+        out["os_version"] = f"{m.group(1)}.{m.group(2)}"
+    mm = _INSTANT_ON_MODEL_RE.search(descr)
+    if mm:
+        out["model"] = f"{mm.group(1)} {mm.group(2)}"
+    return out
+
+
 def _model_from_aos_cx_descr(descr: str) -> str:
     """
     Extract the model from the HPE/ANW-prefixed AOS-CX sysDescr form, e.g.
@@ -157,6 +187,8 @@ def _model_from_aos_cx_descr(descr: str) -> str:
     Returns '' for any other sysDescr (so it never touches Cisco/Aruba-mobility).
     """
     if not re.search(r"\bHPE\b|\bANW\b", descr, re.IGNORECASE):
+        return ""
+    if "instant on" in descr.lower():   # also "HPE …", but a different lexicon
         return ""
     head = _AOS_CX_FW_SPLIT_RE.split(descr, 1)[0]          # drop firmware suffix
     head = re.sub(r"^\s*HPE\s+(?:ANW\s+)?", "", head, flags=re.IGNORECASE)
@@ -293,6 +325,11 @@ def _parse_snmp(res: dict, updates: dict) -> None:
             # as entPhysicalModelName — the descr model ("ex4100-24mp") is better.
             if not model or _JUNIPER_PART_NO_RE.match(model):
                 model = junos.get("model", "") or model
+        instant = _parse_instant_on_descr(descr)
+        if instant:
+            if "os_version" in instant:
+                updates["os_version"] = instant["os_version"]
+            model = model or instant.get("model", "")
         # The HPE/ANW AOS-CX sysDescr carries the most descriptive model
         # ("HPE ANW R9Y04A 6100 …"); prefer it over the entPhysical column.
         descr_model = _model_from_aos_cx_descr(descr)

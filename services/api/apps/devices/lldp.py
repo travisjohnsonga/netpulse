@@ -39,6 +39,7 @@ PLATFORM_HINTS: list[tuple[str, str]] = [
     ("NX-OS", "nxos"),
     ("Nexus", "nxos"),
     ("Cisco IOS", "ios"),
+    ("Instant On", "instant_on"),   # before "Aruba" (older units brand "Aruba Instant On")
     ("ArubaOS-CX", "aos_cx"),
     ("AOS-CX", "aos_cx"),
     ("Aruba", "aos_cx"),

@@ -735,6 +735,12 @@ aos_cx, aruba, sonicwall, plus aruba/aos.
   granular per Juniper docs, so probe, never allowlist. EX4100/4400: entPhysicalTable yes,
   ENTITY-SENSOR-MIB entirely absent → PSU/fan are presence-only; real status needs
   proprietary jnxOperatingTable (1.3.6.1.4.1.2636.3.1.13.1, roadmap — verify by walk first).
+- **HPE Instant On (`instant_on`, verified on a 1930 JL684B, fw 3.3.0.9)**: SNMP-only (v2c read-only;
+  cloud/app-managed → config collection skipped). Radlan firmware with the RADLAN MIB **re-rooted from
+  enterprise 89 to HP's 1.3.6.1.4.1.11.2** (89.x → 11.2.x). sysObjectID `11.2.3.7.11.*` is shared with
+  ProCurve, so detection is by sysDescr ("Instant On"). No HOST-RESOURCES / ENTITY-SENSOR: CPU =
+  `11.2.1.8.0` (rlCpuUtilDuringLastMinute), temp + PSU/fan status = `11.2.53.15.1` (rlPhdUnitEnvParamTable),
+  presence/names from entPhysical. PoE budget is TRUE watts (no AOS-CX ÷2). No memory OID.
 - **Discovery**: 4-tier (passive/topology-walk/active-scan/import); all land PENDING, never
   auto-activate. Default `ping_snmp` (production-safe). ⚠️ nmap Active Scan tripped a firewall block in
   a production lab — reserve for labs. OT/ICS WARNING: never auto-probe industrial subnets (excluded_subnets).

@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 SKIP_CONFIG_PLATFORMS = frozenset({
     "unifi_ap", "unifi_udm", "unifi_sw", "unifi_uckp", "unifi_ucg",
     "mist_ap", "mist_sw", "mist_gw",
+    # HPE Instant On: cloud/app-managed, no CLI to pull a config from.
+    "instant_on",
     "unknown", "",
 })
 
