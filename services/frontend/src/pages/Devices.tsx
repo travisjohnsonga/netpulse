@@ -3,7 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
-import { fetchDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
+import Modal from '../components/Modal'
+import { fetchDevices, bulkDeleteDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
   fetchDeviceMetricsSummary, fetchDeviceStatusSummary, fetchDevicePlatforms,
   type Device, type DeviceRole, type PingSummary, type DeviceMetricsSummary,
   type DeviceStatusSummary, type PlatformOption } from '../api/client'
@@ -11,6 +12,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { useComplianceRunAll } from '../hooks/useComplianceRun'
 import { useReenrichAll } from '../hooks/useReenrichAll'
 import { useSite } from '../store/siteStore'
+import { useHasCapability } from '../store/authStore'
 import {
   DEVICE_COLUMNS, defaultColumnKeys, loadColumnKeys, saveColumnKeys, COLUMN_STORAGE_KEY, type ColCtx,
 } from '../lib/deviceColumns'
@@ -62,7 +64,7 @@ export default function Devices() {
   const [pingMap, setPingMap] = useState<Record<number, PingSummary>>({})
   const [metricsMap, setMetricsMap] = useState<Record<number, DeviceMetricsSummary>>({})
   const [statusSummary, setStatusSummary] = useState<DeviceStatusSummary | null>(null)
-  // Bulk selection for "Run Compliance" on the chosen devices.
+  // Bulk selection for "Run Compliance" / "Delete" on the chosen devices.
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const { status: runStatus, start: startRun, starting, isRunning } = useComplianceRunAll()
   const { status: reenrichStatus, start: startReenrich, starting: reenrichStarting,
@@ -75,6 +77,10 @@ export default function Devices() {
   const someSelected = selected.size > 0 && !allSelected
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(pageIds))
   const runComplianceSelected = () => { if (selected.size) startRun(Array.from(selected)) }
+  // Bulk delete — UI-gated on device:edit (the API 403 is the real boundary).
+  const canEdit = useHasCapability('device:edit')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   useEffect(() => {
     fetchCredentials()
@@ -177,6 +183,26 @@ export default function Devices() {
   }, [page, search, statusFilter, platformFilter, selectedSite, roleFilter, complianceFilter, ordering])
 
   useEffect(() => { load() }, [load])
+
+  const deleteSelected = async () => {
+    setBulkDeleting(true)
+    try {
+      const r = await bulkDeleteDevices(Array.from(selected))
+      setToast(r.failed
+        ? `Deleted ${r.deleted} device${r.deleted !== 1 ? 's' : ''}; ${r.failed} could not be deleted`
+        : `Deleted ${r.deleted} device${r.deleted !== 1 ? 's' : ''}`)
+      setSelected(new Set())
+      // Step back a page if this one is now empty.
+      if (r.deleted >= devices.length && page > 1) setPage(page - 1)
+      else load()
+    } catch {
+      setToast('Failed to delete devices')
+    } finally {
+      setBulkDeleting(false)
+      setConfirmingDelete(false)
+      setTimeout(() => setToast(null), 5000)
+    }
+  }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
@@ -340,6 +366,15 @@ export default function Devices() {
                   >
                     {starting || isRunning ? 'Running…' : '▶ Run Compliance'}
                   </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => setConfirmingDelete(true)}
+                      disabled={bulkDeleting}
+                      className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 font-medium"
+                    >
+                      🗑 Delete
+                    </button>
+                  )}
                   <button onClick={() => setSelected(new Set())} className="px-3 py-1.5 rounded-md text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 font-medium">Clear</button>
                 </div>
               </div>
@@ -468,6 +503,26 @@ export default function Devices() {
           onClose={() => setShowAddModal(false)}
           onCreated={load}
         />
+      )}
+
+      {confirmingDelete && (
+        <Modal title={`Delete ${selected.size} device${selected.size !== 1 ? 's' : ''}?`}
+          onClose={() => { if (!bulkDeleting) setConfirmingDelete(false) }}
+          footer={
+            <>
+              <button onClick={() => setConfirmingDelete(false)} disabled={bulkDeleting}
+                className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">Cancel</button>
+              <button onClick={deleteSelected} disabled={bulkDeleting}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {bulkDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </>
+          }>
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            The selected devices and their monitored interfaces, configs and telemetry settings will be
+            permanently removed. This cannot be undone.
+          </p>
+        </Modal>
       )}
 
       {/* Discovery Modal (stub) */}

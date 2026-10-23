@@ -412,6 +412,34 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
                   description=f"Device {name} deleted")
         instance.delete()
 
+    @extend_schema(summary="Delete many devices", request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """
+        POST {"ids": [...]} — delete many devices at once (device:edit). Each
+        deletion goes through perform_destroy, so every device gets its own
+        audit event; one failure never aborts the rest. Unknown ids count as
+        failed. Returns {deleted, failed, errors}.
+        """
+        ids = request.data.get("ids")
+        if (not isinstance(ids, list) or not ids
+                or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+            return Response({"error": "Provide a non-empty 'ids' list of integers."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        ids = list(dict.fromkeys(ids))
+        from django.db import transaction
+        deleted, errors = 0, []
+        for device in Device.objects.filter(pk__in=ids):
+            try:
+                # Savepoint per device: a failed delete also rolls back its audit row.
+                with transaction.atomic():
+                    self.perform_destroy(device)
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("bulk delete failed for device %s: %s", device.pk, type(exc).__name__)
+                errors.append({"id": device.pk, "error": "delete failed"})
+        return Response({"deleted": deleted, "failed": len(ids) - deleted, "errors": errors})
+
     @extend_schema(
         request=TestConnectionRequestSerializer,
         responses=TestConnectionResponseSerializer,
