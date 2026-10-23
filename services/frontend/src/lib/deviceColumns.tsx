@@ -95,7 +95,8 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
   },
   { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{d.ip_address}</span> },
   {
-    key: 'ping', label: 'Ping', default: true,
+    // Server-side sort on the current RTT (cached InfluxDB ping summary).
+    key: 'ping', label: 'Ping', default: true, sortKey: 'ping',
     render: (d, ctx) => {
       const p = ctx.ping?.[d.id]
       const ms = p?.current_ms ?? null

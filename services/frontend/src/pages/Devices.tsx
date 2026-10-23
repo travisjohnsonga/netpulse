@@ -22,7 +22,15 @@ import { STRIPED_ROW } from '../lib/tableStyles'
 import StatCard from '../components/StatCard'
 
 const STATUS_OPTIONS = ['All', 'active', 'inactive', 'pending', 'unreachable']
-const PAGE_SIZE = 20
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250, 500]
+const PAGE_SIZE_KEY = 'devices.pageSize'
+
+function loadPageSize(): number {
+  try {
+    const n = Number(localStorage.getItem(PAGE_SIZE_KEY))
+    return PAGE_SIZE_OPTIONS.includes(n) ? n : PAGE_SIZE_OPTIONS[0]
+  } catch { return PAGE_SIZE_OPTIONS[0] }
+}
 
 export default function Devices() {
   const navigate = useNavigate()
@@ -56,6 +64,12 @@ export default function Devices() {
   // Sort: column sortKey with optional leading '-' for descending (DRF ordering).
   const [ordering, setOrdering] = useState('hostname')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(loadPageSize)
+  const changePageSize = (n: number) => {
+    setPageSize(n)
+    setPage(1)
+    try { localStorage.setItem(PAGE_SIZE_KEY, String(n)) } catch { /* per-viewer nicety only */ }
+  }
   const [total, setTotal] = useState(0)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showDiscoveryModal, setShowDiscoveryModal] = useState(false)
@@ -160,7 +174,7 @@ export default function Devices() {
 
   const load = useCallback(() => {
     setLoading(true)
-    const params: Record<string, string> = { page: String(page), page_size: String(PAGE_SIZE) }
+    const params: Record<string, string> = { page: String(page), page_size: String(pageSize) }
     if (search) params.search = search
     if (statusFilter !== 'All') params.status = statusFilter
     if (platformFilter !== 'All') params.platform = platformFilter
@@ -180,7 +194,7 @@ export default function Devices() {
         setError('Failed to load devices. Check that the API is running.')
         setLoading(false)
       })
-  }, [page, search, statusFilter, platformFilter, selectedSite, roleFilter, complianceFilter, ordering])
+  }, [page, pageSize, search, statusFilter, platformFilter, selectedSite, roleFilter, complianceFilter, ordering])
 
   useEffect(() => { load() }, [load])
 
@@ -204,7 +218,7 @@ export default function Devices() {
     }
   }
 
-  const totalPages = Math.ceil(total / PAGE_SIZE)
+  const totalPages = Math.ceil(total / pageSize)
 
   return (
     <div className="space-y-4">
@@ -412,6 +426,7 @@ export default function Devices() {
                       const sortable = !!col.sortKey
                       const active = col.sortKey === ordering || `-${col.sortKey}` === ordering
                       const arrow = !active ? '' : ordering.startsWith('-') ? ' ↓' : ' ↑'
+                      // Faint ↕ marks a sortable-but-inactive header as clickable.
                       const sticky = i === 0 ? 'sticky left-12 z-20 bg-gray-50 dark:bg-gray-900' : ''
                       return (
                         <th
@@ -419,7 +434,10 @@ export default function Devices() {
                           onClick={sortable ? () => toggleSort(col.sortKey as string) : undefined}
                           className={`px-5 py-3 font-medium whitespace-nowrap ${sticky} ${sortable ? 'cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200' : ''} ${active ? 'text-gray-700 dark:text-gray-200' : ''}`}
                         >
-                          {col.label}<span className="text-blue-500">{arrow}</span>
+                          {col.label}
+                          {active
+                            ? <span className="text-blue-500">{arrow}</span>
+                            : sortable && <span className="text-gray-300 dark:text-gray-600"> ↕</span>}
                         </th>
                       )
                     })}
@@ -470,11 +488,23 @@ export default function Devices() {
             </div>
 
             {/* Pagination */}
-            {totalPages > 1 && (
+            {total > PAGE_SIZE_OPTIONS[0] && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 dark:border-gray-700 text-sm">
-                <span className="text-gray-500 dark:text-gray-300">
-                  Page {page} of {totalPages}
-                </span>
+                <div className="flex items-center gap-3 text-gray-500 dark:text-gray-300">
+                  <span>Page {page} of {Math.max(totalPages, 1)}</span>
+                  <label className="flex items-center gap-1.5">
+                    Show
+                    <select
+                      aria-label="Devices per page"
+                      value={pageSize}
+                      onChange={(e) => changePageSize(Number(e.target.value))}
+                      className="border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200"
+                    >
+                      {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    per page
+                  </label>
+                </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
