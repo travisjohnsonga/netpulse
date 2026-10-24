@@ -369,6 +369,32 @@ class TestMaintenanceWindows:
         assert ended.status_code == 200 and ended.json()["is_currently_active"] is False
 
 
+    def test_device_scoped_window_from_bulk_action(self, auth_client):
+        """The Devices-page bulk Maintenance button posts a device-scoped window;
+        it must suppress only those devices, not act as a global window."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.alerting.maintenance import is_in_maintenance
+        from apps.devices.models import Device
+        a = Device.objects.create(hostname="site1-ap-01", ip_address="192.0.2.31")
+        b = Device.objects.create(hostname="site1-ap-02", ip_address="192.0.2.32")
+        other = Device.objects.create(hostname="site1-ap-03", ip_address="192.0.2.33")
+        now = timezone.now()
+        resp = auth_client.post("/api/alerting/maintenance/", {
+            "name": "Maintenance — 2 devices",
+            "description": "gateway moved",
+            "start_time": now.isoformat(),
+            "end_time": (now + timedelta(hours=4)).isoformat(),
+            "recurrence": "none",
+            "is_active": True,
+            "devices": [a.id, b.id],
+        }, format="json")
+        assert resp.status_code == 201, resp.content
+        assert sorted(resp.json()["device_names"]) == ["site1-ap-01", "site1-ap-02"]
+        assert is_in_maintenance(device_id=a.id, severity="high")
+        assert is_in_maintenance(device_id=b.id, severity="high")
+        assert not is_in_maintenance(device_id=other.id, severity="high")
+
 class TestDiscord:
     def test_discord_embed_format(self):
         from apps.alerting import channels
