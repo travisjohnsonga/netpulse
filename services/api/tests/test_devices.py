@@ -107,14 +107,14 @@ class TestDeviceStatusSummary:
         Device.objects.create(hostname="srv", ip_address="127.0.0.1", status="active",
                               device_kind=Device.DeviceKind.SERVER)
         body = auth_client.get("/api/devices/status-summary/").json()
-        assert body == {"total": 3, "up": 2, "down": 1}
+        assert body == {"total": 3, "up": 2, "down": 1, "maintenance": 0}
 
     def test_site_scoped(self, auth_client, site):
         other = Site.objects.create(name="DC-2")
         Device.objects.create(hostname="a", ip_address="10.1.0.1", status="active", is_reachable=True, site=site)
         Device.objects.create(hostname="b", ip_address="10.1.0.2", status="unreachable", is_reachable=False, site=other)
         body = auth_client.get(f"/api/devices/status-summary/?site={site.pk}").json()
-        assert body == {"total": 1, "up": 1, "down": 0}
+        assert body == {"total": 1, "up": 1, "down": 0, "maintenance": 0}
 
     def test_metrics_summary_endpoint_ok(self, auth_client, device):
         # InfluxDB isn't available in tests → returns an empty list, not a 500.
@@ -189,7 +189,7 @@ class TestDeviceEndpoints:
             "platform", "vendor", "model", "os_version", "serial_number", "status",
             "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",
-            "compliance_score", "compliance_grade",
+            "compliance_score", "compliance_grade", "maintenance_until",
             "notes", "created_at",
         }
 

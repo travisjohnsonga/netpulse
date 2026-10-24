@@ -657,17 +657,28 @@ class DeviceViewSet(CapabilityViewSetMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="status-summary")
     def status_summary(self, request):
-        """Total / up / down counts for the device-list summary cards. Counts the
-        NETWORK-device set (optionally ?site=) — the list is paginated, so these
-        come from the DB, not the current page. up = reachable & not unreachable;
-        down = the complement (matches the Up/Down badge). Cheap COUNT queries."""
+        """Total / up / down / maintenance counts for the device-list summary
+        cards. Counts the NETWORK-device set (optionally ?site=) — the list is
+        paginated, so these come from the DB, not the current page. Devices
+        covered by an active maintenance window count as maintenance (matching
+        the Maintenance badge) and not as up/down; of the rest, up = reachable &
+        not unreachable, down = the complement (matches the Up/Down badge)."""
+        from apps.alerting.maintenance import MaintenanceLookup
         qs = Device.objects.filter(device_kind=Device.DeviceKind.NETWORK_DEVICE)
         site = request.query_params.get("site")
         if site:
             qs = qs.filter(site_id=site)
+        is_down = Q(status=Device.Status.UNREACHABLE) | Q(is_reachable=False)
+        lookup = MaintenanceLookup()
+        if lookup.global_until or lookup.by_device or lookup.by_site:
+            maint_ids = [i for i, site_id in qs.values_list("id", "site_id") if lookup.until(i, site_id)]
+            qs = qs.exclude(id__in=maint_ids)
+        else:
+            maint_ids = []
         total = qs.count()
-        down = qs.filter(Q(status=Device.Status.UNREACHABLE) | Q(is_reachable=False)).count()
-        return Response({"total": total, "up": total - down, "down": down})
+        down = qs.filter(is_down).count()
+        return Response({"total": total + len(maint_ids), "up": total - down, "down": down,
+                         "maintenance": len(maint_ids)})
 
     @action(detail=False, methods=["get"], url_path="metrics-summary")
     def metrics_summary(self, request):
