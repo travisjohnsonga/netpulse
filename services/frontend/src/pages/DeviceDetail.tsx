@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTabParam } from '../lib/useTabParam'
 import clsx from 'clsx'
+import { badge } from '../lib/ui'
 import { api, fetchDevice, fetchCredential, deleteDevice, refreshDevice, reachabilityOf, fetchCollectors, setDeviceCollector, type Collector, type DeviceDetail as Device } from '../api/client'
 import { sshUrl, sshTooltip } from '../lib/ssh'
 import { useWebSocket } from '../hooks/useWebSocket'
@@ -169,6 +170,11 @@ export default function DeviceDetail() {
             <VendorLogo platform={device.platform} vendor={device.vendor} size={28} />
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100" title={device.hostname}>{device.display_hostname || device.hostname}</h1>
             <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium capitalize', STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600')}>{device.status}</span>
+            {device.maintenance_until && (
+              <span className={badge('warn')} title="Alerts for this device are muted by a maintenance window">
+                Maintenance until {new Date(device.maintenance_until).toLocaleString()}
+              </span>
+            )}
             <RoleBubble role={device.role} />
             <ReachabilityIndicator device={device} />
           </div>

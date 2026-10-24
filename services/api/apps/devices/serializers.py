@@ -170,12 +170,28 @@ class DeviceAlertingSerializer(serializers.Serializer):
     silenced_until = serializers.DateTimeField(required=False, allow_null=True)
 
 
+def _maintenance_until(serializer, obj):
+    """End of the active maintenance window covering ``obj`` (ISO) or None.
+
+    The lookup is cached on the root serializer's context, so a list page loads
+    the active windows once rather than per row.
+    """
+    from apps.alerting.maintenance import MaintenanceLookup
+    lookup = serializer.context.get("maintenance_lookup")
+    if lookup is None:
+        lookup = serializer.context["maintenance_lookup"] = MaintenanceLookup()
+    until = lookup.until(obj.id, obj.site_id)
+    return until.isoformat() if until else None
+
+
 class DeviceSerializer(serializers.ModelSerializer):
     # Resolved collector display info (assigned → site default → global default).
     collector_name = serializers.SerializerMethodField()
     collector_ip = serializers.SerializerMethodField()
     collector_status = serializers.SerializerMethodField()
     display_hostname = serializers.SerializerMethodField()
+    # Set while an active maintenance window covers the device (computed, not stored).
+    maintenance_until = serializers.SerializerMethodField()
     # Role: nested object on read, `role_id` on write (matches the UI dropdown).
     role = DeviceRoleSerializer(read_only=True)
     role_id = serializers.PrimaryKeyRelatedField(
@@ -190,6 +206,9 @@ class DeviceSerializer(serializers.ModelSerializer):
 
     def get_display_hostname(self, obj):
         return obj.display_hostname
+
+    def get_maintenance_until(self, obj):
+        return _maintenance_until(self, obj)
 
     def _effective(self, obj):
         from apps.collectors.resolve import effective_collector
@@ -230,6 +249,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
     # see DeviceViewSet.get_queryset; cheap, no live calls) + derived letter grade.
     compliance_score = serializers.SerializerMethodField()
     compliance_grade = serializers.SerializerMethodField()
+    maintenance_until = serializers.SerializerMethodField()
 
     class Meta:
         model = Device
@@ -241,7 +261,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
             "platform", "vendor", "model", "os_version", "serial_number", "status",
             "site_name", "role", "credential_profile", "last_seen", "is_reachable",
             "consecutive_failures", "last_reachability_check", "unreachable_since",
-            "compliance_score", "compliance_grade",
+            "compliance_score", "compliance_grade", "maintenance_until",
             "notes", "created_at",
         )
 
@@ -254,6 +274,9 @@ class DeviceListSerializer(serializers.ModelSerializer):
 
     def get_compliance_grade(self, obj):
         return _score_grade(getattr(obj, "compliance_score", None))
+
+    def get_maintenance_until(self, obj):
+        return _maintenance_until(self, obj)
 
 
 class TestConnectionRequestSerializer(serializers.Serializer):

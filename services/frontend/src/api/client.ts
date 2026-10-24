@@ -140,6 +140,8 @@ export interface Device {
   consecutive_failures?: number
   last_reachability_check?: string | null
   unreachable_since?: string | null
+  /** End of the active maintenance window covering this device (computed), else null. */
+  maintenance_until?: string | null
   // Latest stored template-compliance score (list endpoint only) + letter grade.
   compliance_score?: number | null
   compliance_grade?: string | null
@@ -1055,7 +1057,7 @@ export async function fetchDeviceMetricsSummary(): Promise<DeviceMetricsSummary[
 
 // Total/up/down counts for the Devices summary cards (DB counts over the network
 // -device set; the list is paginated so these aren't derivable client-side).
-export interface DeviceStatusSummary { total: number; up: number; down: number }
+export interface DeviceStatusSummary { total: number; up: number; down: number; maintenance: number }
 export async function fetchDeviceStatusSummary(site?: string): Promise<DeviceStatusSummary> {
   const { data } = await api.get<DeviceStatusSummary>('/devices/status-summary/',
     { params: site ? { site } : {} })
@@ -3125,6 +3127,8 @@ export async function fetchSiteDevices(id: number): Promise<Device[]> {
 // Full device record from GET /api/devices/{id}/ (detail serializer = all fields).
 export interface DeviceDetail {
   id: number
+  /** End of the active maintenance window covering this device (computed), else null. */
+  maintenance_until?: string | null
   hostname: string
   // Display-only hostname (domain suffix optionally stripped); SSH/SNMP/syslog
   // still use `hostname`. Always returned by the serializer.

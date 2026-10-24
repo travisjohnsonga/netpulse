@@ -39,3 +39,48 @@ def is_in_maintenance(device_id=None, severity=None, check_type=None, now=None) 
         if site_id and site_id in site_ids:
             return True
     return False
+
+
+class MaintenanceLookup:
+    """Per-request answer to "is this device in maintenance, and until when?".
+
+    Loads the active windows once (one query + prefetch), so a device list page
+    can stamp every row without a query per device. A window counts when it
+    would suppress the device-down alert: no check-type narrowing, and a
+    severity filter that is empty or includes "high". Global (unscoped) windows
+    cover every device. Returns the latest end_time among covering windows.
+    """
+
+    def __init__(self, now=None):
+        self.global_until = None
+        self.by_device: dict = {}
+        self.by_site: dict = {}
+        for w in active_windows(now):
+            if w.check_types:
+                continue
+            if w.severity_filter and "high" not in w.severity_filter:
+                continue
+            dev_ids = [d.id for d in w.devices.all()]
+            site_ids = [s.id for s in w.sites.all()]
+            if not dev_ids and not site_ids:
+                self.global_until = _later(self.global_until, w.end_time)
+            for i in dev_ids:
+                self.by_device[i] = _later(self.by_device.get(i), w.end_time)
+            for i in site_ids:
+                self.by_site[i] = _later(self.by_site.get(i), w.end_time)
+
+    def until(self, device_id, site_id=None):
+        """End time of the covering maintenance window, or None."""
+        until = self.global_until
+        until = _later(until, self.by_device.get(device_id))
+        if site_id:
+            until = _later(until, self.by_site.get(site_id))
+        return until
+
+
+def _later(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)

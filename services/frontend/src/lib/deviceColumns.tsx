@@ -91,7 +91,7 @@ export const DEVICE_COLUMNS: DeviceColumn[] = [
   {
     // Shared Up/Down badge (no duration in the pill — that's the Last Change column).
     key: 'status', label: 'Status', default: true, sortKey: 'status',
-    render: (d) => <StatusBadge up={deviceUp(d)} />,
+    render: (d) => <StatusBadge up={deviceUp(d)} maintenanceUntil={d.maintenance_until} />,
   },
   { key: 'ip_address', label: 'IP Address', default: true, sortKey: 'ip_address', render: (d) => <span className="font-mono text-xs text-gray-600 dark:text-gray-300">{d.ip_address}</span> },
   {

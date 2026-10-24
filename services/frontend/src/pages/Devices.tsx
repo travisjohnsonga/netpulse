@@ -133,13 +133,15 @@ export default function Devices() {
 
   // Summary-card counts (DB totals over the network-device set, site-scoped) —
   // the list is paginated so these can't be derived from the current page.
+  // summaryTick bumps after a bulk maintenance start so the Maintenance card updates.
+  const [summaryTick, setSummaryTick] = useState(0)
   useEffect(() => {
     let active = true
     fetchDeviceStatusSummary(selectedSite || undefined)
       .then((s) => { if (active) setStatusSummary(s) })
       .catch(() => { if (active) setStatusSummary(null) })
     return () => { active = false }
-  }, [selectedSite, total])
+  }, [selectedSite, total, summaryTick])
 
   // Live reachability updates: patch the matching row when the monitor pushes.
   const { lastMessage } = useWebSocket('/ws/devices/')
@@ -252,6 +254,8 @@ export default function Devices() {
       setToast(`Maintenance started for ${ids.length} device${ids.length !== 1 ? 's' : ''} until ${end.toLocaleString()}`)
       setSelected(new Set())
       setMaintOpen(false)
+      setSummaryTick((t) => t + 1)
+      load()
       setMaintReason('')
     } catch {
       setToast('Failed to start maintenance')
@@ -327,10 +331,13 @@ export default function Devices() {
       {/* Count-based summary (matches the Servers cards) — how many are down is
           the actionable number; a fleet CPU/mem average hides hosts in trouble. */}
       {statusSummary && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className={`grid gap-3 ${statusSummary.maintenance ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
           <StatCard title="Total Devices" value={statusSummary.total} color="blue" />
           <StatCard title="Up" value={statusSummary.up} color="green" />
           <StatCard title="Down" value={statusSummary.down} color="red" />
+          {statusSummary.maintenance > 0 && (
+            <StatCard title="Maintenance" value={statusSummary.maintenance} color="yellow" />
+          )}
         </div>
       )}
 
