@@ -18,7 +18,6 @@ const isDeletable = (r: AlertRule) => r.kind !== 'system' && !r.is_system
 
 const TABS = [
   { id: 'rules', label: 'Alert Rules' },
-  { id: 'windows', label: 'Maintenance Windows' },
   { id: 'templates', label: 'Templates' },
 ]
 
@@ -37,10 +36,9 @@ export default function Alerting() {
   const [tab, setTab] = useState('rules')
   return (
     <div>
-      <SectionHeader title="Alerting" description="Alert rules, maintenance windows and notification templates." />
+      <SectionHeader title="Alerting" description="Alert rules and notification templates. Maintenance windows live under Routing & Notifications." />
       <Tabs tabs={TABS} active={tab} onChange={setTab} />
       {tab === 'rules' && <RulesTab />}
-      {tab === 'windows' && <MaintenanceTab />}
       {tab === 'templates' && <TemplatesTab />}
     </div>
   )
@@ -677,70 +675,6 @@ function EditRuleModal({ rule, onClose, onSaved }: { rule: AlertRule; onClose: (
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Condition (JSON)</label>
           <textarea className={`${inputCls} font-mono text-xs h-32`} value={condition} onChange={(e) => setCondition(e.target.value)} />
         </div>
-      </div>
-    </Modal>
-  )
-}
-
-// ── Maintenance Windows (illustrative) ───────────────────────────────────────
-
-interface Window { id: number; name: string; start: string; end: string; scope: string }
-
-function MaintenanceTab() {
-  const [windows, setWindows] = useState<Window[]>([
-    { id: 1, name: 'DC-1 core upgrade', start: '2026-06-02 22:00', end: '2026-06-03 02:00', scope: 'Site: DC-1' },
-  ])
-  const [adding, setAdding] = useState(false)
-
-  return (
-    <div>
-      <div className="flex justify-end mb-3">
-        <button onClick={() => setAdding(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Create Window</button>
-      </div>
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
-        {windows.length === 0 ? (
-          <EmptyState title="No maintenance windows" description="Schedule a window to suppress alerts and exclude downtime from SLA." icon="🛠" />
-        ) : windows.map((w) => (
-          <div key={w.id} className="flex items-center gap-4 px-5 py-3">
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-800 dark:text-gray-100">{w.name}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{w.start} → {w.end} · {w.scope}</p>
-            </div>
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Scheduled</span>
-            <button onClick={() => setWindows((ws) => ws.filter((x) => x.id !== w.id))} className="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Cancel</button>
-          </div>
-        ))}
-      </div>
-      <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">Alerts are suppressed and downtime excluded from SLA during active windows.</p>
-
-      {adding && <CreateWindowModal onClose={() => setAdding(false)} onCreate={(w) => { setWindows((ws) => [...ws, { ...w, id: Date.now() }]); setAdding(false) }} />}
-    </div>
-  )
-}
-
-function CreateWindowModal({ onClose, onCreate }: { onClose: () => void; onCreate: (w: Omit<Window, 'id'>) => void }) {
-  const [name, setName] = useState('')
-  const [start, setStart] = useState('')
-  const [end, setEnd] = useState('')
-  const [scope, setScope] = useState('')
-  return (
-    <Modal
-      title="Create Maintenance Window"
-      onClose={onClose}
-      footer={
-        <>
-          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50">Cancel</button>
-          <button onClick={() => name && onCreate({ name, start, end, scope: scope || 'All devices' })} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Create</button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start</label><input className={inputCls} type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-          <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">End</label><input className={inputCls} type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-        </div>
-        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Affected devices / sites</label><input className={inputCls} value={scope} onChange={(e) => setScope(e.target.value)} placeholder="Site: DC-1" /></div>
       </div>
     </Modal>
   )

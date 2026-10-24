@@ -4,7 +4,7 @@ import EmptyState from '../components/EmptyState'
 import DeviceAddModal from '../components/DeviceAddModal'
 import ColumnPicker from '../components/ColumnPicker'
 import Modal from '../components/Modal'
-import { fetchDevices, bulkDeleteDevices, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
+import { fetchDevices, bulkDeleteDevices, saveMaintenanceWindow, fetchCredentials, fetchDeviceRoles, fetchPingSummary,
   fetchDeviceMetricsSummary, fetchDeviceStatusSummary, fetchDevicePlatforms,
   type Device, type DeviceRole, type PingSummary, type DeviceMetricsSummary,
   type DeviceStatusSummary, type PlatformOption } from '../api/client'
@@ -95,6 +95,13 @@ export default function Devices() {
   const canEdit = useHasCapability('device:edit')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  // Bulk maintenance — creates one device-scoped maintenance window (alert:manage).
+  const canManageAlerts = useHasCapability('alert:manage')
+  const [maintOpen, setMaintOpen] = useState(false)
+  const [maintSaving, setMaintSaving] = useState(false)
+  const [maintHours, setMaintHours] = useState('4')
+  const [maintCustomEnd, setMaintCustomEnd] = useState('')
+  const [maintReason, setMaintReason] = useState('')
 
   useEffect(() => {
     fetchCredentials()
@@ -214,6 +221,42 @@ export default function Devices() {
     } finally {
       setBulkDeleting(false)
       setConfirmingDelete(false)
+      setTimeout(() => setToast(null), 5000)
+    }
+  }
+
+  const maintEnd = (): Date | null => {
+    if (maintHours === 'custom') {
+      const d = maintCustomEnd ? new Date(maintCustomEnd) : null
+      return d && !isNaN(d.getTime()) && d.getTime() > Date.now() ? d : null
+    }
+    return new Date(Date.now() + Number(maintHours) * 3600_000)
+  }
+
+  const startMaintenance = async () => {
+    const end = maintEnd()
+    const ids = Array.from(selected)
+    // A window with no devices (and no sites) suppresses EVERY alert — never send one.
+    if (!end || ids.length === 0) return
+    setMaintSaving(true)
+    try {
+      await saveMaintenanceWindow({
+        name: `Maintenance — ${ids.length} device${ids.length !== 1 ? 's' : ''}`,
+        description: maintReason.trim(),
+        start_time: new Date().toISOString(),
+        end_time: end.toISOString(),
+        recurrence: 'none',
+        is_active: true,
+        devices: ids,
+      })
+      setToast(`Maintenance started for ${ids.length} device${ids.length !== 1 ? 's' : ''} until ${end.toLocaleString()}`)
+      setSelected(new Set())
+      setMaintOpen(false)
+      setMaintReason('')
+    } catch {
+      setToast('Failed to start maintenance')
+    } finally {
+      setMaintSaving(false)
       setTimeout(() => setToast(null), 5000)
     }
   }
@@ -380,6 +423,15 @@ export default function Devices() {
                   >
                     {starting || isRunning ? 'Running…' : '▶ Run Compliance'}
                   </button>
+                  {canManageAlerts && (
+                    <button
+                      onClick={() => setMaintOpen(true)}
+                      disabled={maintSaving}
+                      className="px-3 py-1.5 rounded-md bg-yellow-500 hover:bg-yellow-600 text-white disabled:opacity-50 font-medium"
+                    >
+                      🔧 Maintenance
+                    </button>
+                  )}
                   {canEdit && (
                     <button
                       onClick={() => setConfirmingDelete(true)}
@@ -552,6 +604,52 @@ export default function Devices() {
             The selected devices and their monitored interfaces, configs and telemetry settings will be
             permanently removed. This cannot be undone.
           </p>
+        </Modal>
+      )}
+
+      {maintOpen && (
+        <Modal title={`Start maintenance for ${selected.size} device${selected.size !== 1 ? 's' : ''}`}
+          onClose={() => { if (!maintSaving) setMaintOpen(false) }}
+          footer={
+            <>
+              <button onClick={() => setMaintOpen(false)} disabled={maintSaving}
+                className="flex-1 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50">Cancel</button>
+              <button onClick={startMaintenance} disabled={maintSaving || !maintEnd()}
+                className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {maintSaving ? 'Starting…' : 'Start maintenance'}
+              </button>
+            </>
+          }>
+          <div className="space-y-3 text-sm">
+            <p className="text-gray-700 dark:text-gray-300">
+              Alerts for the selected devices are suppressed from now until the end time. Device status
+              is still tracked. End it early from Settings → Alerting → Routing & Notifications.
+            </p>
+            <div>
+              <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">Duration</label>
+              <select className={SELECT} value={maintHours} onChange={(e) => setMaintHours(e.target.value)}>
+                <option value="1">1 hour</option>
+                <option value="4">4 hours</option>
+                <option value="8">8 hours</option>
+                <option value="24">24 hours</option>
+                <option value="72">3 days</option>
+                <option value="168">7 days</option>
+                <option value="custom">Until…</option>
+              </select>
+            </div>
+            {maintHours === 'custom' && (
+              <div>
+                <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">End</label>
+                <input className={INPUT} type="datetime-local" value={maintCustomEnd}
+                  onChange={(e) => setMaintCustomEnd(e.target.value)} />
+              </div>
+            )}
+            <div>
+              <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">Reason (optional)</label>
+              <input className={INPUT} value={maintReason} onChange={(e) => setMaintReason(e.target.value)}
+                placeholder="e.g. gateway moved to new firewall" />
+            </div>
+          </div>
         </Modal>
       )}
 
