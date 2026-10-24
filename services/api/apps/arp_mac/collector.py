@@ -415,6 +415,15 @@ def _send(conn, command: str):
         return []
 
 
+def _send_raw(conn, command: str) -> str:
+    """send_command without TextFSM; returns the raw text ("" on failure)."""
+    try:
+        return conn.send_command(command, read_timeout=60) or ""
+    except Exception as exc:
+        logger.warning("arp_mac: '%s' failed: %s", command, exc)
+        return ""
+
+
 def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], list[dict]]:
     """
     Collect and normalize the device's ARP and MAC tables. Returns
@@ -475,12 +484,17 @@ def collect_arp_mac(device, secrets: dict, username: str) -> tuple[list[dict], l
         return [], []
     try:
         arp_cmd = ARP_COMMANDS.get(platform)
-        if arp_cmd:
+        if arp_cmd and platform == "fortios":
+            # Skip TextFSM: the ntc-templates fortinet "get system arp" template
+            # raises a State Error on any row with a "-" age (e.g. the HA
+            # heartbeat entry on the "ha" interface), which _send turns into an
+            # empty list — 0 entries for every FortiGate in an HA pair. Our own
+            # parser handles "-" ages.
+            arp_entries = _parse_fortios_arp(_send_raw(conn, arp_cmd))
+        elif arp_cmd:
             out = _send(conn, arp_cmd)
             if isinstance(out, list):
                 arp_entries = _normalize_arp(out)
-            elif platform == "fortios":
-                arp_entries = _parse_fortios_arp(out)
             elif platform == "aos_cx":
                 arp_entries = _normalize_arp(_textfsm_parse(out, "aruba_aoscx_show_arp.textfsm"))
 

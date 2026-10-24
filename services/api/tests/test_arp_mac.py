@@ -140,6 +140,38 @@ class TestParsing:
                         "protocol": "Internet", "entry_type": "dynamic"}]
 
 
+    def test_fortios_arp_skips_textfsm_and_parses_ha_row(self, monkeypatch):
+        """ntc-templates' FortiOS ARP template raises a State Error on a "-" age
+        (the HA heartbeat row), so collection must read raw text and use our
+        parser — otherwise every FortiGate in an HA pair collects 0 entries."""
+        from apps.arp_mac import collector
+        from apps.devices.models import Device
+        dev = Device.objects.create(hostname="site1-fw-01", ip_address="192.0.2.60",
+                                    platform="fortios")
+        sent = []
+
+        class _Conn:
+            def send_command(self, cmd, use_textfsm=False, **k):
+                sent.append((cmd, use_textfsm))
+                if use_textfsm:
+                    raise Exception("State Error raised. Rule Line: 10.")
+                return (
+                    "Address           Age(min)   Hardware Addr      Interface\n"
+                    "169.254.0.1       -          00:00:5e:00:53:aa ha\n"
+                    "192.0.2.1         0          00:00:5e:00:53:01 port1\n"
+                    "198.51.100.7      12         00:00:5e:00:53:02 internal\n")
+
+            def disconnect(self):
+                pass
+
+        import netmiko
+        monkeypatch.setattr(netmiko, "ConnectHandler", lambda **kw: _Conn())
+        arp, mac = collector.collect_arp_mac(dev, {"ssh_password": "pw"}, "u")
+        assert sent == [("get system arp", False)]
+        assert [(e["ip_address"], e["interface"], e["age_minutes"]) for e in arp] == [
+            ("169.254.0.1", "ha", None), ("192.0.2.1", "port1", 0), ("198.51.100.7", "internal", 12)]
+        assert mac == []
+
 class TestAOSCXRest:
     """AOS-CX collection prefers the REST API and falls back to SSH on failure."""
 
